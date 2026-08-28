@@ -27,9 +27,33 @@ tests/
 sessions/
 ```
 
-Ogni directory sotto `tests/` è un gruppo. I gruppi possono essere nidificati e la selezione di un gruppo esegue ricorsivamente tutti i test che contiene. `tests/` è il gruppo radice e rappresenta l'intera suite.
+Ogni directory normale sotto `tests/` è un gruppo. I gruppi possono essere nidificati e la selezione di un gruppo esegue ricorsivamente tutti i test che contiene. `tests/` è il gruppo radice e rappresenta l'intera suite.
 
 Il pathname relativo a `tests/` identifica naturalmente test e gruppi.
+
+## Discovery
+
+Le regole di discovery sono volutamente minime:
+
+1. un file regolare `*.test` identifica un test;
+2. ogni directory normale sotto `tests/` identifica un gruppo;
+3. directory e pathname il cui nome inizia con `.` sono materiale interno e vengono esclusi dalla discovery;
+4. ogni altro file viene ignorato dal runner.
+
+Esempio:
+
+```text
+tests/rumiai-os/bootstrap/
+├── absolute.test
+├── relative.test
+├── README.md
+├── .fixtures/
+│   └── source
+└── .support/
+    └── helper
+```
+
+L'estensione `.test` identifica il ruolo del file nella suite e non il linguaggio con cui il test è implementato.
 
 ## Indipendenza dei test
 
@@ -58,6 +82,33 @@ L'ordine serve esclusivamente a rendere l'esecuzione prevedibile e confrontabile
 
 Lo status del test è distinto dallo status del programma testato.
 
+Una incompatibilità reale dell'host rispetto alla proprietà richiesta produce `FAIL`. Non deve essere trasformata in `PASS` o `SKIP` per nascondere una incompatibilità nota.
+
+`SKIP` indica invece un test non applicabile o una precondizione dichiarata non disponibile; `ERROR` indica che il test non è riuscito a determinare un risultato per un problema del test, del runner o dell'ambiente.
+
+## Modello host
+
+I test devono essere unici e universali rispetto agli host sui quali sono applicabili. La suite descrive la proprietà da verificare; la sessione registra l'ambiente nel quale la proprietà è stata verificata.
+
+Gli host stabili di riferimento correnti sono:
+
+```text
+macOS
+Ubuntu 26.04 ARM64
+```
+
+Host aggiuntivi usati periodicamente includono:
+
+```text
+Ubuntu 26.04 x64
+Windows 10 x64
+Windows 11 x64
+```
+
+Una validation session registra almeno sistema operativo, versione, architettura e altre caratteristiche dell'ambiente materialmente rilevanti.
+
+Se un test fallisce solo su un determinato host, il progetto valuta il fallimento insieme ai metadati della sessione. Un'incompatibilità può essere accettata esplicitamente senza correggere il prodotto quando non è abbastanza importante, ma il risultato storico della sessione rimane `FAIL`.
+
 ## Workspace locale consigliato
 
 Il clone può essere collocato accanto al runtime locale sotto:
@@ -72,4 +123,4 @@ Questa collocazione è una convenienza di sviluppo e non deve essere l'unico mod
 
 Il runner pubblico è `rumiai-test`, nome scelto per evitare collisioni con la utility POSIX `test`.
 
-La CLI completa e le regole precise di discovery/selezione dei test verranno definite prima dell'implementazione della prima suite permanente.
+La CLI completa e il contratto runner/test vengono definiti prima dell'implementazione della prima suite permanente.
