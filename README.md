@@ -71,6 +71,28 @@ I membri di un gruppo vengono attraversati in ordine lessicografico deterministi
 
 L'ordine serve esclusivamente a rendere l'esecuzione prevedibile e confrontabile; non ha significato funzionale e nessun test può dipenderne.
 
+## Test autonomi
+
+Ogni `.test` contiene tutta la conoscenza specifica necessaria alla propria verifica.
+
+Il test si occupa autonomamente di:
+
+- individuare e canonicalizzare la propria posizione quando necessario;
+- individuare il target;
+- localizzare fixture e file di supporto tramite nomi e relazioni logiche hardcoded;
+- preparare ciò che serve alla prova;
+- creare e gestire eventuali risorse temporanee;
+- verificare il comportamento atteso;
+- produrre diagnostica;
+- effettuare il cleanup;
+- restituire l'exit status del test.
+
+Sono ammessi riferimenti logici relativi, come `.fixtures/input`, `.support/helper` o `bin/log`; non sono ammessi pathname host-specifici hardcoded come home directory personali o path locali dello sviluppatore.
+
+Un `.test` deve poter essere eseguito direttamente. Il suo shebang identifica esclusivamente il proprio interprete; per i test implementati in shell POSIX il normale shebang è `#!/bin/sh`.
+
+`rumiai-test` e `rumiai-os` non sono interpreti impliciti dei file `.test`.
+
 ## Exit status dei test
 
 ```text
@@ -117,10 +139,31 @@ Il clone può essere collocato accanto al runtime locale sotto:
 $RumiAI_ROOT/.dev/rumiai-tests/
 ```
 
-Questa collocazione è una convenienza di sviluppo e non deve essere l'unico modo per indicare il target da testare.
+Questa collocazione è una convenienza di sviluppo. I test devono poter effettuare autonomamente il discovery necessario anche quando il repository è collocato altrove.
 
 ## Runner
 
 Il runner pubblico è `rumiai-test`, nome scelto per evitare collisioni con la utility POSIX `test`.
 
-La CLI completa e il contratto runner/test vengono definiti prima dell'implementazione della prima suite permanente.
+Il runner è intenzionalmente semplice: osserva l'esecuzione, non la prepara.
+
+Si occupa di discovery e selezione, ordine lessicografico, raccolta del contesto host/sessione, esecuzione dei `.test`, raccolta degli exit status, riepilogo e conservazione dei risultati.
+
+Il contratto runner -> test è vuoto: il runner non passa argomenti o variabili RumiAI-specifiche, non individua il target, non localizza fixture, non crea workspace temporanei, non cambia la current working directory, non modifica `HOME` o `TMPDIR`, non esegue setup/cleanup e non implementa una sandbox implicita.
+
+Il contratto test -> runner è limitato a:
+
+```text
+stream combinato stdout/stderr
+exit status 0..3
+```
+
+`stdout` e `stderr` vengono catturati in un unico stream, secondo un modello equivalente a:
+
+```sh
+1>logfile 2>&1
+```
+
+Il contesto globale della sessione viene registrato dal runner separatamente dal log prodotto dal test.
+
+La CLI precisa del runner deve restare coerente con questo contratto minimale e viene definita prima dell'implementazione della prima suite permanente.
