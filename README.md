@@ -2,7 +2,9 @@
 
 Suite permanente di test e validazione di RumiAI.
 
-Le regole canoniche di testing sono definite in `massimilianonardi-ai/rumiai-dev/TESTING.md`. Questo repository contiene l'implementazione eseguibile dei test, il runner, il supporto comune e le sessioni di validazione.
+Le regole canoniche generali sono definite in `massimilianonardi-ai/rumiai-dev/TESTING.md`. Il contratto canonico specifico del runner è definito in `massimilianonardi-ai/rumiai-dev/RUNNER.md`.
+
+Questo repository contiene l'implementazione eseguibile dei test, il runner, il supporto comune e le sessioni di validazione.
 
 ## Ruolo
 
@@ -108,6 +110,8 @@ Una incompatibilità reale dell'host rispetto alla proprietà richiesta produce 
 
 `SKIP` indica invece un test non applicabile o una precondizione dichiarata non disponibile; `ERROR` indica che il test non è riuscito a determinare un risultato per un problema del test, del runner o dell'ambiente.
 
+Un `.test` che termina con uno status diverso da `0..3`, o che viene terminato da un segnale prima di produrre un esito valido, viene classificato dal runner come `ERROR`.
+
 ## Modello host
 
 I test devono essere unici e universali rispetto agli host sui quali sono applicabili. La suite descrive la proprietà da verificare; la sessione registra l'ambiente nel quale la proprietà è stata verificata.
@@ -166,4 +170,65 @@ exit status 0..3
 
 Il contesto globale della sessione viene registrato dal runner separatamente dal log prodotto dal test.
 
-La CLI precisa del runner deve restare coerente con questo contratto minimale e viene definita prima dell'implementazione della prima suite permanente.
+## CLI iniziale
+
+La CLI canonica iniziale è:
+
+```text
+rumiai-test [--validation] [selection]
+```
+
+Con:
+
+```text
+selection assente
+    intera suite / gruppo radice tests/
+
+selection = directory relativa a tests/
+    gruppo ricorsivo
+
+selection = file *.test relativo a tests/
+    singolo test
+```
+
+Esempi:
+
+```text
+rumiai-test
+rumiai-test rumiai-os/bootstrap
+rumiai-test rumiai-os/bootstrap/path/absolute.test
+rumiai-test --validation
+rumiai-test --validation rumiai-os/bootstrap
+```
+
+`rumiai-test .` non è ammesso: `.` identifica normalmente la current working directory e sarebbe ambiguo rispetto alla root logica `tests/`.
+
+La CLI iniziale accetta un solo selettore.
+
+## Exit status del runner
+
+```text
+0 = SUCCESS
+1 = FAIL
+2 = TEST ERROR
+3 = RUNNER ERROR
+```
+
+La precedenza è:
+
+```text
+RUNNER ERROR > TEST ERROR > FAIL > SUCCESS
+```
+
+Semantica:
+
+- `0`: run completata senza test `FAIL` o `ERROR`; possono essere presenti `SKIP`;
+- `1`: almeno un test `FAIL`, nessun test `ERROR`;
+- `2`: almeno un test `ERROR`; prevale sull'eventuale presenza di `FAIL`;
+- `3`: errore del runner o run non completabile correttamente.
+
+Una selezione inesistente, invalida o un gruppo selezionato senza alcun test valido produce `RUNNER ERROR=3`.
+
+Se `rumiai-test` viene interrotto esternamente da un segnale, non deve trasformare artificialmente l'evento in status `3`: deve preservare per quanto possibile la normale semantica di terminazione da segnale della piattaforma.
+
+La struttura persistente esatta delle development run e delle validation run viene definita prima dell'implementazione stabile del runner.
