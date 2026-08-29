@@ -54,10 +54,9 @@ resolve_test_dir() {
 }
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-bootstrap_group=${test_dir%/*}
-tests_dir=${bootstrap_group%/*}
-suite_tests=${tests_dir%/*}
-suite_root=${suite_tests%/*}
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
 root=$(rumiai_test_target_rumiai_os_find "$suite_root")
 status=$?
 case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
@@ -80,7 +79,7 @@ printf '%s\n%s\n' "$RumiAI_ROOT" "$RumiAI_BOOTSTRAP_BIN" > "$PROBE_RESULT" || re
 return 0
 EOT
 
-EXPECTED_ROOT=$root EXPECTED_BIN=$entry PROBE_RESULT=$result \
+EXPECTED_ROOT=$root EXPECTED_BIN=$entry PROBE_RESULT=$result
 export EXPECTED_ROOT EXPECTED_BIN PROBE_RESULT
 
 "$entry" "$probe" >"$transcript" 2>&1 || {
