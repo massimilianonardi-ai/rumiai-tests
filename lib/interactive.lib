@@ -79,18 +79,18 @@ while {[gets $fh line] >= 0} {
     }
     set prompt [string range $line 0 [expr {$tab - 1}]]
     set response [string range $line [expr {$tab + 1}] end]
-    expect {
-        -exact -- $prompt {}
-        timeout {
-            puts stderr "timeout waiting for prompt: $prompt"
-            close $fh
+    set outcome none
+    expect -timeout 180 \
+        -ex "$prompt" {set outcome matched} \
+        timeout {set outcome timeout} \
+        eof {set outcome eof}
+    if {$outcome ne "matched"} {
+        puts stderr "$outcome waiting for prompt: $prompt"
+        close $fh
+        if {$outcome eq "timeout"} {
             exit 124
         }
-        eof {
-            puts stderr "EOF before prompt: $prompt"
-            close $fh
-            exit 125
-        }
+        exit 125
     }
     send -- "$response\r"
 }
