@@ -1,0 +1,63 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/lib/rumiai-os-target-reference.test
+
+fail() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 1
+}
+
+error() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 3
+}
+
+skip() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 2
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_tests_group=${test_dir%/*}
+tests_dir=${rumiai_tests_group%/*}
+suite_root=${tests_dir%/*}
+interactive_group=${suite_root##*/}
+[ -n "$interactive_group" ] || :
+
+target_lib=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_lib" ] || error 'lib/rumiai-os-target.lib is unavailable'
+
+# The library is intentionally sourced here because it is the target of this test.
+. "$target_lib" || error 'cannot load lib/rumiai-os-target.lib'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'no rumiai-os target checkout is discoverable from this suite location' ;;
+    2) fail 'explicit RUMIAI_TEST_RUMIAI_OS_ROOT is not a valid rumiai-os checkout' ;;
+    *) error 'cannot perform rumiai-os target discovery' ;;
+esac
+
+case $root in
+    /*) : ;;
+    *) fail "discovered target root is not absolute: $root" ;;
+esac
+
+[ -f "$root/rumiai-os" ] || fail 'discovered target has no rumiai-os entrypoint'
+rumiai_test_target_rumiai_os_origin_ok "$root" || fail 'discovered target has unexpected Git origin'
+physical=$(CDPATH= cd -- "$root" 2>/dev/null && pwd -P) || error 'cannot canonicalize discovered root'
+[ "$physical" = "$root" ] || fail "discovered root is not physical: $root -> $physical"
+
+exit 0
