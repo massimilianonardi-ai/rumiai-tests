@@ -29,7 +29,8 @@ resolve_test_dir() {
 }
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-tests_dir=${test_dir%/*}
+rumiai_tests_group=${test_dir%/*}
+tests_dir=${rumiai_tests_group%/*}
 suite_root=${tests_dir%/*}
 interactive_lib=$suite_root/lib/interactive.lib
 [ -f "$interactive_lib" ] || error 'lib/interactive.lib is unavailable'
