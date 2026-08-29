@@ -1,0 +1,66 @@
+# RumiAI test authoring reference: discover a local rumiai-os target checkout.
+#
+# This file is a reference implementation for test authors. Permanent tests that need
+# historical independence should copy the required functions inline and record the
+# immutable Git commit and pathname of the copied version.
+
+rumiai_test_target_have() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|\
+        git@github.com:massimilianonardi-ai/rumiai-os.git|\
+        ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+rumiai_test_target_rumiai_os_validate() {
+    candidate=$1
+
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+
+    printf '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+
+    rumiai_test_target_have git || return 3
+
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+    then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+
+    while :
+    do
+        if rumiai_test_target_rumiai_os_validate "$candidate"
+        then
+            return 0
+        fi
+
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}
+        [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+
+    return 1
+}
