@@ -151,6 +151,36 @@ rumiai_test_interactive_run() {
     esac
 }
 
+rumiai_test_path_without_bash() {
+    [ "$#" -eq 1 ] || return 1
+
+    rest=$1
+    filtered=
+
+    while :
+    do
+        case $rest in
+            *:*)
+                component=${rest%%:*}
+                rest=${rest#*:}
+                ;;
+            *)
+                component=$rest
+                rest=
+                ;;
+        esac
+
+        if [ -n "$component" ] && [ ! -x "$component/bash" ]
+        then
+            filtered=${filtered:+$filtered:}$component
+        fi
+
+        [ -n "$rest" ] || break
+    done
+
+    printf '%s\n' "$filtered"
+}
+
 resolve_test_dir() { self=$0; case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac; self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P; }
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 group=${test_dir%/*}; rumiai_os_group=${group%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
@@ -170,16 +200,35 @@ fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canon
 mkdir -p "$fixture/conf/shell" || error 'cannot create shell configuration directory'
 printf '%s\n' bash > "$fixture/conf/shell/default" || error 'cannot write shell default'
 
+filtered_path=$(rumiai_test_path_without_bash "$PATH") || error 'cannot build bash-free PATH'
+RUMIAI_TEST_FALLBACK_PATH=$fixture/bin${filtered_path:+:$filtered_path}
+export RUMIAI_TEST_FALLBACK_PATH
+
+if /bin/sh -c 'PATH=$RUMIAI_TEST_FALLBACK_PATH; export PATH; command -v -- bash >/dev/null 2>&1'
+then
+    fail 'test precondition failed: bash remains resolvable in filtered PATH'
+fi
+
 wrapper=$tmp/run
-cat > "$wrapper" <<EOT
+cat > "$wrapper" <<'EOT'
 #!/bin/sh
 LC_ALL=C
 RumiAI_LOG_LEVEL=info
-PATH="$fixture/bin"
+PATH=$RUMIAI_TEST_FALLBACK_PATH
 export LC_ALL RumiAI_LOG_LEVEL PATH
-exec "$fixture/rumiai-os"
+
+if command -v -- bash >/dev/null 2>&1
+then
+    printf '%s\n' 'RUMIAI_TEST_BASH_STILL_VISIBLE' >&2
+    exit 97
+fi
+
+exec "$RUMIAI_TEST_FIXTURE/rumiai-os"
 EOT
 chmod 700 "$wrapper" || error 'cannot make wrapper executable'
+RUMIAI_TEST_FIXTURE=$fixture
+export RUMIAI_TEST_FIXTURE
+
 dialogue=$tmp/dialogue
 printf '[RumiAI] $ \texit 0\n' > "$dialogue" || error 'cannot write dialogue'
 output=$tmp/session
