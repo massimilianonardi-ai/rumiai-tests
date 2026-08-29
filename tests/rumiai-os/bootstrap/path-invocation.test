@@ -1,0 +1,98 @@
+#!/bin/sh
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@5af68cbff09ce979df3dff91e398e287eadd48b7:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+
+TEST_ID=rumiai-os/bootstrap/path-invocation.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_rumiai_os_validate() {
+    candidate=$1
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+    printf '%s\n' "$target_root"
+}
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+    return 1
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+entry=$root/rumiai-os
+launcher=$root/bin/rumiai-os
+[ -L "$launcher" ] || fail 'bin/rumiai-os is not the expected structural symlink'
+
+tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-path-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+probe=$tmp/probe
+result=$tmp/result
+transcript=$tmp/transcript
+
+cat > "$probe" <<'EOT'
+[ "${RumiAI_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
+[ "${RumiAI_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || return 42
+printf '%s\n%s\n' "$RumiAI_ROOT" "$RumiAI_BOOTSTRAP_BIN" > "$PROBE_RESULT" || return 43
+return 0
+EOT
+EXPECTED_ROOT=$root EXPECTED_BIN=$entry PROBE_RESULT=$result
+export EXPECTED_ROOT EXPECTED_BIN PROBE_RESULT
+
+PATH=$root/bin${PATH:+:$PATH}
+export PATH
+rumiai-os "$probe" >"$transcript" 2>&1 || {
+    status=$?
+    cat "$transcript" >&2
+    fail "PATH invocation returned $status"
+}
+
+[ -f "$result" ] || fail 'probe did not run'
+expected=$(printf '%s\n%s' "$root" "$entry")
+actual=$(cat "$result") || error 'cannot read probe result'
+[ "$actual" = "$expected" ] || fail 'PATH invocation did not canonicalize the bootstrap entrypoint'
+
+exit 0
