@@ -22,14 +22,20 @@ setup_dev_have() {
 setup_dev_init() {
     setup_dev_have git || setup_dev_support_error 'git is unavailable'
     setup_dev_have curl || setup_dev_support_skip 'curl is unavailable'
-    setup_dev_have script || setup_dev_support_skip 'script(1) is unavailable'
     setup_dev_have grep || setup_dev_support_error 'grep is unavailable'
     setup_dev_have uname || setup_dev_support_error 'uname is unavailable'
 
     SETUP_DEV_SYSTEM=$(uname -s 2>/dev/null) || setup_dev_support_error 'cannot determine operating system'
     case $SETUP_DEV_SYSTEM in
-        Darwin|Linux) : ;;
-        *) setup_dev_support_skip "PTY automation is not implemented for $SETUP_DEV_SYSTEM" ;;
+        Darwin)
+            setup_dev_have expect || setup_dev_support_skip 'expect(1) is unavailable on macOS'
+            ;;
+        Linux)
+            setup_dev_have script || setup_dev_support_skip 'script(1) is unavailable on Linux'
+            ;;
+        *)
+            setup_dev_support_skip "PTY automation is not implemented for $SETUP_DEV_SYSTEM"
+            ;;
     esac
 
     SETUP_DEV_URL=https://raw.githubusercontent.com/massimilianonardi-ai/rumiai-dev/refs/heads/main/setup-dev.sh
@@ -51,6 +57,65 @@ EOT
     chmod +x "$SETUP_DEV_WRAPPER" || setup_dev_support_error 'cannot make PTY wrapper executable'
 }
 
+setup_dev_run_darwin_case() {
+    case_name=$1
+    driver=$CASE_DIR/driver.expect
+
+    case $case_name in
+        invalid)
+            cat > "$driver" <<'EOT'
+set timeout -1
+log_user 0
+log_file -noappend $env(CASE_OUTPUT)
+spawn $env(SETUP_DEV_WRAPPER)
+expect -exact "Git user.name: "
+send -- "massimilianonardi-ai\r"
+expect -exact "Git user.email: "
+send -- "not-an-email\r"
+expect eof
+EOT
+            ;;
+        cancel)
+            cat > "$driver" <<'EOT'
+set timeout -1
+log_user 0
+log_file -noappend $env(CASE_OUTPUT)
+spawn $env(SETUP_DEV_WRAPPER)
+expect -exact "Git user.name: "
+send -- "massimilianonardi-ai\r"
+expect -exact "Git user.email: "
+send -- "massimiliano.nardi.ai@gmail.com\r"
+expect -exact "Use this Git identity globally? [y/N] "
+send -- "n\r"
+expect eof
+EOT
+            ;;
+        positive)
+            cat > "$driver" <<'EOT'
+set timeout -1
+log_user 0
+log_file -noappend $env(CASE_OUTPUT)
+spawn $env(SETUP_DEV_WRAPPER)
+expect -exact "Git user.name: "
+send -- "massimilianonardi-ai\r"
+expect -exact "Git user.email: "
+send -- "massimiliano.nardi.ai@gmail.com\r"
+expect -exact "Use this Git identity globally? [y/N] "
+send -- "y\r"
+expect -exact "Configure a GitHub personal access token now? [y/N] "
+send -- "n\r"
+expect eof
+EOT
+            ;;
+        *)
+            setup_dev_support_error "unknown Darwin PTY case '$case_name'"
+            ;;
+    esac
+
+    CASE_OUTPUT=$CASE_OUTPUT SETUP_DEV_WRAPPER=$SETUP_DEV_WRAPPER expect -f "$driver" >/dev/null 2>&1 ||
+        setup_dev_support_error "$case_name Expect driver failed"
+}
+
 setup_dev_run_case() {
     case_name=$1
     input_file=$2
@@ -60,13 +125,13 @@ setup_dev_run_case() {
     CASE_ROOT=$CASE_DIR/rumiai-os
     CASE_STATUS=$CASE_DIR/status
     CASE_OUTPUT=$CASE_DIR/output
-    export CASE_HOME CASE_ROOT CASE_STATUS SETUP_DEV_URL
+    export CASE_HOME CASE_ROOT CASE_STATUS CASE_OUTPUT SETUP_DEV_URL SETUP_DEV_WRAPPER
 
     mkdir -p "$CASE_HOME" || setup_dev_support_error "cannot create $case_name HOME"
 
     case $SETUP_DEV_SYSTEM in
         Darwin)
-            script -q /dev/null "$SETUP_DEV_WRAPPER" < "$input_file" > "$CASE_OUTPUT" 2>&1
+            setup_dev_run_darwin_case "$case_name"
             ;;
         Linux)
             script -q -c "$SETUP_DEV_WRAPPER" /dev/null < "$input_file" > "$CASE_OUTPUT" 2>&1
