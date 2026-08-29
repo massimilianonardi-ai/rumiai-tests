@@ -1,0 +1,87 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/lib/interactive-reference.test
+
+fail() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 1
+}
+
+error() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 3
+}
+
+skip() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 2
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+tests_dir=${test_dir%/*}
+suite_root=${tests_dir%/*}
+interactive_lib=$suite_root/lib/interactive.lib
+[ -f "$interactive_lib" ] || error 'lib/interactive.lib is unavailable'
+
+# The library is intentionally sourced here because it is the target of this test.
+. "$interactive_lib" || error 'cannot load lib/interactive.lib'
+
+command -v grep >/dev/null 2>&1 || error 'grep is unavailable'
+
+rumiai_test_interactive_require
+status=$?
+case $status in
+    0) : ;;
+    2) skip 'no supported scripted TTY driver is available on this host' ;;
+    *) error 'cannot initialize scripted TTY driver' ;;
+esac
+
+tmp=${TMPDIR:-/tmp}/rumiai-tests-interactive-reference-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+result=$tmp/result
+wrapper=$tmp/interactive-program
+dialogue=$tmp/dialogue
+output=$tmp/output
+export result
+
+cat > "$wrapper" <<'EOT'
+#!/bin/sh
+printf '%s' 'Name: ' >/dev/tty
+IFS= read -r name </dev/tty || exit 10
+printf '%s' 'Confirm [y/N]: ' >/dev/tty
+IFS= read -r confirm </dev/tty || exit 11
+printf '%s|%s\n' "$name" "$confirm" > "$result"
+EOT
+chmod +x "$wrapper" || error 'cannot make fixture executable'
+
+printf '%s\t%s\n' \
+    'Name: ' 'RumiAI' \
+    'Confirm [y/N]: ' 'y' > "$dialogue" || error 'cannot prepare dialogue'
+
+rumiai_test_interactive_run "$dialogue" "$output" "$wrapper" || {
+    cat "$output" >&2 2>/dev/null || :
+    fail 'interactive reference driver failed'
+}
+
+[ -f "$result" ] || fail 'interactive program did not produce its result'
+actual=$(cat "$result") || error 'cannot read interactive program result'
+[ "$actual" = 'RumiAI|y' ] || fail "unexpected interactive result '$actual'"
+
+grep -F -- 'Name: ' "$output" >/dev/null 2>&1 || fail 'first prompt is absent from transcript'
+grep -F -- 'Confirm [y/N]: ' "$output" >/dev/null 2>&1 || fail 'second prompt is absent from transcript'
+
+exit 0
