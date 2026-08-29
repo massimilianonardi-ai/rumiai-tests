@@ -7,8 +7,6 @@ RUNNER_STATUS_FAIL=1
 RUNNER_STATUS_TEST_ERROR=2
 RUNNER_STATUS_ERROR=3
 
-TAB=$(printf '\t')
-
 say_error() {
     printf '%s\n' "rumiai-test: $*" >&2
 }
@@ -54,6 +52,23 @@ canonical_dir() {
         return 0
     fi
     (CDPATH= cd "$path" 2>/dev/null && pwd -P)
+}
+
+path_is_at_or_below() {
+    root=$1
+    path=$2
+
+    if [ "$root" = / ]; then
+        case $path in
+            /*) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+
+    case $path in
+        "$root"|"$root"/*) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 self_path=$(resolve_self) || fatal 'cannot resolve runner pathname'
@@ -154,17 +169,21 @@ fi
 
 [ -e "$selection_path" ] || fatal 'selection does not exist'
 
-if command -v realpath >/dev/null 2>&1; then
-    selection_canon=$(realpath "$selection_path" 2>/dev/null) || fatal 'cannot canonicalize selection'
-    case $selection_canon in
-        "$tests_root"|"$tests_root"/*) : ;;
-        *) fatal 'selection resolves outside tests/' ;;
-    esac
-fi
-
+# A selected path must remain under tests/ even when realpath(1) is unavailable.
+# Canonicalizing its parent resolves every intermediate symlink; the selected
+# entry itself is separately forbidden from being a symlink.
 if [ -L "$selection_path" ] 2>/dev/null; then
     fatal 'selection cannot be a symbolic link'
 fi
+selection_parent=${selection_path%/*}
+selection_base=${selection_path##*/}
+[ -n "$selection_parent" ] || selection_parent=/
+selection_parent_canon=$(canonical_dir "$selection_parent") || fatal 'cannot canonicalize selection parent'
+selection_canon=$selection_parent_canon/$selection_base
+case $selection_canon in
+    "$tests_root"|"$tests_root"/*) : ;;
+    *) fatal 'selection resolves outside tests/' ;;
+esac
 
 selection_kind=
 if [ -f "$selection_path" ]; then
@@ -405,14 +424,11 @@ snapshot_take() {
     err_file=$work_base.err
 
     : > "$err_file" || return 1
-    case $run_dir_canon in
-        "$root"|"$root"/*)
-            find "$root" \( -path "$run_dir_canon" -prune \) -o -print > "$list_file" 2> "$err_file"
-            ;;
-        *)
-            find "$root" -print > "$list_file" 2> "$err_file"
-            ;;
-    esac
+    if path_is_at_or_below "$root" "$run_dir_canon"; then
+        find "$root" \( -path "$run_dir_canon" -prune \) -o -print > "$list_file" 2> "$err_file"
+    else
+        find "$root" -print > "$list_file" 2> "$err_file"
+    fi
     status=$?
     [ "$status" -eq 0 ] || return 1
     [ ! -s "$err_file" ] || return 1
@@ -421,6 +437,8 @@ snapshot_take() {
     while IFS= read -r path; do
         if [ "$path" = "$root" ]; then
             rel=.
+        elif [ "$root" = / ]; then
+            rel=${path#/}
         else
             rel=${path#"$root"/}
         fi

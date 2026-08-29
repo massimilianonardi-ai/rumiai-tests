@@ -9,8 +9,18 @@ error() {
     exit 3
 }
 
-self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
-test_dir=${self%/*}
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 tests_dir=${test_dir%/*}
 suite_root=${tests_dir%/*}
 runner=$suite_root/rumiai-test
@@ -22,7 +32,8 @@ mkdir "$tmp_base" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
 
 suite=$tmp_base/suite
-mkdir -p "$suite/tests/group/.hidden" "$suite/tests/empty" "$suite/sessions" || error 'cannot create fixture suite'
+outside=$tmp_base/outside
+mkdir -p "$suite/tests/group/.hidden" "$suite/tests/empty" "$suite/sessions" "$outside" || error 'cannot create fixture suite'
 cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
 chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
 
@@ -38,8 +49,13 @@ cat > "$suite/tests/group/.hidden/ignored.test" <<'EOT'
 #!/bin/sh
 exit 1
 EOT
+cat > "$outside/escape.test" <<'EOT'
+#!/bin/sh
+exit 0
+EOT
 printf '%s\n' ignored > "$suite/tests/group/note.txt"
-chmod +x "$suite/tests/group/a.test" "$suite/tests/group/b.test" "$suite/tests/group/.hidden/ignored.test" || error 'cannot prepare fixture tests'
+chmod +x "$suite/tests/group/a.test" "$suite/tests/group/b.test" "$suite/tests/group/.hidden/ignored.test" "$outside/escape.test" || error 'cannot prepare fixture tests'
+ln -s "$outside" "$suite/tests/escape-link" || error 'cannot prepare intermediate symlink fixture'
 
 "$suite/rumiai-test" group > "$tmp_base/output" 2>&1
 status=$?
@@ -60,5 +76,12 @@ actual=$(cat "$run/results")
 
 "$suite/rumiai-test" empty > "$tmp_base/empty-output" 2>&1
 [ "$?" -eq 3 ] || fail 'empty group was not rejected with runner status 3'
+
+no_realpath_bin=$tmp_base/no-realpath-bin
+mkdir "$no_realpath_bin" || error 'cannot create no-realpath PATH fixture'
+grep_path=$(command -v grep 2>/dev/null) || error 'grep is unavailable'
+ln -s "$grep_path" "$no_realpath_bin/grep" || error 'cannot prepare no-realpath PATH fixture'
+PATH="$no_realpath_bin" "$suite/rumiai-test" escape-link/escape.test > "$tmp_base/escape-output" 2>&1
+[ "$?" -eq 3 ] || fail 'selection through an intermediate symlink escaped tests/ without realpath'
 
 exit 0

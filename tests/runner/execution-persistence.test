@@ -9,8 +9,18 @@ error() {
     exit 3
 }
 
-self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
-test_dir=${self%/*}
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 tests_dir=${test_dir%/*}
 suite_root=${tests_dir%/*}
 runner=$suite_root/rumiai-test

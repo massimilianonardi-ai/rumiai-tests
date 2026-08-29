@@ -9,8 +9,32 @@ error() {
     exit 3
 }
 
-self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
-test_dir=${self%/*}
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+single_run_dir() {
+    parent=$1
+    found=
+    count=0
+    for candidate in "$parent"/*; do
+        if [ -d "$candidate" ]; then
+            found=$candidate
+            count=$((count + 1))
+        fi
+    done
+    [ "$count" -eq 1 ] || return 1
+    printf '%s\n' "$found"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 tests_dir=${test_dir%/*}
 suite_root=${tests_dir%/*}
 runner=$suite_root/rumiai-test
@@ -46,40 +70,58 @@ chmod +x "$suite/tests/group/nochange.test" "$suite/tests/group/mutate.test" || 
 [ "$?" -eq 3 ] || fail 'unavailable snapshot root did not produce RUNNER ERROR=3'
 grep '^ERROR  snapshot root root-001$' "$tmp_base/error-output" >/dev/null 2>&1 || fail 'snapshot ERROR outcome was not visible on terminal output'
 
+# Regression for the filesystem root '/'. Avoid scanning the real filesystem by
+# mocking only find(1). The runner must still recognize its run directory as
+# being below '/', prune it, and persist relative (not absolute) entry paths.
+mock_bin=$tmp_base/mock-bin
+root_probe=$tmp_base/root-probe
+mkdir "$mock_bin" || error 'cannot create find mock directory'
+printf '%s\n' root-probe > "$root_probe"
+cat > "$mock_bin/find" <<EOT
+#!/bin/sh
+[ "\$1" = / ] || exit 90
+saw_prune=0
+for arg do
+    [ "\$arg" = -prune ] && saw_prune=1
+done
+[ "\$saw_prune" -eq 1 ] || exit 91
+printf '%s\n' /
+printf '%s\n' '$root_probe'
+exit 0
+EOT
+chmod +x "$mock_bin/find" || error 'cannot make find mock executable'
+PATH="$mock_bin:$PATH" "$suite/rumiai-test" --snapshot=metadata --snapshot-scope=selection --snapshot-root / -- group/nochange.test > "$tmp_base/root-output" 2>&1
+[ "$?" -eq 0 ] || fail "snapshot root '/' was not handled correctly"
+root_run=$(single_run_dir "$suite/.runs") || fail "root '/' regression run was not persisted uniquely"
+root_rel=${root_probe#/}
+awk -F '\t' -v expected="$root_rel" '$1 == expected { found=1 } END { exit found ? 0 : 1 }' \
+    "$root_run/snapshots/selection/root-001.before" || fail "snapshot root '/' did not persist relative entry paths"
+rm -rf "$root_run" || error "cannot clean root '/' regression run"
+
 # metadata + selection scope + self-exclusion of the current run directory
 "$suite/rumiai-test" --snapshot=metadata --snapshot-scope=selection --snapshot-root "$suite" -- group/nochange.test > "$tmp_base/selection-output" 2>&1
 [ "$?" -eq 0 ] || fail 'metadata selection snapshot run failed'
-selection_run=
-for candidate in "$suite"/.runs/*; do
-    [ -d "$candidate" ] && selection_run=$candidate
-done
-[ -n "$selection_run" ] || fail 'selection snapshot run was not persisted'
+selection_run=$(single_run_dir "$suite/.runs") || fail 'selection snapshot run was not persisted uniquely'
 [ -f "$selection_run/snapshots/selection/root-001.before" ] || fail 'selection before snapshot is missing'
 [ -f "$selection_run/snapshots/selection/root-001.after" ] || fail 'selection after snapshot is missing'
 [ -f "$selection_run/snapshots/selection/root-001.diff" ] || fail 'selection diff is missing'
 [ ! -s "$selection_run/snapshots/selection/root-001.diff" ] || fail 'current run directory was not excluded from suite-root snapshot'
 [ ! -d "$selection_run/snapshots/tests" ] || fail 'selection scope unexpectedly created per-test snapshots'
+rm -rf "$selection_run" || error 'cannot clean selection regression run'
 
 # metadata + test scope
 "$suite/rumiai-test" --snapshot=metadata --snapshot-scope=test --snapshot-root "$root2" -- group/nochange.test > "$tmp_base/test-output" 2>&1
 [ "$?" -eq 0 ] || fail 'metadata test snapshot run failed'
-test_run=
-for candidate in "$suite"/.runs/*; do
-    [ -d "$candidate" ] && test_run=$candidate
-done
-[ "$test_run" != "$selection_run" ] || fail 'second development run did not receive a distinct run id'
+test_run=$(single_run_dir "$suite/.runs") || fail 'test snapshot run was not persisted uniquely'
 [ -f "$test_run/snapshots/tests/group/nochange.test/root-001.diff" ] || fail 'test-scope diff is missing'
 [ ! -s "$test_run/snapshots/tests/group/nochange.test/root-001.diff" ] || fail 'unchanged test root did not produce CLEAN audit'
 [ ! -d "$test_run/snapshots/selection" ] || fail 'test scope unexpectedly created selection snapshots'
+rm -rf "$test_run" || error 'cannot clean test-scope regression run'
 
 # hash + both scope + multiple roots; root1 changes while root2 stays clean.
 "$suite/rumiai-test" --snapshot=hash --snapshot-scope=both --snapshot-root "$root1" --snapshot-root "$root2" -- group/mutate.test > "$tmp_base/both-output" 2>&1
 [ "$?" -eq 0 ] || fail 'hash both-scope snapshot run failed'
-both_run=
-for candidate in "$suite"/.runs/*; do
-    [ -d "$candidate" ] && both_run=$candidate
-done
-[ "$both_run" != "$test_run" ] || fail 'third development run did not receive a distinct run id'
+both_run=$(single_run_dir "$suite/.runs") || fail 'both-scope snapshot run was not persisted uniquely'
 
 [ -s "$both_run/snapshots/selection/root-001.diff" ] || fail 'changed root did not produce selection CHANGED evidence'
 [ -s "$both_run/snapshots/tests/group/mutate.test/root-001.diff" ] || fail 'changed root did not produce test CHANGED evidence'
