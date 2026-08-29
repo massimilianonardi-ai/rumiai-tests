@@ -1,0 +1,78 @@
+#!/bin/sh
+
+fail() {
+    printf '%s\n' "execution-persistence.test: $*" >&2
+    exit 1
+}
+error() {
+    printf '%s\n' "execution-persistence.test: $*" >&2
+    exit 3
+}
+
+self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
+test_dir=${self%/*}
+tests_dir=${test_dir%/*}
+suite_root=${tests_dir%/*}
+runner=$suite_root/rumiai-test
+[ -x "$runner" ] || error 'runner is not executable'
+
+tmp_base=${TMPDIR:-/tmp}/rumiai-test-execution-persistence-$$
+umask 077
+mkdir "$tmp_base" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
+
+suite=$tmp_base/suite
+mkdir -p "$suite/tests/statuses" "$suite/sessions" || error 'cannot create fixture suite'
+cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
+chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
+
+cat > "$suite/tests/statuses/error.test" <<'EOT'
+#!/bin/sh
+exit 3
+EOT
+cat > "$suite/tests/statuses/fail.test" <<'EOT'
+#!/bin/sh
+exit 1
+EOT
+cat > "$suite/tests/statuses/invalid.test" <<'EOT'
+#!/bin/sh
+exit 42
+EOT
+cat > "$suite/tests/statuses/pass.test" <<'EOT'
+#!/bin/sh
+printf '%s\n' one
+printf '%s\n' two >&2
+printf '%s\n' three
+exit 0
+EOT
+cat > "$suite/tests/statuses/skip.test" <<'EOT'
+#!/bin/sh
+exit 2
+EOT
+chmod +x "$suite/tests/statuses/"*.test || error 'cannot prepare fixture tests'
+
+"$suite/rumiai-test" statuses > "$tmp_base/output" 2>&1
+status=$?
+[ "$status" -eq 2 ] || fail "FAIL+ERROR run returned $status instead of TEST ERROR=2"
+
+run=
+for candidate in "$suite"/.runs/*; do
+    [ -d "$candidate" ] && run=$candidate
+done
+[ -n "$run" ] || fail 'development run was not persisted'
+
+expected=$(printf 'ERROR\tstatuses/error.test\t3\nFAIL\tstatuses/fail.test\t1\nERROR\tstatuses/invalid.test\t42\nPASS\tstatuses/pass.test\t0\nSKIP\tstatuses/skip.test\t2')
+actual=$(cat "$run/results")
+[ "$actual" = "$expected" ] || fail 'results do not preserve status classification and observed termination'
+
+expected_log=$(printf 'one\ntwo\nthree')
+actual_log=$(cat "$run/logs/statuses/pass.test.log")
+[ "$actual_log" = "$expected_log" ] || fail 'combined stdout/stderr log order was not preserved'
+
+session_status=$(awk -F '\t' '$1 == "runner-exit-status" { value=$2 } END { print value }' "$run/session")
+[ "$session_status" = 2 ] || fail 'session does not record runner exit status 2'
+
+[ -f "$run/logs/statuses/error.test.log" ] || fail 'empty test log was not persisted'
+[ ! -s "$run/logs/statuses/error.test.log" ] || fail 'empty test log unexpectedly contains runner metadata'
+
+exit 0

@@ -1,0 +1,64 @@
+#!/bin/sh
+
+fail() {
+    printf '%s\n' "cli-discovery.test: $*" >&2
+    exit 1
+}
+error() {
+    printf '%s\n' "cli-discovery.test: $*" >&2
+    exit 3
+}
+
+self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
+test_dir=${self%/*}
+tests_dir=${test_dir%/*}
+suite_root=${tests_dir%/*}
+runner=$suite_root/rumiai-test
+[ -x "$runner" ] || error 'runner is not executable'
+
+tmp_base=${TMPDIR:-/tmp}/rumiai-test-cli-discovery-$$
+umask 077
+mkdir "$tmp_base" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
+
+suite=$tmp_base/suite
+mkdir -p "$suite/tests/group/.hidden" "$suite/tests/empty" "$suite/sessions" || error 'cannot create fixture suite'
+cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
+chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
+
+cat > "$suite/tests/group/b.test" <<'EOT'
+#!/bin/sh
+exit 0
+EOT
+cat > "$suite/tests/group/a.test" <<'EOT'
+#!/bin/sh
+exit 0
+EOT
+cat > "$suite/tests/group/.hidden/ignored.test" <<'EOT'
+#!/bin/sh
+exit 1
+EOT
+printf '%s\n' ignored > "$suite/tests/group/note.txt"
+chmod +x "$suite/tests/group/a.test" "$suite/tests/group/b.test" "$suite/tests/group/.hidden/ignored.test" || error 'cannot prepare fixture tests'
+
+"$suite/rumiai-test" group > "$tmp_base/output" 2>&1
+status=$?
+[ "$status" -eq 0 ] || fail "group run returned $status instead of 0"
+
+run=
+for candidate in "$suite"/.runs/*; do
+    [ -d "$candidate" ] && run=$candidate
+done
+[ -n "$run" ] || fail 'development run was not persisted'
+
+expected=$(printf 'PASS\tgroup/a.test\t0\nPASS\tgroup/b.test\t0')
+actual=$(cat "$run/results")
+[ "$actual" = "$expected" ] || fail 'discovery or lexical order differs from contract'
+
+"$suite/rumiai-test" . > "$tmp_base/dot-output" 2>&1
+[ "$?" -eq 3 ] || fail "selection '.' was not rejected with runner status 3"
+
+"$suite/rumiai-test" empty > "$tmp_base/empty-output" 2>&1
+[ "$?" -eq 3 ] || fail 'empty group was not rejected with runner status 3'
+
+exit 0

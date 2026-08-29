@@ -1,4 +1,689 @@
 #!/bin/sh
 
-printf '%s\n' 'rumiai-test: no permanent tests are defined yet' >&2
-exit 3
+# rumiai-test — minimal RumiAI test runner
+
+RUNNER_STATUS_SUCCESS=0
+RUNNER_STATUS_FAIL=1
+RUNNER_STATUS_TEST_ERROR=2
+RUNNER_STATUS_ERROR=3
+
+TAB=$(printf '\t')
+
+say_error() {
+    printf '%s\n' "rumiai-test: $*" >&2
+}
+
+fatal() {
+    say_error "$*"
+    exit "$RUNNER_STATUS_ERROR"
+}
+
+one_line() {
+    printf '%s' "$1" | tr '\t\r\n' '   '
+}
+
+resolve_self() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *)
+            self=$(command -v "$self" 2>/dev/null) || return 1
+            ;;
+    esac
+
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$self" 2>/dev/null
+        return $?
+    fi
+
+    case $self in
+        */*) self_dir=${self%/*}; self_base=${self##*/} ;;
+        *) self_dir=.; self_base=$self ;;
+    esac
+    [ -n "$self_dir" ] || self_dir=/
+    self_dir=$(CDPATH= cd "$self_dir" 2>/dev/null && pwd -P) || return 1
+    printf '%s/%s\n' "$self_dir" "$self_base"
+}
+
+canonical_dir() {
+    path=$1
+    if command -v realpath >/dev/null 2>&1; then
+        resolved=$(realpath "$path" 2>/dev/null) || return 1
+        [ -d "$resolved" ] || return 1
+        printf '%s\n' "$resolved"
+        return 0
+    fi
+    (CDPATH= cd "$path" 2>/dev/null && pwd -P)
+}
+
+self_path=$(resolve_self) || fatal 'cannot resolve runner pathname'
+suite_root=${self_path%/*}
+[ -n "$suite_root" ] || suite_root=/
+tests_root=$(canonical_dir "$suite_root/tests") || fatal 'cannot locate tests/ beside runner'
+
+validation=0
+snapshot_mode=
+snapshot_scope=
+snapshot_root_count=0
+snapshot_option_seen=0
+selection=
+selection_set=0
+parse_options=1
+
+while [ "$#" -gt 0 ]; do
+    if [ "$parse_options" -eq 1 ]; then
+        case $1 in
+            --validation)
+                validation=1
+                shift
+                continue
+                ;;
+            --snapshot=metadata|--snapshot=hash)
+                snapshot_option_seen=1
+                snapshot_mode=${1#--snapshot=}
+                shift
+                continue
+                ;;
+            --snapshot=*)
+                fatal "invalid snapshot mode: ${1#--snapshot=}"
+                ;;
+            --snapshot-scope=selection|--snapshot-scope=test|--snapshot-scope=both)
+                snapshot_option_seen=1
+                snapshot_scope=${1#--snapshot-scope=}
+                shift
+                continue
+                ;;
+            --snapshot-scope=*)
+                fatal "invalid snapshot scope: ${1#--snapshot-scope=}"
+                ;;
+            --snapshot-root)
+                [ "$#" -ge 2 ] || fatal '--snapshot-root requires a pathname'
+                snapshot_option_seen=1
+                snapshot_root_count=$((snapshot_root_count + 1))
+                snapshot_root_value=$2
+                eval "snapshot_root_${snapshot_root_count}=\$snapshot_root_value"
+                shift 2
+                continue
+                ;;
+            --)
+                parse_options=0
+                shift
+                continue
+                ;;
+            -*)
+                fatal "unknown option: $1"
+                ;;
+            *)
+                parse_options=0
+                ;;
+        esac
+    fi
+
+    [ "$selection_set" -eq 0 ] || fatal 'only one selection is allowed'
+    selection=$1
+    selection_set=1
+    shift
+done
+
+if [ "$snapshot_option_seen" -eq 1 ]; then
+    [ -n "$snapshot_mode" ] || fatal '--snapshot=metadata|hash is required when snapshot is requested'
+    [ -n "$snapshot_scope" ] || fatal '--snapshot-scope=selection|test|both is required when snapshot is requested'
+    [ "$snapshot_root_count" -gt 0 ] || fatal 'at least one --snapshot-root is required when snapshot is requested'
+fi
+
+if [ "$selection_set" -eq 1 ]; then
+    [ -n "$selection" ] || fatal 'empty selection is not valid'
+    [ "$selection" != '.' ] || fatal "selection '.' is not valid; omit selection for tests/"
+    case $selection in
+        /*) fatal 'selection must be relative to tests/' ;;
+    esac
+    while [ "${selection%/}" != "$selection" ]; do
+        selection=${selection%/}
+    done
+    [ -n "$selection" ] || fatal 'selection must be relative to tests/'
+    if printf '%s\n' "$selection" | grep -Eq '(^|/)\.'; then
+        fatal 'selection cannot contain hidden or dot path components'
+    fi
+    case $selection in
+        *'//'*) fatal 'selection cannot contain empty path components' ;;
+    esac
+    selection_path=$tests_root/$selection
+else
+    selection_path=$tests_root
+fi
+
+[ -e "$selection_path" ] || fatal 'selection does not exist'
+
+if command -v realpath >/dev/null 2>&1; then
+    selection_canon=$(realpath "$selection_path" 2>/dev/null) || fatal 'cannot canonicalize selection'
+    case $selection_canon in
+        "$tests_root"|"$tests_root"/*) : ;;
+        *) fatal 'selection resolves outside tests/' ;;
+    esac
+fi
+
+if [ -L "$selection_path" ] 2>/dev/null; then
+    fatal 'selection cannot be a symbolic link'
+fi
+
+selection_kind=
+if [ -f "$selection_path" ]; then
+    case ${selection_path##*/} in
+        *.test) selection_kind=test ;;
+        *) fatal 'selected file is not a *.test' ;;
+    esac
+elif [ -d "$selection_path" ]; then
+    selection_kind=group
+else
+    fatal 'selection is neither a regular test file nor a group directory'
+fi
+
+if [ "$selection_kind" = group ]; then
+    first_test=$(find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print 2>/dev/null | LC_ALL=C sort | sed -n '1p')
+    [ -n "$first_test" ] || fatal 'selected group contains no tests'
+fi
+
+# Snapshot roots are explicit observations. Canonicalize them before creating run evidence.
+i=1
+while [ "$i" -le "$snapshot_root_count" ]; do
+    root_id=$(printf 'root-%03d' "$i")
+    eval "snapshot_requested=\${snapshot_root_${i}}"
+    if ! snapshot_canonical=$(canonical_dir "$snapshot_requested"); then
+        printf 'ERROR  %s\n' "snapshot root $root_id"
+        fatal "cannot access snapshot root: $snapshot_requested"
+    fi
+    eval "snapshot_canonical_${i}=\$snapshot_canonical"
+    i=$((i + 1))
+done
+
+uname_s=$(uname -s 2>/dev/null || printf '%s' unknown)
+
+stat_style=
+if [ "$snapshot_option_seen" -eq 1 ]; then
+    if stat -c '%a' "$tests_root" >/dev/null 2>&1; then
+        stat_style=gnu
+    elif stat -f '%Lp' "$tests_root" >/dev/null 2>&1; then
+        stat_style=bsd
+    else
+        fatal 'snapshot metadata is not supported by the available stat utility'
+    fi
+fi
+
+hash_tool=
+if [ "$snapshot_mode" = hash ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash_tool=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then
+        hash_tool=shasum
+    elif command -v openssl >/dev/null 2>&1; then
+        hash_tool=openssl
+    else
+        fatal 'no SHA-256 implementation is available for hash snapshots'
+    fi
+fi
+
+suite_commit=
+if command -v git >/dev/null 2>&1 && git -C "$suite_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    suite_commit=$(git -C "$suite_root" rev-parse HEAD 2>/dev/null || printf '')
+fi
+
+if [ "$validation" -eq 1 ]; then
+    command -v git >/dev/null 2>&1 || fatal 'validation requires git for rumiai-tests revision checks'
+    git_top=$(git -C "$suite_root" rev-parse --show-toplevel 2>/dev/null) || fatal 'validation requires rumiai-tests to be a Git working tree'
+    git_top=$(canonical_dir "$git_top") || fatal 'cannot canonicalize rumiai-tests Git root'
+    [ "$git_top" = "$suite_root" ] || fatal 'runner is not at the root of the rumiai-tests Git working tree'
+    suite_commit=$(git -C "$suite_root" rev-parse HEAD 2>/dev/null) || fatal 'validation requires a committed rumiai-tests HEAD'
+    git_status=$(git -C "$suite_root" status --porcelain --untracked-files=normal 2>/dev/null) || fatal 'cannot inspect rumiai-tests working tree'
+    [ -z "$git_status" ] || fatal 'validation requires a clean rumiai-tests working tree'
+fi
+
+run_stamp=$(date '+%Y%m%dT%H%M%S%z' 2>/dev/null) || fatal 'cannot create run timestamp'
+run_id=$run_stamp-$$
+if [ "$validation" -eq 1 ]; then
+    run_parent=$suite_root/sessions
+    run_dir=$run_parent/.$run_id
+    final_run_dir=$run_parent/$run_id
+    run_type=validation
+else
+    run_parent=$suite_root/.runs
+    run_dir=$run_parent/$run_id
+    final_run_dir=
+    run_type=development
+fi
+
+[ ! -e "$run_dir" ] || fatal 'run identifier collision'
+[ -z "$final_run_dir" ] || [ ! -e "$final_run_dir" ] || fatal 'run identifier collision'
+mkdir -p "$run_parent" || fatal 'cannot create run parent directory'
+mkdir "$run_dir" || fatal 'cannot create run directory'
+mkdir "$run_dir/logs" "$run_dir/.work" || {
+    say_error 'cannot initialize run directory'
+    exit "$RUNNER_STATUS_ERROR"
+}
+
+run_dir_canon=$(canonical_dir "$run_dir") || {
+    say_error 'cannot canonicalize run directory'
+    exit "$RUNNER_STATUS_ERROR"
+}
+
+session_file=$run_dir/session
+results_file=$run_dir/results
+: > "$session_file" || exit "$RUNNER_STATUS_ERROR"
+: > "$results_file" || exit "$RUNNER_STATUS_ERROR"
+
+session_put() {
+    key=$1
+    value=$(one_line "$2")
+    printf '%s\t%s\n' "$key" "$value" >> "$session_file"
+}
+
+os_version() {
+    case $uname_s in
+        Darwin)
+            if command -v sw_vers >/dev/null 2>&1; then
+                sw_vers -productVersion 2>/dev/null && return 0
+            fi
+            ;;
+        Linux)
+            if [ -r /etc/os-release ]; then
+                value=$(sed -n 's/^PRETTY_NAME=//p' /etc/os-release | sed -n '1p')
+                case $value in
+                    \"*\") value=${value#\"}; value=${value%\"} ;;
+                esac
+                [ -n "$value" ] && { printf '%s\n' "$value"; return 0; }
+            fi
+            ;;
+    esac
+    uname -r 2>/dev/null || printf '%s\n' unknown
+}
+
+start_time=$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || printf '%s' unknown)
+session_put type "$run_type"
+session_put start "$start_time"
+if [ "$selection_set" -eq 1 ]; then
+    session_put selection "$selection"
+else
+    session_put selection 'tests/'
+fi
+session_put os "$uname_s"
+session_put os-version "$(os_version)"
+session_put architecture "$(uname -m 2>/dev/null || printf '%s' unknown)"
+session_put kernel "$(uname -sr 2>/dev/null || uname -r 2>/dev/null || printf '%s' unknown)"
+if command -v hostname >/dev/null 2>&1; then
+    session_put hostname "$(hostname 2>/dev/null || uname -n 2>/dev/null || printf '%s' unknown)"
+else
+    session_put hostname "$(uname -n 2>/dev/null || printf '%s' unknown)"
+fi
+[ -z "$suite_commit" ] || session_put rumiai-tests-commit "$suite_commit"
+
+if [ "$snapshot_option_seen" -eq 1 ]; then
+    mkdir "$run_dir/snapshots" || {
+        say_error 'cannot create snapshots directory'
+        exit "$RUNNER_STATUS_ERROR"
+    }
+    : > "$run_dir/snapshots/roots" || exit "$RUNNER_STATUS_ERROR"
+    session_put snapshot-mode "$snapshot_mode"
+    session_put snapshot-scope "$snapshot_scope"
+    i=1
+    while [ "$i" -le "$snapshot_root_count" ]; do
+        root_id=$(printf 'root-%03d' "$i")
+        eval "requested=\${snapshot_root_${i}}"
+        eval "canonical=\${snapshot_canonical_${i}}"
+        printf '%s\t%s\t%s\n' "$root_id" "$(one_line "$requested")" "$(one_line "$canonical")" >> "$run_dir/snapshots/roots" || exit "$RUNNER_STATUS_ERROR"
+        session_put "snapshot-${root_id}-requested" "$requested"
+        session_put "snapshot-${root_id}-canonical" "$canonical"
+        i=$((i + 1))
+    done
+fi
+
+# Build the deterministic execution list only after the run directory exists.
+tests_file=$run_dir/.work/tests
+if [ "$selection_kind" = test ]; then
+    printf '%s\n' "$selection" > "$tests_file" || exit "$RUNNER_STATUS_ERROR"
+else
+    find_paths=$run_dir/.work/find-paths
+    find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print > "$find_paths" 2> "$run_dir/.work/find-error"
+    find_status=$?
+    [ "$find_status" -eq 0 ] || {
+        say_error 'test discovery failed'
+        exit "$RUNNER_STATUS_ERROR"
+    }
+    : > "$run_dir/.work/test-ids"
+    while IFS= read -r test_path; do
+        test_id=${test_path#"$tests_root"/}
+        printf '%s\n' "$test_id" >> "$run_dir/.work/test-ids" || exit "$RUNNER_STATUS_ERROR"
+    done < "$find_paths"
+    LC_ALL=C sort "$run_dir/.work/test-ids" > "$tests_file" || exit "$RUNNER_STATUS_ERROR"
+fi
+
+fs_mode() {
+    if [ "$stat_style" = gnu ]; then
+        stat -c '%a' "$1" 2>/dev/null
+    else
+        stat -f '%Lp' "$1" 2>/dev/null
+    fi
+}
+
+fs_size() {
+    if [ "$stat_style" = gnu ]; then
+        stat -c '%s' "$1" 2>/dev/null
+    else
+        stat -f '%z' "$1" 2>/dev/null
+    fi
+}
+
+fs_mtime() {
+    if [ "$stat_style" = gnu ]; then
+        stat -c '%.Y' "$1" 2>/dev/null
+    else
+        stat -f '%.9Fm' "$1" 2>/dev/null
+    fi
+}
+
+sha256_file() {
+    case $hash_tool in
+        sha256sum)
+            sha256sum "$1" 2>/dev/null | awk '{print $1}'
+            ;;
+        shasum)
+            shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
+            ;;
+        openssl)
+            openssl dgst -sha256 -r "$1" 2>/dev/null | awk '{print $1}'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+snapshot_take() {
+    root=$1
+    output=$2
+    work_base=$3
+    list_file=$work_base.list
+    unsorted_file=$work_base.unsorted
+    err_file=$work_base.err
+
+    : > "$err_file" || return 1
+    case $run_dir_canon in
+        "$root"|"$root"/*)
+            find "$root" \( -path "$run_dir_canon" -prune \) -o -print > "$list_file" 2> "$err_file"
+            ;;
+        *)
+            find "$root" -print > "$list_file" 2> "$err_file"
+            ;;
+    esac
+    status=$?
+    [ "$status" -eq 0 ] || return 1
+    [ ! -s "$err_file" ] || return 1
+    : > "$unsorted_file" || return 1
+
+    while IFS= read -r path; do
+        if [ "$path" = "$root" ]; then
+            rel=.
+        else
+            rel=${path#"$root"/}
+        fi
+
+        mode=$(fs_mode "$path") || return 1
+        type=other
+        size=
+        mtime=
+        target=
+        digest=
+
+        if [ -L "$path" ] 2>/dev/null; then
+            type=symlink
+            target=$(readlink "$path" 2>/dev/null) || return 1
+        elif [ -f "$path" ]; then
+            type=file
+            size=$(fs_size "$path") || return 1
+            mtime=$(fs_mtime "$path") || return 1
+            if [ "$snapshot_mode" = hash ]; then
+                digest=$(sha256_file "$path") || return 1
+                [ -n "$digest" ] || return 1
+            fi
+        elif [ -d "$path" ]; then
+            type=directory
+        elif [ -p "$path" ]; then
+            type=fifo
+        elif [ -b "$path" ]; then
+            type=block
+        elif [ -c "$path" ]; then
+            type=character
+        elif [ -S "$path" ] 2>/dev/null; then
+            type=socket
+        fi
+
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$rel" "$type" "$mode" "$size" "$mtime" "$target" "$digest" >> "$unsorted_file" || return 1
+    done < "$list_file"
+
+    LC_ALL=C sort "$unsorted_file" > "$output" || return 1
+    rm -f "$list_file" "$unsorted_file" "$err_file"
+    return 0
+}
+
+snapshot_compare() {
+    before=$1
+    after=$2
+    diff_file=$3
+    label=$4
+
+    if cmp -s "$before" "$after"; then
+        : > "$diff_file" || return 1
+        printf 'CLEAN  %s\n' "$label"
+        return 0
+    fi
+
+    diff -u "$before" "$after" > "$diff_file"
+    diff_status=$?
+    if [ "$diff_status" -eq 1 ]; then
+        printf 'CHANGED %s\n' "$label"
+        return 0
+    fi
+    return 1
+}
+
+snapshot_selection_before() {
+    mkdir -p "$run_dir/snapshots/selection" || return 1
+    i=1
+    while [ "$i" -le "$snapshot_root_count" ]; do
+        root_id=$(printf 'root-%03d' "$i")
+        eval "root=\${snapshot_canonical_${i}}"
+        out=$run_dir/snapshots/selection/$root_id.before
+        if ! snapshot_take "$root" "$out" "$run_dir/.work/selection-$root_id-before"; then
+            printf 'ERROR  %s\n' "snapshot selection $root_id"
+            return 1
+        fi
+        i=$((i + 1))
+    done
+}
+
+snapshot_selection_after_compare() {
+    i=1
+    while [ "$i" -le "$snapshot_root_count" ]; do
+        root_id=$(printf 'root-%03d' "$i")
+        eval "root=\${snapshot_canonical_${i}}"
+        before=$run_dir/snapshots/selection/$root_id.before
+        after=$run_dir/snapshots/selection/$root_id.after
+        diff_file=$run_dir/snapshots/selection/$root_id.diff
+        if ! snapshot_take "$root" "$after" "$run_dir/.work/selection-$root_id-after"; then
+            printf 'ERROR  %s\n' "snapshot selection $root_id"
+            return 1
+        fi
+        if ! snapshot_compare "$before" "$after" "$diff_file" "snapshot selection $root_id"; then
+            printf 'ERROR  %s\n' "snapshot selection $root_id"
+            return 1
+        fi
+        i=$((i + 1))
+    done
+}
+
+snapshot_test_before() {
+    test_id=$1
+    test_snapshot_dir=$run_dir/snapshots/tests/$test_id
+    mkdir -p "$test_snapshot_dir" || return 1
+    i=1
+    while [ "$i" -le "$snapshot_root_count" ]; do
+        root_id=$(printf 'root-%03d' "$i")
+        eval "root=\${snapshot_canonical_${i}}"
+        out=$test_snapshot_dir/$root_id.before
+        if ! snapshot_take "$root" "$out" "$run_dir/.work/test-$i-before-$$"; then
+            printf 'ERROR  %s\n' "snapshot test $test_id $root_id"
+            return 1
+        fi
+        i=$((i + 1))
+    done
+}
+
+snapshot_test_after_compare() {
+    test_id=$1
+    test_snapshot_dir=$run_dir/snapshots/tests/$test_id
+    i=1
+    while [ "$i" -le "$snapshot_root_count" ]; do
+        root_id=$(printf 'root-%03d' "$i")
+        eval "root=\${snapshot_canonical_${i}}"
+        before=$test_snapshot_dir/$root_id.before
+        after=$test_snapshot_dir/$root_id.after
+        diff_file=$test_snapshot_dir/$root_id.diff
+        if ! snapshot_take "$root" "$after" "$run_dir/.work/test-$i-after-$$"; then
+            printf 'ERROR  %s\n' "snapshot test $test_id $root_id"
+            return 1
+        fi
+        if ! snapshot_compare "$before" "$after" "$diff_file" "snapshot test $test_id $root_id"; then
+            printf 'ERROR  %s\n' "snapshot test $test_id $root_id"
+            return 1
+        fi
+        i=$((i + 1))
+    done
+}
+
+runner_error=0
+pass_count=0
+fail_count=0
+skip_count=0
+error_count=0
+total_count=0
+
+case $snapshot_scope in
+    selection|both)
+        if ! snapshot_selection_before; then
+            say_error 'filesystem snapshot failed before selection'
+            runner_error=1
+        fi
+        ;;
+esac
+
+if [ "$runner_error" -eq 0 ]; then
+    while IFS= read -r test_id; do
+        [ -n "$test_id" ] || continue
+        test_path=$tests_root/$test_id
+
+        case $snapshot_scope in
+            test|both)
+                if ! snapshot_test_before "$test_id"; then
+                    say_error "filesystem snapshot failed before test: $test_id"
+                    runner_error=1
+                    break
+                fi
+                ;;
+        esac
+
+        log_file=$run_dir/logs/$test_id.log
+        log_dir=${log_file%/*}
+        mkdir -p "$log_dir" || {
+            say_error "cannot create log directory for: $test_id"
+            runner_error=1
+            break
+        }
+
+        "$test_path" > "$log_file" 2>&1
+        observed=$?
+        case $observed in
+            0)
+                result=PASS
+                pass_count=$((pass_count + 1))
+                ;;
+            1)
+                result=FAIL
+                fail_count=$((fail_count + 1))
+                ;;
+            2)
+                result=SKIP
+                skip_count=$((skip_count + 1))
+                ;;
+            3)
+                result=ERROR
+                error_count=$((error_count + 1))
+                ;;
+            *)
+                result=ERROR
+                error_count=$((error_count + 1))
+                ;;
+        esac
+        total_count=$((total_count + 1))
+        printf '%s\t%s\t%s\n' "$result" "$test_id" "$observed" >> "$results_file" || {
+            say_error 'cannot persist test result'
+            runner_error=1
+            break
+        }
+        printf '%-6s %s\n' "$result" "$test_id"
+
+        case $snapshot_scope in
+            test|both)
+                if ! snapshot_test_after_compare "$test_id"; then
+                    say_error "filesystem snapshot failed after test: $test_id"
+                    runner_error=1
+                    break
+                fi
+                ;;
+        esac
+    done < "$tests_file"
+fi
+
+if [ "$runner_error" -eq 0 ]; then
+    case $snapshot_scope in
+        selection|both)
+            if ! snapshot_selection_after_compare; then
+                say_error 'filesystem snapshot failed after selection'
+                runner_error=1
+            fi
+            ;;
+    esac
+fi
+
+printf '%s\n' \
+    "PASS   $pass_count" \
+    "FAIL   $fail_count" \
+    "SKIP   $skip_count" \
+    "ERROR  $error_count" \
+    "TOTAL  $total_count"
+
+if [ "$runner_error" -eq 1 ]; then
+    runner_status=$RUNNER_STATUS_ERROR
+elif [ "$error_count" -gt 0 ]; then
+    runner_status=$RUNNER_STATUS_TEST_ERROR
+elif [ "$fail_count" -gt 0 ]; then
+    runner_status=$RUNNER_STATUS_FAIL
+else
+    runner_status=$RUNNER_STATUS_SUCCESS
+fi
+
+rm -rf "$run_dir/.work" 2>/dev/null || runner_status=$RUNNER_STATUS_ERROR
+end_time=$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || printf '%s' unknown)
+session_put end "$end_time" || runner_status=$RUNNER_STATUS_ERROR
+session_put runner-exit-status "$runner_status" || runner_status=$RUNNER_STATUS_ERROR
+
+if [ "$validation" -eq 1 ] && [ "$runner_status" -ne "$RUNNER_STATUS_ERROR" ]; then
+    if ! mv "$run_dir" "$final_run_dir"; then
+        say_error 'cannot publish completed validation session'
+        runner_status=$RUNNER_STATUS_ERROR
+        # The session is still hidden/incomplete, so it is safe to update its diagnostic status.
+        if [ -d "$run_dir" ]; then
+            printf '%s\t%s\n' runner-exit-status "$RUNNER_STATUS_ERROR" >> "$run_dir/session" 2>/dev/null || :
+        fi
+    fi
+fi
+
+exit "$runner_status"

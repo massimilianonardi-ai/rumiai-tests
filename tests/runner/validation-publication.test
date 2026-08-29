@@ -1,0 +1,76 @@
+#!/bin/sh
+
+fail() {
+    printf '%s\n' "validation-publication.test: $*" >&2
+    exit 1
+}
+error() {
+    printf '%s\n' "validation-publication.test: $*" >&2
+    exit 3
+}
+
+command -v git >/dev/null 2>&1 || exit 2
+
+self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
+test_dir=${self%/*}
+tests_dir=${test_dir%/*}
+suite_root=${tests_dir%/*}
+runner=$suite_root/rumiai-test
+[ -x "$runner" ] || error 'runner is not executable'
+
+tmp_base=${TMPDIR:-/tmp}/rumiai-test-validation-publication-$$
+umask 077
+mkdir "$tmp_base" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
+
+suite=$tmp_base/suite
+mkdir -p "$suite/tests" "$suite/sessions" || error 'cannot create fixture suite'
+cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
+chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
+: > "$suite/sessions/.gitkeep"
+cat > "$suite/tests/pass.test" <<'EOT'
+#!/bin/sh
+exit 0
+EOT
+chmod +x "$suite/tests/pass.test" || error 'cannot prepare fixture test'
+
+(
+    cd "$suite" || exit 1
+    git init -q || exit 1
+    git config user.name rumiai-test || exit 1
+    git config user.email rumiai-test@example.invalid || exit 1
+    git add . || exit 1
+    git commit -qm initial || exit 1
+) || error 'cannot prepare committed fixture repository'
+
+head_before=$(git -C "$suite" rev-parse HEAD 2>/dev/null) || error 'cannot read fixture HEAD'
+"$suite/rumiai-test" --validation pass.test > "$tmp_base/output" 2>&1
+status=$?
+[ "$status" -eq 0 ] || fail "validation run returned $status instead of 0"
+head_after=$(git -C "$suite" rev-parse HEAD 2>/dev/null) || error 'cannot re-read fixture HEAD'
+[ "$head_after" = "$head_before" ] || fail 'runner changed Git HEAD during validation'
+
+published=
+for candidate in "$suite"/sessions/*; do
+    [ -d "$candidate" ] && published=$candidate
+done
+[ -n "$published" ] || fail 'completed validation session was not published'
+
+hidden=0
+for candidate in "$suite"/sessions/.[!.]* "$suite"/sessions/..?*; do
+    [ -d "$candidate" ] && hidden=1
+done
+[ "$hidden" -eq 0 ] || fail 'completed validation left a hidden session directory'
+
+recorded_commit=$(awk -F '\t' '$1 == "rumiai-tests-commit" { print $2 }' "$published/session")
+[ "$recorded_commit" = "$head_before" ] || fail 'validation session does not record exact rumiai-tests commit'
+recorded_status=$(awk -F '\t' '$1 == "runner-exit-status" { value=$2 } END { print value }' "$published/session")
+[ "$recorded_status" = 0 ] || fail 'published session does not record runner exit status 0'
+
+status_lines=$(git -C "$suite" status --porcelain --untracked-files=normal 2>/dev/null) || error 'cannot inspect post-validation Git status'
+printf '%s\n' "$status_lines" | grep '^?? sessions/' >/dev/null 2>&1 || fail 'validation evidence was not left uncommitted for separate Git handling'
+
+"$suite/rumiai-test" --validation pass.test > "$tmp_base/dirty-output" 2>&1
+[ "$?" -eq 3 ] || fail 'validation did not reject the now-dirty rumiai-tests working tree'
+
+exit 0

@@ -1,0 +1,95 @@
+#!/bin/sh
+
+fail() {
+    printf '%s\n' "snapshot.test: $*" >&2
+    exit 1
+}
+error() {
+    printf '%s\n' "snapshot.test: $*" >&2
+    exit 3
+}
+
+self=$(realpath "$0" 2>/dev/null) || error 'cannot resolve self'
+test_dir=${self%/*}
+tests_dir=${test_dir%/*}
+suite_root=${tests_dir%/*}
+runner=$suite_root/rumiai-test
+[ -x "$runner" ] || error 'runner is not executable'
+
+tmp_base=${TMPDIR:-/tmp}/rumiai-test-snapshot-$$
+umask 077
+mkdir "$tmp_base" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
+
+suite=$tmp_base/suite
+root1=$tmp_base/root-one
+root2=$tmp_base/root-two
+mkdir -p "$suite/tests/group" "$suite/sessions" "$root1" "$root2" || error 'cannot create fixture layout'
+cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
+chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
+printf '%s\n' before > "$root1/file"
+printf '%s\n' stable > "$root2/file"
+
+cat > "$suite/tests/group/nochange.test" <<'EOT'
+#!/bin/sh
+exit 0
+EOT
+cat > "$suite/tests/group/mutate.test" <<EOT
+#!/bin/sh
+printf '%s\n' after > '$root1/file'
+exit 0
+EOT
+chmod +x "$suite/tests/group/nochange.test" "$suite/tests/group/mutate.test" || error 'cannot prepare fixture tests'
+
+# An explicitly requested audit that cannot access its root is a runner error and is shown as ERROR.
+"$suite/rumiai-test" --snapshot=metadata --snapshot-scope=selection --snapshot-root "$tmp_base/missing-root" -- group/nochange.test > "$tmp_base/error-output" 2>&1
+[ "$?" -eq 3 ] || fail 'unavailable snapshot root did not produce RUNNER ERROR=3'
+grep '^ERROR  snapshot root root-001$' "$tmp_base/error-output" >/dev/null 2>&1 || fail 'snapshot ERROR outcome was not visible on terminal output'
+
+# metadata + selection scope + self-exclusion of the current run directory
+"$suite/rumiai-test" --snapshot=metadata --snapshot-scope=selection --snapshot-root "$suite" -- group/nochange.test > "$tmp_base/selection-output" 2>&1
+[ "$?" -eq 0 ] || fail 'metadata selection snapshot run failed'
+selection_run=
+for candidate in "$suite"/.runs/*; do
+    [ -d "$candidate" ] && selection_run=$candidate
+done
+[ -n "$selection_run" ] || fail 'selection snapshot run was not persisted'
+[ -f "$selection_run/snapshots/selection/root-001.before" ] || fail 'selection before snapshot is missing'
+[ -f "$selection_run/snapshots/selection/root-001.after" ] || fail 'selection after snapshot is missing'
+[ -f "$selection_run/snapshots/selection/root-001.diff" ] || fail 'selection diff is missing'
+[ ! -s "$selection_run/snapshots/selection/root-001.diff" ] || fail 'current run directory was not excluded from suite-root snapshot'
+[ ! -d "$selection_run/snapshots/tests" ] || fail 'selection scope unexpectedly created per-test snapshots'
+
+# metadata + test scope
+"$suite/rumiai-test" --snapshot=metadata --snapshot-scope=test --snapshot-root "$root2" -- group/nochange.test > "$tmp_base/test-output" 2>&1
+[ "$?" -eq 0 ] || fail 'metadata test snapshot run failed'
+test_run=
+for candidate in "$suite"/.runs/*; do
+    [ -d "$candidate" ] && test_run=$candidate
+done
+[ "$test_run" != "$selection_run" ] || fail 'second development run did not receive a distinct run id'
+[ -f "$test_run/snapshots/tests/group/nochange.test/root-001.diff" ] || fail 'test-scope diff is missing'
+[ ! -s "$test_run/snapshots/tests/group/nochange.test/root-001.diff" ] || fail 'unchanged test root did not produce CLEAN audit'
+[ ! -d "$test_run/snapshots/selection" ] || fail 'test scope unexpectedly created selection snapshots'
+
+# hash + both scope + multiple roots; root1 changes while root2 stays clean.
+"$suite/rumiai-test" --snapshot=hash --snapshot-scope=both --snapshot-root "$root1" --snapshot-root "$root2" -- group/mutate.test > "$tmp_base/both-output" 2>&1
+[ "$?" -eq 0 ] || fail 'hash both-scope snapshot run failed'
+both_run=
+for candidate in "$suite"/.runs/*; do
+    [ -d "$candidate" ] && both_run=$candidate
+done
+[ "$both_run" != "$test_run" ] || fail 'third development run did not receive a distinct run id'
+
+[ -s "$both_run/snapshots/selection/root-001.diff" ] || fail 'changed root did not produce selection CHANGED evidence'
+[ -s "$both_run/snapshots/tests/group/mutate.test/root-001.diff" ] || fail 'changed root did not produce test CHANGED evidence'
+[ ! -s "$both_run/snapshots/selection/root-002.diff" ] || fail 'unchanged second root did not remain CLEAN at selection scope'
+[ ! -s "$both_run/snapshots/tests/group/mutate.test/root-002.diff" ] || fail 'unchanged second root did not remain CLEAN at test scope'
+
+root_count=$(wc -l < "$both_run/snapshots/roots" | tr -d ' ')
+[ "$root_count" -eq 2 ] || fail 'multiple snapshot roots were not persisted distinctly'
+
+awk -F '\t' '$2 == "file" && $7 ~ /^[0-9a-f][0-9a-f]*$/ && length($7) == 64 { found=1 } END { exit found ? 0 : 1 }' \
+    "$both_run/snapshots/selection/root-001.before" || fail 'hash snapshot does not contain SHA-256 file digest'
+
+exit 0
