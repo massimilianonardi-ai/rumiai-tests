@@ -1,0 +1,130 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/bootstrap/text-encoding-fallback.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@5af68cbff09ce979df3dff91e398e287eadd48b7:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+
+rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_rumiai_os_validate() {
+    candidate=$1
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+    printf '%s\n' "$target_root"
+}
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+    return 1
+}
+
+# Isolated root primitive copied from:
+# massimilianonardi-ai/rumiai-tests@251ec2bde45a197590ec7dc23b8b41e60a79543f:lib/rumiai-os-fixture.lib
+# Copied inline intentionally to preserve test independence.
+
+rumiai_test_fixture_rumiai_os_create() {
+    [ "$#" -eq 2 ] || return 3
+    source_root=$1
+    fixture_root=$2
+    [ -n "$source_root" ] || return 3
+    [ -n "$fixture_root" ] || return 3
+    [ -f "$source_root/rumiai-os" ] || return 1
+    [ -d "$source_root/bin" ] || return 1
+    [ -d "$source_root/lib" ] || return 1
+    [ -d "$source_root/lang" ] || return 1
+    [ ! -e "$fixture_root" ] || return 2
+    if ! mkdir -p "$fixture_root/conf/bootstrap"; then return 2; fi
+    if ! cp "$source_root/rumiai-os" "$fixture_root/rumiai-os"; then rm -rf "$fixture_root"; return 2; fi
+    if ! cp -R "$source_root/bin" "$fixture_root/bin"; then rm -rf "$fixture_root"; return 2; fi
+    if ! cp -R "$source_root/lib" "$fixture_root/lib"; then rm -rf "$fixture_root"; return 2; fi
+    if ! cp -R "$source_root/lang" "$fixture_root/lang"; then rm -rf "$fixture_root"; return 2; fi
+    if ! chmod u+x "$fixture_root/rumiai-os"; then rm -rf "$fixture_root"; return 2; fi
+    return 0
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+bootstrap_group=${test_dir%/*}
+rumiai_os_group=${bootstrap_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+source_root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+tmp=${TMPDIR:-/tmp}/rumiai-text-encoding-fallback-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture=$tmp/root
+
+rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"
+status=$?
+case $status in 0) : ;; 1) fail 'source checkout lacks required runtime material' ;; 2) error 'cannot materialize isolated fixture' ;; *) error "fixture primitive returned unexpected status $status" ;; esac
+
+fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canonicalize fixture root'
+entry=$fixture/rumiai-os
+probe=$tmp/probe
+stdout_file=$tmp/stdout
+stderr_file=$tmp/stderr
+
+printf '%s\n' ISO-8859-1 > "$fixture/conf/bootstrap/text-encoding" || error 'cannot write unsupported text-encoding preference'
+
+cat > "$probe" <<'EOT'
+[ "${RumiAI_TEXT_ENCODING-}" = UTF-8 ] || return 41
+return 0
+EOT
+
+(
+    unset LC_ALL LC_MESSAGES
+    LANG=C
+    RumiAI_LOG_LEVEL=info
+    export LANG RumiAI_LOG_LEVEL
+    "$entry" "$probe"
+) >"$stdout_file" 2>"$stderr_file" || {
+    status=$?
+    cat "$stderr_file" >&2
+    fail "unsupported text-encoding preference probe returned $status"
+}
+
+[ ! -s "$stdout_file" ] || fail 'unsupported text-encoding preference probe produced unexpected stdout'
+grep -F '[warn] [bootstrap.text-encoding-fallback]' "$stderr_file" >/dev/null 2>&1 || { cat "$stderr_file" >&2; fail 'text-encoding fallback warning is missing'; }
+grep -F '[requested="ISO-8859-1"]' "$stderr_file" >/dev/null 2>&1 || { cat "$stderr_file" >&2; fail 'text-encoding fallback warning lacks requested value'; }
+grep -F '[selected="UTF-8"]' "$stderr_file" >/dev/null 2>&1 || { cat "$stderr_file" >&2; fail 'text-encoding fallback warning lacks selected value'; }
+
+exit 0
