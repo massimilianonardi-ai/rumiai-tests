@@ -2,7 +2,7 @@
 
 Suite permanente di test e validazione di RumiAI.
 
-Le regole canoniche generali sono definite in `massimilianonardi-ai/rumiai-dev/TESTING.md`. Il contratto canonico specifico del runner è definito in `massimilianonardi-ai/rumiai-dev/RUNNER.md`.
+Le regole canoniche generali sono definite in `massimilianonardi-ai/rumiai-dev/TESTING.md`. Il contratto canonico specifico del runner, della persistenza delle run e degli snapshot filesystem è definito in `massimilianonardi-ai/rumiai-dev/RUNNER.md`.
 
 Questo repository contiene l'implementazione eseguibile dei test, il runner, il supporto comune e le sessioni di validazione.
 
@@ -12,7 +12,7 @@ Questo repository contiene l'implementazione eseguibile dei test, il runner, il 
 
 I proof-of-concept restano separati in `rumiai-dev-PoCs`.
 
-## Struttura iniziale
+## Struttura
 
 ```text
 rumiai-test
@@ -26,8 +26,11 @@ tests/
         log/
         shell/
     external/
+.runs/
 sessions/
 ```
+
+`.runs/` contiene development run locali ed è ignorata da Git. `sessions/` contiene validation session completate e versionabili.
 
 Ogni directory normale sotto `tests/` è un gruppo. I gruppi possono essere nidificati e la selezione di un gruppo esegue ricorsivamente tutti i test che contiene. `tests/` è il gruppo radice e rappresenta l'intera suite.
 
@@ -151,8 +154,6 @@ Il runner pubblico è `rumiai-test`, nome scelto per evitare collisioni con la u
 
 Il runner è intenzionalmente semplice: osserva l'esecuzione, non la prepara.
 
-Si occupa di discovery e selezione, ordine lessicografico, raccolta del contesto host/sessione, esecuzione dei `.test`, raccolta degli exit status, riepilogo e conservazione dei risultati.
-
 Il contratto runner -> test è vuoto: il runner non passa argomenti o variabili RumiAI-specifiche, non individua il target, non localizza fixture, non crea workspace temporanei, non cambia la current working directory, non modifica `HOME` o `TMPDIR`, non esegue setup/cleanup e non implementa una sandbox implicita.
 
 Il contratto test -> runner è limitato a:
@@ -175,8 +176,19 @@ Il contesto globale della sessione viene registrato dal runner separatamente dal
 La CLI canonica iniziale è:
 
 ```text
-rumiai-test [--validation] [selection]
+rumiai-test [options] [--] [selection]
 ```
+
+Opzioni iniziali:
+
+```text
+--validation
+--snapshot=metadata|hash
+--snapshot-scope=selection|test|both
+--snapshot-root <pathname>
+```
+
+`--snapshot-root` è ripetibile.
 
 Con:
 
@@ -199,11 +211,12 @@ rumiai-test rumiai-os/bootstrap
 rumiai-test rumiai-os/bootstrap/path/absolute.test
 rumiai-test --validation
 rumiai-test --validation rumiai-os/bootstrap
+rumiai-test --validation --snapshot=hash --snapshot-scope=test --snapshot-root /path/to/rumiai-os --snapshot-root /home -- rumiai-os/bootstrap
 ```
 
-`rumiai-test .` non è ammesso: `.` identifica normalmente la current working directory e sarebbe ambiguo rispetto alla root logica `tests/`.
+`rumiai-test .` non è ammesso. `--snapshot-root .` è invece valido e indica esplicitamente la current working directory come root da osservare.
 
-La CLI iniziale accetta un solo selettore.
+La CLI accetta un solo selettore. Quando lo snapshot è richiesto, modalità, scope e almeno una root devono essere specificati esplicitamente.
 
 ## Exit status del runner
 
@@ -231,4 +244,72 @@ Una selezione inesistente, invalida o un gruppo selezionato senza alcun test val
 
 Se `rumiai-test` viene interrotto esternamente da un segnale, non deve trasformare artificialmente l'evento in status `3`: deve preservare per quanto possibile la normale semantica di terminazione da segnale della piattaforma.
 
-La struttura persistente esatta delle development run e delle validation run viene definita prima dell'implementazione stabile del runner.
+## Persistenza delle run
+
+Development e validation usano lo stesso formato:
+
+```text
+<run-id>/
+├── session
+├── results
+├── logs/
+└── snapshots/        solo quando richiesto
+```
+
+Le development run vengono conservate sotto `.runs/`; le validation run completate sotto `sessions/`.
+
+Il run-id ha forma:
+
+```text
+YYYYMMDDThhmmss+zzzz-PID
+```
+
+`session` usa record `key<TAB>value` e contiene il contesto globale osservato dal runner. `results` contiene un record elementare per test nel formato `result<TAB>test-id<TAB>observed-termination`, senza totali duplicati. `logs/` replica la gerarchia degli identificatori dei test e ogni `.log` contiene esclusivamente lo stream combinato del relativo `.test`.
+
+Durante una validation la directory nasce come `sessions/.<run-id>/` e diventa `sessions/<run-id>/` soltanto quando il runner ha completato correttamente la produzione dell'evidenza. Una sessione completata non viene sovrascritta o modificata dal runner.
+
+Il runner non applica retention automatica a `.runs/` e non esegue automaticamente `git add`, `git commit` o `git push` delle validation session.
+
+## Filesystem snapshot
+
+La capability di filesystem snapshot fa parte della prima versione del runner ed è opzionale per ogni run.
+
+Modalità:
+
+```text
+metadata
+hash
+```
+
+`metadata` registra almeno pathname relativo alla root, tipo, size dei file regolari, mtime dei file regolari, mode/permessi e target dei symlink quando applicabili. Non usa `atime` e non usa l'`mtime` delle directory come indicatore canonico di differenza.
+
+`hash` comprende tutti i metadata e aggiunge SHA-256 per ogni file regolare.
+
+Scope:
+
+```text
+selection
+    snapshot prima e dopo l'intera selezione
+
+test
+    snapshot prima e dopo ogni singolo test
+
+both
+    entrambe le modalità di osservazione
+```
+
+È possibile specificare più root ripetendo `--snapshot-root`. Ogni root viene risolta/canonicalizzata dal runner e gli entry pathname dello snapshot sono relativi alla rispettiva root.
+
+Il runner esclude automaticamente soltanto la directory della run corrente che esso stesso sta generando, se ricade sotto una root osservata. Non esclude implicitamente `.dev/`, `.git/`, `rumiai-tests/`, `sessions/` o altre directory generiche.
+
+Gli esiti dell'audit filesystem sono distinti dagli esiti dei test:
+
+```text
+CLEAN
+CHANGED
+ERROR
+```
+
+`CHANGED` segnala una differenza osservata e non trasforma automaticamente il test in `FAIL` o `ERROR`. `ERROR` indica che l'audit esplicitamente richiesto non è stato completato e produce `RUNNER ERROR`.
+
+Gli snapshot sono conservati separatamente sotto `snapshots/`, con mapping delle root in `snapshots/roots`, coppie `before/after` e relativo `diff`. Con scope `test` viene replicata la gerarchia del test; con scope `both` vengono conservati sia l'audit della selezione sia gli audit dei singoli test.
