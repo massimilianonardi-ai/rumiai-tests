@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Interactive primitive copied from:
-# massimilianonardi-ai/rumiai-tests@f71448ba078fd0b98a74a0dc9b89f3fdeba7cdab:lib/interactive.lib
+# massimilianonardi-ai/rumiai-tests@7eed87d7cba441d248ae68de82762b73b2320f77:lib/interactive.lib
 # Copied inline intentionally to preserve test independence.
 
 TEST_ID=rumiai-dev/setup-dev/identity-cancel.test
@@ -87,18 +87,18 @@ while {[gets $fh line] >= 0} {
     }
     set prompt [string range $line 0 [expr {$tab - 1}]]
     set response [string range $line [expr {$tab + 1}] end]
-    expect {
-        -exact -- $prompt {}
-        timeout {
-            puts stderr "timeout waiting for prompt: $prompt"
-            close $fh
+    set outcome none
+    expect -timeout 180 \
+        -ex "$prompt" {set outcome matched} \
+        timeout {set outcome timeout} \
+        eof {set outcome eof}
+    if {$outcome ne "matched"} {
+        puts stderr "$outcome waiting for prompt: $prompt"
+        close $fh
+        if {$outcome eq "timeout"} {
             exit 124
         }
-        eof {
-            puts stderr "EOF before prompt: $prompt"
-            close $fh
-            exit 125
-        }
+        exit 125
     }
     send -- "$response\r"
 }
