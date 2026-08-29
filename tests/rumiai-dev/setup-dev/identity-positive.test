@@ -1,70 +1,278 @@
 #!/bin/sh
 
+# Interactive primitive copied from:
+# massimilianonardi-ai/rumiai-tests@f71448ba078fd0b98a74a0dc9b89f3fdeba7cdab:lib/interactive.lib
+# Copied inline intentionally to preserve test independence.
+
 TEST_ID=rumiai-dev/setup-dev/identity-positive.test
 
-resolve_test_dir() {
-    self=$0
-    case $self in
-        */*) : ;;
-        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
-    esac
-    self_dir=${self%/*}
-    [ "$self_dir" != "$self" ] || self_dir=.
-    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+# RumiAI test authoring reference: scripted interaction with programs that read from a TTY.
+#
+# This file is a reference implementation for test authors. Permanent tests that need
+# historical independence should copy the required functions inline and record the
+# immutable Git commit and pathname of the copied version.
+
+rumiai_test_interactive_have() {
+    command -v "$1" >/dev/null 2>&1
 }
 
-test_dir=$(resolve_test_dir) || exit 3
-. "$test_dir/.support/common.sh" || exit 3
-setup_dev_init
+rumiai_test_interactive_system() {
+    uname -s 2>/dev/null
+}
 
-input=$SETUP_DEV_TMP/input
-printf '%s\n' \
-    'massimilianonardi-ai' \
-    'massimiliano.nardi.ai@gmail.com' \
-    'y' \
-    'n' > "$input" || setup_dev_support_error 'cannot prepare input'
+rumiai_test_interactive_require() {
+    rumiai_test_interactive_have uname || return 3
 
-setup_dev_run_case positive "$input"
+    RUMIAI_TEST_INTERACTIVE_SYSTEM=$(rumiai_test_interactive_system) || return 3
+    export RUMIAI_TEST_INTERACTIVE_SYSTEM
+
+    case $RUMIAI_TEST_INTERACTIVE_SYSTEM in
+        Darwin)
+            rumiai_test_interactive_have expect || return 2
+            ;;
+        Linux)
+            rumiai_test_interactive_have script || return 2
+            rumiai_test_interactive_have grep || return 2
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+
+    return 0
+}
+
+rumiai_test_interactive_make_linux_input() {
+    dialogue=$1
+    input=$2
+    tab=$(printf '\tX')
+    tab=${tab%X}
+
+    : > "$input" || return 1
+    while IFS="$tab" read -r prompt response extra; do
+        [ -z "$extra" ] || return 1
+        printf '%s\n' "$response" >> "$input" || return 1
+    done < "$dialogue"
+}
+
+rumiai_test_interactive_verify_linux_prompts() {
+    dialogue=$1
+    output=$2
+    tab=$(printf '\tX')
+    tab=${tab%X}
+
+    while IFS="$tab" read -r prompt response extra; do
+        [ -z "$extra" ] || return 1
+        grep -F -- "$prompt" "$output" >/dev/null 2>&1 || return 1
+    done < "$dialogue"
+}
+
+rumiai_test_interactive_run_darwin() {
+    dialogue=$1
+    output=$2
+    command=$3
+    driver=${output}.expect
+
+    cat > "$driver" <<'EOT'
+set timeout 180
+log_user 1
+spawn $env(RUMIAI_TEST_INTERACTIVE_COMMAND)
+set fh [open $env(RUMIAI_TEST_INTERACTIVE_DIALOGUE) r]
+while {[gets $fh line] >= 0} {
+    set tab [string first "\t" $line]
+    if {$tab < 0} {
+        puts stderr "invalid dialogue record: missing TAB"
+        close $fh
+        exit 2
+    }
+    set prompt [string range $line 0 [expr {$tab - 1}]]
+    set response [string range $line [expr {$tab + 1}] end]
+    expect {
+        -exact -- $prompt {}
+        timeout {
+            puts stderr "timeout waiting for prompt: $prompt"
+            close $fh
+            exit 124
+        }
+        eof {
+            puts stderr "EOF before prompt: $prompt"
+            close $fh
+            exit 125
+        }
+    }
+    send -- "$response\r"
+}
+close $fh
+expect eof
+EOT
+
+    RUMIAI_TEST_INTERACTIVE_DIALOGUE=$dialogue \
+    RUMIAI_TEST_INTERACTIVE_COMMAND=$command \
+    export RUMIAI_TEST_INTERACTIVE_DIALOGUE RUMIAI_TEST_INTERACTIVE_COMMAND
+
+    expect -f "$driver" > "$output" 2>&1
+}
+
+rumiai_test_interactive_run_linux() {
+    dialogue=$1
+    output=$2
+    command=$3
+    input=${output}.input
+
+    rumiai_test_interactive_make_linux_input "$dialogue" "$input" || return 1
+    script -q -c "$command" /dev/null < "$input" > "$output" 2>&1 || return 1
+    rumiai_test_interactive_verify_linux_prompts "$dialogue" "$output"
+}
+
+rumiai_test_interactive_run() {
+    dialogue=$1
+    output=$2
+    command=$3
+
+    case ${RUMIAI_TEST_INTERACTIVE_SYSTEM:-} in
+        Darwin)
+            rumiai_test_interactive_run_darwin "$dialogue" "$output" "$command"
+            ;;
+        Linux)
+            rumiai_test_interactive_run_linux "$dialogue" "$output" "$command"
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
+
+setup_fail() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 1
+}
+
+setup_error() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 3
+}
+
+setup_skip() {
+    printf '%s\n' "$TEST_ID: $*" >&2
+    exit 2
+}
+
+setup_require_interactive() {
+    rumiai_test_interactive_require
+    status=$?
+    case $status in
+        0) : ;;
+        2) setup_skip 'no supported scripted TTY driver is available on this host' ;;
+        *) setup_error 'cannot initialize scripted TTY driver' ;;
+    esac
+}
+
+setup_prepare() {
+    SETUP_DEV_URL=https://raw.githubusercontent.com/massimilianonardi-ai/rumiai-dev/refs/heads/main/setup-dev.sh
+    SETUP_TMP=${TMPDIR:-/tmp}/rumiai-tests-setup-dev-${TEST_ID##*/}-$$
+    CASE_DIR=$SETUP_TMP/case
+    CASE_HOME=$CASE_DIR/home
+    CASE_ROOT=$CASE_DIR/rumiai-os
+    CASE_STATUS=$CASE_DIR/status
+    CASE_OUTPUT=$CASE_DIR/output
+    CASE_DIALOGUE=$CASE_DIR/dialogue
+    CASE_WRAPPER=$CASE_DIR/run-setup
+    export SETUP_DEV_URL CASE_HOME CASE_ROOT CASE_STATUS
+
+    umask 077
+    mkdir -p "$CASE_HOME" || setup_error 'cannot create temporary test environment'
+    trap 'rm -rf "$SETUP_TMP"' 0 HUP INT TERM
+
+    cat > "$CASE_WRAPPER" <<'EOT'
+#!/bin/sh
+HOME=$CASE_HOME
+export HOME
+curl -fsSL "$SETUP_DEV_URL" | sh -s -- "$CASE_ROOT"
+status=$?
+printf '%s\n' "$status" > "$CASE_STATUS"
+exit "$status"
+EOT
+    chmod +x "$CASE_WRAPPER" || setup_error 'cannot make setup wrapper executable'
+}
+
+setup_run_dialogue() {
+    rumiai_test_interactive_run "$CASE_DIALOGUE" "$CASE_OUTPUT" "$CASE_WRAPPER" || {
+        printf '%s\n' "--- $TEST_ID captured interaction ---" >&2
+        cat "$CASE_OUTPUT" >&2 2>/dev/null || :
+        printf '%s\n' '--- end captured interaction ---' >&2
+        setup_error 'scripted TTY interaction failed'
+    }
+    [ -f "$CASE_STATUS" ] || setup_error 'setup-dev did not persist child exit status'
+    CASE_RESULT=$(cat "$CASE_STATUS") || setup_error 'cannot read setup-dev exit status'
+}
+
+setup_assert_output() {
+    grep -F -- "$1" "$CASE_OUTPUT" >/dev/null 2>&1 || {
+        printf '%s\n' "--- $TEST_ID captured interaction ---" >&2
+        cat "$CASE_OUTPUT" >&2
+        printf '%s\n' '--- end captured interaction ---' >&2
+        setup_fail "expected output not found: $1"
+    }
+}
+
+setup_assert_no_identity() {
+    HOME="$CASE_HOME" git config --global --get user.name >/dev/null 2>&1 &&
+        setup_fail 'unexpectedly persisted user.name'
+    HOME="$CASE_HOME" git config --global --get user.email >/dev/null 2>&1 &&
+        setup_fail 'unexpectedly persisted user.email'
+}
+
+setup_require_interactive
+command -v git >/dev/null 2>&1 || setup_error 'git is unavailable'
+command -v curl >/dev/null 2>&1 || setup_skip 'curl is unavailable'
+command -v grep >/dev/null 2>&1 || setup_error 'grep is unavailable'
+setup_prepare
+
+printf '%s\t%s\n' \
+    'Git user.name: ' 'massimilianonardi-ai' \
+    'Git user.email: ' 'massimiliano.nardi.ai@gmail.com' \
+    'Use this Git identity globally? [y/N] ' 'y' \
+    'Configure a GitHub personal access token now? [y/N] ' 'n' > "$CASE_DIALOGUE" || setup_error 'cannot prepare dialogue'
+
+setup_run_dialogue
 [ "$CASE_RESULT" -eq 0 ] || {
-    printf '%s\n' "--- $TEST_ID captured output ---" >&2
     cat "$CASE_OUTPUT" >&2
-    printf '%s\n' "--- end captured output ---" >&2
-    setup_dev_support_fail "positive setup returned $CASE_RESULT instead of 0"
+    setup_fail "positive setup returned $CASE_RESULT instead of 0"
 }
 
 name=$(HOME="$CASE_HOME" git config --global --get user.name 2>/dev/null) ||
-    setup_dev_support_fail 'positive setup did not persist user.name'
+    setup_fail 'positive setup did not persist user.name'
 email=$(HOME="$CASE_HOME" git config --global --get user.email 2>/dev/null) ||
-    setup_dev_support_fail 'positive setup did not persist user.email'
+    setup_fail 'positive setup did not persist user.email'
 use_config_only=$(HOME="$CASE_HOME" git config --global --get user.useConfigOnly 2>/dev/null) ||
-    setup_dev_support_fail 'positive setup did not persist user.useConfigOnly'
+    setup_fail 'positive setup did not persist user.useConfigOnly'
 
-[ "$name" = 'massimilianonardi-ai' ] || setup_dev_support_fail "unexpected user.name '$name'"
-[ "$email" = 'massimiliano.nardi.ai@gmail.com' ] || setup_dev_support_fail "unexpected user.email '$email'"
-[ "$use_config_only" = true ] || setup_dev_support_fail "user.useConfigOnly is '$use_config_only' instead of true"
+[ "$name" = 'massimilianonardi-ai' ] || setup_fail "unexpected user.name '$name'"
+[ "$email" = 'massimiliano.nardi.ai@gmail.com' ] || setup_fail "unexpected user.email '$email'"
+[ "$use_config_only" = true ] || setup_fail "user.useConfigOnly is '$use_config_only' instead of true"
 
 HOME="$CASE_HOME" git var GIT_AUTHOR_IDENT >/dev/null 2>&1 ||
-    setup_dev_support_fail 'Git cannot construct author identity'
+    setup_fail 'Git cannot construct author identity'
 HOME="$CASE_HOME" git var GIT_COMMITTER_IDENT >/dev/null 2>&1 ||
-    setup_dev_support_fail 'Git cannot construct committer identity'
+    setup_fail 'Git cannot construct committer identity'
 
 probe=$CASE_DIR/commit-probe
-mkdir "$probe" || setup_dev_support_error 'cannot create commit probe'
-HOME="$CASE_HOME" git -C "$probe" init -q || setup_dev_support_fail 'cannot initialize commit probe'
-printf '%s\n' probe > "$probe/probe" || setup_dev_support_error 'cannot create commit probe file'
-HOME="$CASE_HOME" git -C "$probe" add -- probe || setup_dev_support_fail 'cannot stage commit probe'
-HOME="$CASE_HOME" git -C "$probe" commit -qm 'Git identity probe' || setup_dev_support_fail 'real commit probe failed'
+mkdir "$probe" || setup_error 'cannot create commit probe'
+HOME="$CASE_HOME" git -C "$probe" init -q || setup_fail 'cannot initialize commit probe'
+printf '%s\n' probe > "$probe/probe" || setup_error 'cannot create commit probe file'
+HOME="$CASE_HOME" git -C "$probe" add -- probe || setup_fail 'cannot stage commit probe'
+HOME="$CASE_HOME" git -C "$probe" commit -qm 'Git identity probe' || setup_fail 'real commit probe failed'
 identity=$(HOME="$CASE_HOME" git -C "$probe" show -s --format='%an <%ae>|%cn <%ce>') ||
-    setup_dev_support_fail 'cannot inspect commit identity'
+    setup_fail 'cannot inspect commit identity'
 expected='massimilianonardi-ai <massimiliano.nardi.ai@gmail.com>|massimilianonardi-ai <massimiliano.nardi.ai@gmail.com>'
-[ "$identity" = "$expected" ] || setup_dev_support_fail "real commit used unexpected identity '$identity'"
+[ "$identity" = "$expected" ] || setup_fail "real commit used unexpected identity '$identity'"
 
 check_origin() {
     repo_dir=$1
     expected_origin=$2
     actual=$(git -C "$repo_dir" remote get-url origin 2>/dev/null) ||
-        setup_dev_support_fail "cannot read origin for $repo_dir"
-    [ "$actual" = "$expected_origin" ] || setup_dev_support_fail "unexpected origin '$actual' for $repo_dir"
+        setup_fail "cannot read origin for $repo_dir"
+    [ "$actual" = "$expected_origin" ] || setup_fail "unexpected origin '$actual' for $repo_dir"
 }
 
 check_origin "$CASE_ROOT" 'https://github.com/massimilianonardi-ai/rumiai-os.git'
