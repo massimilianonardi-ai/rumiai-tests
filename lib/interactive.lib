@@ -1,0 +1,135 @@
+# RumiAI test authoring reference: scripted interaction with programs that read from a TTY.
+#
+# This file is a reference implementation for test authors. Permanent tests that need
+# historical independence should copy the required functions inline and record the
+# immutable Git commit and pathname of the copied version.
+
+rumiai_test_interactive_have() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_interactive_system() {
+    uname -s 2>/dev/null
+}
+
+rumiai_test_interactive_require() {
+    rumiai_test_interactive_have uname || return 3
+
+    RUMIAI_TEST_INTERACTIVE_SYSTEM=$(rumiai_test_interactive_system) || return 3
+    export RUMIAI_TEST_INTERACTIVE_SYSTEM
+
+    case $RUMIAI_TEST_INTERACTIVE_SYSTEM in
+        Darwin)
+            rumiai_test_interactive_have expect || return 2
+            ;;
+        Linux)
+            rumiai_test_interactive_have script || return 2
+            rumiai_test_interactive_have grep || return 2
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+
+    return 0
+}
+
+rumiai_test_interactive_make_linux_input() {
+    dialogue=$1
+    input=$2
+    tab=$(printf '\tX')
+    tab=${tab%X}
+
+    : > "$input" || return 1
+    while IFS="$tab" read -r prompt response extra; do
+        [ -z "$extra" ] || return 1
+        printf '%s\n' "$response" >> "$input" || return 1
+    done < "$dialogue"
+}
+
+rumiai_test_interactive_verify_linux_prompts() {
+    dialogue=$1
+    output=$2
+    tab=$(printf '\tX')
+    tab=${tab%X}
+
+    while IFS="$tab" read -r prompt response extra; do
+        [ -z "$extra" ] || return 1
+        grep -F -- "$prompt" "$output" >/dev/null 2>&1 || return 1
+    done < "$dialogue"
+}
+
+rumiai_test_interactive_run_darwin() {
+    dialogue=$1
+    output=$2
+    command=$3
+    driver=${output}.expect
+
+    cat > "$driver" <<'EOT'
+set timeout 180
+log_user 1
+spawn $env(RUMIAI_TEST_INTERACTIVE_COMMAND)
+set fh [open $env(RUMIAI_TEST_INTERACTIVE_DIALOGUE) r]
+while {[gets $fh line] >= 0} {
+    set tab [string first "\t" $line]
+    if {$tab < 0} {
+        puts stderr "invalid dialogue record: missing TAB"
+        close $fh
+        exit 2
+    }
+    set prompt [string range $line 0 [expr {$tab - 1}]]
+    set response [string range $line [expr {$tab + 1}] end]
+    expect {
+        -exact -- $prompt {}
+        timeout {
+            puts stderr "timeout waiting for prompt: $prompt"
+            close $fh
+            exit 124
+        }
+        eof {
+            puts stderr "EOF before prompt: $prompt"
+            close $fh
+            exit 125
+        }
+    }
+    send -- "$response\r"
+}
+close $fh
+expect eof
+EOT
+
+    RUMIAI_TEST_INTERACTIVE_DIALOGUE=$dialogue \
+    RUMIAI_TEST_INTERACTIVE_COMMAND=$command \
+    export RUMIAI_TEST_INTERACTIVE_DIALOGUE RUMIAI_TEST_INTERACTIVE_COMMAND
+
+    expect -f "$driver" > "$output" 2>&1
+}
+
+rumiai_test_interactive_run_linux() {
+    dialogue=$1
+    output=$2
+    command=$3
+    input=${output}.input
+
+    rumiai_test_interactive_make_linux_input "$dialogue" "$input" || return 1
+    script -q -c "$command" /dev/null < "$input" > "$output" 2>&1 || return 1
+    rumiai_test_interactive_verify_linux_prompts "$dialogue" "$output"
+}
+
+rumiai_test_interactive_run() {
+    dialogue=$1
+    output=$2
+    command=$3
+
+    case ${RUMIAI_TEST_INTERACTIVE_SYSTEM:-} in
+        Darwin)
+            rumiai_test_interactive_run_darwin "$dialogue" "$output" "$command"
+            ;;
+        Linux)
+            rumiai_test_interactive_run_linux "$dialogue" "$output" "$command"
+            ;;
+        *)
+            return 2
+            ;;
+    esac
+}
