@@ -64,45 +64,42 @@ setup_dev_run_darwin_case() {
     case $case_name in
         invalid)
             cat > "$driver" <<'EOT'
-set timeout -1
-log_user 0
-log_file -noappend $env(CASE_OUTPUT)
+set timeout 180
+log_user 1
 spawn $env(SETUP_DEV_WRAPPER)
-expect -exact "Git user.name: "
+expect -exact {Git user.name: }
 send -- "massimilianonardi-ai\r"
-expect -exact "Git user.email: "
+expect -exact {Git user.email: }
 send -- "not-an-email\r"
 expect eof
 EOT
             ;;
         cancel)
             cat > "$driver" <<'EOT'
-set timeout -1
-log_user 0
-log_file -noappend $env(CASE_OUTPUT)
+set timeout 180
+log_user 1
 spawn $env(SETUP_DEV_WRAPPER)
-expect -exact "Git user.name: "
+expect -exact {Git user.name: }
 send -- "massimilianonardi-ai\r"
-expect -exact "Git user.email: "
+expect -exact {Git user.email: }
 send -- "massimiliano.nardi.ai@gmail.com\r"
-expect -exact "Use this Git identity globally? [y/N] "
+expect -exact {Use this Git identity globally? [y/N] }
 send -- "n\r"
 expect eof
 EOT
             ;;
         positive)
             cat > "$driver" <<'EOT'
-set timeout -1
-log_user 0
-log_file -noappend $env(CASE_OUTPUT)
+set timeout 180
+log_user 1
 spawn $env(SETUP_DEV_WRAPPER)
-expect -exact "Git user.name: "
+expect -exact {Git user.name: }
 send -- "massimilianonardi-ai\r"
-expect -exact "Git user.email: "
+expect -exact {Git user.email: }
 send -- "massimiliano.nardi.ai@gmail.com\r"
-expect -exact "Use this Git identity globally? [y/N] "
+expect -exact {Use this Git identity globally? [y/N] }
 send -- "y\r"
-expect -exact "Configure a GitHub personal access token now? [y/N] "
+expect -exact {Configure a GitHub personal access token now? [y/N] }
 send -- "n\r"
 expect eof
 EOT
@@ -112,8 +109,12 @@ EOT
             ;;
     esac
 
-    CASE_OUTPUT=$CASE_OUTPUT SETUP_DEV_WRAPPER=$SETUP_DEV_WRAPPER expect -f "$driver" >/dev/null 2>&1 ||
+    SETUP_DEV_WRAPPER=$SETUP_DEV_WRAPPER expect -f "$driver" > "$CASE_OUTPUT" 2>&1 || {
+        printf '%s\n' "--- $TEST_ID Expect output ---" >&2
+        cat "$CASE_OUTPUT" >&2
+        printf '%s\n' "--- end Expect output ---" >&2
         setup_dev_support_error "$case_name Expect driver failed"
+    }
 }
 
 setup_dev_run_case() {
