@@ -25,6 +25,9 @@ tests/
         i18n/
         log/
         shell/
+    rumiai-dev/
+        setup-dev/
+    runner/
     external/
 .runs/
 sessions/
