@@ -1,0 +1,31 @@
+#!/bin/sh
+
+TEST_ID=rumiai-dev/setup-dev/identity-cancel.test
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || exit 3
+. "$test_dir/.support/common.sh" || exit 3
+setup_dev_init
+
+input=$SETUP_DEV_TMP/input
+printf '%s\n' \
+    'massimilianonardi-ai' \
+    'massimiliano.nardi.ai@gmail.com' \
+    'n' > "$input" || setup_dev_support_error 'cannot prepare input'
+
+setup_dev_run_case cancel "$input"
+[ "$CASE_RESULT" -eq 1 ] || setup_dev_support_fail "identity cancellation returned $CASE_RESULT instead of 1"
+setup_dev_assert_output 'Git identity configuration cancelled'
+[ ! -e "$CASE_ROOT" ] || setup_dev_support_fail 'cancelled identity created the workspace'
+setup_dev_assert_no_identity
+exit 0

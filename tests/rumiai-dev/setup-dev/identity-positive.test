@@ -1,0 +1,73 @@
+#!/bin/sh
+
+TEST_ID=rumiai-dev/setup-dev/identity-positive.test
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || exit 3
+. "$test_dir/.support/common.sh" || exit 3
+setup_dev_init
+
+input=$SETUP_DEV_TMP/input
+printf '%s\n' \
+    'massimilianonardi-ai' \
+    'massimiliano.nardi.ai@gmail.com' \
+    'y' \
+    'n' > "$input" || setup_dev_support_error 'cannot prepare input'
+
+setup_dev_run_case positive "$input"
+[ "$CASE_RESULT" -eq 0 ] || {
+    printf '%s\n' "--- $TEST_ID captured output ---" >&2
+    cat "$CASE_OUTPUT" >&2
+    printf '%s\n' "--- end captured output ---" >&2
+    setup_dev_support_fail "positive setup returned $CASE_RESULT instead of 0"
+}
+
+name=$(HOME="$CASE_HOME" git config --global --get user.name 2>/dev/null) ||
+    setup_dev_support_fail 'positive setup did not persist user.name'
+email=$(HOME="$CASE_HOME" git config --global --get user.email 2>/dev/null) ||
+    setup_dev_support_fail 'positive setup did not persist user.email'
+use_config_only=$(HOME="$CASE_HOME" git config --global --get user.useConfigOnly 2>/dev/null) ||
+    setup_dev_support_fail 'positive setup did not persist user.useConfigOnly'
+
+[ "$name" = 'massimilianonardi-ai' ] || setup_dev_support_fail "unexpected user.name '$name'"
+[ "$email" = 'massimiliano.nardi.ai@gmail.com' ] || setup_dev_support_fail "unexpected user.email '$email'"
+[ "$use_config_only" = true ] || setup_dev_support_fail "user.useConfigOnly is '$use_config_only' instead of true"
+
+HOME="$CASE_HOME" git var GIT_AUTHOR_IDENT >/dev/null 2>&1 ||
+    setup_dev_support_fail 'Git cannot construct author identity'
+HOME="$CASE_HOME" git var GIT_COMMITTER_IDENT >/dev/null 2>&1 ||
+    setup_dev_support_fail 'Git cannot construct committer identity'
+
+probe=$CASE_DIR/commit-probe
+mkdir "$probe" || setup_dev_support_error 'cannot create commit probe'
+HOME="$CASE_HOME" git -C "$probe" init -q || setup_dev_support_fail 'cannot initialize commit probe'
+printf '%s\n' probe > "$probe/probe" || setup_dev_support_error 'cannot create commit probe file'
+HOME="$CASE_HOME" git -C "$probe" add -- probe || setup_dev_support_fail 'cannot stage commit probe'
+HOME="$CASE_HOME" git -C "$probe" commit -qm 'Git identity probe' || setup_dev_support_fail 'real commit probe failed'
+identity=$(HOME="$CASE_HOME" git -C "$probe" show -s --format='%an <%ae>|%cn <%ce>') ||
+    setup_dev_support_fail 'cannot inspect commit identity'
+expected='massimilianonardi-ai <massimiliano.nardi.ai@gmail.com>|massimilianonardi-ai <massimiliano.nardi.ai@gmail.com>'
+[ "$identity" = "$expected" ] || setup_dev_support_fail "real commit used unexpected identity '$identity'"
+
+check_origin() {
+    repo_dir=$1
+    expected_origin=$2
+    actual=$(git -C "$repo_dir" remote get-url origin 2>/dev/null) ||
+        setup_dev_support_fail "cannot read origin for $repo_dir"
+    [ "$actual" = "$expected_origin" ] || setup_dev_support_fail "unexpected origin '$actual' for $repo_dir"
+}
+
+check_origin "$CASE_ROOT" 'https://github.com/massimilianonardi-ai/rumiai-os.git'
+check_origin "$CASE_ROOT/.dev/rumiai-tests" 'https://github.com/massimilianonardi-ai/rumiai-tests.git'
+check_origin "$CASE_ROOT/.dev/rumiai-dev-PoCs" 'https://github.com/massimilianonardi-ai/rumiai-dev-PoCs.git'
+exit 0
