@@ -1,6 +1,6 @@
 #!/bin/sh
 
-TEST_ID=rumiai-os/bootstrap/data/config/has.test
+TEST_ID=rumiai-os/bootstrap/data/config/namespace.test
 
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
@@ -73,29 +73,35 @@ esac
 entry=$root/rumiai-os
 [ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-data-rumiai-os-bootstrap-data-config-has-$$
+tmp=${TMPDIR:-/tmp}/rumiai-data-rumiai-os-bootstrap-data-config-namespace-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 conf=$tmp/conf
-printf 'identity.name\tnetbeans\nidentity.display_name\tNetBeans IDE Ω\nrequirements.count\t1\nrequirements.1.id\tjdk\n' > "$conf" || error 'cannot create configuration'
+expected=$tmp/expected
+printf 'requirements.count\t2\nrequirements.1.id\tjdk\nrequirements.1.constraint\t>=17 <22\nrequirements.2.id\tpython\nrequirements_extra\toutside\nidentity.name\tnetbeans\n' > "$conf" || error 'cannot create configuration'
+printf 'requirements.count\t2\nrequirements.1.id\tjdk\nrequirements.1.constraint\t>=17 <22\nrequirements.2.id\tpython\n' > "$expected" || error 'cannot create expected namespace'
 
 probe=$tmp/probe
 transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
-rumi_conf_has "$CONF" identity.name || return 41
+actual=$TMP/actual
+rumi_conf_namespace "$CONF" requirements > "$actual" || return 41
+cmp -s "$EXPECTED" "$actual" || return 42
 
-rumi_conf_has "$CONF" identity.missing >/dev/null 2>&1
-[ "$?" -eq 1 ] || return 42
+rumi_conf_namespace "$CONF" missing >/dev/null 2>&1
+[ "$?" -eq 1 ] || return 43
 
-rumi_conf_has "$CONF" '1identity.name' >/dev/null 2>&1
-[ "$?" -eq 2 ] || return 43
+rumi_conf_namespace "$CONF" 'requirements..1' >/dev/null 2>&1
+[ "$?" -eq 2 ] || return 44
 
 return 0
 EOT
 
 CONF=$conf; export CONF
+EXPECTED=$expected; export EXPECTED
+TMP=$tmp; export TMP
 
 (
     unset LC_ALL LC_MESSAGES

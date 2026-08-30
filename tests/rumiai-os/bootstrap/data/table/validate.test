@@ -1,6 +1,6 @@
 #!/bin/sh
 
-TEST_ID=rumiai-os/bootstrap/data/config/has.test
+TEST_ID=rumiai-os/bootstrap/data/table/validate.test
 
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
@@ -73,29 +73,42 @@ esac
 entry=$root/rumiai-os
 [ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-data-rumiai-os-bootstrap-data-config-has-$$
+tmp=${TMPDIR:-/tmp}/rumiai-data-rumiai-os-bootstrap-data-table-validate-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
-conf=$tmp/conf
-printf 'identity.name\tnetbeans\nidentity.display_name\tNetBeans IDE Ω\nrequirements.count\t1\nrequirements.1.id\tjdk\n' > "$conf" || error 'cannot create configuration'
+valid=$tmp/valid.tsv
+wrong_header=$tmp/wrong-header.tsv
+duplicate_header=$tmp/duplicate-header.tsv
+wrong_columns=$tmp/wrong-columns.tsv
+
+printf 'type\tmode\tdigest\ttarget\tpath\nD\t0500\t-\t-\t.\nF\t0500\tabc\t-\t./bin/foo\nL\t-\tdef\t../run/log\t./log\n' > "$valid" || error 'cannot create valid table'
+printf 'mode\ttype\tdigest\ttarget\tpath\nD\t0500\t-\t-\t.\n' > "$wrong_header" || error 'cannot create wrong-header table'
+printf 'type\tmode\tdigest\tpath\tpath\nD\t0500\t-\t-\t.\n' > "$duplicate_header" || error 'cannot create duplicate-header table'
+printf 'type\tmode\tdigest\ttarget\tpath\nD\t0500\t-\t-\n' > "$wrong_columns" || error 'cannot create wrong-columns table'
 
 probe=$tmp/probe
 transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
-rumi_conf_has "$CONF" identity.name || return 41
+rumi_table_validate "$VALID" type mode digest target path || return 41
 
-rumi_conf_has "$CONF" identity.missing >/dev/null 2>&1
-[ "$?" -eq 1 ] || return 42
+rumi_table_validate "$WRONG_HEADER" type mode digest target path >/dev/null 2>&1
+[ "$?" -eq 2 ] || return 42
 
-rumi_conf_has "$CONF" '1identity.name' >/dev/null 2>&1
+rumi_table_validate "$DUPLICATE_HEADER" >/dev/null 2>&1
 [ "$?" -eq 2 ] || return 43
+
+rumi_table_validate "$WRONG_COLUMNS" type mode digest target path >/dev/null 2>&1
+[ "$?" -eq 2 ] || return 44
 
 return 0
 EOT
 
-CONF=$conf; export CONF
+VALID=$valid; export VALID
+WRONG_HEADER=$wrong_header; export WRONG_HEADER
+DUPLICATE_HEADER=$duplicate_header; export DUPLICATE_HEADER
+WRONG_COLUMNS=$wrong_columns; export WRONG_COLUMNS
 
 (
     unset LC_ALL LC_MESSAGES

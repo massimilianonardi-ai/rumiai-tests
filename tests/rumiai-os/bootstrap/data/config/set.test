@@ -1,6 +1,6 @@
 #!/bin/sh
 
-TEST_ID=rumiai-os/bootstrap/data/config/has.test
+TEST_ID=rumiai-os/bootstrap/data/config/set.test
 
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
@@ -73,29 +73,41 @@ esac
 entry=$root/rumiai-os
 [ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-data-rumiai-os-bootstrap-data-config-has-$$
+tmp=${TMPDIR:-/tmp}/rumiai-data-rumiai-os-bootstrap-data-config-set-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 conf=$tmp/conf
-printf 'identity.name\tnetbeans\nidentity.display_name\tNetBeans IDE Ω\nrequirements.count\t1\nrequirements.1.id\tjdk\n' > "$conf" || error 'cannot create configuration'
+new_conf=$tmp/new-conf
+printf 'identity.name\tnetbeans\nidentity.version\t26\n' > "$conf" || error 'cannot create configuration'
 
 probe=$tmp/probe
 transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
-rumi_conf_has "$CONF" identity.name || return 41
+rumi_conf_set "$CONF" identity.version 27 || return 41
+value=$(rumi_conf_get "$CONF" identity.version) || return 42
+[ "$value" = 27 ] || return 43
 
-rumi_conf_has "$CONF" identity.missing >/dev/null 2>&1
-[ "$?" -eq 1 ] || return 42
+rumi_conf_set "$CONF" identity.display_name 'NetBeans IDE Ω' || return 44
+value=$(rumi_conf_get "$CONF" identity.display_name) || return 45
+[ "$value" = 'NetBeans IDE Ω' ] || return 46
 
-rumi_conf_has "$CONF" '1identity.name' >/dev/null 2>&1
-[ "$?" -eq 2 ] || return 43
+rumi_conf_set "$NEW_CONF" schema 1 || return 47
+value=$(rumi_conf_get "$NEW_CONF" schema) || return 48
+[ "$value" = 1 ] || return 49
+
+cp "$CONF" "$TMP/current-before-invalid" || return 50
+rumi_conf_set "$CONF" 'identity..bad' value >/dev/null 2>&1
+[ "$?" -eq 2 ] || return 51
+cmp -s "$TMP/current-before-invalid" "$CONF" || return 52
 
 return 0
 EOT
 
 CONF=$conf; export CONF
+NEW_CONF=$new_conf; export NEW_CONF
+TMP=$tmp; export TMP
 
 (
     unset LC_ALL LC_MESSAGES
