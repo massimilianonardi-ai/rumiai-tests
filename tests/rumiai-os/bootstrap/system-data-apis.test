@@ -99,61 +99,61 @@ TAB=${TAB%X}
     printf 'map.1.value\thello # world \\ path\n'
 } > "$conf" || return 20
 
-rumi_conf_validate "$conf" || { probe_fail 'valid configuration rejected'; return 21; }
-[ "$(rumi_conf_get "$conf" identity.name)" = netbeans ] || { probe_fail 'dot lookup failed'; return 22; }
-[ "$(rumi_conf_get "$conf" identity.display_name)" = 'NetBeans IDE 26' ] || { probe_fail 'space-preserving lookup failed'; return 23; }
-[ "$(rumi_conf_get "$conf" map.1.key)" = 'café' ] || { probe_fail 'Unicode value lookup failed'; return 24; }
-[ "$(rumi_conf_get "$conf" map.1.value)" = 'hello # world \ path' ] || { probe_fail 'opaque value lookup failed'; return 25; }
-rumi_conf_has "$conf" requirements.1.id || { probe_fail 'has failed for existing field'; return 26; }
-rumi_conf_has "$conf" requirements.2.id >/dev/null 2>&1
+RumiAI_conf_validate "$conf" || { probe_fail 'valid configuration rejected'; return 21; }
+[ "$(RumiAI_conf_get "$conf" identity.name)" = netbeans ] || { probe_fail 'dot lookup failed'; return 22; }
+[ "$(RumiAI_conf_get "$conf" identity.display_name)" = 'NetBeans IDE 26' ] || { probe_fail 'space-preserving lookup failed'; return 23; }
+[ "$(RumiAI_conf_get "$conf" map.1.key)" = 'café' ] || { probe_fail 'Unicode value lookup failed'; return 24; }
+[ "$(RumiAI_conf_get "$conf" map.1.value)" = 'hello # world \ path' ] || { probe_fail 'opaque value lookup failed'; return 25; }
+RumiAI_conf_has "$conf" requirements.1.id || { probe_fail 'has failed for existing field'; return 26; }
+RumiAI_conf_has "$conf" requirements.2.id >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'has missing-field status is not 1'; return 27; }
-rumi_conf_get "$conf" 'bad-key' >/dev/null 2>&1
+RumiAI_conf_get "$conf" 'bad-key' >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'invalid query key status is not 2'; return 28; }
 
-namespace=$(rumi_conf_namespace "$conf" requirements) || { probe_fail 'namespace query failed'; return 29; }
+namespace=$(RumiAI_conf_namespace "$conf" requirements) || { probe_fail 'namespace query failed'; return 29; }
 expected_namespace=$(printf 'requirements.count\t1\nrequirements.1.id\tjdk\nrequirements.1.target\tcapability\nrequirements.1.constraint\t>=17 <22')
 [ "$namespace" = "$expected_namespace" ] || { probe_fail 'namespace query returned unexpected rows'; return 30; }
-rumi_conf_namespace "$conf" missing >/dev/null 2>&1
+RumiAI_conf_namespace "$conf" missing >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'missing namespace status is not 1'; return 31; }
 
-rumi_conf_set "$conf" identity.display_name 'NetBeans IDE Twenty Six' || { probe_fail 'field update failed'; return 32; }
-[ "$(rumi_conf_get "$conf" identity.display_name)" = 'NetBeans IDE Twenty Six' ] || { probe_fail 'updated field not visible'; return 33; }
-rumi_conf_set "$conf" selection.1.provider temurin || { probe_fail 'field append failed'; return 34; }
-[ "$(rumi_conf_get "$conf" selection.1.provider)" = temurin ] || { probe_fail 'appended field not visible'; return 35; }
-rumi_conf_remove "$conf" selection.1.provider || { probe_fail 'field removal failed'; return 36; }
-rumi_conf_has "$conf" selection.1.provider >/dev/null 2>&1
+RumiAI_conf_set "$conf" identity.display_name 'NetBeans IDE Twenty Six' || { probe_fail 'field update failed'; return 32; }
+[ "$(RumiAI_conf_get "$conf" identity.display_name)" = 'NetBeans IDE Twenty Six' ] || { probe_fail 'updated field not visible'; return 33; }
+RumiAI_conf_set "$conf" selection.1.provider temurin || { probe_fail 'field append failed'; return 34; }
+[ "$(RumiAI_conf_get "$conf" selection.1.provider)" = temurin ] || { probe_fail 'appended field not visible'; return 35; }
+RumiAI_conf_remove "$conf" selection.1.provider || { probe_fail 'field removal failed'; return 36; }
+RumiAI_conf_has "$conf" selection.1.provider >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'removed field still present'; return 37; }
-rumi_conf_remove "$conf" selection.1.provider >/dev/null 2>&1
+RumiAI_conf_remove "$conf" selection.1.provider >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'missing remove status is not 1'; return 38; }
 
-rumi_conf_set "$created" root.value created || { probe_fail 'configuration creation failed'; return 39; }
-[ "$(rumi_conf_get "$created" root.value)" = created ] || { probe_fail 'created configuration unreadable'; return 40; }
+RumiAI_conf_set "$created" root.value created || { probe_fail 'configuration creation failed'; return 39; }
+[ "$(RumiAI_conf_get "$created" root.value)" = created ] || { probe_fail 'created configuration unreadable'; return 40; }
 
-rumi_conf_set "$conf" identity scalar >/dev/null 2>&1
+RumiAI_conf_set "$conf" identity scalar >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'scalar/namespace collision accepted'; return 41; }
-[ "$(rumi_conf_get "$conf" identity.name)" = netbeans ] || { probe_fail 'failed mutation changed original configuration'; return 42; }
+[ "$(RumiAI_conf_get "$conf" identity.name)" = netbeans ] || { probe_fail 'failed mutation changed original configuration'; return 42; }
 invalid_value=$(printf 'a\tb')
-rumi_conf_set "$conf" invalid.value "$invalid_value" >/dev/null 2>&1
+RumiAI_conf_set "$conf" invalid.value "$invalid_value" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'TAB-containing value accepted'; return 43; }
 invalid_value='a
 b'
-rumi_conf_set "$conf" invalid.value "$invalid_value" >/dev/null 2>&1
+RumiAI_conf_set "$conf" invalid.value "$invalid_value" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'LF-containing value accepted'; return 44; }
 
 printf 'foo\t1\nfoo\t2\n' > "$bad" || return 45
-rumi_conf_validate "$bad" >/dev/null 2>&1
+RumiAI_conf_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'duplicate field accepted'; return 46; }
 printf 'foo\t1\nfoo.bar\t2\n' > "$bad" || return 47
-rumi_conf_validate "$bad" >/dev/null 2>&1
+RumiAI_conf_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'scalar/namespace conflict accepted'; return 48; }
 printf 'requirements.01.id\tx\n' > "$bad" || return 49
-rumi_conf_validate "$bad" >/dev/null 2>&1
+RumiAI_conf_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'non-canonical numeric segment accepted'; return 50; }
 printf 'foo..bar\tx\n' > "$bad" || return 51
-rumi_conf_validate "$bad" >/dev/null 2>&1
+RumiAI_conf_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'empty namespace segment accepted'; return 52; }
 printf 'foo\tvalue\textra\n' > "$bad" || return 53
-rumi_conf_validate "$bad" >/dev/null 2>&1
+RumiAI_conf_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'multiple TAB configuration record accepted'; return 54; }
 
 {
@@ -164,31 +164,31 @@ rumi_conf_validate "$bad" >/dev/null 2>&1
     printf 'L\t-\tdef\t../run/log\t./log\n'
 } > "$inventory" || return 55
 
-rumi_table_validate "$inventory" type mode digest target path || { probe_fail 'valid table rejected'; return 56; }
-rumi_table_validate "$inventory" type mode digest path target >/dev/null 2>&1
+RumiAI_table_validate "$inventory" type mode digest target path || { probe_fail 'valid table rejected'; return 56; }
+RumiAI_table_validate "$inventory" type mode digest path target >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'wrong expected header accepted'; return 57; }
-[ "$(rumi_table_header "$inventory")" = "type${TAB}mode${TAB}digest${TAB}target${TAB}path" ] || { probe_fail 'header query failed'; return 58; }
-paths=$(rumi_table_column "$inventory" path) || { probe_fail 'column query failed'; return 59; }
+[ "$(RumiAI_table_header "$inventory")" = "type${TAB}mode${TAB}digest${TAB}target${TAB}path" ] || { probe_fail 'header query failed'; return 58; }
+paths=$(RumiAI_table_column "$inventory" path) || { probe_fail 'column query failed'; return 59; }
 expected_paths=$(printf '.\n./bin/foo\n./dati/caffè file.txt\n./log')
 [ "$paths" = "$expected_paths" ] || { probe_fail 'column query returned unexpected values'; return 60; }
-selected=$(rumi_table_select "$inventory" path './log') || { probe_fail 'table select failed'; return 61; }
+selected=$(RumiAI_table_select "$inventory" path './log') || { probe_fail 'table select failed'; return 61; }
 [ "$selected" = "L${TAB}-${TAB}def${TAB}../run/log${TAB}./log" ] || { probe_fail 'table select returned unexpected row'; return 62; }
-rumi_table_select "$inventory" path './missing' >/dev/null 2>&1
+RumiAI_table_select "$inventory" path './missing' >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'missing table selection status is not 1'; return 63; }
-rumi_table_column "$inventory" missing >/dev/null 2>&1
+RumiAI_table_column "$inventory" missing >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'missing table column status is not 1'; return 64; }
-rows=$(rumi_table_rows "$inventory") || { probe_fail 'row streaming failed'; return 65; }
+rows=$(RumiAI_table_rows "$inventory") || { probe_fail 'row streaming failed'; return 65; }
 row_count=$(printf '%s\n' "$rows" | command -p awk 'END { print NR }') || return 66
 [ "$row_count" -eq 4 ] || { probe_fail 'row streaming count mismatch'; return 67; }
 
 printf 'type\ttype\nF\tF\n' > "$bad" || return 68
-rumi_table_validate "$bad" >/dev/null 2>&1
+RumiAI_table_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'duplicate table header field accepted'; return 69; }
 printf 'bad-name\tvalue\nx\ty\n' > "$bad" || return 70
-rumi_table_validate "$bad" >/dev/null 2>&1
+RumiAI_table_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'invalid table header field accepted'; return 71; }
 printf 'type\tmode\nF\t0500\textra\n' > "$bad" || return 72
-rumi_table_validate "$bad" >/dev/null 2>&1
+RumiAI_table_validate "$bad" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'wrong table field count accepted'; return 73; }
 
 printf '%s\n' ok > "$PROBE_RESULT" || return 74
