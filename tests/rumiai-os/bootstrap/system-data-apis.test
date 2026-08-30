@@ -1,0 +1,214 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/bootstrap/system-data-apis.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_rumiai_os_validate() {
+    candidate=$1
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+    printf '%s\n' "$target_root"
+}
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+    return 1
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+entry=$root/rumiai-os
+[ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
+[ -r "$root/lib/data.lib" ] || fail 'bootstrap system data library is missing or unreadable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-system-data-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+probe=$tmp/probe
+result=$tmp/result
+transcript=$tmp/transcript
+
+cat > "$probe" <<'PROBE'
+probe_fail()
+{
+    printf '%s\n' "system-data-api: $*" >&2
+    return 1
+}
+
+conf=$PROBE_TMP/config
+created=$PROBE_TMP/created
+bad=$PROBE_TMP/bad
+inventory=$PROBE_TMP/integrity.tsv
+TAB=$(printf '\tX')
+TAB=${TAB%X}
+
+{
+    printf '%s\n' '# human editable configuration'
+    printf '\n'
+    printf 'kind\tpackage\n'
+    printf 'schema\t1\n'
+    printf 'identity.name\tnetbeans\n'
+    printf 'identity.display_name\tNetBeans IDE 26\n'
+    printf 'requirements.count\t1\n'
+    printf 'requirements.1.id\tjdk\n'
+    printf 'requirements.1.target\tcapability\n'
+    printf 'requirements.1.constraint\t>=17 <22\n'
+    printf 'map.count\t1\n'
+    printf 'map.1.key\tcafé\n'
+    printf 'map.1.value\thello # world \\ path\n'
+} > "$conf" || return 20
+
+rumi_conf_validate "$conf" || { probe_fail 'valid configuration rejected'; return 21; }
+[ "$(rumi_conf_get "$conf" identity.name)" = netbeans ] || { probe_fail 'dot lookup failed'; return 22; }
+[ "$(rumi_conf_get "$conf" identity.display_name)" = 'NetBeans IDE 26' ] || { probe_fail 'space-preserving lookup failed'; return 23; }
+[ "$(rumi_conf_get "$conf" map.1.key)" = 'café' ] || { probe_fail 'Unicode value lookup failed'; return 24; }
+[ "$(rumi_conf_get "$conf" map.1.value)" = 'hello # world \ path' ] || { probe_fail 'opaque value lookup failed'; return 25; }
+rumi_conf_has "$conf" requirements.1.id || { probe_fail 'has failed for existing field'; return 26; }
+rumi_conf_has "$conf" requirements.2.id >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'has missing-field status is not 1'; return 27; }
+rumi_conf_get "$conf" 'bad-key' >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'invalid query key status is not 2'; return 28; }
+
+namespace=$(rumi_conf_namespace "$conf" requirements) || { probe_fail 'namespace query failed'; return 29; }
+expected_namespace=$(printf 'requirements.count\t1\nrequirements.1.id\tjdk\nrequirements.1.target\tcapability\nrequirements.1.constraint\t>=17 <22')
+[ "$namespace" = "$expected_namespace" ] || { probe_fail 'namespace query returned unexpected rows'; return 30; }
+rumi_conf_namespace "$conf" missing >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'missing namespace status is not 1'; return 31; }
+
+rumi_conf_set "$conf" identity.display_name 'NetBeans IDE Twenty Six' || { probe_fail 'field update failed'; return 32; }
+[ "$(rumi_conf_get "$conf" identity.display_name)" = 'NetBeans IDE Twenty Six' ] || { probe_fail 'updated field not visible'; return 33; }
+rumi_conf_set "$conf" selection.1.provider temurin || { probe_fail 'field append failed'; return 34; }
+[ "$(rumi_conf_get "$conf" selection.1.provider)" = temurin ] || { probe_fail 'appended field not visible'; return 35; }
+rumi_conf_remove "$conf" selection.1.provider || { probe_fail 'field removal failed'; return 36; }
+rumi_conf_has "$conf" selection.1.provider >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'removed field still present'; return 37; }
+rumi_conf_remove "$conf" selection.1.provider >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'missing remove status is not 1'; return 38; }
+
+rumi_conf_set "$created" root.value created || { probe_fail 'configuration creation failed'; return 39; }
+[ "$(rumi_conf_get "$created" root.value)" = created ] || { probe_fail 'created configuration unreadable'; return 40; }
+
+rumi_conf_set "$conf" identity scalar >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'scalar/namespace collision accepted'; return 41; }
+[ "$(rumi_conf_get "$conf" identity.name)" = netbeans ] || { probe_fail 'failed mutation changed original configuration'; return 42; }
+invalid_value=$(printf 'a\tb')
+rumi_conf_set "$conf" invalid.value "$invalid_value" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'TAB-containing value accepted'; return 43; }
+invalid_value='a
+b'
+rumi_conf_set "$conf" invalid.value "$invalid_value" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'LF-containing value accepted'; return 44; }
+
+printf 'foo\t1\nfoo\t2\n' > "$bad" || return 45
+rumi_conf_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'duplicate field accepted'; return 46; }
+printf 'foo\t1\nfoo.bar\t2\n' > "$bad" || return 47
+rumi_conf_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'scalar/namespace conflict accepted'; return 48; }
+printf 'requirements.01.id\tx\n' > "$bad" || return 49
+rumi_conf_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'non-canonical numeric segment accepted'; return 50; }
+printf 'foo..bar\tx\n' > "$bad" || return 51
+rumi_conf_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'empty namespace segment accepted'; return 52; }
+printf 'foo\tvalue\textra\n' > "$bad" || return 53
+rumi_conf_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'multiple TAB configuration record accepted'; return 54; }
+
+{
+    printf 'type\tmode\tdigest\ttarget\tpath\n'
+    printf 'D\t0500\t-\t-\t.\n'
+    printf 'F\t0500\tabc\t-\t./bin/foo\n'
+    printf 'F\t0400\tghi\t-\t./dati/caffè file.txt\n'
+    printf 'L\t-\tdef\t../run/log\t./log\n'
+} > "$inventory" || return 55
+
+rumi_table_validate "$inventory" type mode digest target path || { probe_fail 'valid table rejected'; return 56; }
+rumi_table_validate "$inventory" type mode digest path target >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'wrong expected header accepted'; return 57; }
+[ "$(rumi_table_header "$inventory")" = "type${TAB}mode${TAB}digest${TAB}target${TAB}path" ] || { probe_fail 'header query failed'; return 58; }
+paths=$(rumi_table_column "$inventory" path) || { probe_fail 'column query failed'; return 59; }
+expected_paths=$(printf '.\n./bin/foo\n./dati/caffè file.txt\n./log')
+[ "$paths" = "$expected_paths" ] || { probe_fail 'column query returned unexpected values'; return 60; }
+selected=$(rumi_table_select "$inventory" path './log') || { probe_fail 'table select failed'; return 61; }
+[ "$selected" = "L${TAB}-${TAB}def${TAB}../run/log${TAB}./log" ] || { probe_fail 'table select returned unexpected row'; return 62; }
+rumi_table_select "$inventory" path './missing' >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'missing table selection status is not 1'; return 63; }
+rumi_table_column "$inventory" missing >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'missing table column status is not 1'; return 64; }
+rows=$(rumi_table_rows "$inventory") || { probe_fail 'row streaming failed'; return 65; }
+row_count=$(printf '%s\n' "$rows" | command -p awk 'END { print NR }') || return 66
+[ "$row_count" -eq 4 ] || { probe_fail 'row streaming count mismatch'; return 67; }
+
+printf 'type\ttype\nF\tF\n' > "$bad" || return 68
+rumi_table_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'duplicate table header field accepted'; return 69; }
+printf 'bad-name\tvalue\nx\ty\n' > "$bad" || return 70
+rumi_table_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'invalid table header field accepted'; return 71; }
+printf 'type\tmode\nF\t0500\textra\n' > "$bad" || return 72
+rumi_table_validate "$bad" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'wrong table field count accepted'; return 73; }
+
+printf '%s\n' ok > "$PROBE_RESULT" || return 74
+return 0
+PROBE
+
+PROBE_TMP=$tmp PROBE_RESULT=$result
+export PROBE_TMP PROBE_RESULT
+
+"$entry" "$probe" >"$transcript" 2>&1 || {
+    status=$?
+    cat "$transcript" >&2
+    fail "system data API probe returned $status"
+}
+
+[ -f "$result" ] || fail 'probe did not produce a result'
+[ "$(cat "$result")" = ok ] || fail 'probe result is not ok'
+[ ! -s "$transcript" ] || {
+    cat "$transcript" >&2
+    fail 'successful probe produced unexpected output'
+}
+
+exit 0
