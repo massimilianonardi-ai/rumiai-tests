@@ -90,27 +90,28 @@ IFS=${IFS%_}
 for source in $sources
 do
     [ -f "$source" ] || continue
-    matches=$(command -p grep -n -E '(^|[^A-Za-z0-9_])rumi_[A-Za-z_][A-Za-z0-9_]*' "$source" 2>/dev/null)
-    status=$?
-    case $status in
-        0)
-            bad=${bad}${bad:+
+    matches=$(command -p awk '
+        /^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*$/ {
+            name=$0
+            sub(/\(\)[[:space:]]*$/, "", name)
+            if (name !~ /^RumiAI_/ && name != "log" && name != "i18n")
+                printf "%d:%s\n", FNR, name
+        }
+    ' "$source") || {
+        IFS=$old_ifs
+        error "cannot inspect source: $source"
+    }
+
+    if [ -n "$matches" ]; then
+        bad=${bad}${bad:+
 }${source}:${matches}
-            ;;
-        1)
-            :
-            ;;
-        *)
-            IFS=$old_ifs
-            error "cannot inspect source: $source"
-            ;;
-    esac
+    fi
 done
 IFS=$old_ifs
 
 if [ -n "$bad" ]; then
     printf '%s\n' "$bad" >&2
-    fail 'lowercase rumi_ namespace found; canonical RumiAI shell namespace is RumiAI_'
+    fail 'noncanonical RumiAI shell function namespace found'
 fi
 
 exit 0
