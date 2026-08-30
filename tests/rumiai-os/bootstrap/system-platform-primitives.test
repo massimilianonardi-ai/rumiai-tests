@@ -1,0 +1,217 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/bootstrap/system-platform-primitives.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@c84aab9db16a455bd17511a697c6dcff96f75bef:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+
+rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_rumiai_os_validate() {
+    candidate=$1
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+    printf '%s\n' "$target_root"
+}
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+    return 1
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+entry=$root/rumiai-os
+[ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
+[ -r "$root/lib/platform.lib" ] || fail 'bootstrap platform library is missing or unreadable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-platform-primitives-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fixture_dir=$tmp/dir
+fixture_file=$tmp/file
+fixture_link=$tmp/link
+replace_source=$tmp/replace-source
+replace_dest=$tmp/replace-dest
+other_dir=$tmp/other
+cross_source=$tmp/cross-source
+shadow_dir=$tmp/shadow
+probe=$tmp/probe
+transcript=$tmp/transcript
+
+mkdir "$fixture_dir" "$other_dir" "$shadow_dir" || error 'cannot create fixture directories'
+chmod 700 "$fixture_dir" "$other_dir" "$shadow_dir" || error 'cannot set fixture directory modes'
+printf '%s' abc > "$fixture_file" || error 'cannot create digest fixture'
+chmod 600 "$fixture_file" || error 'cannot set file mode'
+ln -s file "$fixture_link" || error 'cannot create symlink fixture'
+printf '%s' new > "$replace_source" || error 'cannot create atomic source fixture'
+printf '%s' old > "$replace_dest" || error 'cannot create atomic destination fixture'
+printf '%s' cross > "$cross_source" || error 'cannot create cross-directory source fixture'
+
+cat > "$shadow_dir/sha256sum" <<'SHADOW'
+#!/bin/sh
+printf '%s\n' shadowed
+exit 0
+SHADOW
+cat > "$shadow_dir/shasum" <<'SHADOW'
+#!/bin/sh
+printf '%s\n' shadowed
+exit 0
+SHADOW
+chmod 700 "$shadow_dir/sha256sum" "$shadow_dir/shasum" || error 'cannot prepare digest shadow fixture'
+
+cat > "$probe" <<'PROBE'
+probe_fail()
+{
+    printf '%s\n' "system-platform-primitives: $*" >&2
+    return 1
+}
+
+case $(command -p uname -s 2>/dev/null) in
+    Linux) expected_platform=linux ;;
+    Darwin) expected_platform=macos ;;
+    *) probe_fail 'unsupported reference operating system'; return 20 ;;
+esac
+
+case $(command -p uname -m 2>/dev/null) in
+    arm64|aarch64) expected_architecture=arm64 ;;
+    x86_64|amd64|AMD64) expected_architecture=x86_64 ;;
+    *) probe_fail 'unsupported reference architecture'; return 21 ;;
+esac
+
+expected_execution_platform=$expected_platform-$expected_architecture
+
+[ "$RumiAI_PLATFORM" = "$expected_platform" ] || { probe_fail 'RumiAI_PLATFORM mismatch'; return 22; }
+[ "$RumiAI_ARCHITECTURE" = "$expected_architecture" ] || { probe_fail 'RumiAI_ARCHITECTURE mismatch'; return 23; }
+[ "$RumiAI_EXECUTION_PLATFORM" = "$expected_execution_platform" ] || { probe_fail 'RumiAI_EXECUTION_PLATFORM mismatch'; return 24; }
+[ "$(rumi_platform)" = "$expected_platform" ] || { probe_fail 'rumi_platform mismatch'; return 25; }
+[ "$(rumi_architecture)" = "$expected_architecture" ] || { probe_fail 'rumi_architecture mismatch'; return 26; }
+[ "$(rumi_execution_platform)" = "$expected_execution_platform" ] || { probe_fail 'rumi_execution_platform mismatch'; return 27; }
+
+expected_native_bin=$RumiAI_ROOT/bin/@platforms/$expected_execution_platform
+[ "$RumiAI_PLATFORM_BIN_DIR" = "$expected_native_bin" ] || { probe_fail 'native bin directory mismatch'; return 28; }
+case $PATH in
+    "$expected_native_bin:$RumiAI_ROOT/bin"|"$expected_native_bin:$RumiAI_ROOT/bin:"*) : ;;
+    *) probe_fail 'native/cross-platform PATH precedence mismatch'; return 29 ;;
+esac
+
+canonical=$(rumi_path_canonicalize_existing "$FIXTURE_FILE") || { probe_fail 'canonicalization failed'; return 30; }
+case $canonical in
+    /*) : ;;
+    *) probe_fail 'canonicalized path is not absolute'; return 31 ;;
+esac
+[ -f "$canonical" ] || { probe_fail 'canonicalized file is not the fixture'; return 32; }
+rumi_path_canonicalize_existing "$PROBE_TMP/missing" >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'missing canonical path status is not 1'; return 33; }
+
+[ "$(rumi_fs_type "$FIXTURE_DIR")" = directory ] || { probe_fail 'directory type mismatch'; return 34; }
+[ "$(rumi_fs_type "$FIXTURE_FILE")" = file ] || { probe_fail 'file type mismatch'; return 35; }
+[ "$(rumi_fs_type "$FIXTURE_LINK")" = link ] || { probe_fail 'link type mismatch'; return 36; }
+rumi_fs_type "$PROBE_TMP/missing" >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'missing fs type status is not 1'; return 37; }
+
+[ "$(rumi_fs_mode "$FIXTURE_DIR")" = 0700 ] || { probe_fail 'directory mode mismatch'; return 38; }
+[ "$(rumi_fs_mode "$FIXTURE_FILE")" = 0600 ] || { probe_fail 'file mode mismatch'; return 39; }
+rumi_fs_mode "$FIXTURE_LINK" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'symlink mode status is not 2'; return 40; }
+[ "$(rumi_fs_readlink "$FIXTURE_LINK")" = file ] || { probe_fail 'readlink target mismatch'; return 41; }
+rumi_fs_readlink "$FIXTURE_FILE" >/dev/null 2>&1
+[ "$?" -eq 1 ] || { probe_fail 'non-link readlink status is not 1'; return 42; }
+
+expected_sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+PATH=$SHADOW_DIR:$PATH
+export PATH
+[ "$(rumi_digest_file sha256 "$FIXTURE_FILE")" = "$expected_sha256" ] || { probe_fail 'file SHA-256 mismatch or PATH shadowing leaked in'; return 43; }
+[ "$(rumi_digest_text sha256 abc)" = "$expected_sha256" ] || { probe_fail 'text SHA-256 mismatch or PATH shadowing leaked in'; return 44; }
+rumi_digest_file sha1 "$FIXTURE_FILE" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'unsupported digest algorithm status is not 2'; return 45; }
+
+rumi_atomic_replace "$REPLACE_SOURCE" "$REPLACE_DEST" || { probe_fail 'same-directory atomic replace failed'; return 46; }
+[ ! -e "$REPLACE_SOURCE" ] || { probe_fail 'atomic source still exists'; return 47; }
+[ "$(cat "$REPLACE_DEST")" = new ] || { probe_fail 'atomic destination content mismatch'; return 48; }
+
+rumi_atomic_replace "$CROSS_SOURCE" "$OTHER_DIR/cross-dest" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { probe_fail 'cross-directory atomic replace was not rejected'; return 49; }
+[ -f "$CROSS_SOURCE" ] || { probe_fail 'rejected cross-directory replace consumed source'; return 50; }
+
+return 0
+PROBE
+
+PROBE_TMP=$tmp
+FIXTURE_DIR=$fixture_dir
+FIXTURE_FILE=$fixture_file
+FIXTURE_LINK=$fixture_link
+REPLACE_SOURCE=$replace_source
+REPLACE_DEST=$replace_dest
+CROSS_SOURCE=$cross_source
+OTHER_DIR=$other_dir
+SHADOW_DIR=$shadow_dir
+export PROBE_TMP FIXTURE_DIR FIXTURE_FILE FIXTURE_LINK REPLACE_SOURCE REPLACE_DEST CROSS_SOURCE OTHER_DIR SHADOW_DIR
+
+(
+    unset LC_ALL LC_MESSAGES
+    LANG=C
+    RumiAI_LOG_LEVEL=off
+    export LANG RumiAI_LOG_LEVEL
+    "$entry" "$probe"
+) >"$transcript" 2>&1
+status=$?
+
+[ "$status" -eq 0 ] || {
+    cat "$transcript" >&2
+    fail "system platform primitive probe returned status $status"
+}
+
+[ ! -s "$transcript" ] || {
+    cat "$transcript" >&2
+    fail 'successful platform primitive probe produced unexpected output'
+}
+
+exit 0
