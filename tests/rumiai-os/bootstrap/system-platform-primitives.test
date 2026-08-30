@@ -131,9 +131,9 @@ expected_execution_platform=$expected_platform-$expected_architecture
 [ "$RumiAI_PLATFORM" = "$expected_platform" ] || { probe_fail 'RumiAI_PLATFORM mismatch'; return 22; }
 [ "$RumiAI_ARCHITECTURE" = "$expected_architecture" ] || { probe_fail 'RumiAI_ARCHITECTURE mismatch'; return 23; }
 [ "$RumiAI_EXECUTION_PLATFORM" = "$expected_execution_platform" ] || { probe_fail 'RumiAI_EXECUTION_PLATFORM mismatch'; return 24; }
-[ "$(rumi_platform)" = "$expected_platform" ] || { probe_fail 'rumi_platform mismatch'; return 25; }
-[ "$(rumi_architecture)" = "$expected_architecture" ] || { probe_fail 'rumi_architecture mismatch'; return 26; }
-[ "$(rumi_execution_platform)" = "$expected_execution_platform" ] || { probe_fail 'rumi_execution_platform mismatch'; return 27; }
+[ "$(RumiAI_platform)" = "$expected_platform" ] || { probe_fail 'RumiAI_platform mismatch'; return 25; }
+[ "$(RumiAI_architecture)" = "$expected_architecture" ] || { probe_fail 'RumiAI_architecture mismatch'; return 26; }
+[ "$(RumiAI_execution_platform)" = "$expected_execution_platform" ] || { probe_fail 'RumiAI_execution_platform mismatch'; return 27; }
 
 expected_native_bin=$RumiAI_ROOT/bin/@platforms/$expected_execution_platform
 [ "$RumiAI_PLATFORM_BIN_DIR" = "$expected_native_bin" ] || { probe_fail 'native bin directory mismatch'; return 28; }
@@ -142,42 +142,42 @@ case $PATH in
     *) probe_fail 'native/cross-platform PATH precedence mismatch'; return 29 ;;
 esac
 
-canonical=$(rumi_path_canonicalize_existing "$FIXTURE_FILE") || { probe_fail 'canonicalization failed'; return 30; }
+canonical=$(RumiAI_path_canonicalize_existing "$FIXTURE_FILE") || { probe_fail 'canonicalization failed'; return 30; }
 case $canonical in
     /*) : ;;
     *) probe_fail 'canonicalized path is not absolute'; return 31 ;;
 esac
 [ -f "$canonical" ] || { probe_fail 'canonicalized file is not the fixture'; return 32; }
-rumi_path_canonicalize_existing "$PROBE_TMP/missing" >/dev/null 2>&1
+RumiAI_path_canonicalize_existing "$PROBE_TMP/missing" >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'missing canonical path status is not 1'; return 33; }
 
-[ "$(rumi_fs_type "$FIXTURE_DIR")" = directory ] || { probe_fail 'directory type mismatch'; return 34; }
-[ "$(rumi_fs_type "$FIXTURE_FILE")" = file ] || { probe_fail 'file type mismatch'; return 35; }
-[ "$(rumi_fs_type "$FIXTURE_LINK")" = link ] || { probe_fail 'link type mismatch'; return 36; }
-rumi_fs_type "$PROBE_TMP/missing" >/dev/null 2>&1
+[ "$(RumiAI_fs_type "$FIXTURE_DIR")" = directory ] || { probe_fail 'directory type mismatch'; return 34; }
+[ "$(RumiAI_fs_type "$FIXTURE_FILE")" = file ] || { probe_fail 'file type mismatch'; return 35; }
+[ "$(RumiAI_fs_type "$FIXTURE_LINK")" = link ] || { probe_fail 'link type mismatch'; return 36; }
+RumiAI_fs_type "$PROBE_TMP/missing" >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'missing fs type status is not 1'; return 37; }
 
-[ "$(rumi_fs_mode "$FIXTURE_DIR")" = 0700 ] || { probe_fail 'directory mode mismatch'; return 38; }
-[ "$(rumi_fs_mode "$FIXTURE_FILE")" = 0600 ] || { probe_fail 'file mode mismatch'; return 39; }
-rumi_fs_mode "$FIXTURE_LINK" >/dev/null 2>&1
+[ "$(RumiAI_fs_mode "$FIXTURE_DIR")" = 0700 ] || { probe_fail 'directory mode mismatch'; return 38; }
+[ "$(RumiAI_fs_mode "$FIXTURE_FILE")" = 0600 ] || { probe_fail 'file mode mismatch'; return 39; }
+RumiAI_fs_mode "$FIXTURE_LINK" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'symlink mode status is not 2'; return 40; }
-[ "$(rumi_fs_readlink "$FIXTURE_LINK")" = file ] || { probe_fail 'readlink target mismatch'; return 41; }
-rumi_fs_readlink "$FIXTURE_FILE" >/dev/null 2>&1
+[ "$(RumiAI_fs_readlink "$FIXTURE_LINK")" = file ] || { probe_fail 'readlink target mismatch'; return 41; }
+RumiAI_fs_readlink "$FIXTURE_FILE" >/dev/null 2>&1
 [ "$?" -eq 1 ] || { probe_fail 'non-link readlink status is not 1'; return 42; }
 
 expected_sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 PATH=$SHADOW_DIR:$PATH
 export PATH
-[ "$(rumi_digest_file sha256 "$FIXTURE_FILE")" = "$expected_sha256" ] || { probe_fail 'file SHA-256 mismatch or PATH shadowing leaked in'; return 43; }
-[ "$(rumi_digest_text sha256 abc)" = "$expected_sha256" ] || { probe_fail 'text SHA-256 mismatch or PATH shadowing leaked in'; return 44; }
-rumi_digest_file sha1 "$FIXTURE_FILE" >/dev/null 2>&1
+[ "$(RumiAI_digest_file sha256 "$FIXTURE_FILE")" = "$expected_sha256" ] || { probe_fail 'file SHA-256 mismatch or PATH shadowing leaked in'; return 43; }
+[ "$(RumiAI_digest_text sha256 abc)" = "$expected_sha256" ] || { probe_fail 'text SHA-256 mismatch or PATH shadowing leaked in'; return 44; }
+RumiAI_digest_file sha1 "$FIXTURE_FILE" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'unsupported digest algorithm status is not 2'; return 45; }
 
-rumi_atomic_replace "$REPLACE_SOURCE" "$REPLACE_DEST" || { probe_fail 'same-directory atomic replace failed'; return 46; }
+RumiAI_atomic_replace "$REPLACE_SOURCE" "$REPLACE_DEST" || { probe_fail 'same-directory atomic replace failed'; return 46; }
 [ ! -e "$REPLACE_SOURCE" ] || { probe_fail 'atomic source still exists'; return 47; }
 [ "$(cat "$REPLACE_DEST")" = new ] || { probe_fail 'atomic destination content mismatch'; return 48; }
 
-rumi_atomic_replace "$CROSS_SOURCE" "$OTHER_DIR/cross-dest" >/dev/null 2>&1
+RumiAI_atomic_replace "$CROSS_SOURCE" "$OTHER_DIR/cross-dest" >/dev/null 2>&1
 [ "$?" -eq 2 ] || { probe_fail 'cross-directory atomic replace was not rejected'; return 49; }
 [ -f "$CROSS_SOURCE" ] || { probe_fail 'rejected cross-directory replace consumed source'; return 50; }
 
