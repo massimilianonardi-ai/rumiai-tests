@@ -76,8 +76,10 @@ done
 
 if [ -d "$root/bin" ]; then
     bin_sources=$(find "$root/bin" -type f -print 2>/dev/null) || error 'cannot enumerate system command sources'
-    [ -z "$bin_sources" ] || sources="$sources
+    if [ -n "$bin_sources" ]; then
+        sources="$sources
 $bin_sources"
+    fi
 fi
 
 bad=
