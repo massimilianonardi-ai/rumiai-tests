@@ -66,31 +66,48 @@ case $status in
     *) error 'target discovery failed' ;;
 esac
 
-bad=$(
-    command -p awk '
-        function report(name, file, line) {
-            printf "%s:%d:%s\n", file, line, name
-            found=1
-        }
-        /^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*$/ {
-            name=$0
-            sub(/\(\)[[:space:]]*$/, "", name)
-            if (name ~ /^rumi_/) report(name, FILENAME, FNR)
-        }
-        END { exit found ? 0 : 1 }
-    ' "$root/rumiai-os" "$root"/lib/*.lib 2>/dev/null
-)
-status=$?
+sources=$root/rumiai-os
+for source in "$root"/lib/*.lib
+do
+    [ -f "$source" ] || continue
+    sources="$sources
+$source"
+done
 
-case $status in
-    1)
-        exit 0
-        ;;
-    0)
-        printf '%s\n' "$bad" >&2
-        fail 'lowercase rumi_ function namespace found; canonical namespace is RumiAI_'
-        ;;
-    *)
-        error 'cannot inspect RumiAI shell function declarations'
-        ;;
-esac
+if [ -d "$root/bin" ]; then
+    bin_sources=$(find "$root/bin" -type f -print 2>/dev/null) || error 'cannot enumerate system command sources'
+    [ -z "$bin_sources" ] || sources="$sources
+$bin_sources"
+fi
+
+bad=
+old_ifs=$IFS
+IFS='
+'
+for source in $sources
+do
+    [ -f "$source" ] || continue
+    matches=$(command -p grep -n -E '(^|[^A-Za-z0-9_])rumi_[A-Za-z_][A-Za-z0-9_]*' "$source" 2>/dev/null)
+    status=$?
+    case $status in
+        0)
+            bad=${bad}${bad:+
+}${source}:${matches}
+            ;;
+        1)
+            :
+            ;;
+        *)
+            IFS=$old_ifs
+            error "cannot inspect source: $source"
+            ;;
+    esac
+done
+IFS=$old_ifs
+
+if [ -n "$bad" ]; then
+    printf '%s\n' "$bad" >&2
+    fail 'lowercase rumi_ namespace found; canonical RumiAI shell namespace is RumiAI_'
+fi
+
+exit 0
