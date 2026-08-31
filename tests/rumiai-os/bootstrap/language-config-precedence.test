@@ -103,7 +103,7 @@ probe=$tmp/probe
 stdout_file=$tmp/stdout
 stderr_file=$tmp/stderr
 
-printf '%s\n' it_IT > "$fixture/conf/bootstrap/language" || error 'cannot write language preference'
+printf 'value\tit_IT\n' > "$fixture/conf/bootstrap/language" || error 'cannot write language preference'
 
 cat > "$probe" <<'EOT'
 [ "${RumiAI_LANGUAGE-}" = it_IT ] || return 41
