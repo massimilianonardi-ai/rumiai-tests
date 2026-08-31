@@ -61,7 +61,7 @@ rumiai_test_fixture_rumiai_os_create() {
     [ -d "$source_root/lib" ] || return 1
     [ -d "$source_root/lang" ] || return 1
     [ ! -e "$fixture_root" ] || return 2
-    if ! mkdir -p "$fixture_root/conf/bootstrap"; then return 2; fi
+    if ! mkdir -p "$fixture_root/conf/bootstrap/i18n"; then return 2; fi
     if ! cp "$source_root/rumiai-os" "$fixture_root/rumiai-os"; then rm -rf "$fixture_root"; return 2; fi
     if ! cp -R "$source_root/bin" "$fixture_root/bin"; then rm -rf "$fixture_root"; return 2; fi
     if ! cp -R "$source_root/lib" "$fixture_root/lib"; then rm -rf "$fixture_root"; return 2; fi
@@ -103,7 +103,7 @@ probe=$tmp/probe
 stdout_file=$tmp/stdout
 stderr_file=$tmp/stderr
 
-printf '%s\n' utf8 > "$fixture/conf/bootstrap/text-encoding" || error 'cannot write text-encoding preference'
+printf '%s\n' utf8 > "$fixture/conf/bootstrap/i18n/text-encoding" || error 'cannot write text-encoding preference'
 
 cat > "$probe" <<'EOT'
 [ "${RumiAI_TEXT_ENCODING-}" = UTF-8 ] || return 41
