@@ -214,4 +214,177 @@ status=$?
     fail 'successful platform primitive probe produced unexpected output'
 }
 
+# Transaction primitives: lock acquire/release, file/directory sync, atomic publish.
+
+lock_file=$tmp/manager.lock
+lock_ready=$tmp/lock-ready
+lock_holder_probe=$tmp/lock-holder-probe
+lock_contender_probe=$tmp/lock-contender-probe
+transaction_probe=$tmp/transaction-probe
+transaction_transcript=$tmp/transaction-transcript
+sync_file=$tmp/sync-file
+sync_dir=$tmp/sync-dir
+publish_staging=$tmp/publish-staging
+publish_final=$tmp/publish-final
+publish_existing_staging=$tmp/publish-existing-staging
+publish_existing_final=$tmp/publish-existing-final
+publish_cross_parent=$tmp/publish-cross-parent
+publish_cross_staging=$publish_cross_parent/staging
+publish_cross_final=$tmp/publish-cross-final
+
+printf '%s' durable > "$sync_file" || error 'cannot create sync file fixture'
+mkdir "$sync_dir" "$publish_staging" "$publish_existing_staging" "$publish_existing_final" "$publish_cross_parent" "$publish_cross_staging" || error 'cannot create transaction fixture directories'
+printf '%s' complete > "$publish_staging/value" || error 'cannot create publish fixture'
+printf '%s' keep > "$publish_existing_staging/value" || error 'cannot create existing-target staging fixture'
+printf '%s' existing > "$publish_existing_final/value" || error 'cannot create existing publish target fixture'
+printf '%s' cross > "$publish_cross_staging/value" || error 'cannot create cross-parent publish fixture'
+
+cat > "$shadow_dir/sync" <<'SHADOW'
+#!/bin/sh
+exit 99
+SHADOW
+chmod 700 "$shadow_dir/sync" || error 'cannot prepare sync shadow fixture'
+
+cat > "$lock_contender_probe" <<'CONTENDER'
+RumiAI_lock_acquire "$LOCK_FILE"
+status=$?
+case $status in
+    0)
+        handle=$RumiAI_LOCK_HANDLE
+        RumiAI_lock_release "$handle" || return 82
+        return 0
+        ;;
+    1)
+        return 75
+        ;;
+    *)
+        return 83
+        ;;
+esac
+CONTENDER
+
+cat > "$lock_holder_probe" <<'HOLDER'
+RumiAI_lock_acquire "$LOCK_FILE" || return 84
+: > "$LOCK_READY" || return 85
+while :
+do
+    :
+done
+HOLDER
+
+cat > "$transaction_probe" <<'TRANSACTION'
+transaction_fail()
+{
+    printf '%s\n' "system-platform-primitives: $*" >&2
+    return 1
+}
+
+PATH=$SHADOW_DIR:$PATH
+export PATH
+
+RumiAI_file_sync "$SYNC_FILE" || { transaction_fail 'file sync failed or PATH shadowing leaked in'; return 60; }
+RumiAI_directory_sync "$SYNC_DIR" || { transaction_fail 'directory sync failed or PATH shadowing leaked in'; return 61; }
+RumiAI_file_sync "$SYNC_DIR" >/dev/null 2>&1
+[ "$?" -eq 1 ] || { transaction_fail 'file sync accepted a directory'; return 62; }
+RumiAI_directory_sync "$SYNC_FILE" >/dev/null 2>&1
+[ "$?" -eq 1 ] || { transaction_fail 'directory sync accepted a regular file'; return 63; }
+
+RumiAI_lock_acquire "$LOCK_FILE" || { transaction_fail 'cannot acquire transaction lock'; return 64; }
+[ "$RumiAI_LOCK_HANDLE" = 9 ] || { transaction_fail 'unexpected lock handle'; return 65; }
+
+"$RumiAI_BOOTSTRAP_BIN" "$LOCK_CONTENDER_PROBE" >/dev/null 2>&1
+[ "$?" -eq 75 ] || { transaction_fail 'concurrent lock acquisition was not rejected as busy'; return 66; }
+
+handle=$RumiAI_LOCK_HANDLE
+RumiAI_lock_release "$handle" || { transaction_fail 'cannot release transaction lock'; return 67; }
+[ -z "${RumiAI_LOCK_HANDLE-}" ] || { transaction_fail 'lock handle remained after release'; return 68; }
+
+"$RumiAI_BOOTSTRAP_BIN" "$LOCK_CONTENDER_PROBE" >/dev/null 2>&1
+[ "$?" -eq 0 ] || { transaction_fail 'released lock was not immediately reacquirable'; return 69; }
+
+rm -f "$LOCK_READY"
+"$RumiAI_BOOTSTRAP_BIN" "$LOCK_HOLDER_PROBE" >/dev/null 2>&1 &
+holder_pid=$!
+spin=0
+while [ ! -f "$LOCK_READY" ] && [ "$spin" -lt 1000000 ]
+do
+    spin=$((spin + 1))
+done
+[ -f "$LOCK_READY" ] || {
+    kill -KILL "$holder_pid" 2>/dev/null || :
+    wait "$holder_pid" 2>/dev/null || :
+    transaction_fail 'lock holder did not become ready'
+    return 70
+}
+
+"$RumiAI_BOOTSTRAP_BIN" "$LOCK_CONTENDER_PROBE" >/dev/null 2>&1
+[ "$?" -eq 75 ] || {
+    kill -KILL "$holder_pid" 2>/dev/null || :
+    wait "$holder_pid" 2>/dev/null || :
+    transaction_fail 'live holder did not exclude contender'
+    return 71
+}
+
+kill -KILL "$holder_pid" 2>/dev/null || { transaction_fail 'cannot terminate lock holder'; return 72; }
+wait "$holder_pid" 2>/dev/null || :
+
+"$RumiAI_BOOTSTRAP_BIN" "$LOCK_CONTENDER_PROBE" >/dev/null 2>&1
+[ "$?" -eq 0 ] || { transaction_fail 'lock was not released after holder termination'; return 73; }
+
+RumiAI_atomic_publish "$PUBLISH_STAGING" "$PUBLISH_FINAL" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { transaction_fail 'atomic publish was allowed without manager lock'; return 74; }
+
+RumiAI_lock_acquire "$LOCK_FILE" || { transaction_fail 'cannot reacquire lock for publish'; return 75; }
+handle=$RumiAI_LOCK_HANDLE
+
+RumiAI_atomic_publish "$PUBLISH_STAGING" "$PUBLISH_FINAL" || { transaction_fail 'atomic publish failed'; return 76; }
+[ ! -e "$PUBLISH_STAGING" ] || { transaction_fail 'published staging directory still exists'; return 77; }
+[ -d "$PUBLISH_FINAL" ] || { transaction_fail 'published final directory is missing'; return 78; }
+[ "$(cat "$PUBLISH_FINAL/value")" = complete ] || { transaction_fail 'published final content mismatch'; return 79; }
+
+RumiAI_atomic_publish "$PUBLISH_EXISTING_STAGING" "$PUBLISH_EXISTING_FINAL" >/dev/null 2>&1
+[ "$?" -eq 1 ] || { transaction_fail 'existing publish target was not rejected'; return 80; }
+[ -d "$PUBLISH_EXISTING_STAGING" ] || { transaction_fail 'existing-target rejection consumed staging'; return 81; }
+
+RumiAI_atomic_publish "$PUBLISH_CROSS_STAGING" "$PUBLISH_CROSS_FINAL" >/dev/null 2>&1
+[ "$?" -eq 2 ] || { transaction_fail 'cross-parent publish was not rejected'; return 82; }
+[ -d "$PUBLISH_CROSS_STAGING" ] || { transaction_fail 'cross-parent rejection consumed staging'; return 83; }
+
+RumiAI_lock_release "$handle" || { transaction_fail 'cannot release publish lock'; return 84; }
+return 0
+TRANSACTION
+
+LOCK_FILE=$lock_file
+LOCK_READY=$lock_ready
+LOCK_HOLDER_PROBE=$lock_holder_probe
+LOCK_CONTENDER_PROBE=$lock_contender_probe
+SYNC_FILE=$sync_file
+SYNC_DIR=$sync_dir
+PUBLISH_STAGING=$publish_staging
+PUBLISH_FINAL=$publish_final
+PUBLISH_EXISTING_STAGING=$publish_existing_staging
+PUBLISH_EXISTING_FINAL=$publish_existing_final
+PUBLISH_CROSS_STAGING=$publish_cross_staging
+PUBLISH_CROSS_FINAL=$publish_cross_final
+export LOCK_FILE LOCK_READY LOCK_HOLDER_PROBE LOCK_CONTENDER_PROBE SYNC_FILE SYNC_DIR PUBLISH_STAGING PUBLISH_FINAL PUBLISH_EXISTING_STAGING PUBLISH_EXISTING_FINAL PUBLISH_CROSS_STAGING PUBLISH_CROSS_FINAL SHADOW_DIR
+
+(
+    unset LC_ALL LC_MESSAGES
+    LANG=C
+    RumiAI_LOG_LEVEL=off
+    export LANG RumiAI_LOG_LEVEL
+    "$entry" "$transaction_probe"
+) >"$transaction_transcript" 2>&1
+status=$?
+
+[ "$status" -eq 0 ] || {
+    cat "$transaction_transcript" >&2
+    fail "transaction primitive probe returned status $status"
+}
+
+[ ! -s "$transaction_transcript" ] || {
+    cat "$transaction_transcript" >&2
+    fail 'successful transaction primitive probe produced unexpected output'
+}
+
 exit 0
