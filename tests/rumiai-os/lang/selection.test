@@ -1,0 +1,58 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/lang/selection.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_origin_ok() { candidate=$1; origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;; esac; return 1; }
+rumiai_test_target_validate() { candidate=$1; [ -n "$candidate" ] || return 1; [ -f "$candidate/rumiai-os" ] || return 1; rumiai_test_target_origin_ok "$candidate" || return 1; target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1; [ -f "$target_root/rumiai-os" ] || return 1; printf '%s\n' "$target_root"; }
+rumiai_test_target_find() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then rumiai_test_target_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; return 0; fi; candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3; while :; do if rumiai_test_target_validate "$candidate"; then return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; [ "$parent" != "$candidate" ] || break; candidate=$parent; done; return 1; }
+resolve_test_dir() { self=$0; case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac; self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P; }
+make_fixture() { source_root=$1; fixture_root=$2; mkdir "$fixture_root" || return 1; cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || return 1; cp -R "$source_root/bin" "$fixture_root/bin" || return 1; cp -R "$source_root/lang" "$fixture_root/lang" || return 1; chmod u+x "$fixture_root/rumiai-os" || return 1; }
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+root=$(rumiai_test_target_find "$suite_root"); status=$?; case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+[ -x "$root/bin/sys/lang-set" ] || fail 'bin/sys/lang-set is missing or not executable'
+command -v readlink >/dev/null 2>&1 || error 'readlink is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-lang-selection-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture=$tmp/root; make_fixture "$root" "$fixture" || error 'cannot materialize isolated rumiai-os fixture'
+rm -rf "$fixture/lang" || error 'cannot reset fixture catalogs'
+mkdir -p "$fixture/lang/en_US/filesystem/nested" "$fixture/lang/it_IT/filesystem" "$fixture/lang/it_IT/execution" || error 'cannot create fixture catalogs'
+printf '%s\n' one > "$fixture/lang/en_US/filesystem/one" || error 'cannot write English message'
+: > "$fixture/lang/en_US/filesystem/empty" || error 'cannot write empty message'
+printf '%s\n' deep > "$fixture/lang/en_US/filesystem/nested/deep" || error 'cannot write nested non-message file'
+printf '%s\n' uno > "$fixture/lang/it_IT/filesystem/one" || error 'cannot write Italian filesystem message'
+printf '%s\n' due > "$fixture/lang/it_IT/execution/two" || error 'cannot write Italian execution message'
+
+stdout=$tmp/stdout; stderr=$tmp/stderr; tab=$(printf '\tX'); tab=${tab%X}
+LC_ALL=C "$fixture/rumiai-os" "$fixture/bin/sys/lang-set" >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'lang-set query failed'; }
+expected="current${tab}en_US
+en_US${tab}1
+it_IT${tab}2"
+[ "$(cat "$stdout")" = "$expected" ] || { cat "$stdout" >&2; fail 'lang-set query output or non-empty message counts are incorrect'; }
+[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'lang-set query produced unexpected stderr'; }
+
+"$fixture/rumiai-os" "$fixture/bin/sys/lang-set" it_IT >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'lang-set could not select an available language'; }
+[ ! -s "$stdout" ] || fail 'successful lang-set selection produced unexpected stdout'
+[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'successful lang-set selection produced unexpected stderr'; }
+[ -L "$fixture/lang/current" ] || fail 'lang-set did not create current as a symlink'
+[ "$(readlink "$fixture/lang/current")" = it_IT ] || fail 'lang-set current target is not the relative language name'
+
+LC_ALL=C "$fixture/rumiai-os" "$fixture/bin/sys/lang-set" >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'lang-set post-selection query failed'; }
+case $(cat "$stdout") in "current${tab}it_IT"*) : ;; *) cat "$stdout" >&2; fail 'lang-set did not report selected current language' ;; esac
+
+"$fixture/rumiai-os" "$fixture/bin/sys/lang-set" fr_FR >"$stdout" 2>"$stderr" && fail 'lang-set accepted unavailable language'
+[ "$(readlink "$fixture/lang/current")" = it_IT ] || fail 'unavailable language changed current selection'
+
+"$fixture/rumiai-os" "$fixture/bin/sys/lang-set" en_US extra >"$stdout" 2>"$stderr" && fail 'lang-set accepted more than one argument'
+[ "$(readlink "$fixture/lang/current")" = it_IT ] || fail 'invalid argument count changed current selection'
+
+rm -f "$fixture/lang/current" || error 'cannot remove current symlink'
+printf '%s\n' keep > "$fixture/lang/current" || error 'cannot create non-symlink current fixture'
+"$fixture/rumiai-os" "$fixture/bin/sys/lang-set" en_US >"$stdout" 2>"$stderr" && fail 'lang-set overwrote non-symlink current object'
+[ -f "$fixture/lang/current" ] && [ ! -L "$fixture/lang/current" ] || fail 'non-symlink current object was replaced'
+[ "$(cat "$fixture/lang/current")" = keep ] || fail 'non-symlink current object content changed'
+
+exit 0

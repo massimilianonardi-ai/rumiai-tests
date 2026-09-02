@@ -1,0 +1,101 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/lang/public-command.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_validate() {
+    candidate=$1
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_origin_ok "$candidate" || return 1
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+    printf '%s\n' "$target_root"
+}
+rumiai_test_target_find() {
+    start=$1
+    command -v git >/dev/null 2>&1 || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_validate "$candidate"; then return 0; fi
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+    return 1
+}
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+make_fixture() {
+    source_root=$1
+    fixture_root=$2
+    mkdir "$fixture_root" || return 1
+    cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || return 1
+    cp -R "$source_root/bin" "$fixture_root/bin" || return 1
+    cp -R "$source_root/lang" "$fixture_root/lang" || return 1
+    chmod u+x "$fixture_root/rumiai-os" || return 1
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+root=$(rumiai_test_target_find "$suite_root")
+status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+[ -x "$root/bin/sys/lang" ] || fail 'bin/sys/lang is missing or not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-lang-public-command-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture=$tmp/root
+make_fixture "$root" "$fixture" || error 'cannot materialize isolated rumiai-os fixture'
+
+rm -rf "$fixture/lang" || error 'cannot reset fixture catalogs'
+mkdir -p "$fixture/lang/en_US/demo" "$fixture/lang/it_IT/demo" || error 'cannot create fixture catalogs'
+printf '%s\n' 'English message' > "$fixture/lang/en_US/demo/item" || error 'cannot write fallback message'
+printf '%s\n' 'Messaggio italiano' > "$fixture/lang/it_IT/demo/item" || error 'cannot write selected message'
+ln -s it_IT "$fixture/lang/current" || error 'cannot create selected language link'
+
+stdout=$tmp/stdout
+stderr=$tmp/stderr
+"$fixture/rumiai-os" "$fixture/bin/sys/lang" demo item >"$stdout" 2>"$stderr"
+status=$?
+[ "$status" -eq 0 ] || { cat "$stderr" >&2; fail "selected-language command returned $status"; }
+[ "$(cat "$stdout")" = 'Messaggio italiano' ] || fail 'public lang command did not use selected catalog'
+[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'selected-language command produced unexpected stderr'; }
+
+rm -f "$fixture/lang/current" || error 'cannot remove current language link'
+"$fixture/rumiai-os" "$fixture/bin/sys/lang" demo item >"$stdout" 2>"$stderr"
+status=$?
+[ "$status" -eq 0 ] || { cat "$stderr" >&2; fail "fallback command returned $status"; }
+[ "$(cat "$stdout")" = 'English message' ] || fail 'public lang command did not use fallback catalog'
+[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'fallback command produced unexpected stderr'; }
+
+rm -f "$fixture/lang/en_US/demo/item" || error 'cannot remove fallback message'
+"$fixture/rumiai-os" "$fixture/bin/sys/lang" demo item >"$stdout" 2>"$stderr"
+status=$?
+[ "$status" -eq 0 ] || { cat "$stderr" >&2; fail "identifier fallback command returned $status"; }
+[ "$(cat "$stdout")" = 'demo.item' ] || fail 'public lang command did not return domain.message-id fallback'
+[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'identifier fallback produced unexpected stderr'; }
+
+exit 0
