@@ -222,4 +222,36 @@ EOF
 [ "$(readlink "$fixture_stub/bin/sys-osarch")" = "sys-$stub_osarch" ] || fail "osarch-update did not consume m_OSARCH from osarch.lib.sh"
 [ "$(readlink "$fixture_stub/bin/ext-osarch")" = "ext-$stub_osarch" ] || fail "osarch-update duplicated host detection instead of consuming osarch.lib.sh"
 
+fixture_unsupported="$tmp/root-unsupported"
+make_fixture "$root" "$fixture_unsupported" || error "cannot materialize unsupported-osarch fixture"
+rm -f "$fixture_unsupported/bin/sys-osarch" "$fixture_unsupported/bin/ext-osarch" || error "cannot reset unsupported-osarch active links"
+
+cat > "$fixture_unsupported/lib/sh/osarch.lib.sh" <<'EOF'
+m_OSARCH_OS="unsupported-os"
+m_OSARCH_ARCH="x86_64"
+m_OSARCH="unsupported-os-x86_64"
+export -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
+readonly -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
+EOF
+
+"$fixture_unsupported/rumiai-os" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported operating system"
+[ ! -e "$fixture_unsupported/bin/sys-unsupported-os-x86_64" ] || fail "unsupported OS created a sys-<osarch> directory"
+[ ! -e "$fixture_unsupported/bin/ext-unsupported-os-x86_64" ] || fail "unsupported OS created an ext-<osarch> directory"
+[ ! -e "$fixture_unsupported/bin/sys-osarch" ] && [ ! -L "$fixture_unsupported/bin/sys-osarch" ] || fail "unsupported OS changed sys-osarch"
+[ ! -e "$fixture_unsupported/bin/ext-osarch" ] && [ ! -L "$fixture_unsupported/bin/ext-osarch" ] || fail "unsupported OS changed ext-osarch"
+
+cat > "$fixture_unsupported/lib/sh/osarch.lib.sh" <<'EOF'
+m_OSARCH_OS="linux"
+m_OSARCH_ARCH="unsupported-arch"
+m_OSARCH="linux-unsupported-arch"
+export -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
+readonly -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
+EOF
+
+"$fixture_unsupported/rumiai-os" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported architecture"
+[ ! -e "$fixture_unsupported/bin/sys-linux-unsupported-arch" ] || fail "unsupported architecture created a sys-<osarch> directory"
+[ ! -e "$fixture_unsupported/bin/ext-linux-unsupported-arch" ] || fail "unsupported architecture created an ext-<osarch> directory"
+[ ! -e "$fixture_unsupported/bin/sys-osarch" ] && [ ! -L "$fixture_unsupported/bin/sys-osarch" ] || fail "unsupported architecture changed sys-osarch"
+[ ! -e "$fixture_unsupported/bin/ext-osarch" ] && [ ! -L "$fixture_unsupported/bin/ext-osarch" ] || fail "unsupported architecture changed ext-osarch"
+
 exit "0"
