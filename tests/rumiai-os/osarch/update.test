@@ -1,53 +1,225 @@
 #!/bin/sh
 
-TEST_ID=rumiai-os/osarch/update.test
-fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
-error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
-skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+TEST_ID="rumiai-os/osarch/update.test"
 
-rumiai_test_target_origin_ok() { candidate=$1; origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;; esac; return 1; }
-rumiai_test_target_validate() { candidate=$1; [ -n "$candidate" ] || return 1; [ -f "$candidate/rumiai-os" ] || return 1; rumiai_test_target_origin_ok "$candidate" || return 1; target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1; [ -f "$target_root/rumiai-os" ] || return 1; printf '%s\n' "$target_root"; }
-rumiai_test_target_find() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then rumiai_test_target_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; return 0; fi; candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3; while :; do if rumiai_test_target_validate "$candidate"; then return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; [ "$parent" != "$candidate" ] || break; candidate=$parent; done; return 1; }
-resolve_test_dir() { self=$0; case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac; self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P; }
-make_fixture() { source_root=$1; fixture_root=$2; mkdir "$fixture_root" || return 1; cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || return 1; cp -R "$source_root/bin" "$fixture_root/bin" || return 1; cp -R "$source_root/lang" "$fixture_root/lang" || return 1; chmod u+x "$fixture_root/rumiai-os" || return 1; }
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
 
-test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
-root=$(rumiai_test_target_find "$suite_root"); status=$?; case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
-[ -x "$root/bin/sys/osarch-update" ] || fail 'bin/sys/osarch-update is missing or not executable'
-command -v readlink >/dev/null 2>&1 || error 'readlink is unavailable'
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
 
-case $(command -p uname -s 2>/dev/null) in Linux) expected_platform=linux ;; Darwin) expected_platform=macos ;; CYGWIN*|MSYS*|MINGW*) expected_platform=windows ;; *) fail 'host platform is outside the osarch vocabulary' ;; esac
-case $(command -p uname -m 2>/dev/null) in arm64|ARM64|aarch64|AARCH64) expected_architecture=arm64 ;; x86_64|X86_64|amd64|AMD64|x64|X64) expected_architecture=x86_64 ;; *) fail 'host architecture is outside the osarch vocabulary' ;; esac
-expected=$expected_platform-$expected_architecture
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
 
-tmp=${TMPDIR:-/tmp}/rumiai-osarch-update-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture=$tmp/root; make_fixture "$root" "$fixture" || error 'cannot materialize isolated rumiai-os fixture'
-rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error 'cannot reset active osarch links'
-stdout=$tmp/stdout; stderr=$tmp/stderr
+rumiai_test_target_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
 
-"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'osarch-update failed on supported host'; }
-[ ! -s "$stdout" ] || fail 'successful osarch-update produced unexpected stdout'
-[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'successful osarch-update produced unexpected stderr'; }
-[ -d "$fixture/bin/sys-$expected" ] || fail 'osarch-update did not create sys-<osarch> directory'
-[ -d "$fixture/bin/ext-$expected" ] || fail 'osarch-update did not create ext-<osarch> directory'
-[ -L "$fixture/bin/sys-osarch" ] || fail 'sys-osarch is not a symlink'
-[ -L "$fixture/bin/ext-osarch" ] || fail 'ext-osarch is not a symlink'
-[ "$(readlink "$fixture/bin/sys-osarch")" = "sys-$expected" ] || fail 'sys-osarch target is incorrect or not relative'
-[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$expected" ] || fail 'ext-osarch target is incorrect or not relative'
+  case "$origin" in
+    "https://github.com/massimilianonardi-ai/rumiai-os.git"|"git@github.com:massimilianonardi-ai/rumiai-os.git"|"ssh://git@github.com/massimilianonardi-ai/rumiai-os.git")
+      return "0"
+      ;;
+  esac
 
-rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error 'cannot replace active links for refresh test'
-ln -s sys-bogus "$fixture/bin/sys-osarch" || error 'cannot create stale sys-osarch link'
-ln -s ext-bogus "$fixture/bin/ext-osarch" || error 'cannot create stale ext-osarch link'
-"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'osarch-update could not refresh stale active links'; }
-[ "$(readlink "$fixture/bin/sys-osarch")" = "sys-$expected" ] || fail 'sys-osarch stale link was not refreshed'
-[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$expected" ] || fail 'ext-osarch stale link was not refreshed'
+  return "1"
+}
 
-rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error 'cannot prepare non-symlink conflict fixture'
-ln -s sys-bogus "$fixture/bin/sys-osarch" || error 'cannot create preflight sys link'
-printf '%s\n' keep > "$fixture/bin/ext-osarch" || error 'cannot create non-symlink ext-osarch fixture'
-"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail 'osarch-update overwrote non-symlink active-link pathname'
-[ "$(readlink "$fixture/bin/sys-osarch")" = sys-bogus ] || fail 'osarch-update partially changed sys-osarch before rejecting ext-osarch conflict'
-[ -f "$fixture/bin/ext-osarch" ] && [ ! -L "$fixture/bin/ext-osarch" ] || fail 'non-symlink ext-osarch object was replaced'
-[ "$(cat "$fixture/bin/ext-osarch")" = keep ] || fail 'non-symlink ext-osarch content changed'
+rumiai_test_target_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
 
-exit 0
+rumiai_test_target_find()
+{
+  start="$1"
+  command -v git >/dev/null 2>&1 || return "3"
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+
+  while :
+  do
+    if rumiai_test_target_validate "$candidate"
+    then
+      return "0"
+    fi
+
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*)
+      :
+      ;;
+    *)
+      self="$(command -v "$self" 2>/dev/null)" || return "1"
+      ;;
+  esac
+
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+make_fixture()
+{
+  source_root="$1"
+  fixture_root="$2"
+
+  mkdir "$fixture_root" || return "1"
+  cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || return "1"
+  cp -R "$source_root/bin" "$fixture_root/bin" || return "1"
+  cp -R "$source_root/lang" "$fixture_root/lang" || return "1"
+  cp -R "$source_root/lib" "$fixture_root/lib" || return "1"
+  chmod u+x "$fixture_root/rumiai-os" || return "1"
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+
+root="$(rumiai_test_target_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    skip "rumiai-os target checkout not found"
+    ;;
+  "2")
+    fail "invalid explicit rumiai-os target"
+    ;;
+  *)
+    error "target discovery failed"
+    ;;
+esac
+
+[ -x "$root/bin/sys/osarch-update" ] || fail "bin/sys/osarch-update is missing or not executable"
+[ -f "$root/lib/sh/osarch.lib.sh" ] || fail "lib/sh/osarch.lib.sh is missing"
+[ ! -x "$root/lib/sh/osarch.lib.sh" ] || fail "lib/sh/osarch.lib.sh must not be executable"
+command -v readlink >/dev/null 2>&1 || error "readlink is unavailable"
+
+case "$(command -p -- uname -s 2>/dev/null)" in
+  "Linux") expected_platform="linux" ;;
+  "Darwin") expected_platform="macos" ;;
+  "CYGWIN"*|"MSYS"*|"MINGW"*) expected_platform="windows" ;;
+  *) fail "host platform is outside the osarch-update vocabulary" ;;
+esac
+
+case "$(command -p -- uname -m 2>/dev/null)" in
+  "arm64"|"ARM64"|"aarch64"|"AARCH64") expected_architecture="arm64" ;;
+  "x86_64"|"X86_64"|"amd64"|"AMD64"|"x64"|"X64") expected_architecture="x86_64" ;;
+  *) fail "host architecture is outside the osarch-update vocabulary" ;;
+esac
+
+expected="${expected_platform}-${expected_architecture}"
+tmp="${TMPDIR:-/tmp}/rumiai-osarch-update-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fixture="$tmp/root"
+make_fixture "$root" "$fixture" || error "cannot materialize isolated rumiai-os fixture"
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot reset active osarch links"
+stdout="$tmp/stdout"
+stderr="$tmp/stderr"
+
+"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
+  cat "$stderr" >&2
+  fail "osarch-update failed on supported host"
+}
+
+[ ! -s "$stdout" ] || fail "successful osarch-update produced unexpected stdout"
+[ ! -s "$stderr" ] || {
+  cat "$stderr" >&2
+  fail "successful osarch-update produced unexpected stderr"
+}
+[ -d "$fixture/bin/sys-$expected" ] || fail "osarch-update did not create sys-<osarch> directory"
+[ -d "$fixture/bin/ext-$expected" ] || fail "osarch-update did not create ext-<osarch> directory"
+[ -L "$fixture/bin/sys-osarch" ] || fail "sys-osarch is not a symlink"
+[ -L "$fixture/bin/ext-osarch" ] || fail "ext-osarch is not a symlink"
+[ "$(readlink "$fixture/bin/sys-osarch")" = "sys-$expected" ] || fail "sys-osarch target is incorrect or not relative"
+[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$expected" ] || fail "ext-osarch target is incorrect or not relative"
+
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot replace active links for refresh test"
+ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create stale sys-osarch link"
+ln -s "ext-bogus" "$fixture/bin/ext-osarch" || error "cannot create stale ext-osarch link"
+"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
+  cat "$stderr" >&2
+  fail "osarch-update could not refresh stale active links"
+}
+[ "$(readlink "$fixture/bin/sys-osarch")" = "sys-$expected" ] || fail "sys-osarch stale link was not refreshed"
+[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$expected" ] || fail "ext-osarch stale link was not refreshed"
+
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot prepare non-symlink conflict fixture"
+ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create preflight sys link"
+printf -- '%s\n' "keep" > "$fixture/bin/ext-osarch" || error "cannot create non-symlink ext-osarch fixture"
+"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update overwrote non-symlink active-link pathname"
+[ "$(readlink "$fixture/bin/sys-osarch")" = "sys-bogus" ] || fail "osarch-update partially changed sys-osarch before rejecting ext-osarch conflict"
+[ -f "$fixture/bin/ext-osarch" ] && [ ! -L "$fixture/bin/ext-osarch" ] || fail "non-symlink ext-osarch object was replaced"
+[ "$(cat "$fixture/bin/ext-osarch")" = "keep" ] || fail "non-symlink ext-osarch content changed"
+
+fixture_stub="$tmp/root-stub"
+make_fixture "$root" "$fixture_stub" || error "cannot materialize library-driven fixture"
+rm -f "$fixture_stub/bin/sys-osarch" "$fixture_stub/bin/ext-osarch" || error "cannot reset stub active links"
+
+if [ "$expected" = "linux-x86_64" ]
+then
+  stub_platform="macos"
+  stub_architecture="arm64"
+else
+  stub_platform="linux"
+  stub_architecture="x86_64"
+fi
+stub_osarch="${stub_platform}-${stub_architecture}"
+
+cat > "$fixture_stub/lib/sh/osarch.lib.sh" <<EOF
+m_OSARCH_OS="$stub_platform"
+m_OSARCH_ARCH="$stub_architecture"
+m_OSARCH="$stub_osarch"
+export -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
+readonly -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
+EOF
+
+"$fixture_stub/rumiai-os" "$fixture_stub/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
+  cat "$stderr" >&2
+  fail "osarch-update failed with deterministic detection-library fixture"
+}
+[ "$(readlink "$fixture_stub/bin/sys-osarch")" = "sys-$stub_osarch" ] || fail "osarch-update did not consume m_OSARCH from osarch.lib.sh"
+[ "$(readlink "$fixture_stub/bin/ext-osarch")" = "ext-$stub_osarch" ] || fail "osarch-update duplicated host detection instead of consuming osarch.lib.sh"
+
+exit "0"
