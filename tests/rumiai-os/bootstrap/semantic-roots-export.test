@@ -4,7 +4,7 @@
 # massimilianonardi-ai/rumiai-tests@5af68cbff09ce979df3dff91e398e287eadd48b7:lib/rumiai-os-target.lib
 # Copied inline intentionally to preserve test independence.
 
-TEST_ID=rumiai-os/bootstrap/semantic-roots.test
+TEST_ID=rumiai-os/bootstrap/semantic-roots-export.test
 
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
@@ -62,7 +62,7 @@ case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail
 entry=$root/rumiai-os
 [ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-semantic-roots-$$
+tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-semantic-roots-export-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
@@ -70,21 +70,23 @@ probe=$tmp/probe
 transcript=$tmp/transcript
 
 cat > "$probe" <<'EOT'
-[ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
-[ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BOOTSTRAP_BIN" ] || return 42
-[ "${m_BIN_DIR-}" = "$EXPECTED_BIN_DIR" ] || return 43
-[ "${m_LIB_DIR-}" = "$EXPECTED_LIB_DIR" ] || return 44
-[ "${m_PKG_DIR-}" = "$EXPECTED_PKG_DIR" ] || return 45
-[ "${m_LANG_DIR-}" = "$EXPECTED_LANG_DIR" ] || return 46
-[ "${m_SRC_DIR-}" = "$EXPECTED_SRC_DIR" ] || return 47
-[ "${m_CONF_DIR-}" = "$EXPECTED_CONF_DIR" ] || return 48
-[ "${m_DATA_DIR-}" = "$EXPECTED_DATA_DIR" ] || return 49
-[ "${m_HOME_DIR-}" = "$EXPECTED_HOME_DIR" ] || return 50
-[ "${m_CACHE_DIR-}" = "$EXPECTED_CACHE_DIR" ] || return 51
-[ "${m_LOG_DIR-}" = "$EXPECTED_LOG_DIR" ] || return 52
-[ "${m_RUN_DIR-}" = "$EXPECTED_RUN_DIR" ] || return 53
-[ "${m_TMP_DIR-}" = "$EXPECTED_TMP_DIR" ] || return 54
-[ "${m_VAR_DIR+x}" != x ] || return 55
+command -p sh -c '
+[ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || exit 41
+[ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BOOTSTRAP_BIN" ] || exit 42
+[ "${m_BIN_DIR-}" = "$EXPECTED_BIN_DIR" ] || exit 43
+[ "${m_LIB_DIR-}" = "$EXPECTED_LIB_DIR" ] || exit 44
+[ "${m_PKG_DIR-}" = "$EXPECTED_PKG_DIR" ] || exit 45
+[ "${m_LANG_DIR-}" = "$EXPECTED_LANG_DIR" ] || exit 46
+[ "${m_SRC_DIR-}" = "$EXPECTED_SRC_DIR" ] || exit 47
+[ "${m_CONF_DIR-}" = "$EXPECTED_CONF_DIR" ] || exit 48
+[ "${m_DATA_DIR-}" = "$EXPECTED_DATA_DIR" ] || exit 49
+[ "${m_HOME_DIR-}" = "$EXPECTED_HOME_DIR" ] || exit 50
+[ "${m_CACHE_DIR-}" = "$EXPECTED_CACHE_DIR" ] || exit 51
+[ "${m_LOG_DIR-}" = "$EXPECTED_LOG_DIR" ] || exit 52
+[ "${m_RUN_DIR-}" = "$EXPECTED_RUN_DIR" ] || exit 53
+[ "${m_TMP_DIR-}" = "$EXPECTED_TMP_DIR" ] || exit 54
+[ "${m_VAR_DIR+x}" != x ] || exit 55
+' || return $?
 return 0
 EOT
 
@@ -112,12 +114,12 @@ export EXPECTED_ROOT EXPECTED_BOOTSTRAP_BIN EXPECTED_BIN_DIR EXPECTED_LIB_DIR EX
 ) >"$transcript" 2>&1 || {
     status=$?
     cat "$transcript" >&2
-    fail "semantic roots probe returned $status"
+    fail "semantic roots export probe returned $status"
 }
 
 [ ! -s "$transcript" ] || {
     cat "$transcript" >&2
-    fail 'semantic roots probe produced unexpected output'
+    fail 'semantic roots export probe produced unexpected output'
 }
 
 exit 0
