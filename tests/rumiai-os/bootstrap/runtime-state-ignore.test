@@ -1,0 +1,112 @@
+#!/bin/sh
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@21e2047da8906f8b0de9919e7841d78ecce98974:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+
+TEST_ID=rumiai-os/bootstrap/runtime-state-ignore.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_rumiai_os_validate() {
+    candidate=$1
+    [ -n "$candidate" ] || return 1
+    [ -f "$candidate/rumiai-os" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/rumiai-os" ] || return 1
+    printf '%s\n' "$target_root"
+}
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
+        [ "$candidate" != / ] || break
+        parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+        [ "$parent" != "$candidate" ] || break
+        candidate=$parent
+    done
+    return 1
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+assert_ignored() {
+    path=$1
+    git -C "$tmp" check-ignore -q -- "$path" >/dev/null 2>&1
+    status=$?
+    case $status in
+        0) : ;;
+        1) fail "$path is not ignored" ;;
+        *) error "git check-ignore failed for $path with status $status" ;;
+    esac
+}
+
+assert_not_ignored() {
+    path=$1
+    git -C "$tmp" check-ignore -q -- "$path" >/dev/null 2>&1
+    status=$?
+    case $status in
+        0) fail "$path is unexpectedly ignored" ;;
+        1) : ;;
+        *) error "git check-ignore failed for $path with status $status" ;;
+    esac
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
+root=$(rumiai_test_target_rumiai_os_find "$start")
+status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+ignore_file=$root/.gitignore
+[ -r "$ignore_file" ] || fail '.gitignore is not readable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-runtime-state-ignore-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+git -C "$tmp" init -q || error 'cannot initialize isolated Git repository'
+cp "$ignore_file" "$tmp/.gitignore" || error 'cannot copy target .gitignore'
+
+for area in pkg data home cache log run tmp; do
+    mkdir -p "$tmp/$area" "$tmp/nested/$area" || error "cannot create probe directories for $area"
+    : > "$tmp/$area/probe" || error "cannot create top-level probe for $area"
+    : > "$tmp/nested/$area/probe" || error "cannot create nested probe for $area"
+    assert_ignored "$area/probe"
+    assert_not_ignored "nested/$area/probe"
+done
+
+mkdir -p "$tmp/conf" "$tmp/nested" || error 'cannot create remaining probe directories'
+: > "$tmp/conf/probe" || error 'cannot create conf probe'
+: > "$tmp/.DS_Store" || error 'cannot create root .DS_Store probe'
+: > "$tmp/nested/.DS_Store" || error 'cannot create nested .DS_Store probe'
+
+assert_not_ignored 'conf/probe'
+assert_ignored '.DS_Store'
+assert_ignored 'nested/.DS_Store'
+
+exit 0
