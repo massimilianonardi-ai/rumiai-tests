@@ -138,11 +138,15 @@ mkdir "$tmp" || error "cannot create temporary directory"
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 repository_dir="$tmp/repository"
+ambiguous_repository_dir="$tmp/ambiguous-repository"
 fakebin="$tmp/bin"
-mkdir "$repository_dir" "$fakebin" || error "cannot create fixture directories"
+mkdir "$repository_dir" "$ambiguous_repository_dir" "$fakebin" || error "cannot create fixture directories"
 printf -- '%s\n' "github" > "$repository_dir/type"
 printf -- '%s\n' "acme" > "$repository_dir/owner"
 printf -- '%s\n' "demo" > "$repository_dir/repository"
+printf -- '%s\n' "github" > "$ambiguous_repository_dir/type"
+printf -- '%s\n' "acme" > "$ambiguous_repository_dir/owner"
+printf -- '%s\n' "ambiguous" > "$ambiguous_repository_dir/repository"
 
 cat > "$fakebin/http-fetch" <<'EOF_HTTP_FETCH'
 #!/bin/sh
@@ -153,6 +157,9 @@ do
 done
 
 case "$url" in
+  *'/repos/acme/ambiguous/releases?per_page=100&page=1')
+    printf '%s\n' '[{"tag_name":"same-a","draft":false,"prerelease":false,"created_at":"2026-01-20T00:00:00Z","published_at":"2026-01-21T00:00:00Z"},{"tag_name":"same-b","draft":false,"prerelease":false,"created_at":"2026-01-20T00:00:00Z","published_at":"2026-01-21T00:00:00Z"}]'
+    ;;
   *'/releases?per_page=100&page=1')
     printf '['
     i=1
@@ -161,13 +168,19 @@ case "$url" in
       [ "$i" -eq 1 ] || printf ','
       case "$i" in
         1)
-          printf '{"tag_name":"v2","draft":false,"prerelease":false,"created_at":"2026-02-01T00:00:00Z"}'
+          printf '{"tag_name":"v2","draft":false,"prerelease":false,"created_at":"2026-02-01T00:00:00Z","published_at":"2026-02-02T00:00:00Z"}'
           ;;
         2)
           printf '{"tag_name":"draft2","draft":true,"prerelease":false,"created_at":"2026-03-01T00:00:00Z"}'
           ;;
         3)
           printf '{"tag_name":"pre3","draft":false,"prerelease":true,"created_at":"2026-04-01T00:00:00Z"}'
+          ;;
+        4)
+          printf '{"tag_name":"v1b","draft":false,"prerelease":false,"created_at":"2026-01-15T00:00:00Z","published_at":"2026-01-17T00:00:00Z"}'
+          ;;
+        5)
+          printf '{"tag_name":"v1a","draft":false,"prerelease":false,"created_at":"2026-01-15T00:00:00Z","published_at":"2026-01-16T00:00:00Z"}'
           ;;
         *)
           printf '{"tag_name":"draft%s","draft":true,"prerelease":false,"created_at":"2025-01-01T00:00:00Z"}' "$i"
@@ -178,7 +191,7 @@ case "$url" in
     printf ']\n'
     ;;
   *'/releases?per_page=100&page=2')
-    printf '%s\n' '[{"tag_name":"v1","draft":false,"prerelease":false,"created_at":"2026-01-01T00:00:00Z"}]'
+    printf '%s\n' '[{"tag_name":"v1","draft":false,"prerelease":false,"created_at":"2026-01-01T00:00:00Z","published_at":"2026-01-02T00:00:00Z"}]'
     ;;
   *'/releases/latest')
     printf '%s\n' '{"tag_name":"v2","draft":false,"prerelease":false,"created_at":"2026-02-01T00:00:00Z"}'
@@ -204,8 +217,15 @@ export m_LIB_DIR
 
 versions="$(pkg_repository_list_versions "$repository_dir")" || fail "pkg_repository_list_versions failed"
 expected_versions="v1
+v1a
+v1b
 v2"
-[ "$versions" = "$expected_versions" ] || fail "version list was not paged, filtered and ordered oldest -> latest"
+[ "$versions" = "$expected_versions" ] || fail "version list was not paged, filtered and ordered by created_at then published_at"
+
+if pkg_repository_list_versions "$ambiguous_repository_dir" >/dev/null 2>&1
+then
+  fail "releases with identical created_at and published_at were accepted as an ordered succession"
+fi
 
 latest="$(pkg_repository_resolve_version "$repository_dir")" || fail "latest version resolution failed"
 [ "$latest" = "v2" ] || fail "latest version resolution returned $latest instead of v2"
