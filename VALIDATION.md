@@ -37,6 +37,26 @@ rumiai-validate
 
 Il bootstrap root resta intenzionalmente minimale. La logica evolutiva viene caricata soltanto dopo il self-update della suite.
 
+## Chiusura della finestra su Linux
+
+Quando `rumiai-validate` viene avviato su Linux in un terminale effimero, per esempio tramite un file manager che apre una finestra terminale destinata a chiudersi alla fine del comando, il launcher mantiene la finestra aperta e mostra:
+
+```text
+Press Enter to close...
+```
+
+Il prompt viene attivato soltanto quando stdin e stdout sono terminali e il launcher rileva che non sta semplicemente girando come comando figlio di una normale shell interattiva. Un normale:
+
+```text
+./rumiai-validate
+```
+
+digitato in una shell Linux continua quindi a terminare senza richiedere Enter.
+
+Esecuzioni non interattive, redirect, pipe e automazioni non vengono mai bloccati dal meccanismo di hold. Il tasto Enter serve soltanto a chiudere la finestra dopo che tutto l'output è già stato prodotto; l'exit status originale del launcher o del runner viene preservato.
+
+Il finalizer appartiene al bootstrap root affinché funzioni anche per errori che avvengono prima del caricamento della logica evolutiva. Un `exec` riuscito durante il self-update sostituisce invece normalmente il processo con il launcher aggiornato senza mostrare un prompt intermedio.
+
 ## Sessioni pendenti e cleanliness
 
 File untracked arbitrari continuano a non essere ammessi prima dell'effettiva validation.
