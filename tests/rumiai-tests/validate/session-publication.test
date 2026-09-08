@@ -35,30 +35,30 @@ bare_remote=$tmp/remote.git
 seed=$tmp/seed
 work=$tmp/work
 
-git init --bare -q "$bare_remote" || error 'cannot initialize publication remote'
-git init -q "$seed" || error 'cannot initialize publication seed'
+git init --bare -q -- "$bare_remote" || error 'cannot initialize publication remote'
+git init -q -- "$seed" || error 'cannot initialize publication seed'
 seed_branch=$(git -C "$seed" symbolic-ref --short HEAD) || error 'cannot determine publication branch'
-git -C "$seed" config user.name RumiAI-Test || error 'cannot configure seed Git name'
-git -C "$seed" config user.email rumiai-test@example.invalid || error 'cannot configure seed Git email'
+git -C "$seed" config -- user.name RumiAI-Test || error 'cannot configure seed Git name'
+git -C "$seed" config -- user.email rumiai-test@example.invalid || error 'cannot configure seed Git email'
 mkdir "$seed/sessions" || error 'cannot create seed sessions directory'
 : > "$seed/sessions/.gitkeep" || error 'cannot create seed sessions placeholder'
 printf '%s\n' base > "$seed/base-marker" || error 'cannot create base marker'
-git -C "$seed" add . || error 'cannot stage base suite'
+git -C "$seed" add -- . || error 'cannot stage base suite'
 git -C "$seed" commit -qm base-suite || error 'cannot commit base suite'
 recorded_commit=$(git -C "$seed" rev-parse HEAD) || error 'cannot read base suite commit'
-git -C "$seed" remote add origin "$bare_remote" || error 'cannot add publication remote'
-git -C "$seed" push -q -u origin "$seed_branch" || error 'cannot push base suite'
-git -C "$bare_remote" symbolic-ref HEAD "refs/heads/$seed_branch" || error 'cannot set publication remote HEAD'
+git -C "$seed" remote add -- origin "$bare_remote" || error 'cannot add publication remote'
+git -C "$seed" push -q -u -- origin "$seed_branch" || error 'cannot push base suite'
+git -C "$bare_remote" symbolic-ref -- HEAD "refs/heads/$seed_branch" || error 'cannot set publication remote HEAD'
 
 printf '%s\n' later > "$seed/later-marker" || error 'cannot create later marker'
-git -C "$seed" add later-marker || error 'cannot stage later suite change'
+git -C "$seed" add -- later-marker || error 'cannot stage later suite change'
 git -C "$seed" commit -qm later-suite || error 'cannot commit later suite change'
-git -C "$seed" push -q origin "$seed_branch" || error 'cannot push later suite change'
+git -C "$seed" push -q -- origin "$seed_branch" || error 'cannot push later suite change'
 current_commit=$(git -C "$seed" rev-parse HEAD) || error 'cannot read current suite commit'
 
-git clone -q "$bare_remote" "$work" || error 'cannot clone publication worktree'
-git -C "$work" config user.name RumiAI-Test || error 'cannot configure worktree Git name'
-git -C "$work" config user.email rumiai-test@example.invalid || error 'cannot configure worktree Git email'
+git clone -q -- "$bare_remote" "$work" || error 'cannot clone publication worktree'
+git -C "$work" config -- user.name RumiAI-Test || error 'cannot configure worktree Git name'
+git -C "$work" config -- user.email rumiai-test@example.invalid || error 'cannot configure worktree Git email'
 
 run_id=20260908T235959+0200-4242
 session_dir=$work/sessions/$run_id
@@ -83,8 +83,8 @@ fatal() { say_error "$*"; exit "$LAUNCHER_STATUS_ERROR"; }
 suite_root=$work
 . "$launcher_lib"
 
-original_remote=$(git -C "$work" remote get-url origin) || error 'cannot read publication remote URL'
-git -C "$work" remote set-url origin "$tmp/missing.git" || error 'cannot install failing publication remote'
+original_remote=$(git -C "$work" remote get-url -- origin) || error 'cannot read publication remote URL'
+git -C "$work" remote set-url -- origin "$tmp/missing.git" || error 'cannot install failing publication remote'
 (
     publish_pending_validation_sessions
 ) > "$tmp/failure-output" 2>&1
@@ -94,7 +94,7 @@ failure_status=$?
     fail "failed publication returned $failure_status instead of 3"
 }
 [ -d "$session_dir" ] || fail 'failed publication removed local validation evidence'
-git -C "$work" remote set-url origin "$original_remote" || error 'cannot restore publication remote'
+git -C "$work" remote set-url -- origin "$original_remote" || error 'cannot restore publication remote'
 
 publish_pending_validation_sessions > "$tmp/publication-output" 2>&1 || {
     cat "$tmp/publication-output" >&2

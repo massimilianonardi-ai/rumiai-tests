@@ -84,8 +84,8 @@ session_field() {
 }
 
 validation_remote() {
-    branch=$(git -C "$suite_root" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
-    remote=$(git -C "$suite_root" config --get "branch.$branch.remote" 2>/dev/null) || return 1
+    branch=$(git -C "$suite_root" symbolic-ref --quiet --short -- HEAD 2>/dev/null) || return 1
+    remote=$(git -C "$suite_root" config --get -- "branch.$branch.remote" 2>/dev/null) || return 1
     [ -n "$remote" ] && [ "$remote" != "." ] || return 1
     printf '%s\n' "$remote"
 }
@@ -104,7 +104,7 @@ prepare_validation_session_tree() {
         return 2
     fi
 
-    GIT_INDEX_FILE="$index_file" git -C "$suite_root" read-tree "$recorded_commit" >/dev/null 2>&1 || {
+    GIT_INDEX_FILE="$index_file" git -C "$suite_root" read-tree -- "$recorded_commit" >/dev/null 2>&1 || {
         rm -f "$index_file" 2>/dev/null || :
         return 1
     }
