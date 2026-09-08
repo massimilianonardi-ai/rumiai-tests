@@ -1,0 +1,117 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/validate/pull-config-and-run.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+command -v git >/dev/null 2>&1 || skip 'git is required'
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+suite_root=${test_dir%/*}
+suite_root=${suite_root%/*}
+suite_root=${suite_root%/*}
+[ -f "$suite_root/rumiai-validate" ] || error 'cannot locate rumiai-validate'
+[ -f "$suite_root/lib/rumiai-os-target.lib" ] || error 'cannot locate rumiai-os target discovery library'
+
+tmp=${TMPDIR:-/tmp}/rumiai-validate-flow-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+commit_repo() {
+    repo=$1
+    message=$2
+    git -C "$repo" -c user.name=RumiAI-Test -c user.email=rumiai-test@example.invalid commit -q -m "$message"
+}
+
+mkdir "$tmp/target-remote.git" || error 'cannot create target remote directory'
+git -C "$tmp/target-remote.git" init --bare -q || error 'cannot initialize target remote'
+mkdir "$tmp/target-seed" || error 'cannot create target seed directory'
+git -C "$tmp/target-seed" init -q || error 'cannot initialize target seed'
+target_branch=$(git -C "$tmp/target-seed" symbolic-ref --short HEAD) || error 'cannot determine target branch'
+printf 'src/\n' > "$tmp/target-seed/.gitignore" || error 'cannot write target gitignore'
+printf '#!/bin/sh\nexit 0\n' > "$tmp/target-seed/rumiai-os" || error 'cannot write target entrypoint'
+chmod +x "$tmp/target-seed/rumiai-os" || error 'cannot make target entrypoint executable'
+git -C "$tmp/target-seed" add . || error 'cannot stage initial target'
+commit_repo "$tmp/target-seed" initial-target || error 'cannot commit initial target'
+git -C "$tmp/target-seed" remote add origin "$tmp/target-remote.git" || error 'cannot add target remote'
+git -C "$tmp/target-seed" push -q -u origin "$target_branch" || error 'cannot push initial target'
+git -C "$tmp/target-remote.git" symbolic-ref HEAD "refs/heads/$target_branch" || error 'cannot set target remote HEAD'
+
+mkdir "$tmp/work" || error 'cannot create work directory'
+git clone -q "$tmp/target-remote.git" "$tmp/work/rumiai-os" || error 'cannot clone target worktree'
+git -C "$tmp/work/rumiai-os" remote rename origin local || error 'cannot rename target local remote'
+git -C "$tmp/work/rumiai-os" remote add origin https://github.com/massimilianonardi-ai/rumiai-os.git || error 'cannot configure canonical target origin'
+git -C "$tmp/work/rumiai-os" config "branch.$target_branch.remote" local || error 'cannot configure target tracking remote'
+git -C "$tmp/work/rumiai-os" config "branch.$target_branch.merge" "refs/heads/$target_branch" || error 'cannot configure target tracking branch'
+
+printf 'updated\n' > "$tmp/target-seed/marker" || error 'cannot write target update marker'
+git -C "$tmp/target-seed" add marker || error 'cannot stage target update'
+commit_repo "$tmp/target-seed" updated-target || error 'cannot commit target update'
+git -C "$tmp/target-seed" push -q origin "$target_branch" || error 'cannot push target update'
+expected_target=$(git -C "$tmp/target-seed" rev-parse HEAD) || error 'cannot read expected target commit'
+
+mkdir "$tmp/suite-remote.git" || error 'cannot create suite remote directory'
+git -C "$tmp/suite-remote.git" init --bare -q || error 'cannot initialize suite remote'
+mkdir "$tmp/suite-seed" || error 'cannot create suite seed directory'
+git -C "$tmp/suite-seed" init -q || error 'cannot initialize suite seed'
+suite_branch=$(git -C "$tmp/suite-seed" symbolic-ref --short HEAD) || error 'cannot determine suite branch'
+cp "$suite_root/rumiai-validate" "$tmp/suite-seed/rumiai-validate" || error 'cannot copy launcher'
+chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher executable'
+mkdir -p "$tmp/suite-seed/lib" "$tmp/suite-seed/sessions" || error 'cannot create suite support directories'
+cp "$suite_root/lib/rumiai-os-target.lib" "$tmp/suite-seed/lib/rumiai-os-target.lib" || error 'cannot copy target discovery library'
+cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
+#!/bin/sh
+printf '%s\n' "$PWD" > "$FAKE_PWD"
+printf '%s\n' "$*" > "$FAKE_ARGS"
+exit 0
+EOT
+chmod +x "$tmp/suite-seed/rumiai-test" || error 'cannot make fake runner executable'
+initial_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot read initial target commit'
+printf 'rumiai-os-commit\t%s\nselection\told-selection\n' "$initial_target" > "$tmp/suite-seed/rumiai-validate.conf" || error 'cannot write initial launcher configuration'
+git -C "$tmp/suite-seed" add . || error 'cannot stage initial suite'
+commit_repo "$tmp/suite-seed" initial-suite || error 'cannot commit initial suite'
+git -C "$tmp/suite-seed" remote add origin "$tmp/suite-remote.git" || error 'cannot add suite remote'
+git -C "$tmp/suite-seed" push -q -u origin "$suite_branch" || error 'cannot push initial suite'
+git -C "$tmp/suite-remote.git" symbolic-ref HEAD "refs/heads/$suite_branch" || error 'cannot set suite remote HEAD'
+
+mkdir -p "$tmp/work/rumiai-os/src" || error 'cannot create target source directory'
+git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite worktree'
+
+printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/rumiai-validate.conf" || error 'cannot update launcher configuration'
+git -C "$tmp/suite-seed" add rumiai-validate.conf || error 'cannot stage launcher configuration update'
+commit_repo "$tmp/suite-seed" updated-suite || error 'cannot commit suite update'
+git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push suite update'
+expected_suite=$(git -C "$tmp/suite-seed" rev-parse HEAD) || error 'cannot read expected suite commit'
+
+mkdir "$tmp/elsewhere" || error 'cannot create unrelated working directory'
+FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
+    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" > "$tmp/transcript" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
+    cat "$tmp/transcript" >&2
+    fail "launcher returned $status"
+fi
+
+actual_suite=$(git -C "$tmp/work/rumiai-os/src/rumiai-tests" rev-parse HEAD) || error 'cannot read updated suite commit'
+actual_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot read updated target commit'
+[ "$actual_suite" = "$expected_suite" ] || fail 'launcher did not fast-forward rumiai-tests before execution'
+[ "$actual_target" = "$expected_target" ] || fail 'launcher did not fast-forward rumiai-os before execution'
+[ -f "$tmp/runner-args" ] || fail 'configured runner was not executed'
+[ "$(cat "$tmp/runner-args")" = '--validation -- rumiai-os/bootstrap' ] || fail 'launcher did not use the updated configured selection'
+[ "$(cat "$tmp/runner-pwd")" = "$tmp/work/rumiai-os/src/rumiai-tests" ] || fail 'launcher did not enter the rumiai-tests repository root before running'
+
+exit 0
