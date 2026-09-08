@@ -112,9 +112,8 @@ latest_completed_session() {
     latest=$(
         for candidate in "$sessions_dir"/*; do
             [ -d "$candidate" ] || continue
-            case ${candidate##*/} in
-                .*) continue ;;
-            esac
+            candidate_name=${candidate##*/}
+            [ "${candidate_name#.*}" = "$candidate_name" ] || continue
             printf '%s\n' "$candidate"
         done | LC_ALL=C sort | sed -n '$p'
     )
