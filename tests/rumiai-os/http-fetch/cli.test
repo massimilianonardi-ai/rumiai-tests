@@ -1,0 +1,259 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/http-fetch/cli.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@c39b1a2c0b6e96e8e43809a6e66d16918cf90a7d:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+
+  rumiai_test_target_have git || return "3"
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*)
+      :
+      ;;
+    *)
+      self="$(command -v "$self" 2>/dev/null)" || return "1"
+      ;;
+  esac
+
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    skip "rumiai-os target checkout not found"
+    ;;
+  "2")
+    fail "invalid explicit rumiai-os target"
+    ;;
+  *)
+    error "target discovery failed"
+    ;;
+esac
+
+
+command_path="$root/bin/sys/http-fetch"
+[ -f "$command_path" ] || fail "bin/sys/http-fetch is missing"
+[ -x "$command_path" ] || fail "bin/sys/http-fetch is not executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-http-fetch-cli-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fakebin="$tmp/bin"
+mkdir "$fakebin" || error "cannot create fake backend directory"
+args_file="$tmp/curl.args"
+wget_marker="$tmp/wget.called"
+
+cat > "$fakebin/curl" <<'EOF_CURL'
+#!/bin/sh
+if [ "${1-}" = "--version" ]
+then
+  printf -- '%s\n' 'curl 99.0'
+  exit 0
+fi
+
+: > "$HTTP_FETCH_ARGS" || exit 90
+output=
+while [ "$#" -gt 0 ]
+do
+  printf -- '%s\n' "$1" >> "$HTTP_FETCH_ARGS" || exit 90
+  if [ "$1" = "--output" ]
+  then
+    shift
+    [ "$#" -gt 0 ] || exit 91
+    printf -- '%s\n' "$1" >> "$HTTP_FETCH_ARGS" || exit 90
+    output=$1
+  fi
+  shift
+done
+
+if [ -n "$output" ]
+then
+  printf -- '%s\n' 'body-from-curl' > "$output" || exit 92
+else
+  printf -- '%s\n' 'body-from-curl'
+fi
+EOF_CURL
+chmod "700" "$fakebin/curl" || error "cannot make fake curl executable"
+
+cat > "$fakebin/wget" <<'EOF_WGET'
+#!/bin/sh
+printf -- '%s\n' called > "$HTTP_FETCH_WGET_MARKER"
+exit 99
+EOF_WGET
+chmod "700" "$fakebin/wget" || error "cannot make fake wget executable"
+
+runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
+export HTTP_FETCH_ARGS="$args_file"
+export HTTP_FETCH_WGET_MARKER="$wget_marker"
+
+stdout="$tmp/stdout"
+stderr="$tmp/stderr"
+PATH="$runtime_path" "$command_path" \
+  -H "X-One: one" \
+  -H "X-Two: two words" \
+  -t "9" \
+  -- "https://example.test/path?x=1" >"$stdout" 2>"$stderr" || {
+    status="$?"
+    cat "$stderr" >&2
+    fail "http-fetch curl request returned $status"
+  }
+
+actual_body="$(cat "$stdout")" || error "cannot read curl stdout"
+[ "$actual_body" = "body-from-curl" ] || fail "http-fetch did not preserve curl body on stdout"
+[ ! -e "$wget_marker" ] || fail "wget was invoked even though curl was available"
+
+expected_args="$tmp/expected.args"
+cat > "$expected_args" <<'EOF_EXPECTED'
+-q
+--fail
+--location
+--silent
+--show-error
+--connect-timeout
+9
+--speed-limit
+1
+--speed-time
+9
+--proto
+=http,https
+--proto-redir
+=http,https
+--header
+X-One: one
+--header
+X-Two: two words
+--
+https://example.test/path?x=1
+EOF_EXPECTED
+
+cmp "$expected_args" "$args_file" >/dev/null 2>&1 || {
+  printf -- '%s\n' "$TEST_ID: unexpected curl arguments:" >&2
+  cat "$args_file" >&2
+  fail "curl backend arguments do not match the http-fetch contract"
+}
+
+output_file="$tmp/output"
+: > "$stdout"
+PATH="$runtime_path" "$command_path" -o "$output_file" -- "https://example.test/file" >"$stdout" 2>"$stderr" || {
+  status="$?"
+  cat "$stderr" >&2
+  fail "http-fetch -o request returned $status"
+}
+[ ! -s "$stdout" ] || fail "http-fetch -o produced unexpected stdout"
+actual_file="$(cat "$output_file")" || error "cannot read http-fetch output file"
+[ "$actual_file" = "body-from-curl" ] || fail "http-fetch -o did not write the backend body"
+
+expect_invalid()
+{
+  PATH="$runtime_path" "$command_path" "$@" >"$tmp/invalid.stdout" 2>"$tmp/invalid.stderr"
+  status="$?"
+  [ "$status" -eq "2" ] || fail "invalid invocation returned status $status instead of 2"
+}
+
+expect_invalid "https://example.test/"
+expect_invalid -- "ftp://example.test/file"
+expect_invalid -t "0" -- "https://example.test/"
+expect_invalid -H "HeaderWithoutColon" -- "https://example.test/"
+expect_invalid -H "" -- "https://example.test/"
+
+exit "0"

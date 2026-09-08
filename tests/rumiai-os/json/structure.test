@@ -1,0 +1,179 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/json/structure.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@c39b1a2c0b6e96e8e43809a6e66d16918cf90a7d:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+
+  rumiai_test_target_have git || return "3"
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*)
+      :
+      ;;
+    *)
+      self="$(command -v "$self" 2>/dev/null)" || return "1"
+      ;;
+  esac
+
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    skip "rumiai-os target checkout not found"
+    ;;
+  "2")
+    fail "invalid explicit rumiai-os target"
+    ;;
+  *)
+    error "target discovery failed"
+    ;;
+esac
+
+
+library="$root/lib/sh/json.lib.sh"
+[ -f "$library" ] || fail "lib/sh/json.lib.sh is missing"
+[ ! -x "$library" ] || fail "lib/sh/json.lib.sh must not be executable"
+
+IFS= read -r first_line < "$library" || first_line=""
+case "$first_line" in
+  "#!"*) fail "lib/sh/json.lib.sh must not contain a shebang" ;;
+esac
+
+. "$library" || error "cannot source json.lib.sh"
+
+compact='{"name":"alpha","count":7,"enabled":true,"none":null,"ignored":{"nested":[1,2]},"items":[{"name":"one","size":1},{"name":"two","size":2}]}'
+pretty='{
+  "name": "alpha",
+  "count": 7,
+  "enabled": true,
+  "none": null,
+  "ignored": {
+    "nested": [1, 2]
+  },
+  "items": [
+    {"name": "one", "size": 1},
+    {"name": "two", "size": 2}
+  ]
+}'
+
+tab="$(printf '\t')"
+expected_object="s:alpha${tab}n:7${tab}b:true${tab}z:${tab}m:"
+compact_object="$(printf -- '%s\n' "$compact" | json_object_fields name count enabled none missing)" || fail "compact root object could not be parsed"
+pretty_object="$(printf -- '%s\n' "$pretty" | json_object_fields name count enabled none missing)" || fail "pretty root object could not be parsed"
+
+[ "$compact_object" = "$expected_object" ] || fail "compact root object produced unexpected typed fields"
+[ "$pretty_object" = "$expected_object" ] || fail "pretty root object produced unexpected typed fields"
+
+expected_items="s:one${tab}n:1
+s:two${tab}n:2"
+compact_items="$(printf -- '%s\n' "$compact" | json_object_array_object_fields items name size)" || fail "compact nested object array could not be parsed"
+pretty_items="$(printf -- '%s\n' "$pretty" | json_object_array_object_fields items name size)" || fail "pretty nested object array could not be parsed"
+
+[ "$compact_items" = "$expected_items" ] || fail "compact nested object array produced unexpected records"
+[ "$pretty_items" = "$expected_items" ] || fail "pretty nested object array produced unexpected records"
+
+array='[{"name":"first","enabled":false},{"name":"second"}]'
+expected_array="s:first${tab}b:false
+s:second${tab}m:"
+actual_array="$(printf -- '%s\n' "$array" | json_array_object_fields name enabled)" || fail "root object array could not be parsed"
+[ "$actual_array" = "$expected_array" ] || fail "root object array produced unexpected typed records"
+
+exit "0"

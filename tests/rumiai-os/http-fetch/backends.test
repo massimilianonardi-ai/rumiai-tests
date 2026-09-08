@@ -1,0 +1,244 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/http-fetch/backends.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@c39b1a2c0b6e96e8e43809a6e66d16918cf90a7d:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+
+  rumiai_test_target_have git || return "3"
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*)
+      :
+      ;;
+    *)
+      self="$(command -v "$self" 2>/dev/null)" || return "1"
+      ;;
+  esac
+
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    skip "rumiai-os target checkout not found"
+    ;;
+  "2")
+    fail "invalid explicit rumiai-os target"
+    ;;
+  *)
+    error "target discovery failed"
+    ;;
+esac
+
+
+command_path="$root/bin/sys/http-fetch"
+[ -f "$command_path" ] || fail "bin/sys/http-fetch is missing"
+[ -x "$command_path" ] || fail "bin/sys/http-fetch is not executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-http-fetch-backends-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fakebin="$tmp/bin"
+mkdir "$fakebin" || error "cannot create fake backend directory"
+runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
+wget_marker="$tmp/wget.called"
+wget_args="$tmp/wget.args"
+export HTTP_FETCH_WGET_MARKER="$wget_marker"
+export HTTP_FETCH_WGET_ARGS="$wget_args"
+
+cat > "$fakebin/curl" <<'EOF_CURL_FAIL'
+#!/bin/sh
+if [ "${1-}" = "--version" ]
+then
+  printf -- '%s\n' 'curl 99.0'
+  exit 0
+fi
+exit 23
+EOF_CURL_FAIL
+chmod "700" "$fakebin/curl" || error "cannot make fake curl executable"
+
+cat > "$fakebin/wget" <<'EOF_WGET_MARK'
+#!/bin/sh
+printf -- '%s\n' called > "$HTTP_FETCH_WGET_MARKER"
+exit 0
+EOF_WGET_MARK
+chmod "700" "$fakebin/wget" || error "cannot make fake wget executable"
+
+PATH="$runtime_path" "$command_path" -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
+status="$?"
+[ "$status" -eq "1" ] || fail "curl transfer failure returned status $status instead of 1"
+[ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl transfer with wget"
+
+cat > "$fakebin/curl" <<'EOF_CURL_UNAVAILABLE'
+#!/bin/sh
+exit 127
+EOF_CURL_UNAVAILABLE
+chmod "700" "$fakebin/curl" || error "cannot replace fake curl"
+
+cat > "$fakebin/wget" <<'EOF_WGET_GNU'
+#!/bin/sh
+if [ "${1-}" = "--version" ]
+then
+  printf -- '%s\n' 'GNU Wget 1.21.4'
+  exit 0
+fi
+
+: > "$HTTP_FETCH_WGET_ARGS" || exit 90
+while [ "$#" -gt 0 ]
+do
+  printf -- '%s\n' "$1" >> "$HTTP_FETCH_WGET_ARGS" || exit 90
+  shift
+done
+printf -- '%s\n' 'body-from-wget'
+EOF_WGET_GNU
+chmod "700" "$fakebin/wget" || error "cannot replace fake wget"
+rm -f "$wget_marker"
+
+PATH="$runtime_path" "$command_path" \
+  -H "X-Test: value" \
+  -t "7" \
+  -- "https://example.test/wget" >"$tmp/stdout" 2>"$tmp/stderr" || {
+    status="$?"
+    cat "$tmp/stderr" >&2
+    fail "GNU Wget fallback returned $status"
+  }
+
+actual_body="$(cat "$tmp/stdout")" || error "cannot read GNU Wget stdout"
+[ "$actual_body" = "body-from-wget" ] || fail "GNU Wget fallback did not preserve body on stdout"
+
+expected_args="$tmp/expected-wget.args"
+cat > "$expected_args" <<'EOF_EXPECTED'
+--no-config
+--no-verbose
+--tries=1
+--timeout=7
+--max-redirect=20
+--output-document=-
+--header=X-Test: value
+--
+https://example.test/wget
+EOF_EXPECTED
+cmp "$expected_args" "$wget_args" >/dev/null 2>&1 || {
+  printf -- '%s\n' "$TEST_ID: unexpected GNU Wget arguments:" >&2
+  cat "$wget_args" >&2
+  fail "GNU Wget backend arguments do not match the http-fetch contract"
+}
+
+cat > "$fakebin/wget" <<'EOF_WGET_BUSYBOX'
+#!/bin/sh
+if [ "${1-}" = "--version" ]
+then
+  printf -- '%s\n' 'BusyBox v1.37.0'
+  exit 0
+fi
+printf -- '%s\n' called > "$HTTP_FETCH_WGET_MARKER"
+exit 0
+EOF_WGET_BUSYBOX
+chmod "700" "$fakebin/wget" || error "cannot replace fake wget with BusyBox probe"
+rm -f "$wget_marker"
+
+PATH="$runtime_path" "$command_path" -- "https://example.test/busybox" >"$tmp/stdout" 2>"$tmp/stderr"
+status="$?"
+[ "$status" -eq "1" ] || fail "unsupported BusyBox Wget case returned status $status instead of 1"
+[ ! -e "$wget_marker" ] || fail "BusyBox Wget was used as a transfer backend"
+
+exit "0"

@@ -1,0 +1,211 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-repository-github/descriptor.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@c39b1a2c0b6e96e8e43809a6e66d16918cf90a7d:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+
+  rumiai_test_target_have git || return "3"
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*)
+      :
+      ;;
+    *)
+      self="$(command -v "$self" 2>/dev/null)" || return "1"
+      ;;
+  esac
+
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    skip "rumiai-os target checkout not found"
+    ;;
+  "2")
+    fail "invalid explicit rumiai-os target"
+    ;;
+  *)
+    error "target discovery failed"
+    ;;
+esac
+
+
+library="$root/lib/sh/pkg-repository-github.lib.sh"
+[ -f "$library" ] || fail "lib/sh/pkg-repository-github.lib.sh is missing"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-github-descriptor-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+repository_dir="$tmp/repository"
+fakebin="$tmp/bin"
+mkdir "$repository_dir" "$fakebin" || error "cannot create fixture directories"
+
+cat > "$fakebin/http-fetch" <<'EOF_HTTP_FETCH'
+#!/bin/sh
+printf -- '%s\n' '{"tag_name":"v1","draft":false,"prerelease":false,"created_at":"2026-01-01T00:00:00Z"}'
+EOF_HTTP_FETCH
+chmod "700" "$fakebin/http-fetch" || error "cannot make fake http-fetch executable"
+
+write_valid_repository()
+{
+  rm -rf "$repository_dir"
+  mkdir "$repository_dir" || error "cannot recreate repository descriptor"
+  printf -- '%s\n' "github" > "$repository_dir/type"
+  printf -- '%s\n' "acme" > "$repository_dir/owner"
+  printf -- '%s\n' ".github" > "$repository_dir/repository"
+}
+
+PATH="$fakebin:/usr/bin:/bin"
+export PATH
+m_LIB_DIR="$root/lib"
+export m_LIB_DIR
+. "$library" || error "cannot source GitHub repository adapter"
+
+write_valid_repository
+resolved="$(pkg_repository_resolve_version "$repository_dir")" || fail "valid .github repository name was rejected"
+[ "$resolved" = "v1" ] || fail "valid .github repository resolved unexpected version"
+
+write_valid_repository
+printf -- '%s\n' "unexpected" > "$repository_dir/extra"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1
+then
+  fail "unknown repository descriptor field was accepted"
+fi
+
+write_valid_repository
+chmod "700" "$repository_dir/owner" || error "cannot make owner scalar executable"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1
+then
+  fail "executable repository scalar was accepted"
+fi
+
+write_valid_repository
+printf -- '%s' "acme" > "$repository_dir/owner"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1
+then
+  fail "repository scalar without LF terminator was accepted"
+fi
+
+write_valid_repository
+printf -- '%s\n%s\n' "acme" "second" > "$repository_dir/owner"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1
+then
+  fail "multi-line repository scalar was accepted"
+fi
+
+write_valid_repository
+printf -- '%s\n' "bad/owner" > "$repository_dir/owner"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1
+then
+  fail "repository owner requiring URL encoding was accepted"
+fi
+
+write_valid_repository
+mv "$repository_dir/repository" "$tmp/repository-value" || error "cannot prepare repository symlink fixture"
+ln -s "$tmp/repository-value" "$repository_dir/repository" || error "cannot create repository scalar symlink"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1
+then
+  fail "symlink repository scalar was accepted"
+fi
+
+exit "0"
