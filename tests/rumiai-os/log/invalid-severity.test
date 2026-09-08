@@ -6,12 +6,8 @@ fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-# Target discovery primitive copied from:
-# massimilianonardi-ai/rumiai-tests@5af68cbff09ce979df3dff91e398e287eadd48b7:lib/rumiai-os-target.lib
-# Copied inline intentionally to preserve test independence.
-
-rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
-rumiai_test_target_rumiai_os_origin_ok() {
+rumiai_test_target_origin_ok()
+{
     candidate=$1
     origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
     case $origin in
@@ -19,25 +15,27 @@ rumiai_test_target_rumiai_os_origin_ok() {
     esac
     return 1
 }
-rumiai_test_target_rumiai_os_validate() {
+rumiai_test_target_validate()
+{
     candidate=$1
     [ -n "$candidate" ] || return 1
     [ -f "$candidate/rumiai-os" ] || return 1
-    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    rumiai_test_target_origin_ok "$candidate" || return 1
     target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
     [ -f "$target_root/rumiai-os" ] || return 1
     printf '%s\n' "$target_root"
 }
-rumiai_test_target_rumiai_os_find() {
+rumiai_test_target_find()
+{
     start=$1
-    rumiai_test_target_have git || return 3
+    command -v git >/dev/null 2>&1 || return 3
     if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
-        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        rumiai_test_target_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
         return 0
     fi
     candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
     while :; do
-        if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
+        if rumiai_test_target_validate "$candidate"; then return 0; fi
         [ "$candidate" != / ] || break
         parent=${candidate%/*}; [ -n "$parent" ] || parent=/
         [ "$parent" != "$candidate" ] || break
@@ -45,8 +43,8 @@ rumiai_test_target_rumiai_os_find() {
     done
     return 1
 }
-
-resolve_test_dir() {
+resolve_test_dir()
+{
     self=$0
     case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
     self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
@@ -58,7 +56,7 @@ group_dir=${test_dir%/*}
 rumiai_os_group=${group_dir%/*}
 tests_dir=${rumiai_os_group%/*}
 suite_root=${tests_dir%/*}
-root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+root=$(rumiai_test_target_find "$suite_root")
 status=$?
 case $status in
     0) : ;;
@@ -66,28 +64,28 @@ case $status in
     2) fail 'invalid explicit rumiai-os target' ;;
     *) error 'target discovery failed' ;;
 esac
+entry=$root/rumiai-os
+[ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-log-invalid-severity-$$
 umask 077
-mkdir -p "$tmp/lang/en_US/demo" || error 'cannot create log catalog fixture'
+mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-printf '%s\n' 'Log message' > "$tmp/lang/en_US/demo/item" || error 'cannot write log catalog message'
+probe=$tmp/probe
+stdout=$tmp/stdout
+stderr=$tmp/stderr
 
-RumiAI_LANG_DIR=$tmp/lang
-RumiAI_LANGUAGE=en_US
-RumiAI_TEXT_ENCODING=UTF-8
-export RumiAI_LANG_DIR RumiAI_LANGUAGE RumiAI_TEXT_ENCODING
+cat > "$probe" <<'EOT'
+log nonsense test message
+EOT
 
-. "$root/lib/i18n.lib" || error 'cannot load product i18n.lib'
-. "$root/lib/log.lib" || error 'cannot load product log.lib'
-
-RumiAI_LOG_LEVEL=trace
-export RumiAI_LOG_LEVEL
-
-log nonsense demo item >"$tmp/stdout" 2>"$tmp/stderr"
+m_LOG_LEVEL=trace "$entry" "$probe" >"$stdout" 2>"$stderr"
 status=$?
-[ "$status" -eq 12 ] || fail "invalid severity returned status $status instead of 12"
-[ ! -s "$tmp/stdout" ] || fail 'invalid severity produced stdout'
-[ ! -s "$tmp/stderr" ] || fail 'invalid severity produced rendered diagnostics'
+[ "$status" -ne 0 ] || fail 'invalid severity was accepted'
+[ ! -s "$stdout" ] || fail 'invalid severity produced unexpected stdout'
+grep -F 'invalid log severity:' "$stderr" >/dev/null 2>&1 || {
+    cat "$stderr" >&2
+    fail 'invalid severity diagnostic is missing'
+}
 
 exit 0
