@@ -1,0 +1,131 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/validate/session-publication.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+command -v git >/dev/null 2>&1 || skip 'git is required'
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+suite_root_source=${test_dir%/*}
+suite_root_source=${suite_root_source%/*}
+suite_root_source=${suite_root_source%/*}
+launcher_lib=$suite_root_source/lib/sh/rumiai-validate.lib.sh
+[ -r "$launcher_lib" ] || error 'cannot locate validation launcher library'
+
+tmp=${TMPDIR:-/tmp}/rumiai-validation-publication-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+bare_remote=$tmp/remote.git
+seed=$tmp/seed
+work=$tmp/work
+
+git init --bare -q "$bare_remote" || error 'cannot initialize publication remote'
+git init -q "$seed" || error 'cannot initialize publication seed'
+seed_branch=$(git -C "$seed" symbolic-ref --short HEAD) || error 'cannot determine publication branch'
+git -C "$seed" config user.name RumiAI-Test || error 'cannot configure seed Git name'
+git -C "$seed" config user.email rumiai-test@example.invalid || error 'cannot configure seed Git email'
+mkdir "$seed/sessions" || error 'cannot create seed sessions directory'
+: > "$seed/sessions/.gitkeep" || error 'cannot create seed sessions placeholder'
+printf '%s\n' base > "$seed/base-marker" || error 'cannot create base marker'
+git -C "$seed" add . || error 'cannot stage base suite'
+git -C "$seed" commit -qm base-suite || error 'cannot commit base suite'
+recorded_commit=$(git -C "$seed" rev-parse HEAD) || error 'cannot read base suite commit'
+git -C "$seed" remote add origin "$bare_remote" || error 'cannot add publication remote'
+git -C "$seed" push -q -u origin "$seed_branch" || error 'cannot push base suite'
+git -C "$bare_remote" symbolic-ref HEAD "refs/heads/$seed_branch" || error 'cannot set publication remote HEAD'
+
+printf '%s\n' later > "$seed/later-marker" || error 'cannot create later marker'
+git -C "$seed" add later-marker || error 'cannot stage later suite change'
+git -C "$seed" commit -qm later-suite || error 'cannot commit later suite change'
+git -C "$seed" push -q origin "$seed_branch" || error 'cannot push later suite change'
+current_commit=$(git -C "$seed" rev-parse HEAD) || error 'cannot read current suite commit'
+
+git clone -q "$bare_remote" "$work" || error 'cannot clone publication worktree'
+git -C "$work" config user.name RumiAI-Test || error 'cannot configure worktree Git name'
+git -C "$work" config user.email rumiai-test@example.invalid || error 'cannot configure worktree Git email'
+
+run_id=20260908T235959+0200-4242
+session_dir=$work/sessions/$run_id
+make_session() {
+    mkdir "$session_dir" || return 1
+    {
+        printf 'type\tvalidation\n'
+        printf 'start\t%s\n' '2026-09-08T23:59:59+0200'
+        printf 'end\t%s\n' '2026-09-09T00:00:01+0200'
+        printf 'rumiai-tests-commit\t%s\n' "$recorded_commit"
+        printf 'runner-exit-status\t1\n'
+    } > "$session_dir/session" || return 1
+    printf 'PASS\t1\nFAIL\t1\nSKIP\t0\nERROR\t0\nTOTAL\t2\n' > "$session_dir/results" || return 1
+}
+
+make_session || error 'cannot create completed validation session fixture'
+
+LAUNCHER_STATUS_ERROR=3
+say() { :; }
+say_error() { printf '%s\n' "$*" >&2; }
+fatal() { say_error "$*"; exit "$LAUNCHER_STATUS_ERROR"; }
+suite_root=$work
+. "$launcher_lib"
+
+original_remote=$(git -C "$work" remote get-url origin) || error 'cannot read publication remote URL'
+git -C "$work" remote set-url origin "$tmp/missing.git" || error 'cannot install failing publication remote'
+(
+    publish_pending_validation_sessions
+) > "$tmp/failure-output" 2>&1
+failure_status=$?
+[ "$failure_status" -eq 3 ] || {
+    cat "$tmp/failure-output" >&2
+    fail "failed publication returned $failure_status instead of 3"
+}
+[ -d "$session_dir" ] || fail 'failed publication removed local validation evidence'
+git -C "$work" remote set-url origin "$original_remote" || error 'cannot restore publication remote'
+
+publish_pending_validation_sessions > "$tmp/publication-output" 2>&1 || {
+    cat "$tmp/publication-output" >&2
+    fail 'completed validation session could not be published'
+}
+
+[ ! -d "$session_dir" ] || fail 'published validation session remained in local working tree'
+[ "$(git -C "$work" rev-parse HEAD)" = "$current_commit" ] || fail 'publication changed local suite HEAD'
+[ -z "$(git -C "$work" status --porcelain --untracked-files=normal)" ] || fail 'publication did not restore a clean suite working tree'
+
+publication_ref=refs/heads/validation/$run_id
+publication_commit=$(git -C "$bare_remote" rev-parse "$publication_ref" 2>/dev/null) || fail 'remote validation publication ref was not created'
+publication_parent=$(git -C "$bare_remote" rev-parse "$publication_commit^" 2>/dev/null) || error 'cannot read validation publication parent'
+[ "$publication_parent" = "$recorded_commit" ] || fail 'validation evidence commit is not based on the recorded suite commit'
+
+git -C "$bare_remote" ls-tree -r --name-only "$publication_commit" | grep "^sessions/$run_id/session$" >/dev/null 2>&1 ||
+    fail 'published evidence does not contain session metadata'
+git -C "$bare_remote" ls-tree -r --name-only "$publication_commit" | grep "^sessions/$run_id/results$" >/dev/null 2>&1 ||
+    fail 'published evidence does not contain session results'
+if git -C "$bare_remote" ls-tree -r --name-only "$publication_commit" | grep '^later-marker$' >/dev/null 2>&1; then
+    fail 'publication included suite content newer than the recorded validation commit'
+fi
+
+make_session || error 'cannot recreate completed validation session fixture'
+publish_pending_validation_sessions > "$tmp/recovery-output" 2>&1 || {
+    cat "$tmp/recovery-output" >&2
+    fail 'existing identical publication could not be recovered idempotently'
+}
+[ ! -d "$session_dir" ] || fail 'idempotent publication recovery did not remove verified local duplicate'
+[ "$(git -C "$bare_remote" rev-parse "$publication_ref")" = "$publication_commit" ] ||
+    fail 'idempotent publication recovery changed the remote evidence ref'
+[ "$(git -C "$work" rev-parse HEAD)" = "$current_commit" ] || fail 'idempotent recovery changed local suite HEAD'
+
+exit 0

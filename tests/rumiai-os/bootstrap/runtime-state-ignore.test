@@ -81,8 +81,20 @@ root=$(rumiai_test_target_rumiai_os_find "$start")
 status=$?
 case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
 
-ignore_file=$root/.gitignore
-[ -r "$ignore_file" ] || fail '.gitignore is not readable'
+root_ignore=$root/.gitignore
+[ -r "$root_ignore" ] || fail 'root .gitignore is not readable'
+[ "$(cat "$root_ignore")" = '.DS_Store' ] || fail 'root .gitignore must contain only .DS_Store'
+
+workspace_ignore=$root/src/.gitignore
+[ -r "$workspace_ignore" ] || fail 'src/.gitignore is not readable'
+expected_local_ignore=$(printf '*\n!.gitignore')
+[ "$(cat "$workspace_ignore")" = "$expected_local_ignore" ] || fail 'src/.gitignore does not use the canonical local-root ignore policy'
+
+for area in pkg data home cache log run tmp; do
+    area_ignore=$root/$area/.gitignore
+    [ -r "$area_ignore" ] || fail "$area/.gitignore is not readable"
+    [ "$(cat "$area_ignore")" = "$expected_local_ignore" ] || fail "$area/.gitignore differs from src/.gitignore"
+done
 
 tmp=${TMPDIR:-/tmp}/rumiai-runtime-state-ignore-$$
 umask 077
@@ -90,13 +102,15 @@ mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 git -C "$tmp" init -q || error 'cannot initialize isolated Git repository'
-cp "$ignore_file" "$tmp/.gitignore" || error 'cannot copy target .gitignore'
+cp "$root_ignore" "$tmp/.gitignore" || error 'cannot copy root .gitignore'
 
-for area in pkg data home cache log run tmp; do
+for area in src pkg data home cache log run tmp; do
     mkdir -p "$tmp/$area" "$tmp/nested/$area" || error "cannot create probe directories for $area"
-    : > "$tmp/$area/probe" || error "cannot create top-level probe for $area"
+    cp "$root/$area/.gitignore" "$tmp/$area/.gitignore" || error "cannot copy $area/.gitignore"
+    : > "$tmp/$area/probe" || error "cannot create local-root probe for $area"
     : > "$tmp/nested/$area/probe" || error "cannot create nested probe for $area"
     assert_ignored "$area/probe"
+    assert_not_ignored "$area/.gitignore"
     assert_not_ignored "nested/$area/probe"
 done
 

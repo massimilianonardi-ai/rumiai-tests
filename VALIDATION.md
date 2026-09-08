@@ -1,6 +1,6 @@
 # RumiAI validation launcher
 
-`rumiai-validate` è il launcher operativo per eseguire una validation run configurata sugli host disponibili senza ricostruire manualmente ogni volta la CLI di `rumiai-test`.
+`rumiai-validate` è il launcher operativo per eseguire una validation run configurata sugli host disponibili senza ricostruire manualmente la CLI di `rumiai-test`.
 
 Il contratto autorevole è definito in:
 
@@ -16,7 +16,7 @@ Il comando normale dell'operatore è soltanto:
 ./rumiai-validate
 ```
 
-Non è necessario eseguire prima `git pull` né portarsi manualmente in una directory specifica, purché `rumiai-validate` venga invocato tramite il proprio pathname oppure sia risolvibile tramite `PATH`.
+Non è necessario eseguire prima `git pull`, cambiare directory o gestire manualmente le sessioni completate.
 
 Il launcher usa due stadi:
 
@@ -26,28 +26,70 @@ rumiai-validate
     -> git pull --ff-only di rumiai-tests
     -> eventuale restart del bootstrap aggiornato
     -> lib/sh/rumiai-validate.lib.sh
+         -> pubblicazione di eventuali validation session completate e pendenti
          -> gate completo di cleanliness della suite
          -> configurazione + target discovery
          -> git pull --ff-only di rumiai-os
          -> gate completo di cleanliness del target
          -> rumiai-test --validation -- <selection>
+         -> pubblicazione della nuova sessione completata
 ```
 
-Il bootstrap root resta intenzionalmente minimale. La logica evolutiva viene caricata soltanto dopo il self-update della suite, così un problema nella helper/config locale non impedisce di ricevere una correzione remota.
+Il bootstrap root resta intenzionalmente minimale. La logica evolutiva viene caricata soltanto dopo il self-update della suite.
 
-## Self-update e working tree
+## Sessioni pendenti e cleanliness
 
-Prima del `git pull --ff-only` di `rumiai-tests`, il launcher blocca eventuali modifiche **tracked** locali.
+File untracked arbitrari continuano a non essere ammessi prima dell'effettiva validation.
 
-I file **untracked** non impediscono il self-update. Dopo l'aggiornamento, però, la working tree deve risultare completamente pulita prima della validation, coerentemente con `TESTING.md`.
+L'unica eccezione operativa è una directory visibile `sessions/<run-id>/` prodotta come validation session completata dal runner. Prima di eseguire una nuova validation, il launcher:
 
-Lo stesso principio viene applicato a `rumiai-os`:
+1. verifica che la sessione abbia metadata e risultati completi;
+2. legge dalla sessione l'esatto `rumiai-tests-commit` contro cui è stata prodotta;
+3. costruisce un commit di sola evidenza basato su quel commit esatto, senza modificare HEAD o index della working tree;
+4. pubblica il commit sul remote configurato sotto:
 
-1. modifiche tracked locali bloccano il pull automatico;
-2. il launcher esegue `git pull --ff-only`;
-3. prima della validation il target deve risultare completamente clean, inclusi gli untracked.
+```text
+validation/<run-id>
+```
 
-Il launcher non cancella, sposta o modifica automaticamente file locali per ottenere una working tree clean.
+5. verifica che il ref remoto punti all'evidenza attesa;
+6. soltanto dopo la verifica elimina la copia locale untracked della sessione.
+
+Se il push o la verifica falliscono, la sessione locale resta intatta e il launcher termina con errore. Alla successiva invocazione lo stesso `./rumiai-validate` ritenta la pubblicazione prima di una nuova validation.
+
+Una pubblicazione già presente con lo stesso contenuto viene riconosciuta in modo idempotente; un ref remoto omonimo con parent o tree differenti è un conflitto e non viene sovrascritto.
+
+Le sessioni con runner status `0`, `1` o `2` sono evidenza completata e vengono pubblicate. Le sessioni incomplete/nascoste, incluse quelle lasciate da un runner error prima della pubblicazione finale, non vengono pubblicate automaticamente e continuano a bloccare il gate di cleanliness.
+
+Dopo la gestione delle sessioni pendenti, la working tree di `rumiai-tests` deve essere completamente clean prima dell'invocazione di `rumiai-test --validation`.
+
+## Perché la pubblicazione non modifica `main`
+
+Le evidenze dei diversi host non vengono committate automaticamente su `main`.
+
+Questo mantiene invariato il commit della suite che deve essere validato da tutti gli host. Se una sessione del primo host avanzasse `main`, il secondo host validerebbe una revisione diversa della suite pur usando gli stessi test.
+
+Il ref `validation/<run-id>` è quindi un ref di conservazione dell'evidenza, non una nuova baseline della suite. Un'eventuale successiva consolidazione delle evidenze in `main` è una fase distinta e non appartiene al launcher.
+
+## Operazioni Git
+
+Gli aggiornamenti del codice restano esclusivamente:
+
+```text
+git pull --ff-only
+```
+
+Per la sola pubblicazione di una validation session completata il launcher può usare primitive Git equivalenti a `add` su index temporaneo, `commit-tree` e `push` verso il ref univoco di evidenza.
+
+Il launcher non esegue automaticamente:
+
+```text
+git merge
+git rebase
+git push --force
+```
+
+e non crea commit di codice, test, configurazione o altro contenuto locale.
 
 ## Configurazione
 
@@ -64,26 +106,4 @@ rumiai-os-commit
 selection
 ```
 
-La configurazione viene aggiornata insieme ai test quando una modifica richiede una nuova physical validation.
-
-La stessa configurazione viene eseguita sui diversi host di riferimento; il launcher rileva e mostra OS/architettura ma non sceglie test differenti in base alla piattaforma.
-
-## Operazioni Git escluse
-
-Il launcher non esegue automaticamente:
-
-```text
-git add
-git commit
-git push
-git merge
-git rebase
-```
-
-Gli aggiornamenti automatici dei checkout sono esclusivamente `git pull --ff-only`.
-
-## Stato dopo una validation
-
-Una validation completata crea una nuova directory sotto `sessions/`. Di conseguenza la working tree di `rumiai-tests` risulta intenzionalmente dirty finché l'evidenza non viene versionata o altrimenti gestita secondo il workflow Git concordato.
-
-Una successiva invocazione di `rumiai-validate` può comunque eseguire il proprio self-update in presenza di quella sessione untracked; prima di avviare una nuova validation applicherà nuovamente il gate completo di cleanliness.
+La configurazione viene aggiornata insieme ai test quando una modifica richiede una nuova physical validation. La stessa configurazione viene eseguita sui diversi host di riferimento.
