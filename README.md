@@ -146,7 +146,7 @@ Se un test fallisce solo su un determinato host, il progetto valuta il falliment
 Il clone può essere collocato accanto al runtime locale sotto:
 
 ```text
-$RumiAI_ROOT/.dev/rumiai-tests/
+$RumiAI_ROOT/src/rumiai-tests/
 ```
 
 Questa collocazione è una convenienza di sviluppo. I test devono poter effettuare autonomamente il discovery necessario anche quando il repository è collocato altrove.
@@ -303,7 +303,7 @@ both
 
 È possibile specificare più root ripetendo `--snapshot-root`. Ogni root viene risolta/canonicalizzata dal runner e gli entry pathname dello snapshot sono relativi alla rispettiva root.
 
-Il runner esclude automaticamente soltanto la directory della run corrente che esso stesso sta generando, se ricade sotto una root osservata. Non esclude implicitamente `.dev/`, `.git/`, `rumiai-tests/`, `sessions/` o altre directory generiche.
+Il runner esclude automaticamente soltanto la directory della run corrente che esso stesso sta generando, se ricade sotto una root osservata. Non esclude implicitamente `src/`, `.git/`, `rumiai-tests/`, `sessions/` o altre directory generiche.
 
 Gli esiti dell'audit filesystem sono distinti dagli esiti dei test:
 
