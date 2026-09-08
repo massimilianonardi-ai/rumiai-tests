@@ -1,6 +1,7 @@
 #!/bin/sh
 
 LAUNCHER_STATUS_ERROR=3
+LAUNCHER_HOLD_ON_EXIT=0
 
 say() {
     printf '%s\n' "$*"
@@ -13,6 +14,86 @@ say_error() {
 fatal() {
     say_error "$*"
     exit "$LAUNCHER_STATUS_ERROR"
+}
+
+launcher_detect_hold_on_exit() {
+    LAUNCHER_HOLD_ON_EXIT=0
+
+    [ -t 0 ] && [ -t 1 ] || return 0
+
+    command -v uname >/dev/null 2>&1 || return 0
+    [ "$(uname -s 2>/dev/null)" = Linux ] || return 0
+
+    command -v ps >/dev/null 2>&1 || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+
+    parent_pid_value=$(ps -o ppid= -p "$$" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $parent_pid_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    parent_pid=$1
+
+    parent_command_value=$(ps -o comm= -p "$parent_pid" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $parent_command_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    parent_command=$1
+
+    shell_path=${SHELL-}
+    shell_name=${shell_path##*/}
+    [ -n "$shell_name" ] && [ "$parent_command" = "$shell_name" ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+
+    parent_pgid_value=$(ps -o pgid= -p "$parent_pid" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $parent_pgid_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    parent_pgid=$1
+
+    self_pgid_value=$(ps -o pgid= -p "$$" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $self_pgid_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    self_pgid=$1
+
+    [ "$parent_pgid" != "$self_pgid" ] || LAUNCHER_HOLD_ON_EXIT=1
+}
+
+launcher_finish() {
+    status=$1
+    trap - 0
+
+    if [ "$LAUNCHER_HOLD_ON_EXIT" -eq 1 ]; then
+        printf '\nPress Enter to close...'
+        IFS= read -r _ || :
+        printf '\n'
+    fi
+
+    exit "$status"
 }
 
 resolve_self() {
@@ -97,4 +178,6 @@ main() {
     rumiai_validate_run
 }
 
+launcher_detect_hold_on_exit
+trap 'launcher_finish "$?"' 0
 main "$@"
