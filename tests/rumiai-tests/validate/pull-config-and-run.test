@@ -24,6 +24,7 @@ suite_root=${test_dir%/*}
 suite_root=${suite_root%/*}
 suite_root=${suite_root%/*}
 [ -f "$suite_root/rumiai-validate" ] || error 'cannot locate rumiai-validate'
+[ -f "$suite_root/lib/sh/rumiai-validate.lib.sh" ] || error 'cannot locate validation launcher implementation'
 [ -f "$suite_root/lib/rumiai-os-target.lib" ] || error 'cannot locate rumiai-os target discovery library'
 
 tmp=${TMPDIR:-/tmp}/rumiai-validate-flow-$$
@@ -69,10 +70,16 @@ git -C "$tmp/suite-remote.git" init --bare -q || error 'cannot initialize suite 
 mkdir "$tmp/suite-seed" || error 'cannot create suite seed directory'
 git -C "$tmp/suite-seed" init -q || error 'cannot initialize suite seed'
 suite_branch=$(git -C "$tmp/suite-seed" symbolic-ref --short HEAD) || error 'cannot determine suite branch'
-cp "$suite_root/rumiai-validate" "$tmp/suite-seed/rumiai-validate" || error 'cannot copy launcher'
+cp "$suite_root/rumiai-validate" "$tmp/suite-seed/rumiai-validate" || error 'cannot copy launcher bootstrap'
 chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher executable'
-mkdir -p "$tmp/suite-seed/lib" "$tmp/suite-seed/sessions" || error 'cannot create suite support directories'
+mkdir -p "$tmp/suite-seed/lib/sh" "$tmp/suite-seed/sessions" || error 'cannot create suite support directories'
 cp "$suite_root/lib/rumiai-os-target.lib" "$tmp/suite-seed/lib/rumiai-os-target.lib" || error 'cannot copy target discovery library'
+
+# The initial implementation is intentionally not valid shell. If the bootstrap
+# loads it before updating rumiai-tests, the test must fail.
+printf '%s\n' 'broken implementation (' > "$tmp/suite-seed/lib/sh/rumiai-validate.lib.sh" ||
+    error 'cannot write intentionally broken initial implementation'
+
 cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
 #!/bin/sh
 printf '%s\n' "$PWD" > "$FAKE_PWD"
@@ -80,8 +87,11 @@ printf '%s\n' "$*" > "$FAKE_ARGS"
 exit 0
 EOT
 chmod +x "$tmp/suite-seed/rumiai-test" || error 'cannot make fake runner executable'
+
 initial_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot read initial target commit'
-printf 'rumiai-os-commit\t%s\nselection\told-selection\n' "$initial_target" > "$tmp/suite-seed/rumiai-validate.conf" || error 'cannot write initial launcher configuration'
+printf 'rumiai-os-commit\t%s\nselection\told-selection\n' "$initial_target" > "$tmp/suite-seed/rumiai-validate.conf" ||
+    error 'cannot write initial launcher configuration'
+
 git -C "$tmp/suite-seed" add . || error 'cannot stage initial suite'
 commit_repo "$tmp/suite-seed" initial-suite || error 'cannot commit initial suite'
 git -C "$tmp/suite-seed" remote add origin "$tmp/suite-remote.git" || error 'cannot add suite remote'
@@ -91,27 +101,53 @@ git -C "$tmp/suite-remote.git" symbolic-ref HEAD "refs/heads/$suite_branch" || e
 mkdir -p "$tmp/work/rumiai-os/src" || error 'cannot create target source directory'
 git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite worktree'
 
-printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/rumiai-validate.conf" || error 'cannot update launcher configuration'
-git -C "$tmp/suite-seed" add rumiai-validate.conf || error 'cannot stage launcher configuration update'
+cp "$suite_root/lib/sh/rumiai-validate.lib.sh" "$tmp/suite-seed/lib/sh/rumiai-validate.lib.sh" ||
+    error 'cannot install updated launcher implementation'
+printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/rumiai-validate.conf" ||
+    error 'cannot update launcher configuration'
+git -C "$tmp/suite-seed" add lib/sh/rumiai-validate.lib.sh rumiai-validate.conf ||
+    error 'cannot stage suite update'
 commit_repo "$tmp/suite-seed" updated-suite || error 'cannot commit suite update'
 git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push suite update'
 expected_suite=$(git -C "$tmp/suite-seed" rev-parse HEAD) || error 'cannot read expected suite commit'
 
 mkdir "$tmp/elsewhere" || error 'cannot create unrelated working directory'
+printf 'local residue\n' > "$tmp/work/rumiai-os/src/rumiai-tests/local-untracked" ||
+    error 'cannot create untracked suite residue'
+
 FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
-    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" > "$tmp/transcript" 2>&1
-status=$?
-if [ "$status" -ne 0 ]; then
-    cat "$tmp/transcript" >&2
-    fail "launcher returned $status"
+    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
+    > "$tmp/first-transcript" 2>&1
+first_status=$?
+
+[ "$first_status" -eq 3 ] || {
+    cat "$tmp/first-transcript" >&2
+    fail "launcher with untracked residue returned $first_status instead of 3"
+}
+
+actual_suite=$(git -C "$tmp/work/rumiai-os/src/rumiai-tests" rev-parse HEAD) ||
+    error 'cannot read suite commit after self-update'
+[ "$actual_suite" = "$expected_suite" ] ||
+    fail 'launcher did not fast-forward rumiai-tests before the full cleanliness gate'
+[ ! -f "$tmp/runner-args" ] || fail 'runner executed despite dirty validation working tree'
+
+rm "$tmp/work/rumiai-os/src/rumiai-tests/local-untracked" || error 'cannot remove test residue'
+
+FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
+    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
+    > "$tmp/second-transcript" 2>&1
+second_status=$?
+if [ "$second_status" -ne 0 ]; then
+    cat "$tmp/second-transcript" >&2
+    fail "launcher returned $second_status after cleanup"
 fi
 
-actual_suite=$(git -C "$tmp/work/rumiai-os/src/rumiai-tests" rev-parse HEAD) || error 'cannot read updated suite commit'
 actual_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot read updated target commit'
-[ "$actual_suite" = "$expected_suite" ] || fail 'launcher did not fast-forward rumiai-tests before execution'
 [ "$actual_target" = "$expected_target" ] || fail 'launcher did not fast-forward rumiai-os before execution'
 [ -f "$tmp/runner-args" ] || fail 'configured runner was not executed'
-[ "$(cat "$tmp/runner-args")" = '--validation -- rumiai-os/bootstrap' ] || fail 'launcher did not use the updated configured selection'
-[ "$(cat "$tmp/runner-pwd")" = "$tmp/work/rumiai-os/src/rumiai-tests" ] || fail 'launcher did not enter the rumiai-tests repository root before running'
+[ "$(cat "$tmp/runner-args")" = '--validation -- rumiai-os/bootstrap' ] ||
+    fail 'launcher did not use the updated configured selection'
+[ "$(cat "$tmp/runner-pwd")" = "$tmp/work/rumiai-os/src/rumiai-tests" ] ||
+    fail 'launcher did not enter the rumiai-tests repository root before running'
 
 exit 0

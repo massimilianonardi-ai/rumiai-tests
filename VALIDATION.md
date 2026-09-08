@@ -10,28 +10,44 @@ massimilianonardi-ai/rumiai-dev/decisions/rumiai-tests/2026-09-08-validation-lau
 
 ## Uso
 
-Dalla root di `rumiai-tests`, oppure invocando l'eseguibile tramite un pathname da qualunque current working directory:
+Il comando normale dell'operatore è soltanto:
 
 ```text
 ./rumiai-validate
 ```
 
-Il launcher:
+Non è necessario eseguire prima `git pull` né portarsi manualmente in una directory specifica, purché `rumiai-validate` venga invocato tramite il proprio pathname oppure sia risolvibile tramite `PATH`.
 
-1. individua la propria root;
-2. richiede una working tree `rumiai-tests` pulita;
-3. esegue `git pull --ff-only` su `rumiai-tests`;
-4. se il checkout è stato aggiornato, riavvia l'eseguibile appena aggiornato;
-5. legge `rumiai-validate.conf`;
-6. individua `rumiai-os` tramite `lib/rumiai-os-target.lib`;
-7. richiede una working tree `rumiai-os` pulita;
-8. esegue `git pull --ff-only` su `rumiai-os`;
-9. verifica l'HEAD `rumiai-os` configurato;
-10. mostra piattaforma, revisioni e selezione;
-11. esegue `rumiai-test --validation -- <selection>`;
-12. restituisce lo stesso exit status del runner.
+Il launcher usa due stadi:
 
-Il launcher non esegue automaticamente `git add`, `git commit`, `git push`, merge o rebase.
+```text
+rumiai-validate
+    -> autodiscovery + cd nella root rumiai-tests
+    -> git pull --ff-only di rumiai-tests
+    -> eventuale restart del bootstrap aggiornato
+    -> lib/sh/rumiai-validate.lib.sh
+         -> gate completo di cleanliness della suite
+         -> configurazione + target discovery
+         -> git pull --ff-only di rumiai-os
+         -> gate completo di cleanliness del target
+         -> rumiai-test --validation -- <selection>
+```
+
+Il bootstrap root resta intenzionalmente minimale. La logica evolutiva viene caricata soltanto dopo il self-update della suite, così un problema nella helper/config locale non impedisce di ricevere una correzione remota.
+
+## Self-update e working tree
+
+Prima del `git pull --ff-only` di `rumiai-tests`, il launcher blocca eventuali modifiche **tracked** locali.
+
+I file **untracked** non impediscono il self-update. Dopo l'aggiornamento, però, la working tree deve risultare completamente pulita prima della validation, coerentemente con `TESTING.md`.
+
+Lo stesso principio viene applicato a `rumiai-os`:
+
+1. modifiche tracked locali bloccano il pull automatico;
+2. il launcher esegue `git pull --ff-only`;
+3. prima della validation il target deve risultare completamente clean, inclusi gli untracked.
+
+Il launcher non cancella, sposta o modifica automaticamente file locali per ottenere una working tree clean.
 
 ## Configurazione
 
@@ -52,8 +68,22 @@ La configurazione viene aggiornata insieme ai test quando una modifica richiede 
 
 La stessa configurazione viene eseguita sui diversi host di riferimento; il launcher rileva e mostra OS/architettura ma non sceglie test differenti in base alla piattaforma.
 
+## Operazioni Git escluse
+
+Il launcher non esegue automaticamente:
+
+```text
+git add
+git commit
+git push
+git merge
+git rebase
+```
+
+Gli aggiornamenti automatici dei checkout sono esclusivamente `git pull --ff-only`.
+
 ## Stato dopo una validation
 
 Una validation completata crea una nuova directory sotto `sessions/`. Di conseguenza la working tree di `rumiai-tests` risulta intenzionalmente dirty finché l'evidenza non viene versionata o altrimenti gestita secondo il workflow Git concordato.
 
-Una nuova esecuzione di `rumiai-validate` rifiuta una working tree dirty, coerentemente con il contratto delle validation run.
+Una successiva invocazione di `rumiai-validate` può comunque eseguire il proprio self-update in presenza di quella sessione untracked; prima di avviare una nuova validation applicherà nuovamente il gate completo di cleanliness.
