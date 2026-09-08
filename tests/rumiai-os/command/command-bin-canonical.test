@@ -36,7 +36,7 @@ entry=$fixture/rumiai-os
 real=$tmp/real-source
 alias=$tmp/source-alias
 cat > "$real" <<'EOT'
-[ "${RumiAI_COMMAND_BIN-}" = "$EXPECTED_COMMAND_BIN" ] || return 41
+[ "${m_COMMAND_BIN-}" = "$EXPECTED_COMMAND_BIN" ] || return 41
 return 0
 EOT
 ln -s "$real" "$alias" || error 'cannot create source symlink'

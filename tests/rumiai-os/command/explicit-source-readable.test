@@ -35,7 +35,7 @@ fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canon
 entry=$fixture/rumiai-os
 probe=$tmp/probe
 cat > "$probe" <<'EOT'
-[ -n "${RumiAI_ROOT-}" ] || return 41
+[ -n "${m_ROOT-}" ] || return 41
 return 0
 EOT
 chmod 600 "$probe" || error 'cannot set non-executable source mode'

@@ -73,8 +73,8 @@ result=$tmp/result
 transcript=$tmp/transcript
 
 cat > "$probe" <<'EOT'
-[ "${RumiAI_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
-[ "${RumiAI_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || return 42
+[ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
+[ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || return 42
 actual_cwd=$(pwd -P) || return 43
 [ "$actual_cwd" = "$EXPECTED_CWD" ] || return 44
 printf '%s\n' "$actual_cwd" > "$PROBE_RESULT" || return 45

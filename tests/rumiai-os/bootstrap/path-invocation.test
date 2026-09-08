@@ -62,8 +62,8 @@ status=$?
 case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
 
 entry=$root/rumiai-os
-launcher=$root/bin/rumiai-os
-[ -L "$launcher" ] || fail 'bin/rumiai-os is not the expected structural symlink'
+launcher=$root/bin/sys/rumiai-os
+[ -L "$launcher" ] || fail 'bin/sys/rumiai-os is not the expected structural symlink'
 
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-path-$$
 umask 077
@@ -74,15 +74,15 @@ result=$tmp/result
 transcript=$tmp/transcript
 
 cat > "$probe" <<'EOT'
-[ "${RumiAI_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
-[ "${RumiAI_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || return 42
-printf '%s\n%s\n' "$RumiAI_ROOT" "$RumiAI_BOOTSTRAP_BIN" > "$PROBE_RESULT" || return 43
+[ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
+[ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || return 42
+printf '%s\n%s\n' "$m_ROOT" "$m_BOOTSTRAP_BIN" > "$PROBE_RESULT" || return 43
 return 0
 EOT
 EXPECTED_ROOT=$root EXPECTED_BIN=$entry PROBE_RESULT=$result
 export EXPECTED_ROOT EXPECTED_BIN PROBE_RESULT
 
-PATH=$root/bin${PATH:+:$PATH}
+PATH=$root/bin/sys${PATH:+:$PATH}
 export PATH
 rumiai-os "$probe" >"$transcript" 2>&1 || {
     status=$?

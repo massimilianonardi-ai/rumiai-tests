@@ -69,7 +69,7 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe
 transcript=$tmp/transcript
 input_path=/usr/bin:/bin
-expected_path=$root/bin:$input_path
+expected_path=$root/bin/sys-osarch:$root/bin/sys:$root/bin/ext-osarch:$root/bin/ext:$input_path
 
 cat > "$probe" <<'EOT'
 [ "${PATH-}" = "$EXPECTED_PATH" ] || return 41

@@ -25,10 +25,10 @@ runtime_a=$(CDPATH= cd -- "$runtime_a" 2>/dev/null && pwd -P) || error 'cannot c
 command_file=$runtime_a/foreign-command; observed=$tmp/observed
 cat > "$command_file" <<'EOT'
 #!/usr/bin/env rumiai-os
-printf '%s\n' "$RumiAI_ROOT" "$RumiAI_BOOTSTRAP_BIN" > "$OBSERVED_RUNTIME" || return 41
+printf '%s\n' "$m_ROOT" "$m_BOOTSTRAP_BIN" > "$OBSERVED_RUNTIME" || return 41
 return 0
 EOT
-chmod 700 "$command_file" || error 'cannot make foreign command executable'; OBSERVED_RUNTIME=$observed; PATH=$runtime_b/bin:/usr/bin:/bin; export OBSERVED_RUNTIME PATH
+chmod 700 "$command_file" || error 'cannot make foreign command executable'; OBSERVED_RUNTIME=$observed; PATH=$runtime_b/bin/sys:/usr/bin:/bin; export OBSERVED_RUNTIME PATH
 "$command_file" >"$tmp/stdout" 2>"$tmp/stderr" || { status=$?; cat "$tmp/stderr" >&2; fail "active-runtime command returned $status"; }
 actual=$(cat "$observed") || error 'cannot read active runtime observations'; expected="$runtime_b
 $runtime_b/rumiai-os"

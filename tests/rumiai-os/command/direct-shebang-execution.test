@@ -25,11 +25,11 @@ fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canon
 command_file=$tmp/direct-command; observed=$tmp/observed
 cat > "$command_file" <<'EOT'
 #!/usr/bin/env rumiai-os
-printf '%s\n' "$RumiAI_ROOT" "$RumiAI_COMMAND_BIN" "$#" "$1" "$2" > "$OBSERVED_DIRECT" || return 41
+printf '%s\n' "$m_ROOT" "$m_COMMAND_BIN" "$#" "$1" "$2" > "$OBSERVED_DIRECT" || return 41
 return 0
 EOT
 chmod 700 "$command_file" || error 'cannot make direct command executable'; expected_command=$(command -p realpath -- "$command_file" 2>/dev/null) || error 'cannot canonicalize direct command'
-OBSERVED_DIRECT=$observed; PATH=$fixture/bin:/usr/bin:/bin; export OBSERVED_DIRECT PATH
+OBSERVED_DIRECT=$observed; PATH=$fixture/bin/sys:/usr/bin:/bin; export OBSERVED_DIRECT PATH
 "$command_file" alpha beta >"$tmp/stdout" 2>"$tmp/stderr" || { status=$?; cat "$tmp/stderr" >&2; fail "direct command returned $status"; }
 actual=$(cat "$observed") || error 'cannot read direct command observations'; expected="$fixture
 $expected_command

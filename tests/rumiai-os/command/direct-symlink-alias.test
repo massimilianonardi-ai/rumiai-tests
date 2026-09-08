@@ -24,11 +24,11 @@ rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"; status=$?; case 
 fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canonicalize fixture root'; real=$tmp/canonical-command; alias=$tmp/renamed-alias; observed=$tmp/observed
 cat > "$real" <<'EOT'
 #!/usr/bin/env rumiai-os
-printf '%s\n' "$RumiAI_COMMAND_BIN" > "$OBSERVED_ALIAS" || return 41
+printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_ALIAS" || return 41
 return 0
 EOT
 chmod 700 "$real" || error 'cannot make canonical command executable'; ln -s "$real" "$alias" || error 'cannot create renamed command alias'; expected=$(command -p realpath -- "$real" 2>/dev/null) || error 'cannot canonicalize canonical command'
-OBSERVED_ALIAS=$observed; PATH=$fixture/bin:/usr/bin:/bin; export OBSERVED_ALIAS PATH
+OBSERVED_ALIAS=$observed; PATH=$fixture/bin/sys:/usr/bin:/bin; export OBSERVED_ALIAS PATH
 "$alias" >"$tmp/stdout" 2>"$tmp/stderr" || { status=$?; cat "$tmp/stderr" >&2; fail "renamed direct alias returned $status"; }
 actual=$(cat "$observed") || error 'cannot read alias observation'; [ "$actual" = "$expected" ] || fail "renamed alias did not canonicalize to implementation: $actual"
 [ ! -s "$tmp/stdout" ] || fail 'renamed alias produced unexpected stdout'; [ ! -s "$tmp/stderr" ] || { cat "$tmp/stderr" >&2; fail 'renamed alias produced unexpected diagnostics'; }
