@@ -9,7 +9,7 @@ skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 # massimilianonardi-ai/rumiai-tests@5af68cbff09ce979df3dff91e398e287eadd48b7:lib/rumiai-os-target.lib
 # Copied inline intentionally to preserve test independence.
 rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
-rumiai_test_target_rumiai_os_origin_ok() { candidate=$1; origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;; esac; return 1; }
+rumiai_test_target_rumiai_os_origin_ok() { candidate=$1; origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com:massimilianonardi-ai/rumiai-os.git) return 0 ;; esac; return 1; }
 rumiai_test_target_rumiai_os_validate() { candidate=$1; [ -n "$candidate" ] || return 1; [ -f "$candidate/rumiai-os" ] || return 1; rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1; target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1; [ -f "$target_root/rumiai-os" ] || return 1; printf '%s\n' "$target_root"; }
 rumiai_test_target_rumiai_os_find() { start=$1; rumiai_test_target_have git || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; return 0; fi; candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3; while :; do if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; [ "$parent" != "$candidate" ] || break; candidate=$parent; done; return 1; }
 
@@ -36,9 +36,10 @@ entry=$fixture/rumiai-os
 missing=$tmp/does-not-exist
 RumiAI_LOG_LEVEL=info "$entry" "$missing" >"$tmp/stdout" 2>"$tmp/stderr"
 status=$?
-[ "$status" -eq 8 ] || { cat "$tmp/stderr" >&2; fail "expected status 8, got $status"; }
+[ "$status" -eq 1 ] || { cat "$tmp/stderr" >&2; fail "expected status 1, got $status"; }
 [ ! -s "$tmp/stdout" ] || fail 'resolution failure produced unexpected stdout'
 stderr_text=$(cat "$tmp/stderr") || error 'cannot read resolution diagnostics'
-case $stderr_text in *'[error] [bootstrap.command-entry-resolution-failed]'*) : ;; *) cat "$tmp/stderr" >&2; fail 'resolution failure event missing' ;; esac
-case $stderr_text in *"[path=\"$missing\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'resolution failure event lacks source path' ;; esac
+case $stderr_text in *'[fatal] [filesystem.path-invalid]'*) : ;; *) cat "$tmp/stderr" >&2; fail 'filesystem.path-invalid event missing' ;; esac
+case $stderr_text in *"[command-original=\"$missing\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'path-invalid event lacks original command path' ;; esac
+case $stderr_text in *'[command-resolved=""]'*) : ;; *) cat "$tmp/stderr" >&2; fail 'path-invalid event does not report empty unresolved path' ;; esac
 exit 0
