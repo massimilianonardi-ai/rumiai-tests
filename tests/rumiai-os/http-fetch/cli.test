@@ -245,9 +245,10 @@ actual_file="$(cat "$output_file")" || error "cannot read http-fetch output file
 
 expect_invalid()
 {
-  PATH="$runtime_path" "$command_path" "$@" >"$tmp/invalid.stdout" 2>"$tmp/invalid.stderr"
+  m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" "$@" >"$tmp/invalid.stdout" 2>"$tmp/invalid.stderr"
   status="$?"
   [ "$status" -eq "2" ] || fail "invalid invocation returned status $status instead of 2"
+  grep -F '[fatal] [execution.invalid-arguments]' "$tmp/invalid.stderr" >/dev/null 2>&1 || fail "invalid http-fetch invocation was not reported as fatal"
 }
 
 expect_invalid "https://example.test/"
