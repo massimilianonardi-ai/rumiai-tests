@@ -273,4 +273,12 @@ else
   [ "$status" -eq 2 ] || fail "invalid upstream version returned $status instead of 2"
 fi
 
+if pkg_default tool 2 foo-bar >/dev/null 2>&1
+then
+  fail "non-canonical osarch was accepted"
+else
+  status=$?
+  [ "$status" -eq 2 ] || fail "non-canonical osarch returned $status instead of 2"
+fi
+
 exit "0"
