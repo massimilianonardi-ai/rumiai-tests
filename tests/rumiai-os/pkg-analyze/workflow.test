@@ -68,7 +68,7 @@ rumiai_test_target_rumiai_os_find()
     parent=${candidate%/*}
     [ -n "$parent" ] || parent=/
     [ "$parent" != "$candidate" ] || break
-    candidate="$parent"
+    candidate=$parent
   done
   return 1
 }
@@ -136,12 +136,19 @@ PATH="$root/bin/sys:$PATH"
 HOME="$tmp/original-home"
 export PATH HOME
 
-printf -- '\n2\ny\n\n' | "$command_file" "$tmp/input" > "$tmp/report" 2> "$tmp/diagnostic"
+printf -- '2\ny\n\n' | "$command_file" "$tmp/input/wrapper/root" > "$tmp/report" 2> "$tmp/diagnostic"
 status=$?
 [ "$status" -eq 0 ] || fail "pkg-analyze workflow returned status $status"
 
-command -p -- grep -F 'suggested-useful-root' "$tmp/report" | command -p -- grep -F 'wrapper/root' >/dev/null || fail "single-directory useful-root suggestion is missing"
-command -p -- grep -F 'selected-useful-root' "$tmp/report" | command -p -- grep -F 'wrapper/root' >/dev/null || fail "accepted useful root is missing"
+command -p -- grep -F 'useful-root' "$tmp/report" | command -p -- grep -F '.' >/dev/null || fail "provided directory was not treated as the useful root"
+if command -p -- grep -F 'suggested-useful-root' "$tmp/report" >/dev/null
+then
+  fail "directory mode still performs superseded useful-root discovery"
+fi
+if command -p -- grep -F 'selected-useful-root' "$tmp/report" >/dev/null
+then
+  fail "directory mode still performs superseded useful-root selection"
+fi
 command -p -- grep -F 'launch-like' "$tmp/report" | command -p -- grep -F 'bin/helper.sh' >/dev/null || fail "non-executable shell candidate is missing"
 command -p -- grep -F 'executable' "$tmp/report" | command -p -- grep -F 'bin/tool' >/dev/null || fail "executable candidate is missing"
 command -p -- grep -F 'launch-like' "$tmp/report" | command -p -- grep -F 'scripts/setup.cmd' >/dev/null || fail "CMD candidate is missing"
