@@ -145,10 +145,11 @@ chmod 700 "$fallback" || error 'cannot make fallback shell executable'
 TEST_RECORD=$tmp/fallback.record
 export TEST_RECORD
 (
-    unset SHELL ENV ZDOTDIR
+    SHELL=
+    unset ENV ZDOTDIR
     PATH="$tmp/bin:$PATH"
     TERM=dumb
-    export PATH TERM
+    export SHELL PATH TERM
     "$source_root/rumiai-os" >"$tmp/fallback.out" 2>"$tmp/fallback.err"
 )
 status=$?
@@ -161,7 +162,7 @@ status=$?
 
 cmp "$tmp/fallback.expected" "$TEST_RECORD" >/dev/null 2>&1 || {
     cat "$TEST_RECORD" >&2
-    fail 'unset SHELL did not select the sh adapter'
+    fail 'empty SHELL did not select the sh adapter'
 }
 
 exit 0
