@@ -199,8 +199,9 @@ do
   [ -f "$destination/payload" ] || fail "single-stream $format did not derive output filename"
 done
 
-PATH="$runtime_path" "$command_path" appimage "$artifact" "$destination" >/dev/null 2>&1
+m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" appimage "$artifact" "$destination" >/dev/null 2>"$tmp/err"
 status="$?"
 [ "$status" -eq 2 ] || fail "extract accepted package-specific appimage mode"
+grep -F '[fatal] [execution.invalid-arguments]' "$tmp/err" >/dev/null 2>&1 || fail "invalid extract invocation was not reported as fatal"
 
 exit "0"
