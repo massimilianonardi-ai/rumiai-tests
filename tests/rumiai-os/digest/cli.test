@@ -133,9 +133,10 @@ PATH="$runtime_path" "$command_path" -a sha256 -- "$tmp/input" >"$stdout" 2>"$st
 
 expect_invalid()
 {
-  PATH="$runtime_path" "$command_path" "$@" >"$stdout" 2>"$stderr"
+  m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" "$@" >"$stdout" 2>"$stderr"
   status="$?"
   [ "$status" -eq 2 ] || fail "invalid digest invocation returned $status instead of 2"
+  grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || fail "invalid digest invocation was not reported as fatal"
 }
 expect_invalid
 expect_invalid -a md5
