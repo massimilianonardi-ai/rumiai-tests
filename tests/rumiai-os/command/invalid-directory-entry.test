@@ -38,9 +38,10 @@ mkdir "$bad" || error 'cannot create invalid directory entry'
 canonical=$(CDPATH= cd -- "$bad" 2>/dev/null && pwd -P) || error 'cannot canonicalize invalid directory entry'
 RumiAI_LOG_LEVEL=info "$entry" "$bad" >"$tmp/stdout" 2>"$tmp/stderr"
 status=$?
-[ "$status" -eq 9 ] || { cat "$tmp/stderr" >&2; fail "expected status 9, got $status"; }
+[ "$status" -eq 1 ] || { cat "$tmp/stderr" >&2; fail "expected status 1, got $status"; }
 [ ! -s "$tmp/stdout" ] || fail 'invalid directory entry produced unexpected stdout'
 stderr_text=$(cat "$tmp/stderr") || error 'cannot read invalid-entry diagnostics'
-case $stderr_text in *'[error] [bootstrap.invalid-command-entry]'*) : ;; *) cat "$tmp/stderr" >&2; fail 'invalid-command-entry event missing' ;; esac
-case $stderr_text in *"[path=\"$canonical\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'invalid-command-entry event lacks canonical path' ;; esac
+case $stderr_text in *'[fatal] [filesystem.path-invalid]'*) : ;; *) cat "$tmp/stderr" >&2; fail 'filesystem.path-invalid event missing' ;; esac
+case $stderr_text in *"[command-original=\"$bad\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'path-invalid event lacks original command path' ;; esac
+case $stderr_text in *"[command-resolved=\"$canonical\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'path-invalid event lacks canonical resolved path' ;; esac
 exit 0
