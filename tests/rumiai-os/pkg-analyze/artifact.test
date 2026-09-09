@@ -75,13 +75,25 @@ PATH="$root/bin/sys:$PATH"
 HOME="$tmp/home"
 export PATH HOME
 
-printf -- '\n\n' | "$command_file" appimage "$artifact" > "$tmp/report" 2> "$tmp/diagnostic"
+printf -- '\n' | "$command_file" appimage "$artifact" > "$tmp/report" 2> "$tmp/diagnostic"
 status=$?
 [ "$status" -eq 0 ] || fail "artifact analysis returned status $status"
 
 command -p -- grep -F 'source' "$tmp/report" | command -p -- grep -F 'artifact' >/dev/null || fail "artifact source was not reported"
 command -p -- grep -F 'format' "$tmp/report" | command -p -- grep -F 'appimage' >/dev/null || fail "artifact format was not reported"
-command -p -- grep -F 'suggested-useful-root' "$tmp/report" | command -p -- grep -F '.' >/dev/null || fail "AppImage useful root was not reported"
+command -p -- grep -F 'useful-root' "$tmp/report" | command -p -- grep -F '.' >/dev/null || fail "normalized useful root was not reported"
+if command -p -- grep -F 'suggested-useful-root' "$tmp/report" >/dev/null
+then
+  fail "superseded useful-root suggestion is still reported"
+fi
+if command -p -- grep -F 'selected-useful-root' "$tmp/report" >/dev/null
+then
+  fail "superseded useful-root selection is still reported"
+fi
+if command -p -- grep -F 'Useful root relative to extracted tree' "$tmp/diagnostic" >/dev/null
+then
+  fail "superseded useful-root prompt is still emitted"
+fi
 command -p -- grep -F 'executable' "$tmp/report" | command -p -- grep -F 'demo.AppImage' >/dev/null || fail "materialized AppImage candidate was not reported"
 command -p -- grep -F 'Selected export candidates:' "$tmp/report" >/dev/null || fail "selection section is missing"
 command -p -- grep -F '(none)' "$tmp/report" >/dev/null || fail "empty selection was not represented"
