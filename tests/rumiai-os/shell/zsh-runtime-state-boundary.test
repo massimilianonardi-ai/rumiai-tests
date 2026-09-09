@@ -1,0 +1,172 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/shell/zsh-runtime-state-boundary.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+# Reference implementation copied from:
+# massimilianonardi-ai/rumiai-tests@326dc93086af2f5c25716d1d92c08a86317afa7f:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|\
+    git@github.com:massimilianonardi-ai/rumiai-os.git|\
+    ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+
+  printf '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return 3
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+
+    [ "$candidate" != / ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+
+  return 1
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) : ;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error 'cannot resolve test directory'
+group="${test_dir%/*}"
+rumiai_os_group="${group%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+[ -x "$source_root/rumiai-os" ] || fail 'rumiai-os target entrypoint is not executable'
+
+tmp="${TMPDIR:-/tmp}/rumiai-shell-zsh-runtime-state-boundary-$$"
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fixture_root="$tmp/rumiai-os"
+mkdir -p \
+  "$fixture_root/lib/sh" \
+  "$fixture_root/conf/sys/shell/zsh" \
+  "$fixture_root/home" || error 'cannot create isolated target fixture'
+
+cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || error 'cannot copy bootstrap into fixture'
+cp "$source_root/lib/sh/core.lib.sh" "$fixture_root/lib/sh/core.lib.sh" || error 'cannot copy core into fixture'
+for proxy in .zshenv .zprofile .zshrc
+do
+  cp "$source_root/conf/sys/shell/zsh/$proxy" "$fixture_root/conf/sys/shell/zsh/$proxy" || error "cannot copy $proxy into fixture"
+done
+
+command_file="$tmp/shell-command"
+cat > "$command_file" <<'EOT'
+shell "$@"
+EOT
+
+fake_dir="$tmp/fake"
+mkdir "$fake_dir" || error 'cannot create fake shell directory'
+fake_zsh="$fake_dir/zsh"
+cat > "$fake_zsh" <<'EOT'
+#!/bin/sh
+
+[ "$ZDOTDIR" = "$m_HOME_DIR/sys/shell/zsh" ] || exit 41
+[ "$ZDOTDIR" != "$m_CONF_DIR/sys/shell/zsh" ] || exit 42
+[ -d "$ZDOTDIR" ] || exit 43
+
+printf '%s\n' "$ZDOTDIR" > "$TEST_RECORD" || exit 44
+printf '%s\n' runtime-state > "$ZDOTDIR/$TEST_STATE_NAME" || exit 45
+exit 0
+EOT
+chmod 700 "$fake_zsh" || error 'cannot make fake zsh executable'
+
+TEST_RECORD="$tmp/zdotdir.record"
+TEST_STATE_NAME=".rumiai-test-runtime-state-$$"
+HOME="$tmp/user-home"
+SHELL="$fake_zsh"
+m_SHELL_EXT=
+TERM=dumb
+mkdir "$HOME" || error 'cannot create user HOME fixture'
+export TEST_RECORD TEST_STATE_NAME HOME SHELL m_SHELL_EXT TERM
+unset ZDOTDIR
+
+"$fixture_root/rumiai-os" "$command_file" > "$tmp/stdout" 2> "$tmp/stderr"
+status="$?"
+[ "$status" -eq 0 ] || {
+  cat "$tmp/stderr" >&2
+  fail "fake Zsh launch returned $status"
+}
+
+runtime_zdotdir="$fixture_root/home/sys/shell/zsh"
+conf_zdotdir="$fixture_root/conf/sys/shell/zsh"
+
+[ "$(cat "$TEST_RECORD")" = "$runtime_zdotdir" ] || fail 'Zsh did not receive the runtime state ZDOTDIR'
+[ -f "$runtime_zdotdir/$TEST_STATE_NAME" ] || fail 'runtime state was not materialized in RumiAI home'
+[ ! -e "$conf_zdotdir/$TEST_STATE_NAME" ] || fail 'runtime state leaked into versioned Zsh configuration'
+
+for proxy in .zshenv .zprofile .zshrc
+do
+  [ -f "$runtime_zdotdir/$proxy" ] || fail "runtime redirector $proxy is missing"
+  [ ! -L "$runtime_zdotdir/$proxy" ] || fail "runtime redirector $proxy must not be a symlink"
+  expected=". \"\$m_CONF_DIR/sys/shell/zsh/$proxy\""
+  [ "$(cat "$runtime_zdotdir/$proxy")" = "$expected" ] || fail "runtime redirector $proxy does not source canonical configuration"
+done
+
+exit 0
