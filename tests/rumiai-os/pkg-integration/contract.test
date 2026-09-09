@@ -1,0 +1,276 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-integration/contract.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return "3"
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) :;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return "1";;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0") :;;
+  "1") skip "rumiai-os target checkout not found";;
+  "2") fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+library="$root/lib/sh/pkg-integration.lib.sh"
+[ -f "$library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-integration-contract-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+readpathce()
+{
+  [ "$#" -eq 2 ] || return 2
+  case "$2" in
+    */*) dir=${2%/*}; base=${2##*/}; [ -n "$dir" ] || dir=/;;
+    *) dir=.; base=$2;;
+  esac
+  physical_dir="$(CDPATH= cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
+  eval "$1=\$physical_dir/\$base"
+}
+
+log()
+{
+  :
+}
+
+m_ROOT="$tmp/root"
+m_BIN_DIR="$m_ROOT/bin"
+m_BIN_EXT_DIR="$m_BIN_DIR/ext"
+m_PKG_DIR="$m_ROOT/pkg"
+mkdir -p "$m_BIN_DIR" "$m_PKG_DIR" || error "cannot create package fixture root"
+export m_ROOT m_BIN_DIR m_BIN_EXT_DIR m_PKG_DIR
+
+. "$library" || error "cannot source pkg-integration library"
+
+make_command()
+{
+  range=$1
+  command_name=$2
+  target=$3
+  mkdir -p "$range/cmd" "$range/link" || return 1
+  cat > "$range/cmd/$command_name" <<'EOF_COMMAND'
+#!/usr/bin/env rumiai-os
+
+launcher "dbeaver" \
+  -configuration "$m_CONF_DIR/dbeaver/configuration" \
+  -data "$m_HOME_DIR/dbeaver/.workspace" \
+  "$@"
+EOF_COMMAND
+  chmod 600 "$range/cmd/$command_name" || return 1
+  printf -- '%s\n' "$target" > "$range/link/$command_name" || return 1
+}
+
+make_payload_target()
+{
+  payload=$1
+  target=$2
+  target_dir=${target%/*}
+  if [ "$target_dir" = "$target" ]
+  then
+    target_dir=.
+  fi
+  mkdir -p "$payload/$target_dir" || return 1
+  printf -- '%s\n' payload > "$payload/$target" || return 1
+  chmod 700 "$payload/$target" || return 1
+}
+
+for spec in \
+  'linux-arm64|dbeaver' \
+  'macos-arm64|DBeaver.app/Contents/MacOS/dbeaver' \
+  'windows-x86_64|dbeaver.exe'
+do
+  osarch=${spec%%|*}
+  target=${spec#*|}
+  range="$tmp/range-$osarch"
+  payload="$tmp/payload-$osarch"
+  mkdir "$range" "$payload" || error "cannot create DBeaver fixture"
+  make_command "$range" dbeaver "$target" || error "cannot create command fixture"
+  printf -- '%s\n' tar.gz > "$range/format"
+  printf -- '%s\n' sha256 > "$range/digest_type"
+  printf -- '%s\n' regex > "$range/archive_regex"
+  make_payload_target "$payload" "$target" || error "cannot create payload fixture"
+
+  pkg_integrate dbeaver 26.2.0 "$range" "$payload" "$osarch" || fail "DBeaver integration failed for $osarch"
+  concrete="$m_PKG_DIR/dbeaver@26.2.0!$osarch"
+  [ -d "$concrete/root" ] || fail "root missing for $osarch"
+  [ -f "$concrete/cmd/dbeaver" ] && [ -x "$concrete/cmd/dbeaver" ] || fail "command not executable for $osarch"
+  cmp "$range/cmd/dbeaver" "$concrete/cmd/dbeaver" >/dev/null 2>&1 || fail "command bytes changed for $osarch"
+  [ ! -x "$range/cmd/dbeaver" ] || fail "catalog command source was made executable"
+  [ "$(readlink "$concrete/link/dbeaver")" = "../root/$target" ] || fail "incorrect link target for $osarch"
+  [ ! -e "$concrete/env" ] && [ ! -e "$concrete/default" ] && [ ! -e "$concrete/var" ] || fail "undeclared integration structure created for $osarch"
+  [ ! -L "$m_PKG_DIR/dbeaver!$osarch" ] || fail "pkg_integrate selected a default for $osarch"
+  [ ! -e "$m_BIN_DIR/ext-$osarch/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-$osarch/dbeaver" ] || fail "pkg_integrate exposed a public command for $osarch"
+done
+
+pkg_default dbeaver 26.2.0 linux-arm64 || fail "target default selection failed"
+[ "$(readlink "$m_PKG_DIR/dbeaver!linux-arm64")" = 'dbeaver@26.2.0!linux-arm64' ] || fail "target current selector is incorrect"
+[ "$(readlink "$m_BIN_DIR/ext-linux-arm64/dbeaver")" = '../../pkg/dbeaver!linux-arm64/cmd/dbeaver' ] || fail "target public binding is incorrect"
+[ ! -e "$m_BIN_DIR/ext-osarch/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-osarch/dbeaver" ] || fail "physical binding was written into ext-osarch alias"
+
+if pkg_deintegrate dbeaver 26.2.0 linux-arm64 >/dev/null 2>&1
+then
+  fail "pkg_deintegrate accepted the current/default concrete version"
+fi
+
+pkg_default dbeaver '' linux-arm64 || fail "target default removal failed"
+[ ! -e "$m_PKG_DIR/dbeaver!linux-arm64" ] && [ ! -L "$m_PKG_DIR/dbeaver!linux-arm64" ] || fail "target current selector survived default removal"
+[ ! -e "$m_BIN_DIR/ext-linux-arm64/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-linux-arm64/dbeaver" ] || fail "target public binding survived default removal"
+[ -d "$m_PKG_DIR/dbeaver@26.2.0!linux-arm64" ] || fail "default removal destroyed availability integration"
+pkg_deintegrate dbeaver 26.2.0 linux-arm64 || fail "non-current DBeaver deintegration failed"
+[ ! -e "$m_PKG_DIR/dbeaver@26.2.0!linux-arm64" ] || fail "deintegrated concrete version survived"
+
+for version in 1 2
+do
+  range="$tmp/tool-range-$version"
+  payload="$tmp/tool-payload-$version"
+  mkdir "$range" "$payload" || error "cannot create command-set fixture"
+  if [ "$version" -eq 1 ]
+  then
+    make_command "$range" old bin/old || error "cannot create old command fixture"
+    make_payload_target "$payload" bin/old || error "cannot create old payload fixture"
+  else
+    make_command "$range" new bin/new || error "cannot create new command fixture"
+    make_payload_target "$payload" bin/new || error "cannot create new payload fixture"
+  fi
+  pkg_integrate tool "$version" "$range" "$payload" || fail "generic integration failed for version $version"
+done
+
+pkg_default tool 1 || fail "generic default v1 failed"
+[ -L "$m_BIN_EXT_DIR/old" ] || fail "old public command missing"
+pkg_default tool 2 || fail "generic default v2 failed with changed command set"
+[ ! -e "$m_BIN_EXT_DIR/old" ] && [ ! -L "$m_BIN_EXT_DIR/old" ] || fail "old public command survived default switch"
+[ -L "$m_BIN_EXT_DIR/new" ] || fail "new public command missing after default switch"
+[ "$(readlink "$m_PKG_DIR/tool")" = 'tool@2' ] || fail "generic current selector did not move"
+
+pkg_default tool '' || fail "generic default removal failed"
+printf -- '%s\n' foreign > "$m_BIN_EXT_DIR/new"
+if pkg_default tool 2 >/dev/null 2>&1
+then
+  fail "foreign public binding collision was accepted"
+fi
+[ -f "$m_BIN_EXT_DIR/new" ] && [ ! -L "$m_BIN_EXT_DIR/new" ] || fail "foreign public binding was modified"
+[ ! -e "$m_PKG_DIR/tool" ] && [ ! -L "$m_PKG_DIR/tool" ] || fail "current changed despite public collision"
+rm "$m_BIN_EXT_DIR/new"
+
+range="$tmp/escape-range"
+payload="$tmp/escape-payload"
+mkdir "$range" "$payload" || error "cannot create escape fixture"
+make_command "$range" escape ../outside || error "cannot create escape command fixture"
+if pkg_integrate escape 1 "$range" "$payload" >/dev/null 2>&1
+then
+  fail "escaping link target was accepted"
+fi
+[ -d "$payload" ] || fail "failed integration consumed useful root"
+[ ! -e "$m_PKG_DIR/escape@1" ] || fail "failed integration published a concrete version"
+
+range="$tmp/unsupported-range"
+payload="$tmp/unsupported-payload"
+mkdir "$range" "$payload" || error "cannot create unsupported fixture"
+printf -- '%s\n' future > "$range/facility"
+if pkg_integrate future 1 "$range" "$payload" >/dev/null 2>&1
+then
+  fail "unsupported integration feature was accepted"
+else
+  status=$?
+  [ "$status" -eq 2 ] || fail "unsupported integration feature returned $status instead of 2"
+fi
+
+if pkg_integrate bad '1/2' "$range" "$payload" >/dev/null 2>&1
+then
+  fail "invalid upstream version was accepted"
+else
+  status=$?
+  [ "$status" -eq 2 ] || fail "invalid upstream version returned $status instead of 2"
+fi
+
+exit "0"
