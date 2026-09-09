@@ -49,12 +49,19 @@ command_file="$root/bin/sys/pkg_analyze"
 PATH="$root/bin/sys:$PATH"
 export PATH
 
-"$command_file" >/dev/null 2>&1
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-analyze-arguments-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+m_LOG_LEVEL=trace "$command_file" >"$tmp/stdout" 2>"$tmp/stderr"
 status=$?
 [ "$status" -eq 2 ] || fail "zero arguments returned $status instead of 2"
+grep -F '[fatal] [execution.invalid-arguments]' "$tmp/stderr" >/dev/null 2>&1 || fail "zero-argument failure was not reported as fatal"
 
-"$command_file" one two three >/dev/null 2>&1
+m_LOG_LEVEL=trace "$command_file" one two three >"$tmp/stdout" 2>"$tmp/stderr"
 status=$?
 [ "$status" -eq 2 ] || fail "three arguments returned $status instead of 2"
+grep -F '[fatal] [execution.invalid-arguments]' "$tmp/stderr" >/dev/null 2>&1 || fail "three-argument failure was not reported as fatal"
 
 exit 0
