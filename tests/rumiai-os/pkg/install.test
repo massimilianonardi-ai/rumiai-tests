@@ -74,6 +74,8 @@ resolve_test_dir()
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
+command -v git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
+
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 group_dir=${test_dir%/*}
 rumiai_os_group=${group_dir%/*}
@@ -180,11 +182,13 @@ make_stream()
   printf -- '%s\n' appimage > "$base/n0002=v1/format" || return 1
 }
 
-for package in alpha beta gamma delta first
+for package in alpha beta gamma delta first unsupported
 do
   make_stream "$package" catalog-linux-arm64 || error "cannot create target stream fixture"
 done
 make_stream generic catalog || error "cannot create generic stream fixture"
+make_stream broken catalog || error "cannot create malformed-target fallback fixture"
+printf -- '%s\n' invalid > "$fixture_catalog/broken/catalog-linux-arm64" || error "cannot create malformed target stream object"
 
 snapshot_calls="$tmp/snapshot-calls"
 : > "$snapshot_calls" || error "cannot initialize snapshot counter"
@@ -217,6 +221,7 @@ integrations="$tmp/integrations"
 pkg_integrate()
 {
   [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || return 2
+  [ "$1" != unsupported ] || return 2
   if [ "$#" -eq 5 ]
   then
     identity="$1@$2!$5"
@@ -278,5 +283,22 @@ else
 fi
 [ -d "$m_PKG_DIR/first@2.0!linux-arm64" ] || fail "successful earlier integration was rolled back after later failure"
 [ ! -e "$m_PKG_DIR/missing@2.0!linux-arm64" ] || fail "failed package was integrated"
+
+if pkg_install 'unsupported@2.0' >/dev/null 2>&1
+then
+  fail "unsupported integration unexpectedly succeeded"
+else
+  status=$?
+  [ "$status" -eq 1 ] || fail "unsupported lower-layer feature leaked status $status instead of operational status 1"
+fi
+
+if pkg_install 'broken@2.0' >/dev/null 2>&1
+then
+  fail "malformed target-specific stream silently fell back to generic"
+else
+  status=$?
+  [ "$status" -eq 1 ] || fail "malformed target-specific stream returned $status instead of 1"
+fi
+[ ! -e "$m_PKG_DIR/broken@2.0" ] || fail "generic fallback was used despite malformed target-specific stream object"
 
 exit 0

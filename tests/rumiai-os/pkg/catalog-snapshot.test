@@ -74,6 +74,8 @@ resolve_test_dir()
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
+command -v git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
+
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 group_dir=${test_dir%/*}
 rumiai_os_group=${group_dir%/*}
@@ -88,7 +90,6 @@ case "$status" in
   *) error "target discovery failed or required git is unavailable" ;;
 esac
 
-command -v git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
 library="$root/lib/sh/pkg-install.lib.sh"
 [ -f "$library" ] || fail "lib/sh/pkg-install.lib.sh is missing"
 
