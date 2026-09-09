@@ -108,6 +108,7 @@ mkdir -p \
   "$fixture_root/lib/sh" \
   "$fixture_root/conf/sys/shell/zsh" \
   "$fixture_root/home" || error 'cannot create isolated target fixture'
+fixture_root="$(CDPATH= cd -- "$fixture_root" 2>/dev/null && pwd -P)" || error 'cannot canonicalize isolated target fixture'
 
 cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || error 'cannot copy bootstrap into fixture'
 cp "$source_root/lib/sh/core.lib.sh" "$fixture_root/lib/sh/core.lib.sh" || error 'cannot copy core into fixture'
