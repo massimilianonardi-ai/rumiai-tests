@@ -25,7 +25,10 @@ tmp=${TMPDIR:-/tmp}/rumiai-command-self-$$; umask 077; mkdir "$tmp" || error 'ca
 rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"; status=$?; case $status in 0) : ;; 1) fail 'source checkout lacks required runtime material' ;; 2) error 'cannot materialize isolated fixture' ;; *) error "fixture primitive returned unexpected status $status" ;; esac
 fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canonicalize fixture root'; entry=$fixture/rumiai-os
 RumiAI_LOG_LEVEL=info "$entry" "$entry" >"$tmp/stdout" 2>"$tmp/stderr"; status=$?
-[ "$status" -eq 9 ] || { cat "$tmp/stderr" >&2; fail "expected status 9, got $status"; }
+[ "$status" -eq 1 ] || { cat "$tmp/stderr" >&2; fail "expected status 1, got $status"; }
 [ ! -s "$tmp/stdout" ] || fail 'self-entry rejection produced unexpected stdout'
-grep -F '[error] [bootstrap.invalid-command-entry]' "$tmp/stderr" >/dev/null 2>&1 || { cat "$tmp/stderr" >&2; fail 'self-entry invalid-command event missing'; }
+stderr_text=$(cat "$tmp/stderr") || error 'cannot read self-entry diagnostics'
+case $stderr_text in *'[fatal] [filesystem.path-invalid]'*) : ;; *) cat "$tmp/stderr" >&2; fail 'filesystem.path-invalid event missing' ;; esac
+case $stderr_text in *"[command-original=\"$entry\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'path-invalid event lacks original self-entry path' ;; esac
+case $stderr_text in *"[command-resolved=\"$entry\"]"*) : ;; *) cat "$tmp/stderr" >&2; fail 'path-invalid event lacks resolved self-entry path' ;; esac
 exit 0
