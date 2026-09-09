@@ -44,14 +44,17 @@ LC_ALL=C "$fixture/rumiai-os" "$fixture/bin/sys/lang-set" >"$stdout" 2>"$stderr"
 case $(cat "$stdout") in "current${tab}it_IT"*) : ;; *) cat "$stdout" >&2; fail 'lang-set did not report selected current language' ;; esac
 
 "$fixture/rumiai-os" "$fixture/bin/sys/lang-set" fr_FR >"$stdout" 2>"$stderr" && fail 'lang-set accepted unavailable language'
+grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'unavailable language was not reported as fatal invalid-arguments'; }
 [ "$(readlink "$fixture/lang/current")" = it_IT ] || fail 'unavailable language changed current selection'
 
 "$fixture/rumiai-os" "$fixture/bin/sys/lang-set" en_US extra >"$stdout" 2>"$stderr" && fail 'lang-set accepted more than one argument'
+grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'invalid argument count was not reported as fatal invalid-arguments'; }
 [ "$(readlink "$fixture/lang/current")" = it_IT ] || fail 'invalid argument count changed current selection'
 
 rm -f "$fixture/lang/current" || error 'cannot remove current symlink'
 printf '%s\n' keep > "$fixture/lang/current" || error 'cannot create non-symlink current fixture'
 "$fixture/rumiai-os" "$fixture/bin/sys/lang-set" en_US >"$stdout" 2>"$stderr" && fail 'lang-set overwrote non-symlink current object'
+grep -F '[fatal] [filesystem.path-invalid]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'non-symlink current object was not reported as fatal path-invalid'; }
 [ -f "$fixture/lang/current" ] && [ ! -L "$fixture/lang/current" ] || fail 'non-symlink current object was replaced'
 [ "$(cat "$fixture/lang/current")" = keep ] || fail 'non-symlink current object content changed'
 
