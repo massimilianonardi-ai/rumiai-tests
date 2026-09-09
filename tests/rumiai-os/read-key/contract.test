@@ -111,6 +111,11 @@ then
   fail "read-key contains a bootstrap dependency"
 fi
 
+if grep '>&2' "$command_path" >/dev/null 2>&1
+then
+  fail "read-key contains direct stderr diagnostics"
+fi
+
 command -p sh -n "$command_path" || fail "read-key is not valid POSIX-shell syntax for the host sh"
 
 tmp="${TMPDIR:-/tmp}/rumiai-read-key-contract-$$"
@@ -124,6 +129,6 @@ PATH="" "$command_path" unexpected > "$stdout" 2> "$stderr"
 status="$?"
 [ "$status" -eq 2 ] || fail "invalid invocation returned $status instead of 2"
 [ ! -s "$stdout" ] || fail "invalid invocation wrote data to stdout"
-[ "$(command -p cat "$stderr")" = 'read-key: invalid arguments' ] || fail "invalid invocation diagnostic is incorrect"
+[ ! -s "$stderr" ] || fail "invalid invocation wrote data to stderr"
 
 exit "0"
