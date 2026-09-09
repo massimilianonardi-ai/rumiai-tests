@@ -1,0 +1,60 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-analyze/arguments.test"
+
+fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
+  self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+suite_root=${test_dir%/tests/rumiai-os/pkg-analyze}
+
+if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+then
+  root="$RUMIAI_TEST_RUMIAI_OS_ROOT"
+else
+  candidate="$suite_root"
+  root=
+  while :
+  do
+    if [ -f "$candidate/rumiai-os" ]
+    then
+      origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || origin=
+      case "$origin" in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+          root="$(CDPATH= cd -- "$candidate" && pwd -P)" || error "cannot resolve rumiai-os target"
+          break
+          ;;
+      esac
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}; [ -n "$parent" ] || parent=/
+    candidate=$parent
+  done
+fi
+
+[ -n "$root" ] || skip "rumiai-os target checkout not found"
+[ -f "$root/rumiai-os" ] || fail "invalid rumiai-os target"
+command_file="$root/bin/sys/pkg_analyze"
+[ -x "$command_file" ] || fail "pkg_analyze is missing or not executable"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+"$command_file" >/dev/null 2>&1
+status=$?
+[ "$status" -eq 2 ] || fail "zero arguments returned $status instead of 2"
+
+"$command_file" one two three >/dev/null 2>&1
+status=$?
+[ "$status" -eq 2 ] || fail "three arguments returned $status instead of 2"
+
+exit 0

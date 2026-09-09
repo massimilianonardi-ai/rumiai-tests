@@ -1,0 +1,160 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-analyze/workflow.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return 3
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return 1
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) :;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return 1;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) :;;
+  1) skip "rumiai-os target checkout not found";;
+  2) fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+command_file="$root/bin/sys/pkg_analyze"
+[ -f "$command_file" ] || fail "bin/sys/pkg_analyze is missing"
+[ -x "$command_file" ] || fail "bin/sys/pkg_analyze is not executable"
+
+case "$(command -p -- sed -n '1p' "$command_file")" in
+  '#!/usr/bin/env rumiai-os') :;;
+  *) fail "pkg_analyze has the wrong command entrypoint";;
+esac
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-analyze-workflow-$$"
+umask 077
+command -p -- mkdir -p -- \
+  "$tmp/input/wrapper/root/bin" \
+  "$tmp/input/wrapper/root/scripts" \
+  "$tmp/input/wrapper/root/share" \
+  "$tmp/original-home" || error "cannot create fixture directories"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+cat > "$tmp/input/wrapper/root/bin/tool" <<'EOF_TOOL'
+#!/bin/sh
+printf -- '%s\n' state > "$HOME/probe-home"
+printf -- '%s\n' config > "$XDG_CONFIG_HOME/probe-config"
+printf -- '%s\n' temp > "$TMPDIR/probe-tmp"
+printf -- '%s\n' root > ./runtime-created
+exit 7
+EOF_TOOL
+command -p -- chmod 700 "$tmp/input/wrapper/root/bin/tool" || error "cannot make fixture executable"
+printf -- '#!/bin/sh\n' > "$tmp/input/wrapper/root/bin/helper.sh"
+printf -- '@echo off\n' > "$tmp/input/wrapper/root/scripts/setup.cmd"
+printf -- 'readme\n' > "$tmp/input/wrapper/root/share/readme"
+printf -- 'baseline\n' > "$tmp/original-home/baseline"
+
+PATH="$root/bin/sys:$PATH"
+HOME="$tmp/original-home"
+export PATH HOME
+
+printf -- '\n2\ny\n\n' | "$command_file" "$tmp/input" > "$tmp/report" 2> "$tmp/diagnostic"
+status=$?
+[ "$status" -eq 0 ] || fail "pkg_analyze workflow returned status $status"
+
+command -p -- grep -F 'suggested-useful-root' "$tmp/report" | command -p -- grep -F 'wrapper/root' >/dev/null || fail "single-directory useful-root suggestion is missing"
+command -p -- grep -F 'selected-useful-root' "$tmp/report" | command -p -- grep -F 'wrapper/root' >/dev/null || fail "accepted useful root is missing"
+command -p -- grep -F 'launch-like' "$tmp/report" | command -p -- grep -F 'bin/helper.sh' >/dev/null || fail "non-executable shell candidate is missing"
+command -p -- grep -F 'executable' "$tmp/report" | command -p -- grep -F 'bin/tool' >/dev/null || fail "executable candidate is missing"
+command -p -- grep -F 'launch-like' "$tmp/report" | command -p -- grep -F 'scripts/setup.cmd' >/dev/null || fail "CMD candidate is missing"
+command -p -- grep -F 'Probe 2: bin/tool' "$tmp/report" >/dev/null || fail "selected candidate was not probed"
+command -p -- grep -F 'exit-status: 7' "$tmp/report" >/dev/null || fail "candidate exit status was not reported"
+command -p -- grep -F 'runtime-created' "$tmp/report" >/dev/null || fail "package-root path delta was not reported"
+command -p -- grep -F 'home/probe-home' "$tmp/report" >/dev/null || fail "redirected HOME delta was not reported"
+command -p -- grep -F 'xdg-config/probe-config' "$tmp/report" >/dev/null || fail "redirected XDG delta was not reported"
+command -p -- grep -F 'tmp/probe-tmp' "$tmp/report" >/dev/null || fail "redirected temporary-state delta was not reported"
+command -p -- grep -F 'WARNING: dynamic probing is diagnostic only; it is not a sandbox.' "$tmp/diagnostic" >/dev/null || fail "non-sandbox warning is missing"
+
+[ -f "$tmp/input/wrapper/root/runtime-created" ] || fail "fixture package-root mutation did not occur"
+[ ! -e "$tmp/original-home/probe-home" ] || fail "candidate escaped redirected HOME in the fixture"
+[ -f "$tmp/original-home/baseline" ] || fail "original HOME baseline was damaged"
+
+exit 0
