@@ -177,10 +177,12 @@ printf -- '%s' payload > "$artifact"
 
 stage="$tmp/custom-destination"
 mkdir "$stage"
+readpathce artifact_canonical "$artifact" || error "cannot canonicalize artifact fixture"
+readpathce stage_canonical "$stage" || error "cannot canonicalize staging fixture"
 PKG_EXTRACT_LAYOUT=flat
 export PKG_EXTRACT_LAYOUT
 pkg_extract "$artifact" tar.gz "$stage" || fail "identity materialization failed"
-[ "$(cat "$PKG_EXTRACT_ARGS")" = "tar.gz $artifact $stage" ] || fail "pkg_extract delegated incorrect extract arguments"
+[ "$(cat "$PKG_EXTRACT_ARGS")" = "tar.gz $artifact_canonical $stage_canonical" ] || fail "pkg_extract delegated incorrect extract arguments"
 [ -f "$stage/one" ] && [ -f "$stage/two" ] || fail "identity useful root was not preserved"
 [ -z "$(find "$m_ROOT/pkg" -mindepth 1 -print -quit)" ] || fail "pkg_extract wrote into m_ROOT/pkg instead of the caller destination"
 
