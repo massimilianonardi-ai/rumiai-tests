@@ -1,0 +1,268 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/read-key/pty.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return "3"
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) :;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return "1";;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0") :;;
+  "1") skip "rumiai-os target checkout not found";;
+  "2") fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+command_path="$root/bin/sys/read-key"
+[ -f "$command_path" ] || fail "bin/sys/read-key is missing"
+[ -x "$command_path" ] || fail "bin/sys/read-key is not executable"
+
+command -v python3 >/dev/null 2>&1 || skip "python3 is unavailable for PTY test support"
+command -v tput >/dev/null 2>&1 || skip "tput is unavailable"
+TERM=xterm-256color tput cols >/dev/null 2>&1 || skip "xterm-256color terminfo entry is unavailable"
+
+python3 - "$command_path" <<'PY'
+import os
+import pty
+import select
+import subprocess
+import sys
+import termios
+import time
+
+command_path = sys.argv[1]
+term = "xterm-256color"
+base_env = os.environ.copy()
+base_env["TERM"] = term
+
+
+def capability(name):
+    try:
+        return subprocess.check_output(["tput", name], env=base_env, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        return b""
+
+
+def run_key(data=None, env_update=None, timeout=3.0):
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+    pid, master = pty.fork()
+
+    if pid == 0:
+        os.dup2(out_w, 1)
+        os.dup2(err_w, 2)
+        for fd in (out_r, err_r, out_w, err_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        env = base_env.copy()
+        if env_update:
+            env.update(env_update)
+        os.execve(command_path, [command_path], env)
+
+    os.close(out_w)
+    os.close(err_w)
+
+    # Let read-key finish terminal setup before injecting the key. smkx normally
+    # produces side traffic on the PTY; a short bound also covers empty smkx.
+    deadline_setup = time.monotonic() + 0.25
+    while time.monotonic() < deadline_setup:
+        ready, _, _ = select.select([master], [], [], 0.02)
+        if ready:
+            try:
+                os.read(master, 4096)
+            except OSError:
+                pass
+            break
+
+    if data is not None:
+        os.write(master, data)
+
+    out = bytearray()
+    err = bytearray()
+    deadline = time.monotonic() + timeout
+    status = None
+
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([out_r, err_r, master], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == out_r:
+                out.extend(chunk)
+            elif fd == err_r:
+                err.extend(chunk)
+            # PTY side traffic is intentionally discarded.
+
+        waited, wait_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = os.waitstatus_to_exitcode(wait_status)
+            break
+
+    if status is None:
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        raise AssertionError("read-key timed out")
+
+    time.sleep(0.03)
+    for fd, target in ((out_r, out), (err_r, err)):
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0)
+            if not ready:
+                break
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            target.extend(chunk)
+
+    # A successful/handled exit must leave the PTY back in canonical echoing
+    # mode; the PTY starts with those flags set.
+    attrs = termios.tcgetattr(master)
+    lflag = attrs[3]
+    restored = bool(lflag & termios.ICANON) and bool(lflag & termios.ECHO)
+
+    os.close(out_r)
+    os.close(err_r)
+    os.close(master)
+    return status, bytes(out), bytes(err), restored
+
+
+def expect(data, expected):
+    status, out, err, restored = run_key(data)
+    assert status == 0, (data, status, out, err)
+    assert out == expected, (data, status, out, err)
+    assert err == b"", (data, status, out, err)
+    assert restored, (data, "terminal state was not restored")
+
+
+expect(b"a", b"a\n")
+expect(b" ", b" \n")
+expect("é".encode("utf-8"), "é\n".encode("utf-8"))
+expect("€".encode("utf-8"), "€\n".encode("utf-8"))
+expect("😀".encode("utf-8"), "😀\n".encode("utf-8"))
+expect(b"\x1b", b"escape\n")
+expect(b"\n", b"enter\n")
+expect(b"\t", b"tab\n")
+
+up = capability("kcuu1")
+assert up, "xterm-256color has no kcuu1 capability"
+expect(up, b"up\n")
+
+backspace = capability("kbs")
+if backspace:
+    expect(backspace, b"backspace\n")
+
+pageup = capability("kpp")
+if pageup:
+    expect(pageup, b"pageup\n")
+
+f1 = capability("kf1")
+if f1:
+    expect(f1, b"f1\n")
+
+for bad in (b"\xc0\x80", b"\xed\xa0\x80", b"\xf4\x90\x80\x80", b"\x01", b"\x1bX"):
+    status, out, err, restored = run_key(bad)
+    assert status == 2, (bad, status, out, err)
+    assert out == b"", (bad, status, out, err)
+    assert err.startswith(b"read-key: "), (bad, status, out, err)
+    assert restored, (bad, "terminal state was not restored")
+
+status, out, err, restored = run_key(None, {"PATH": ""})
+assert status == 1, (status, out, err)
+assert out == b"", (status, out, err)
+assert err == b"read-key: tput unavailable\n", (status, out, err)
+assert restored, "terminal state was not restored after missing tput"
+PY
+status="$?"
+[ "$status" -eq 0 ] || fail "PTY behavior validation failed"
+
+exit "0"
