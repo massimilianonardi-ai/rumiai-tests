@@ -166,6 +166,8 @@ run_download()
 
 stage="$tmp/stage"
 mkdir "$stage"
+stage_canonical="$(CDPATH= cd -- "$stage" 2>/dev/null && pwd -P)" || error "cannot canonicalize staging fixture"
+artifact_path="$stage_canonical/artifact.bin"
 PKG_DOWNLOAD_FETCH_MODE=ok
 PKG_DOWNLOAD_DIGEST_MODE=ok
 export PKG_DOWNLOAD_FETCH_MODE PKG_DOWNLOAD_DIGEST_MODE
@@ -174,10 +176,10 @@ url=https://example.test/artifact.bin
 size=7
 digest=sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 ')" || fail "valid download failed"
-[ "$out" = "$stage/artifact.bin" ] || fail "pkg_download returned incorrect pathname"
-[ "$(cat "$PKG_DOWNLOAD_DIGEST_ARGS")" = "-a sha256 -- $stage/artifact.bin" ] || fail "pkg_download did not delegate SHA-256 to digest"
+[ "$out" = "$artifact_path" ] || fail "pkg_download returned incorrect pathname"
+[ "$(cat "$PKG_DOWNLOAD_DIGEST_ARGS")" = "-a sha256 -- $artifact_path" ] || fail "pkg_download did not delegate SHA-256 to digest"
 
-rm "$stage/artifact.bin"
+rm "$artifact_path"
 PKG_DOWNLOAD_FETCH_MODE=short
 export PKG_DOWNLOAD_FETCH_MODE
 if run_download "$stage" 'name=artifact.bin
@@ -187,7 +189,7 @@ size=7
 then
   fail "size mismatch was accepted"
 fi
-[ ! -e "$stage/artifact.bin" ] || fail "size mismatch left target behind"
+[ ! -e "$artifact_path" ] || fail "size mismatch left target behind"
 
 PKG_DOWNLOAD_FETCH_MODE=ok
 PKG_DOWNLOAD_DIGEST_MODE=mismatch
@@ -200,7 +202,7 @@ digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 then
   fail "digest mismatch was accepted"
 fi
-[ ! -e "$stage/artifact.bin" ] || fail "digest mismatch left target behind"
+[ ! -e "$artifact_path" ] || fail "digest mismatch left target behind"
 
 PKG_DOWNLOAD_DIGEST_MODE=fail
 export PKG_DOWNLOAD_DIGEST_MODE
@@ -212,7 +214,7 @@ digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 then
   fail "digest backend failure was accepted"
 fi
-[ ! -e "$stage/artifact.bin" ] || fail "digest failure left target behind"
+[ ! -e "$artifact_path" ] || fail "digest failure left target behind"
 
 PKG_DOWNLOAD_FETCH_MODE=fail
 export PKG_DOWNLOAD_FETCH_MODE
@@ -223,7 +225,7 @@ size=7
 then
   fail "transfer failure was accepted"
 fi
-[ ! -e "$stage/artifact.bin" ] || fail "transfer failure left target behind"
+[ ! -e "$artifact_path" ] || fail "transfer failure left target behind"
 
 if run_download "$stage" 'name=../escape
 url=https://example.test/x
