@@ -112,8 +112,39 @@ mkdir "$fakebin" || error "cannot create fake backend directory"
 cat > "$fakebin/extract" <<'EOF_EXTRACT'
 #!/bin/sh
 printf -- '%s\n' "$*" > "$PKG_EXTRACT_ARGS"
-printf -- '%s\n' materialized > "$3/from-extract"
-exit "${PKG_EXTRACT_STATUS-0}"
+case "${PKG_EXTRACT_LAYOUT-flat}" in
+  flat)
+    printf -- '%s\n' one > "$3/one"
+    printf -- '%s\n' two > "$3/two"
+    ;;
+  wrapper)
+    mkdir "$3/release-26.2.0" || exit 1
+    printf -- '%s\n' executable > "$3/release-26.2.0/program"
+    mkdir "$3/release-26.2.0/lib" || exit 1
+    ;;
+  deep)
+    mkdir -p "$3/product/26.2.0/root/bin" "$3/product/26.2.0/root/lib" || exit 1
+    printf -- '%s\n' executable > "$3/product/26.2.0/root/bin/program"
+    ;;
+  hidden)
+    mkdir "$3/wrapper" || exit 1
+    printf -- '%s\n' payload > "$3/wrapper/program"
+    printf -- '%s\n' marker > "$3/.marker"
+    ;;
+  symlink)
+    mkdir "$PKG_EXTRACT_SYMLINK_TARGET" || exit 1
+    printf -- '%s\n' payload > "$PKG_EXTRACT_SYMLINK_TARGET/program"
+    ln -s "$PKG_EXTRACT_SYMLINK_TARGET" "$3/wrapper" || exit 1
+    ;;
+  fail)
+    printf -- '%s\n' partial > "$3/partial"
+    exit 7
+    ;;
+  *)
+    exit 9
+    ;;
+esac
+exit 0
 EOF_EXTRACT
 chmod "700" "$fakebin/extract"
 
@@ -136,15 +167,53 @@ PATH="$fakebin:/usr/bin:/bin"
 export PATH
 PKG_EXTRACT_ARGS="$tmp/extract.args"
 export PKG_EXTRACT_ARGS
+m_ROOT="$tmp/forbidden-root"
+mkdir -p "$m_ROOT/pkg" || error "cannot create forbidden package store fixture"
+export m_ROOT
 . "$library" || error "cannot source pkg-extract library"
 
 artifact="$tmp/archive.tar.gz"
 printf -- '%s' payload > "$artifact"
-stage="$tmp/stage"
+
+stage="$tmp/custom-destination"
 mkdir "$stage"
-pkg_extract "$artifact" tar.gz "$stage" || fail "pkg_extract delegation failed"
+PKG_EXTRACT_LAYOUT=flat
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" tar.gz "$stage" || fail "identity materialization failed"
 [ "$(cat "$PKG_EXTRACT_ARGS")" = "tar.gz $artifact $stage" ] || fail "pkg_extract delegated incorrect extract arguments"
-[ -f "$stage/from-extract" ] || fail "delegated materialization is missing"
+[ -f "$stage/one" ] && [ -f "$stage/two" ] || fail "identity useful root was not preserved"
+[ -z "$(find "$m_ROOT/pkg" -mindepth 1 -print -quit)" ] || fail "pkg_extract wrote into m_ROOT/pkg instead of the caller destination"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=wrapper
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" tar "$stage" || fail "single-wrapper normalization failed"
+[ -f "$stage/program" ] && [ -d "$stage/lib" ] || fail "single-wrapper useful root was not lifted into destination"
+[ ! -e "$stage/release-26.2.0" ] && [ ! -L "$stage/release-26.2.0" ] || fail "single wrapper survived normalization"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=deep
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" zip "$stage" || fail "deep-wrapper normalization failed"
+[ -f "$stage/bin/program" ] && [ -d "$stage/lib" ] || fail "deep useful root was not lifted into destination"
+[ ! -e "$stage/product" ] && [ ! -L "$stage/product" ] || fail "deep wrapper survived normalization"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=hidden
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" tar "$stage" || fail "hidden-entry identity case failed"
+[ -f "$stage/.marker" ] && [ -d "$stage/wrapper" ] || fail "hidden entry was ignored by structural discovery"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=symlink
+PKG_EXTRACT_SYMLINK_TARGET="$tmp/symlink-target"
+export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
+pkg_extract "$artifact" tar "$stage" || fail "symlink-wrapper identity case failed"
+[ -L "$stage/wrapper" ] || fail "symlink wrapper was followed or replaced"
 
 rm -rf "$stage"
 mkdir "$stage"
@@ -162,6 +231,18 @@ pkg_extract "$appimage" appimage "$stage" || fail "opaque AppImage materializati
 
 rm -rf "$stage"
 mkdir "$stage"
+PKG_EXTRACT_LAYOUT=fail
+export PKG_EXTRACT_LAYOUT
+if pkg_extract "$artifact" tar "$stage" >/dev/null 2>&1
+then
+  fail "extract backend failure was accepted"
+else
+  status=$?
+  [ "$status" -eq 1 ] || fail "extract backend failure returned $status instead of 1"
+fi
+
+rm -rf "$stage"
+mkdir "$stage"
 printf -- '%s\n' occupied > "$stage/existing"
 if pkg_extract "$artifact" tar "$stage" >/dev/null 2>&1
 then
@@ -174,7 +255,7 @@ if pkg_extract "$artifact" unsupported "$stage" >/dev/null 2>&1
 then
   fail "unsupported format was accepted"
 else
-  status="$?"
+  status=$?
   [ "$status" -eq 2 ] || fail "unsupported format returned $status instead of 2"
 fi
 
