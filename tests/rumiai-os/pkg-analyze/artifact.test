@@ -56,8 +56,8 @@ root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
 status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
 
-command_file="$root/bin/sys/pkg_analyze"
-[ -x "$command_file" ] || fail "pkg_analyze is missing or not executable"
+command_file="$root/bin/sys/pkg-analyze"
+[ -x "$command_file" ] || fail "pkg-analyze is missing or not executable"
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-analyze-artifact-$$"
 umask 077

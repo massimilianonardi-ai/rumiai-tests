@@ -43,8 +43,9 @@ fi
 
 [ -n "$root" ] || skip "rumiai-os target checkout not found"
 [ -f "$root/rumiai-os" ] || fail "invalid rumiai-os target"
-command_file="$root/bin/sys/pkg_analyze"
-[ -x "$command_file" ] || fail "pkg_analyze is missing or not executable"
+command_file="$root/bin/sys/pkg-analyze"
+[ -x "$command_file" ] || fail "pkg-analyze is missing or not executable"
+[ ! -e "$root/bin/sys/pkg_analyze" ] && [ ! -L "$root/bin/sys/pkg_analyze" ] || fail "superseded bin/sys/pkg_analyze still exists"
 
 PATH="$root/bin/sys:$PATH"
 export PATH

@@ -100,13 +100,13 @@ case "$status" in
   *) error "target discovery failed";;
 esac
 
-command_file="$root/bin/sys/pkg_analyze"
-[ -f "$command_file" ] || fail "bin/sys/pkg_analyze is missing"
-[ -x "$command_file" ] || fail "bin/sys/pkg_analyze is not executable"
+command_file="$root/bin/sys/pkg-analyze"
+[ -f "$command_file" ] || fail "bin/sys/pkg-analyze is missing"
+[ -x "$command_file" ] || fail "bin/sys/pkg-analyze is not executable"
 
 case "$(command -p -- sed -n '1p' "$command_file")" in
   '#!/usr/bin/env rumiai-os') :;;
-  *) fail "pkg_analyze has the wrong command entrypoint";;
+  *) fail "pkg-analyze has the wrong command entrypoint";;
 esac
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-analyze-workflow-$$"
@@ -138,7 +138,7 @@ export PATH HOME
 
 printf -- '\n2\ny\n\n' | "$command_file" "$tmp/input" > "$tmp/report" 2> "$tmp/diagnostic"
 status=$?
-[ "$status" -eq 0 ] || fail "pkg_analyze workflow returned status $status"
+[ "$status" -eq 0 ] || fail "pkg-analyze workflow returned status $status"
 
 command -p -- grep -F 'suggested-useful-root' "$tmp/report" | command -p -- grep -F 'wrapper/root' >/dev/null || fail "single-directory useful-root suggestion is missing"
 command -p -- grep -F 'selected-useful-root' "$tmp/report" | command -p -- grep -F 'wrapper/root' >/dev/null || fail "accepted useful root is missing"
