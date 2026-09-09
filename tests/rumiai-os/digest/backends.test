@@ -1,0 +1,158 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/digest/backends.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return "3"
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) :;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return "1";;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0") :;;
+  "1") skip "rumiai-os target checkout not found";;
+  "2") fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+command_path="$root/bin/sys/digest"
+[ -f "$command_path" ] || fail "bin/sys/digest is missing"
+[ -x "$command_path" ] || fail "bin/sys/digest is not executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-digest-backends-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fakebin="$tmp/bin"
+mkdir "$fakebin" || error "cannot create fake backend directory"
+marker="$tmp/marker"
+export DIGEST_MARKER="$marker"
+
+make_backend()
+{
+  name="$1"
+  value="$2"
+  cat > "$fakebin/$name" <<EOF_BACKEND
+#!/bin/sh
+printf -- '%s\\n' '$name' >> "\$DIGEST_MARKER"
+/bin/cat >/dev/null || exit 91
+printf -- '%s\\n' '$value'
+EOF_BACKEND
+  chmod "700" "$fakebin/$name" || error "cannot make fake $name executable"
+}
+
+run_digest()
+{
+  : > "$marker"
+  PATH="$root/bin/sys:$fakebin" "$command_path" -a sha256 </dev/null > "$tmp/out" 2> "$tmp/err"
+}
+
+make_backend cksum 'SHA256 (-) = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+make_backend sha256sum 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  -'
+make_backend shasum 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc  -'
+make_backend openssl 'SHA2-256(stdin)= dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+run_digest || fail "digest failed with cksum available"
+[ "$(sort -u "$marker")" = "cksum" ] || fail "digest did not prefer cksum"
+
+rm "$fakebin/cksum"
+run_digest || fail "digest failed with sha256sum fallback"
+[ "$(cat "$marker")" = "sha256sum" ] || fail "digest did not fall back to sha256sum"
+
+rm "$fakebin/sha256sum"
+run_digest || fail "digest failed with shasum fallback"
+[ "$(cat "$marker")" = "shasum" ] || fail "digest did not fall back to shasum"
+
+rm "$fakebin/shasum"
+run_digest || fail "digest failed with openssl fallback"
+[ "$(cat "$marker")" = "openssl" ] || fail "digest did not fall back to openssl"
+
+rm "$fakebin/openssl"
+PATH="$root/bin/sys:$fakebin" "$command_path" -a sha256 </dev/null > "$tmp/out" 2> "$tmp/err"
+status="$?"
+[ "$status" -eq 1 ] || fail "missing digest capability returned $status instead of 1"
+
+exit "0"

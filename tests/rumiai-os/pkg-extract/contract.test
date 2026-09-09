@@ -1,0 +1,181 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-extract/contract.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return "3"
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) :;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return "1";;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0") :;;
+  "1") skip "rumiai-os target checkout not found";;
+  "2") fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+library="$root/lib/sh/pkg-extract.lib.sh"
+[ -f "$library" ] || fail "lib/sh/pkg-extract.lib.sh is missing"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-extract-contract-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fakebin="$tmp/bin"
+mkdir "$fakebin" || error "cannot create fake backend directory"
+
+cat > "$fakebin/extract" <<'EOF_EXTRACT'
+#!/bin/sh
+printf -- '%s\n' "$*" > "$PKG_EXTRACT_ARGS"
+printf -- '%s\n' materialized > "$3/from-extract"
+exit "${PKG_EXTRACT_STATUS-0}"
+EOF_EXTRACT
+chmod "700" "$fakebin/extract"
+
+readpathce()
+{
+  [ "$#" -eq 2 ] || return 2
+  case "$2" in
+    */*) dir=${2%/*}; base=${2##*/}; [ -n "$dir" ] || dir=/;;
+    *) dir=.; base=$2;;
+  esac
+  physical_dir="$(CDPATH= cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
+  eval "$1=\$physical_dir/\$base"
+}
+log()
+{
+  :
+}
+
+PATH="$fakebin:/usr/bin:/bin"
+export PATH
+PKG_EXTRACT_ARGS="$tmp/extract.args"
+export PKG_EXTRACT_ARGS
+. "$library" || error "cannot source pkg-extract library"
+
+artifact="$tmp/archive.tar.gz"
+printf -- '%s' payload > "$artifact"
+stage="$tmp/stage"
+mkdir "$stage"
+pkg_extract "$artifact" tar.gz "$stage" || fail "pkg_extract delegation failed"
+[ "$(cat "$PKG_EXTRACT_ARGS")" = "tar.gz $artifact $stage" ] || fail "pkg_extract delegated incorrect extract arguments"
+[ -f "$stage/from-extract" ] || fail "delegated materialization is missing"
+
+rm -rf "$stage"
+mkdir "$stage"
+appimage="$tmp/malicious.AppImage"
+marker="$tmp/appimage-executed"
+cat > "$appimage" <<EOF_APPIMAGE
+#!/bin/sh
+printf -- '%s\\n' executed > "$marker"
+EOF_APPIMAGE
+chmod "755" "$appimage"
+pkg_extract "$appimage" appimage "$stage" || fail "opaque AppImage materialization failed"
+[ ! -e "$marker" ] || fail "AppImage was executed during pkg_extract"
+[ -f "$stage/malicious.AppImage" ] || fail "AppImage was not copied opaquely"
+[ -x "$stage/malicious.AppImage" ] || fail "AppImage mode was not preserved"
+
+rm -rf "$stage"
+mkdir "$stage"
+printf -- '%s\n' occupied > "$stage/existing"
+if pkg_extract "$artifact" tar "$stage" >/dev/null 2>&1
+then
+  fail "non-empty staging directory was accepted"
+fi
+
+rm -rf "$stage"
+mkdir "$stage"
+if pkg_extract "$artifact" unsupported "$stage" >/dev/null 2>&1
+then
+  fail "unsupported format was accepted"
+else
+  status="$?"
+  [ "$status" -eq 2 ] || fail "unsupported format returned $status instead of 2"
+fi
+
+exit "0"

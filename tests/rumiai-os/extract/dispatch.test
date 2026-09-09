@@ -1,0 +1,206 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/extract/dispatch.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return "3"
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return "1"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*) :;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return "1";;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"
+rumiai_os_group="${group_dir%/*}"
+tests_dir="${rumiai_os_group%/*}"
+suite_root="${tests_dir%/*}"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0") :;;
+  "1") skip "rumiai-os target checkout not found";;
+  "2") fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+command_path="$root/bin/sys/extract"
+[ -f "$command_path" ] || fail "bin/sys/extract is missing"
+[ -x "$command_path" ] || fail "bin/sys/extract is not executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-extract-dispatch-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fakebin="$tmp/bin"
+mkdir "$fakebin" || error "cannot create fake backend directory"
+marker="$tmp/marker"
+export EXTRACT_MARKER="$marker"
+
+make_passthrough()
+{
+  name="$1"
+  cat > "$fakebin/$name" <<EOF_BACKEND
+#!/bin/sh
+printf -- '%s\\n' '$name' >> "\$EXTRACT_MARKER"
+cat
+EOF_BACKEND
+  chmod "700" "$fakebin/$name" || error "cannot make fake $name executable"
+}
+
+cat > "$fakebin/tar" <<'EOF_TAR'
+#!/bin/sh
+printf -- '%s\n' tar >> "$EXTRACT_MARKER"
+cat >/dev/null
+EOF_TAR
+chmod "700" "$fakebin/tar"
+make_passthrough gzip
+make_passthrough bzip2
+make_passthrough xz
+make_passthrough zstd
+
+cat > "$fakebin/unzip" <<'EOF_UNZIP'
+#!/bin/sh
+printf -- '%s\n' unzip >> "$EXTRACT_MARKER"
+exit 0
+EOF_UNZIP
+chmod "700" "$fakebin/unzip"
+cat > "$fakebin/7zz" <<'EOF_7Z'
+#!/bin/sh
+printf -- '%s\n' 7zz >> "$EXTRACT_MARKER"
+exit 0
+EOF_7Z
+chmod "700" "$fakebin/7zz"
+cat > "$fakebin/dpkg-deb" <<'EOF_DEB'
+#!/bin/sh
+printf -- '%s\n' dpkg-deb >> "$EXTRACT_MARKER"
+exit 0
+EOF_DEB
+chmod "700" "$fakebin/dpkg-deb"
+
+artifact="$tmp/archive.bin"
+printf -- '%s' 'payload' > "$artifact"
+destination="$tmp/destination"
+mkdir "$destination"
+runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
+
+check_dispatch()
+{
+  format="$1"
+  expected="$2"
+  : > "$marker"
+  rm -rf "$destination"
+  mkdir "$destination"
+  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
+    cat "$tmp/err" >&2
+    fail "extract failed for $format"
+  }
+  actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
+  [ "$actual" = "$expected" ] || fail "$format dispatched '$actual' instead of '$expected'"
+}
+
+check_dispatch tar 'tar'
+check_dispatch tar.gz 'gzip tar'
+check_dispatch tgz 'gzip tar'
+check_dispatch tar.bz2 'bzip2 tar'
+check_dispatch tar.xz 'xz tar'
+check_dispatch tar.zst 'zstd tar'
+check_dispatch zip 'unzip'
+check_dispatch jar 'unzip'
+check_dispatch war 'unzip'
+check_dispatch 7z '7zz'
+check_dispatch 7zip '7zz'
+check_dispatch dmg '7zz'
+check_dispatch deb 'dpkg-deb'
+
+for pair in 'gzip:payload.gz' 'gz:payload.gz' 'bzip2:payload.bz2' 'bz2:payload.bz2' 'xz:payload.xz' 'zstd:payload.zst' 'zst:payload.zst'
+do
+  format=${pair%%:*}
+  name=${pair#*:}
+  printf -- '%s' 'stream' > "$tmp/$name"
+  rm -rf "$destination"
+  mkdir "$destination"
+  PATH="$runtime_path" "$command_path" "$format" "$tmp/$name" "$destination" >/dev/null 2>"$tmp/err" || fail "single-stream $format failed"
+  [ -f "$destination/payload" ] || fail "single-stream $format did not derive output filename"
+done
+
+PATH="$runtime_path" "$command_path" appimage "$artifact" "$destination" >/dev/null 2>&1
+status="$?"
+[ "$status" -eq 2 ] || fail "extract accepted package-specific appimage mode"
+
+exit "0"
