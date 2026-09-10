@@ -112,6 +112,22 @@ mkdir "$fakebin" || error "cannot create fake backend directory"
 marker="$tmp/marker"
 export EXTRACT_MARKER="$marker"
 
+cat > "$fakebin/cat" <<'EOF_CAT'
+#!/bin/sh
+while :
+do
+  line=
+  if IFS= read -r line
+  then
+    printf -- '%s\n' "$line"
+  else
+    [ -n "$line" ] && printf -- '%s' "$line"
+    break
+  fi
+done
+EOF_CAT
+chmod "700" "$fakebin/cat" || error "cannot make fake cat executable"
+
 make_passthrough()
 {
   name="$1"
