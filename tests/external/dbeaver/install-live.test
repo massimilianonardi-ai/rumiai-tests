@@ -168,7 +168,7 @@ printf -- '%s\n' "$m_OSARCH"
 EOF_PROBE
 chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
 
-PATH="$fixture/bin/sys:/usr/bin:/bin"
+PATH="$fixture/bin/sys:$PATH"
 export PATH
 osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
 case "$osarch" in
