@@ -123,6 +123,17 @@ EOF_BACKEND
   chmod "700" "$fakebin/$name" || error "cannot make fake $name executable"
 }
 
+make_7z()
+{
+  name="$1"
+  cat > "$fakebin/$name" <<EOF_BACKEND
+#!/bin/sh
+printf -- '%s\\n' '$name' >> "\$EXTRACT_MARKER"
+exit 0
+EOF_BACKEND
+  chmod "700" "$fakebin/$name" || error "cannot make fake $name executable"
+}
+
 cat > "$fakebin/tar" <<'EOF_TAR'
 #!/bin/sh
 printf -- '%s\n' tar >> "$EXTRACT_MARKER"
@@ -140,24 +151,45 @@ printf -- '%s\n' unzip >> "$EXTRACT_MARKER"
 exit 0
 EOF_UNZIP
 chmod "700" "$fakebin/unzip"
-cat > "$fakebin/7zz" <<'EOF_7Z'
-#!/bin/sh
-printf -- '%s\n' 7zz >> "$EXTRACT_MARKER"
-exit 0
-EOF_7Z
-chmod "700" "$fakebin/7zz"
+make_7z 7zz
+make_7z 7z
+make_7z 7za
 cat > "$fakebin/dpkg-deb" <<'EOF_DEB'
 #!/bin/sh
 printf -- '%s\n' dpkg-deb >> "$EXTRACT_MARKER"
 exit 0
 EOF_DEB
 chmod "700" "$fakebin/dpkg-deb"
+cat > "$fakebin/hdiutil" <<'EOF_HDIUTIL'
+#!/bin/sh
+case "$1" in
+  attach)
+    printf -- '%s\n' hdiutil-attach >> "$EXTRACT_MARKER"
+    [ "${EXTRACT_HDIUTIL_FAIL-}" = attach ] && exit 9
+    ;;
+  detach)
+    printf -- '%s\n' hdiutil-detach >> "$EXTRACT_MARKER"
+    [ "${EXTRACT_HDIUTIL_FAIL-}" = detach ] && exit 9
+    ;;
+  *) exit 9;;
+esac
+exit 0
+EOF_HDIUTIL
+chmod "700" "$fakebin/hdiutil"
+cat > "$fakebin/ditto" <<'EOF_DITTO'
+#!/bin/sh
+printf -- '%s\n' ditto >> "$EXTRACT_MARKER"
+[ "${EXTRACT_DITTO_FAIL-}" = 1 ] && exit 9
+exit 0
+EOF_DITTO
+chmod "700" "$fakebin/ditto"
 
 artifact="$tmp/archive.bin"
 printf -- '%s' 'payload' > "$artifact"
 destination="$tmp/destination"
 mkdir "$destination"
 runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
+fallback_path="$root/bin/sys:$fakebin:/bin"
 
 check_dispatch()
 {
@@ -185,8 +217,45 @@ check_dispatch jar 'unzip'
 check_dispatch war 'unzip'
 check_dispatch 7z '7zz'
 check_dispatch 7zip '7zz'
-check_dispatch dmg '7zz'
+check_dispatch dmg 'hdiutil-attach ditto hdiutil-detach'
 check_dispatch deb 'dpkg-deb'
+
+mv "$fakebin/7zz" "$tmp/7zz"
+check_dispatch 7z '7z'
+mv "$fakebin/7z" "$tmp/7z"
+check_dispatch 7zip '7za'
+mv "$tmp/7zz" "$fakebin/7zz"
+mv "$tmp/7z" "$fakebin/7z"
+
+mv "$fakebin/ditto" "$tmp/ditto"
+: > "$marker"
+rm -rf "$destination"
+mkdir "$destination"
+PATH="$fallback_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
+  cat "$tmp/err" >&2
+  fail "dmg fallback failed when native backend was incomplete"
+}
+actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
+[ "$actual" = 7zz ] || fail "dmg incomplete native backend dispatched '$actual' instead of '7zz'"
+mv "$tmp/ditto" "$fakebin/ditto"
+
+: > "$marker"
+rm -rf "$destination"
+mkdir "$destination"
+EXTRACT_HDIUTIL_FAIL=attach PATH="$runtime_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
+status="$?"
+[ "$status" -eq 1 ] || fail "dmg attach failure returned status $status instead of 1"
+actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
+[ "$actual" = hdiutil-attach ] || fail "dmg retried after native attach failure: $actual"
+
+: > "$marker"
+rm -rf "$destination"
+mkdir "$destination"
+EXTRACT_DITTO_FAIL=1 PATH="$runtime_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
+status="$?"
+[ "$status" -eq 1 ] || fail "dmg copy failure returned status $status instead of 1"
+actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
+[ "$actual" = 'hdiutil-attach ditto hdiutil-detach' ] || fail "dmg copy failure did not cleanup without retry: $actual"
 
 for pair in 'gzip:payload.gz' 'gz:payload.gz' 'bzip2:payload.bz2' 'bz2:payload.bz2' 'xz:payload.xz' 'zstd:payload.zst' 'zst:payload.zst'
 do
