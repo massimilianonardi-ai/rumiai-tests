@@ -226,7 +226,7 @@ literal_boundary="$(printf -- '%s\n' "$literal_boundary_json" | json_object_fiel
 [ "$literal_boundary" = "$expected_ignored" ] || fail "ignored literal crossing a parser window changed selected fields"
 
 selected_boundary_value="$(command -p -- awk 'BEGIN { for (i=0; i<4090; i++) printf "x" }')" || error "cannot build selected boundary value"
-selected_boundary_json="$(printf -- '{\"name\":\"%s\"}\n' "$selected_boundary_value")" || error "cannot build selected boundary fixture"
+selected_boundary_json="$(printf -- '{"name":"%s"}\n' "$selected_boundary_value")" || error "cannot build selected boundary fixture"
 selected_boundary="$(printf -- '%s\n' "$selected_boundary_json" | json_object_fields name)" || fail "selected string crossing a parser window was rejected"
 [ "$selected_boundary" = "s:$selected_boundary_value" ] || fail "selected string crossing a parser window changed value"
 
