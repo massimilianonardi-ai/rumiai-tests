@@ -77,6 +77,14 @@ recorded_commit=$(awk -F '\t' '$1 == "rumiai-tests-commit" { print $2 }' "$publi
 recorded_status=$(awk -F '\t' '$1 == "runner-exit-status" { value=$2 } END { print value }' "$published/session")
 [ "$recorded_status" = 0 ] || fail 'published session does not record runner exit status 0'
 
+[ -f "$published/timings" ] || fail 'completed validation session does not contain per-test timings'
+awk -F '\t' '
+NF != 2 { exit 1 }
+$1 != "pass.test" { exit 1 }
+$2 !~ /^[0-9]+([.][0-9]+)?$/ { exit 1 }
+END { if (NR != 1) exit 1 }
+' "$published/timings" || fail 'validation session timing is invalid'
+
 status_lines=$(git -C "$suite" status --porcelain --untracked-files=normal 2>/dev/null) || error 'cannot inspect post-validation Git status'
 printf '%s\n' "$status_lines" | grep '^?? sessions/' >/dev/null 2>&1 || fail 'validation evidence was not left uncommitted for separate Git handling'
 
