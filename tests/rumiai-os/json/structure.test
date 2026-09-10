@@ -191,6 +191,45 @@ large_ignored="$(
 )" || fail "large ignored string could not be skipped"
 [ "$large_ignored" = "$expected_ignored" ] || fail "large ignored string changed selected fields"
 
+unicode_boundary_json="$(
+  command -p -- awk 'BEGIN {
+    printf "{\"name\":\"kept\",\"ignored\":\""
+    for (i=0; i<4066; i++) printf "x"
+    printf "%c", 92
+    printf "u0041\",\"enabled\":true}\n"
+  }'
+)" || error "cannot build Unicode boundary fixture"
+unicode_boundary="$(printf -- '%s\n' "$unicode_boundary_json" | json_object_fields name enabled)" || fail "ignored Unicode escape crossing a parser window was rejected"
+[ "$unicode_boundary" = "$expected_ignored" ] || fail "ignored Unicode escape crossing a parser window changed selected fields"
+
+unicode_boundary_bad="$(
+  command -p -- awk 'BEGIN {
+    printf "{\"name\":\"kept\",\"ignored\":\""
+    for (i=0; i<4066; i++) printf "x"
+    printf "%c", 92
+    printf "u00G1\",\"enabled\":true}\n"
+  }'
+)" || error "cannot build malformed Unicode boundary fixture"
+if printf -- '%s\n' "$unicode_boundary_bad" | json_object_fields name enabled >/dev/null 2>&1
+then
+  fail "malformed ignored Unicode escape crossing a parser window was accepted"
+fi
+
+literal_boundary_json="$(
+  command -p -- awk 'BEGIN {
+    printf "{\"name\":\"kept\",\"pad\":\""
+    for (i=0; i<4059; i++) printf "x"
+    printf "\",\"ignored\":true,\"enabled\":true}\n"
+  }'
+)" || error "cannot build literal boundary fixture"
+literal_boundary="$(printf -- '%s\n' "$literal_boundary_json" | json_object_fields name enabled)" || fail "ignored literal crossing a parser window was rejected"
+[ "$literal_boundary" = "$expected_ignored" ] || fail "ignored literal crossing a parser window changed selected fields"
+
+selected_boundary_value="$(command -p -- awk 'BEGIN { for (i=0; i<4090; i++) printf "x" }')" || error "cannot build selected boundary value"
+selected_boundary_json="$(printf -- '{\"name\":\"%s\"}\n' "$selected_boundary_value")" || error "cannot build selected boundary fixture"
+selected_boundary="$(printf -- '%s\n' "$selected_boundary_json" | json_object_fields name)" || fail "selected string crossing a parser window was rejected"
+[ "$selected_boundary" = "s:$selected_boundary_value" ] || fail "selected string crossing a parser window changed value"
+
 if printf -- '%s\n' '{"name":"kept","ignored":"bad\q"}' |
   json_object_fields name >/dev/null 2>&1
 then
