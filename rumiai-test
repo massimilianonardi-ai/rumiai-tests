@@ -286,13 +286,28 @@ run_dir_canon=$(canonical_dir "$run_dir") || {
 
 session_file=$run_dir/session
 results_file=$run_dir/results
+timings_file=$run_dir/timings
 : > "$session_file" || exit "$RUNNER_STATUS_ERROR"
 : > "$results_file" || exit "$RUNNER_STATUS_ERROR"
+: > "$timings_file" || exit "$RUNNER_STATUS_ERROR"
 
 session_put() {
     key=$1
     value=$(one_line "$2")
     printf '%s\t%s\n' "$key" "$value" >> "$session_file"
+}
+
+timing_real_read() {
+    timing_path=$1
+    IFS=' ' read -r timing_name timing_value timing_extra < "$timing_path" || return 1
+    [ "$timing_name" = real ] || return 1
+    [ -n "$timing_value" ] || return 1
+    [ -z "$timing_extra" ] || return 1
+    timing_value=$(printf '%s\n' "$timing_value" | tr ',' '.') || return 1
+    case $timing_value in
+        ''|.*|*.|*[!0-9.]*|*.*.*) return 1 ;;
+    esac
+    printf '%s\n' "$timing_value"
 }
 
 os_version() {
@@ -616,8 +631,17 @@ if [ "$runner_error" -eq 0 ]; then
             break
         }
 
-        "$test_path" > "$log_file" 2>&1
+        timing_raw=$run_dir/.work/timing
+        (
+            time -p /bin/sh -c 'exec "$1" > "$2" 2>&1' sh "$test_path" "$log_file"
+        ) 2> "$timing_raw"
         observed=$?
+        elapsed=$(timing_real_read "$timing_raw") || {
+            say_error "cannot observe execution time for: $test_id"
+            runner_error=1
+            break
+        }
+
         case $observed in
             0)
                 result=PASS
@@ -646,7 +670,12 @@ if [ "$runner_error" -eq 0 ]; then
             runner_error=1
             break
         }
-        printf '%-6s %s\n' "$result" "$test_id"
+        printf '%s\t%s\n' "$test_id" "$elapsed" >> "$timings_file" || {
+            say_error 'cannot persist test timing'
+            runner_error=1
+            break
+        }
+        printf '%-6s %s  [%ss]\n' "$result" "$test_id" "$elapsed"
 
         case $snapshot_scope in
             test|both)
