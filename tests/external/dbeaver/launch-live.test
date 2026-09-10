@@ -157,8 +157,7 @@ terminate_launch()
 
 confirm_gui_visible()
 {
-  [ -t 0 ] || return "2"
-  [ -r /dev/tty ] && [ -w /dev/tty ] || return "2"
+  ( : < /dev/tty > /dev/tty ) 2>/dev/null || return "2"
 
   while :
   do
@@ -180,8 +179,7 @@ confirm_gui_visible()
 }
 
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
-[ -t 0 ] || skip "interactive graphical confirmation requires a terminal"
-[ -r /dev/tty ] && [ -w /dev/tty ] || skip "interactive graphical confirmation requires /dev/tty"
+( : < /dev/tty > /dev/tty ) 2>/dev/null || skip "interactive graphical confirmation requires /dev/tty"
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 dbeaver_group="${test_dir%/*}"
 external_group="${dbeaver_group%/*}"
