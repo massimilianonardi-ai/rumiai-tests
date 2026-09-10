@@ -188,8 +188,7 @@ artifact="$tmp/archive.bin"
 printf -- '%s' 'payload' > "$artifact"
 destination="$tmp/destination"
 mkdir "$destination"
-runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
-fallback_path="$root/bin/sys:$fakebin:/bin"
+runtime_path="$root/bin/sys:$fakebin"
 
 check_dispatch()
 {
@@ -231,7 +230,7 @@ mv "$fakebin/ditto" "$tmp/ditto"
 : > "$marker"
 rm -rf "$destination"
 mkdir "$destination"
-PATH="$fallback_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
+PATH="$runtime_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
   cat "$tmp/err" >&2
   fail "dmg fallback failed when native backend was incomplete"
 }
