@@ -270,6 +270,13 @@ else
   status=$?
   [ "$status" -eq 2 ] || fail "invalid operand returned $status instead of 2"
 fi
+if pkg_install Bad >/dev/null 2>&1
+then
+  fail "uppercase package name was accepted"
+else
+  status=$?
+  [ "$status" -eq 2 ] || fail "uppercase package name returned $status instead of 2"
+fi
 after_snapshots="$(wc -l < "$snapshot_calls" | tr -d ' ')"
 [ "$after_snapshots" = "$before_snapshots" ] || fail "invalid operand triggered catalog snapshot before prevalidation"
 
