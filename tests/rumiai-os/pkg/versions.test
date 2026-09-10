@@ -115,7 +115,7 @@ export PATH
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-versions-$$"
 umask 077
-mkdir "$tmp" || error "cannot create temporary directory"
+mkdir -- "$tmp" || error "cannot create temporary directory"
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 m_LIB_DIR="$root/lib"
@@ -124,7 +124,7 @@ m_BIN_DIR="$tmp/bin"
 m_BIN_EXT_DIR="$m_BIN_DIR/ext"
 m_OSARCH="linux-arm64"
 m_CACHE_DIR="$tmp/cache-must-remain-absent"
-mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" || error "cannot create fixture roots"
+mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" || error "cannot create fixture roots"
 export m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_OSARCH m_CACHE_DIR
 
 log()
@@ -136,20 +136,20 @@ log()
 
 reset_fixture()
 {
-  rm -rf "$m_PKG_DIR" "$m_BIN_DIR" "$m_CACHE_DIR" || return 1
-  mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" || return 1
+  rm -rf -- "$m_PKG_DIR" "$m_BIN_DIR" "$m_CACHE_DIR" || return 1
+  mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" || return 1
 }
 
 make_concrete()
 {
   [ "$#" -eq 2 ] || return 1
-  mkdir -p "$m_PKG_DIR/$1@$2" || return 1
+  mkdir -p -- "$m_PKG_DIR/$1@$2" || return 1
 }
 
 make_target_concrete()
 {
   [ "$#" -eq 3 ] || return 1
-  mkdir -p "$m_PKG_DIR/$1@$2!$3" || return 1
+  mkdir -p -- "$m_PKG_DIR/$1@$2!$3" || return 1
 }
 
 expect_status()
@@ -169,20 +169,20 @@ pkg_versions tool > "$tmp/output" || fail "generic versions query failed"
 expected='tool@1
 tool@10
 tool@2'
-[ "$(cat "$tmp/output")" = "$expected" ] || fail "generic versions output/order is incorrect"
+[ "$(cat -- "$tmp/output")" = "$expected" ] || fail "generic versions output/order is incorrect"
 
 reset_fixture || error "cannot reset fixture"
 make_concrete dual 1 || error "cannot create dual generic"
 make_target_concrete dual 3 macos-arm64 || error "cannot create dual macOS target"
 pkg_versions 'dual!macos-arm64' > "$tmp/output" || fail "explicit-target versions query failed"
-[ "$(cat "$tmp/output")" = 'dual@3!macos-arm64' ] || fail "explicit-target query leaked another class"
+[ "$(cat -- "$tmp/output")" = 'dual@3!macos-arm64' ] || fail "explicit-target query leaked another class"
 
 reset_fixture || error "cannot reset fixture"
 make_concrete precedence 1 || error "cannot create precedence generic"
 make_target_concrete precedence 2 linux-arm64 || error "cannot create precedence target"
-ln -s 'precedence@2!linux-arm64' "$m_PKG_DIR/precedence!linux-arm64" || error "cannot create target selector"
+ln -s -- 'precedence@2!linux-arm64' "$m_PKG_DIR/precedence!linux-arm64" || error "cannot create target selector"
 pkg_versions precedence > "$tmp/output" || fail "current-target precedence query failed"
-[ "$(cat "$tmp/output")" = 'precedence@2!linux-arm64' ] || fail "target precedence or marker-free output is incorrect"
+[ "$(cat -- "$tmp/output")" = 'precedence@2!linux-arm64' ] || fail "target precedence or marker-free output is incorrect"
 
 reset_fixture || error "cannot reset fixture"
 make_concrete corrupt 1 || error "cannot create corrupt generic"
