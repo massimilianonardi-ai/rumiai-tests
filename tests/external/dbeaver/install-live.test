@@ -164,6 +164,9 @@ mkdir -p \
 runtime_probe="$tmp/runtime-probe"
 cat > "$runtime_probe" <<'EOF_PROBE'
 #!/usr/bin/env rumiai-os
+
+. "$m_LIB_DIR/sh/osarch.lib.sh"
+
 printf -- '%s\n' "$m_OSARCH"
 EOF_PROBE
 chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
@@ -171,6 +174,7 @@ chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
 PATH="$fixture/bin/sys:$PATH"
 export PATH
 osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
+[ -n "$osarch" ] || error "RumiAI osarch probe returned empty output"
 case "$osarch" in
   linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) : ;;
   *) skip "DBeaver live install is not defined for reference target $osarch" ;;
