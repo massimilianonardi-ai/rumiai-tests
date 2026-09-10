@@ -176,4 +176,31 @@ s:second${tab}m:"
 actual_array="$(printf -- '%s\n' "$array" | json_array_object_fields name enabled)" || fail "root object array could not be parsed"
 [ "$actual_array" = "$expected_array" ] || fail "root object array produced unexpected typed records"
 
+ignored_string='{"name":"kept","ignored":"line\n\u0041\tend","enabled":true}'
+expected_ignored="s:kept${tab}b:true"
+actual_ignored="$(printf -- '%s\n' "$ignored_string" | json_object_fields name enabled)" || fail "valid ignored string could not be skipped"
+[ "$actual_ignored" = "$expected_ignored" ] || fail "ignored string changed selected fields"
+
+large_ignored="$(
+  command -p -- awk 'BEGIN {
+    printf "{\"name\":\"kept\",\"ignored\":\""
+    for (i=0; i<131072; i++) printf "x"
+    printf "\",\"enabled\":true}\n"
+  }' |
+    json_object_fields name enabled
+)" || fail "large ignored string could not be skipped"
+[ "$large_ignored" = "$expected_ignored" ] || fail "large ignored string changed selected fields"
+
+if printf -- '%s\n' '{"name":"kept","ignored":"bad\q"}' |
+  json_object_fields name >/dev/null 2>&1
+then
+  fail "invalid escape in ignored string was accepted"
+fi
+
+if printf -- '%s\n' '{"name":"kept","ignored":{"bad\q":"value"}}' |
+  json_object_fields name >/dev/null 2>&1
+then
+  fail "invalid escape in ignored object key was accepted"
+fi
+
 exit "0"
