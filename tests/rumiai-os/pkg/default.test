@@ -1,0 +1,239 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg/default.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+# Target discovery authoring reference:
+# massimilianonardi-ai/rumiai-tests@71963b08476ff5c4d5557ed593cd6c4c8414b63c:lib/rumiai-os-target.lib
+# Kept inline intentionally so this permanent test remains historically independent.
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != "/" ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) : ;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+command -v git >/dev/null 2>&1 || {
+  printf -- '%s\n' "$TEST_ID: git is unavailable" >&2
+  exit 2
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) printf -- '%s\n' "$TEST_ID: rumiai-os target checkout not found" >&2; exit 2 ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+library="$root/lib/sh/pkg-default.lib.sh"
+local_library="$root/lib/sh/pkg-local.lib.sh"
+command_path="$root/bin/sys/pkg"
+[ -f "$library" ] || fail "lib/sh/pkg-default.lib.sh is missing"
+[ ! -x "$library" ] || fail "pkg-default library must not be executable"
+[ -f "$local_library" ] || fail "lib/sh/pkg-local.lib.sh is missing"
+[ ! -x "$local_library" ] || fail "pkg-local library must not be executable"
+[ -x "$command_path" ] || fail "bin/sys/pkg is missing or not executable"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+"$command_path" default >/dev/null 2>&1
+[ "$?" -eq 2 ] || fail "pkg default without operand did not return 2"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-default-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+m_LIB_DIR="$root/lib"
+m_PKG_DIR="$tmp/pkg"
+m_BIN_DIR="$tmp/bin"
+m_BIN_EXT_DIR="$m_BIN_DIR/ext"
+m_OSARCH="linux-arm64"
+m_CACHE_DIR="$tmp/cache-must-remain-absent"
+mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" || error "cannot create fixture roots"
+export m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_OSARCH m_CACHE_DIR
+
+log()
+{
+  :
+}
+
+. "$library" || error "cannot source pkg-default library"
+
+reset_fixture()
+{
+  rm -rf "$m_PKG_DIR" "$m_BIN_DIR" "$m_CACHE_DIR" || return 1
+  mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" || return 1
+}
+
+make_concrete()
+{
+  package=$1
+  version=$2
+  osarch=${3-}
+  if [ -n "$osarch" ]
+  then
+    identity="$package@$version!$osarch"
+  else
+    identity="$package@$version"
+  fi
+  mkdir -p "$m_PKG_DIR/$identity/cmd" || return 1
+  printf -- '#!/bin/sh\nexit 0\n' > "$m_PKG_DIR/$identity/cmd/$package" || return 1
+  chmod 700 "$m_PKG_DIR/$identity/cmd/$package" || return 1
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" > "$tmp/output" 2>/dev/null
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"
+}
+
+reset_fixture || error "cannot reset fixture"
+make_concrete tool 1 || error "cannot create tool 1"
+make_concrete tool 2 || error "cannot create tool 2"
+pkg_default_command 'tool@1' > "$tmp/output" || fail "generic default set failed"
+[ ! -s "$tmp/output" ] || fail "default set produced stdout"
+[ "$(readlink "$m_PKG_DIR/tool")" = 'tool@1' ] || fail "generic selector is incorrect"
+[ "$(readlink "$m_BIN_EXT_DIR/tool")" = '../../pkg/tool/cmd/tool' ] || fail "generic public binding is incorrect"
+pkg_default_command tool > "$tmp/output" || fail "generic default query failed"
+[ "$(cat "$tmp/output")" = 'tool@1' ] || fail "generic default query output is incorrect"
+pkg_default_command 'tool@2' > "$tmp/output" || fail "generic default switch failed"
+[ ! -s "$tmp/output" ] || fail "default switch produced stdout"
+[ "$(readlink "$m_PKG_DIR/tool")" = 'tool@2' ] || fail "generic selector did not switch"
+pkg_default_command -u -- tool > "$tmp/output" || fail "generic default removal failed"
+[ ! -s "$tmp/output" ] || fail "default removal produced stdout"
+[ ! -e "$m_PKG_DIR/tool" ] && [ ! -L "$m_PKG_DIR/tool" ] || fail "generic selector survived removal"
+[ ! -e "$m_BIN_EXT_DIR/tool" ] && [ ! -L "$m_BIN_EXT_DIR/tool" ] || fail "generic public binding survived removal"
+[ -d "$m_PKG_DIR/tool@1" ] && [ -d "$m_PKG_DIR/tool@2" ] || fail "default removal destroyed availability"
+pkg_default_command -u tool || fail "repeated default removal was not idempotent"
+
+reset_fixture || error "cannot reset fixture"
+expect_status 1 pkg_default_command absent
+[ ! -s "$tmp/output" ] || fail "missing default query produced stdout"
+pkg_default_command -u absent > "$tmp/output" || fail "absent package default removal was not idempotent"
+[ ! -s "$tmp/output" ] || fail "absent package removal produced stdout"
+
+reset_fixture || error "cannot reset fixture"
+make_concrete app 3 macos-arm64 || error "cannot create macOS target"
+pkg_default_command 'app@3!macos-arm64' || fail "explicit target default set failed"
+[ "$(readlink "$m_PKG_DIR/app!macos-arm64")" = 'app@3!macos-arm64' ] || fail "target selector is incorrect"
+[ "$(readlink "$m_BIN_DIR/ext-macos-arm64/app")" = '../../pkg/app!macos-arm64/cmd/app' ] || fail "target public binding is incorrect"
+pkg_default_command 'app!macos-arm64' > "$tmp/output" || fail "explicit target default query failed"
+[ "$(cat "$tmp/output")" = 'app@3!macos-arm64' ] || fail "target default query output is incorrect"
+
+reset_fixture || error "cannot reset fixture"
+make_concrete precedence 1 || error "cannot create generic precedence"
+make_concrete precedence 2 linux-arm64 || error "cannot create target precedence"
+pkg_default precedence 1 || error "cannot create generic default"
+expect_status 1 pkg_default_command precedence
+[ ! -s "$tmp/output" ] || fail "query fell back to generic default despite target class presence"
+pkg_default_command 'precedence@2' || fail "implicit-target default set failed"
+[ "$(readlink "$m_PKG_DIR/precedence!linux-arm64")" = 'precedence@2!linux-arm64' ] || fail "implicit-target selector was not created"
+[ "$(readlink "$m_PKG_DIR/precedence")" = 'precedence@1' ] || fail "generic selector was modified by target selection"
+
+reset_fixture || error "cannot reset fixture"
+make_concrete nofallback 1 || error "cannot create generic nofallback"
+make_concrete nofallback 2 linux-arm64 || error "cannot create target nofallback"
+expect_status 1 pkg_default_command 'nofallback@1'
+[ ! -e "$m_PKG_DIR/nofallback!linux-arm64" ] && [ ! -L "$m_PKG_DIR/nofallback!linux-arm64" ] || fail "missing target version selected another default"
+[ -d "$m_PKG_DIR/nofallback@1" ] || fail "generic availability changed after target failure"
+
+reset_fixture || error "cannot reset fixture"
+make_concrete corrupt 1 || error "cannot create corrupt generic"
+pkg_default corrupt 1 || error "cannot create generic corrupt default"
+printf -- '%s\n' broken > "$m_PKG_DIR/corrupt!linux-arm64" || error "cannot create malformed target selector"
+expect_status 1 pkg_default_command corrupt
+[ ! -s "$tmp/output" ] || fail "corrupt priority class fell back to generic default"
+
+reset_fixture || error "cannot reset fixture"
+make_concrete dash 1 || error "cannot create dash"
+pkg_default dash 1 || error "cannot create dash default"
+pkg_default_command -- dash > "$tmp/output" || fail "-- query form failed"
+[ "$(cat "$tmp/output")" = 'dash@1' ] || fail "-- query returned wrong default"
+pkg_default_command -u -- dash || fail "-u -- removal form failed"
+
+expect_status 2 pkg_default_command -u 'dash@1'
+expect_status 2 pkg_default_command -x dash
+expect_status 2 pkg_default_command dash extra
+expect_status 2 pkg_default_command Bad
+
+[ ! -e "$m_CACHE_DIR" ] && [ ! -L "$m_CACHE_DIR" ] || fail "pkg default touched catalog/cache state"
+
+exit 0
