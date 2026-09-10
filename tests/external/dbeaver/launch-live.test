@@ -155,7 +155,33 @@ terminate_launch()
   launch_pid=""
 }
 
+confirm_gui_visible()
+{
+  [ -t 0 ] || return "2"
+  [ -r /dev/tty ] && [ -w /dev/tty ] || return "2"
+
+  while :
+  do
+    printf -- '%s' 'DBeaver window visible? Press Enter to confirm and close it, or type n then Enter if it did not appear: ' > /dev/tty || return "3"
+    gui_confirmation=""
+    IFS= read -r gui_confirmation < /dev/tty || return "3"
+    case "$gui_confirmation" in
+      "" | y | Y | yes | YES)
+        return "0"
+        ;;
+      n | N | no | NO)
+        return "1"
+        ;;
+      *)
+        printf -- '%s\n' 'Please press Enter to confirm, or type n then Enter.' > /dev/tty || return "3"
+        ;;
+    esac
+  done
+}
+
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
+[ -t 0 ] || skip "interactive graphical confirmation requires a terminal"
+[ -r /dev/tty ] && [ -w /dev/tty ] || skip "interactive graphical confirmation requires /dev/tty"
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 dbeaver_group="${test_dir%/*}"
 external_group="${dbeaver_group%/*}"
@@ -354,12 +380,32 @@ then
   fail "DBeaver did not create the expected runtime state during launch"
 fi
 
-kill -s 0 "$launch_pid" 2>/dev/null || fail "DBeaver process exited before launch validation completed"
+kill -s 0 "$launch_pid" 2>/dev/null || fail "DBeaver process exited before graphical confirmation"
+confirm_gui_visible
+confirmation_status="$?"
+case "$confirmation_status" in
+  "0")
+    :
+    ;;
+  "1")
+    cat "$launch_stdout" >&2
+    cat "$launch_stderr" >&2
+    fail "operator reported that the DBeaver window did not appear"
+    ;;
+  "2")
+    skip "interactive graphical confirmation became unavailable"
+    ;;
+  *)
+    error "cannot read graphical confirmation"
+    ;;
+esac
+kill -s 0 "$launch_pid" 2>/dev/null || fail "DBeaver process exited before graphical confirmation completed"
 terminate_launch
 
 printf -- 'launched=%s\n' "$identity"
 printf -- '%s\n' 'public-command=bin/ext-osarch/dbeaver'
 printf -- '%s\n' 'configuration=created'
 printf -- '%s\n' 'workspace=created'
+printf -- '%s\n' 'gui-visible=confirmed'
 
 exit "0"
