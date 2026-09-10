@@ -116,7 +116,7 @@ export PATH
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-versions-$$"
 umask 077
 mkdir -- "$tmp" || error "cannot create temporary directory"
-trap 'rm -rf "$tmp"' 0 HUP INT TERM
+trap 'rm -rf -- "$tmp"' 0 HUP INT TERM
 
 m_LIB_DIR="$root/lib"
 m_PKG_DIR="$tmp/pkg"
