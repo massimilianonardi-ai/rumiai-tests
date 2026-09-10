@@ -115,8 +115,8 @@ export PATH
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-default-$$"
 umask 077
-mkdir "$tmp" || error "cannot create temporary directory"
-trap 'rm -rf "$tmp"' 0 HUP INT TERM
+mkdir -- "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf -- "$tmp"' 0 HUP INT TERM
 
 m_LIB_DIR="$root/lib"
 m_PKG_DIR="$tmp/pkg"
@@ -124,7 +124,7 @@ m_BIN_DIR="$tmp/bin"
 m_BIN_EXT_DIR="$m_BIN_DIR/ext"
 m_OSARCH="linux-arm64"
 m_CACHE_DIR="$tmp/cache-must-remain-absent"
-mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" || error "cannot create fixture roots"
+mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" || error "cannot create fixture roots"
 export m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_OSARCH m_CACHE_DIR
 
 log()
@@ -136,8 +136,8 @@ log()
 
 reset_fixture()
 {
-  rm -rf "$m_PKG_DIR" "$m_BIN_DIR" "$m_CACHE_DIR" || return 1
-  mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" || return 1
+  rm -rf -- "$m_PKG_DIR" "$m_BIN_DIR" "$m_CACHE_DIR" || return 1
+  mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" || return 1
 }
 
 make_concrete()
@@ -151,7 +151,7 @@ make_concrete()
   else
     identity="$package@$version"
   fi
-  mkdir -p "$m_PKG_DIR/$identity/cmd" || return 1
+  mkdir -p -- "$m_PKG_DIR/$identity/cmd" || return 1
   printf -- '#!/bin/sh\nexit 0\n' > "$m_PKG_DIR/$identity/cmd/$package" || return 1
   chmod 700 "$m_PKG_DIR/$identity/cmd/$package" || return 1
 }
@@ -170,13 +170,13 @@ make_concrete tool 1 || error "cannot create tool 1"
 make_concrete tool 2 || error "cannot create tool 2"
 pkg_default_command 'tool@1' > "$tmp/output" || fail "generic default set failed"
 [ ! -s "$tmp/output" ] || fail "default set produced stdout"
-[ "$(readlink "$m_PKG_DIR/tool")" = 'tool@1' ] || fail "generic selector is incorrect"
-[ "$(readlink "$m_BIN_EXT_DIR/tool")" = '../../pkg/tool/cmd/tool' ] || fail "generic public binding is incorrect"
+[ "$(readlink -- "$m_PKG_DIR/tool")" = 'tool@1' ] || fail "generic selector is incorrect"
+[ "$(readlink -- "$m_BIN_EXT_DIR/tool")" = '../../pkg/tool/cmd/tool' ] || fail "generic public binding is incorrect"
 pkg_default_command tool > "$tmp/output" || fail "generic default query failed"
-[ "$(cat "$tmp/output")" = 'tool@1' ] || fail "generic default query output is incorrect"
+[ "$(cat -- "$tmp/output")" = 'tool@1' ] || fail "generic default query output is incorrect"
 pkg_default_command 'tool@2' > "$tmp/output" || fail "generic default switch failed"
 [ ! -s "$tmp/output" ] || fail "default switch produced stdout"
-[ "$(readlink "$m_PKG_DIR/tool")" = 'tool@2' ] || fail "generic selector did not switch"
+[ "$(readlink -- "$m_PKG_DIR/tool")" = 'tool@2' ] || fail "generic selector did not switch"
 pkg_default_command -u -- tool > "$tmp/output" || fail "generic default removal failed"
 [ ! -s "$tmp/output" ] || fail "default removal produced stdout"
 [ ! -e "$m_PKG_DIR/tool" ] && [ ! -L "$m_PKG_DIR/tool" ] || fail "generic selector survived removal"
@@ -193,10 +193,10 @@ pkg_default_command -u absent > "$tmp/output" || fail "absent package default re
 reset_fixture || error "cannot reset fixture"
 make_concrete app 3 macos-arm64 || error "cannot create macOS target"
 pkg_default_command 'app@3!macos-arm64' || fail "explicit target default set failed"
-[ "$(readlink "$m_PKG_DIR/app!macos-arm64")" = 'app@3!macos-arm64' ] || fail "target selector is incorrect"
-[ "$(readlink "$m_BIN_DIR/ext-macos-arm64/app")" = '../../pkg/app!macos-arm64/cmd/app' ] || fail "target public binding is incorrect"
+[ "$(readlink -- "$m_PKG_DIR/app!macos-arm64")" = 'app@3!macos-arm64' ] || fail "target selector is incorrect"
+[ "$(readlink -- "$m_BIN_DIR/ext-macos-arm64/app")" = '../../pkg/app!macos-arm64/cmd/app' ] || fail "target public binding is incorrect"
 pkg_default_command 'app!macos-arm64' > "$tmp/output" || fail "explicit target default query failed"
-[ "$(cat "$tmp/output")" = 'app@3!macos-arm64' ] || fail "target default query output is incorrect"
+[ "$(cat -- "$tmp/output")" = 'app@3!macos-arm64' ] || fail "target default query output is incorrect"
 
 reset_fixture || error "cannot reset fixture"
 make_concrete precedence 1 || error "cannot create generic precedence"
@@ -205,8 +205,8 @@ pkg_default precedence 1 || error "cannot create generic default"
 expect_status 1 pkg_default_command precedence
 [ ! -s "$tmp/output" ] || fail "query fell back to generic default despite target class presence"
 pkg_default_command 'precedence@2' || fail "implicit-target default set failed"
-[ "$(readlink "$m_PKG_DIR/precedence!linux-arm64")" = 'precedence@2!linux-arm64' ] || fail "implicit-target selector was not created"
-[ "$(readlink "$m_PKG_DIR/precedence")" = 'precedence@1' ] || fail "generic selector was modified by target selection"
+[ "$(readlink -- "$m_PKG_DIR/precedence!linux-arm64")" = 'precedence@2!linux-arm64' ] || fail "implicit-target selector was not created"
+[ "$(readlink -- "$m_PKG_DIR/precedence")" = 'precedence@1' ] || fail "generic selector was modified by target selection"
 
 reset_fixture || error "cannot reset fixture"
 make_concrete nofallback 1 || error "cannot create generic nofallback"
@@ -226,7 +226,7 @@ reset_fixture || error "cannot reset fixture"
 make_concrete dash 1 || error "cannot create dash"
 pkg_default dash 1 || error "cannot create dash default"
 pkg_default_command -- dash > "$tmp/output" || fail "-- query form failed"
-[ "$(cat "$tmp/output")" = 'dash@1' ] || fail "-- query returned wrong default"
+[ "$(cat -- "$tmp/output")" = 'dash@1' ] || fail "-- query returned wrong default"
 pkg_default_command -u -- dash || fail "-u -- removal form failed"
 
 expect_status 2 pkg_default_command -u 'dash@1'
