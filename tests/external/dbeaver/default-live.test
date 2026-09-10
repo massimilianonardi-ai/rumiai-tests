@@ -1,0 +1,275 @@
+#!/bin/sh
+
+TEST_ID="external/dbeaver/default-live.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "1"
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "3"
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit "2"
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate="$1"
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return "0"
+      ;;
+  esac
+  return "1"
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate="$1"
+  [ -n "$candidate" ] || return "1"
+  [ -f "$candidate/rumiai-os" ] || return "1"
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
+  [ -f "$target_root/rumiai-os" ] || return "1"
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start="$1"
+  rumiai_test_target_have git || return "3"
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
+    return "0"
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return "0"
+    fi
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"
+    [ -n "$parent" ] || parent="/"
+    [ "$parent" != "$candidate" ] || break
+    candidate="$parent"
+  done
+  return "1"
+}
+
+rumiai_test_fixture_rumiai_os_create()
+{
+  [ "$#" -eq "2" ] || return "3"
+  source_root="$1"
+  fixture_root="$2"
+  [ -n "$source_root" ] || return "3"
+  [ -n "$fixture_root" ] || return "3"
+  [ -f "$source_root/rumiai-os" ] || return "1"
+  [ -d "$source_root/bin" ] || return "1"
+  [ -d "$source_root/lib" ] || return "1"
+  [ -d "$source_root/lang" ] || return "1"
+  [ ! -e "$fixture_root" ] || return "2"
+  mkdir -p "$fixture_root/conf/bootstrap" || return "2"
+  cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || {
+    rm -rf "$fixture_root"
+    return "2"
+  }
+  cp -R "$source_root/bin" "$fixture_root/bin" || {
+    rm -rf "$fixture_root"
+    return "2"
+  }
+  cp -R "$source_root/lib" "$fixture_root/lib" || {
+    rm -rf "$fixture_root"
+    return "2"
+  }
+  cp -R "$source_root/lang" "$fixture_root/lang" || {
+    rm -rf "$fixture_root"
+    return "2"
+  }
+  chmod u+x "$fixture_root/rumiai-os" || {
+    rm -rf "$fixture_root"
+    return "2"
+  }
+  return "0"
+}
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in
+    */*)
+      :
+      ;;
+    *)
+      self="$(command -v "$self" 2>/dev/null)" || return "1"
+      ;;
+  esac
+  self_dir="${self%/*}"
+  [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+command -v git >/dev/null 2>&1 || skip "git is unavailable"
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+dbeaver_group="${test_dir%/*}"
+external_group="${dbeaver_group%/*}"
+tests_dir="${external_group%/*}"
+suite_root="${tests_dir%/*}"
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    skip "rumiai-os target checkout not found"
+    ;;
+  "2")
+    fail "invalid explicit rumiai-os target"
+    ;;
+  *)
+    error "target discovery failed"
+    ;;
+esac
+
+tmp="${TMPDIR:-/tmp}/rumiai-dbeaver-default-live-$$"
+umask "077"
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture="$tmp/root"
+
+rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"
+status="$?"
+case "$status" in
+  "0")
+    :
+    ;;
+  "1")
+    fail "source checkout lacks required runtime material"
+    ;;
+  "2")
+    error "cannot materialize isolated fixture"
+    ;;
+  *)
+    error "fixture primitive returned unexpected status $status"
+    ;;
+esac
+fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize fixture root"
+mkdir -p \
+  "$fixture/pkg" \
+  "$fixture/src" \
+  "$fixture/data" \
+  "$fixture/home" \
+  "$fixture/cache" \
+  "$fixture/log" \
+  "$fixture/run" \
+  "$fixture/tmp" || error "cannot create isolated semantic roots"
+
+runtime_probe="$tmp/runtime-probe"
+cat > "$runtime_probe" <<'EOF_PROBE'
+#!/usr/bin/env rumiai-os
+
+. "$m_LIB_DIR/sh/osarch.lib.sh"
+
+printf -- '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod "700" "$runtime_probe" || error "cannot make runtime probe executable"
+
+PATH="$fixture/bin/sys:$PATH"
+export PATH
+osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
+[ -n "$osarch" ] || error "RumiAI osarch probe returned empty output"
+case "$osarch" in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64)
+    :
+    ;;
+  *)
+    skip "DBeaver live default is not defined for reference target $osarch"
+    ;;
+esac
+
+pkg_command="$fixture/bin/sys/pkg"
+[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
+
+stdout="$tmp/pkg.stdout"
+stderr="$tmp/pkg.stderr"
+"$pkg_command" install dbeaver > "$stdout" 2> "$stderr"
+status="$?"
+if [ "$status" -ne "0" ]
+then
+  cat "$stdout" >&2
+  cat "$stderr" >&2
+  fail "pkg install dbeaver failed with status $status"
+fi
+
+concrete=""
+concrete_count="0"
+for candidate in "$fixture/pkg"/dbeaver@*"!$osarch"
+do
+  [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+  concrete_count="$((concrete_count + 1))"
+  concrete="$candidate"
+done
+[ "$concrete_count" -eq "1" ] || fail "expected one target-specific DBeaver concrete version, found $concrete_count"
+[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "DBeaver concrete version is not a real directory"
+
+identity="${concrete##*/}"
+version_osarch="${identity#dbeaver@}"
+version="${version_osarch%"!$osarch"}"
+[ -n "$version" ] && [ "$version" != "$version_osarch" ] || fail "cannot derive installed DBeaver version from $identity"
+
+selector="$fixture/pkg/dbeaver!$osarch"
+public_binding="$fixture/bin/ext-$osarch/dbeaver"
+[ ! -e "$selector" ] && [ ! -L "$selector" ] || fail "pkg install selected a target default unexpectedly"
+[ ! -e "$public_binding" ] && [ ! -L "$public_binding" ] || fail "pkg install exposed a public DBeaver command unexpectedly"
+
+default_probe="$tmp/default-probe"
+cat > "$default_probe" <<'EOF_DEFAULT'
+#!/usr/bin/env rumiai-os
+
+[ "$#" -eq "3" ] || exit "2"
+
+. "$m_LIB_DIR/sh/pkg-integration.lib.sh"
+
+pkg_default "$1" "$2" "$3"
+EOF_DEFAULT
+chmod "700" "$default_probe" || error "cannot make default probe executable"
+
+"$default_probe" dbeaver "$version" "$osarch" || fail "pkg_default dbeaver failed"
+
+expected_selector_target="dbeaver@$version!$osarch"
+[ -L "$selector" ] || fail "target current selector was not created"
+[ "$(readlink "$selector")" = "$expected_selector_target" ] || fail "target current selector is incorrect"
+[ -d "$selector" ] || fail "target current selector does not resolve to the concrete package"
+
+expected_public_target="../../pkg/dbeaver!$osarch/cmd/dbeaver"
+[ -L "$public_binding" ] || fail "target public DBeaver binding was not created"
+[ "$(readlink "$public_binding")" = "$expected_public_target" ] || fail "target public DBeaver binding is incorrect"
+resolved_public="$(command -p -- realpath -- "$public_binding" 2>/dev/null)" || fail "cannot resolve public DBeaver binding"
+[ "$resolved_public" = "$concrete/cmd/dbeaver" ] || fail "public DBeaver binding does not resolve through current to the installed command"
+[ -f "$resolved_public" ] && [ -x "$resolved_public" ] || fail "public DBeaver binding does not resolve to an executable command"
+
+[ ! -e "$fixture/pkg/dbeaver" ] && [ ! -L "$fixture/pkg/dbeaver" ] || fail "generic DBeaver selector was created for a target-specific package"
+[ ! -e "$fixture/bin/ext/dbeaver" ] && [ ! -L "$fixture/bin/ext/dbeaver" ] || fail "generic public DBeaver binding was created for a target-specific package"
+
+printf -- 'default=%s\n' "$identity"
+printf -- 'selector-target=%s\n' "$(readlink "$selector")"
+printf -- 'binding-target=%s\n' "$(readlink "$public_binding")"
+
+exit "0"
