@@ -1,0 +1,432 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg/setuid.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+rumiai_test_target_have()
+{
+  command -v -- "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v -- "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+readpathce()
+{
+  [ "$#" -eq 2 ] && [ -n "$1" ] && [ -n "$2" ] || return 1
+  case "$1" in "" | [0-9]* | *[!a-zA-Z0-9_]*) return 2 ;; esac
+  resolved="$(command -p -- realpath -- "$2" 2>/dev/null)" || return 1
+  [ -e "$resolved" ] || return 1
+  eval "$1=\$resolved"
+}
+
+log()
+{
+  :
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"
+}
+
+expect_integration_failure()
+{
+  package=$1
+  version=$2
+  range=$3
+  payload=$4
+  osarch=${5-}
+
+  if [ -n "$osarch" ]
+  then
+    expect_status 1 pkg_integrate "$package" "$version" "$range" "$payload" "$osarch"
+    concrete="$m_PKG_DIR/$package@$version!$osarch"
+  else
+    expect_status 1 pkg_integrate "$package" "$version" "$range" "$payload"
+    concrete="$m_PKG_DIR/$package@$version"
+  fi
+
+  [ -d "$payload" ] && [ ! -L "$payload" ] || fail "failed integration consumed useful root for $package"
+  [ ! -e "$concrete" ] && [ ! -L "$concrete" ] || fail "failed integration published $concrete"
+}
+
+new_case()
+{
+  case_name=$1
+  case_range="$tmp/$case_name-range"
+  case_payload="$tmp/$case_name-payload"
+  command -p -- rm -rf -- "$case_range" "$case_payload" || return 1
+  command -p -- mkdir -- "$case_range" "$case_payload" || return 1
+}
+
+make_regular_target()
+{
+  payload=$1
+  path=$2
+  parent=${path%/*}
+  if [ "$parent" != "$path" ]
+  then
+    command -p -- mkdir -p -- "$payload/$parent" || return 1
+  fi
+  printf -- '%s\n' sandbox > "$payload/$path" || return 1
+  command -p -- chmod 700 "$payload/$path" || return 1
+}
+
+make_electron_command()
+{
+  range=$1
+  command -p -- mkdir -- "$range/cmd" "$range/link" || return 1
+  cat > "$range/cmd/electron" <<'EOF_COMMAND'
+#!/usr/bin/env rumiai-os
+
+. "$m_LIB_DIR/sh/pkg-launch.lib.sh"
+
+launcher "electron" "$@"
+EOF_COMMAND
+  command -p -- chmod 600 "$range/cmd/electron" || return 1
+  printf -- '%s\n' electron > "$range/link/electron" || return 1
+}
+
+reset_fixture()
+{
+  command -p -- rm -rf -- "$m_ROOT" || return 1
+  command -p -- mkdir -p -- \
+    "$m_PKG_DIR" \
+    "$m_BIN_DIR" \
+    "$m_CONF_DIR" \
+    "$m_DATA_DIR" \
+    "$m_HOME_DIR" \
+    "$m_CACHE_DIR" \
+    "$m_LOG_DIR" \
+    "$m_RUN_DIR" \
+    "$m_TMP_DIR" || return 1
+}
+
+command -v -- git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
+command -v -- realpath >/dev/null 2>&1 || fail "realpath runtime dependency is unavailable"
+command -v -- mkfifo >/dev/null 2>&1 || fail "mkfifo runtime dependency is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) printf -- '%s\n' "$TEST_ID: rumiai-os target checkout not found" >&2; exit 2 ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+integration_library="$root/lib/sh/pkg-integration.lib.sh"
+setuid_library="$root/lib/sh/pkg-setuid.lib.sh"
+[ -f "$integration_library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
+[ -f "$setuid_library" ] || fail "lib/sh/pkg-setuid.lib.sh is missing"
+[ ! -x "$setuid_library" ] || fail "pkg-setuid library must not be executable"
+case "$(command -p -- sed -n '1p' "$setuid_library")" in '#!'*) fail "pkg-setuid library must not have a shebang" ;; esac
+
+chown_match="$(command -p -- grep -n 'command -p -- chown 0:0 "\$1"' "$setuid_library")" || fail "fixed chown 0:0 operation is missing"
+chmod_match="$(command -p -- grep -n 'command -p -- chmod 4755 "\$1"' "$setuid_library")" || fail "fixed chmod 4755 operation is missing"
+chown_line=${chown_match%%:*}
+chmod_line=${chmod_match%%:*}
+case "$chown_line:$chmod_line" in *[!0-9:]* | :* | *:) fail "cannot parse setuid operation order" ;; esac
+[ "$chown_line" -lt "$chmod_line" ] || fail "chmod 4755 does not follow chown 0:0"
+if command -p -- grep -E '(^|[[:space:]])(sudo|su|pkexec)([[:space:]]|$)' "$setuid_library" >/dev/null 2>&1
+then
+  fail "setuid materialization introduced privilege escalation"
+fi
+if command -p -- grep -- '--no-sandbox' "$setuid_library" >/dev/null 2>&1
+then
+  fail "setuid materialization introduced --no-sandbox fallback"
+fi
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-setuid-$$"
+umask 077
+command -p -- mkdir -- "$tmp" || error "cannot create temporary directory"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+m_ROOT="$tmp/root"
+m_LIB_DIR="$root/lib"
+m_PKG_DIR="$m_ROOT/pkg"
+m_BIN_DIR="$m_ROOT/bin"
+m_BIN_EXT_DIR="$m_BIN_DIR/ext"
+m_CONF_DIR="$m_ROOT/conf"
+m_DATA_DIR="$m_ROOT/data"
+m_HOME_DIR="$m_ROOT/home"
+m_CACHE_DIR="$m_ROOT/cache"
+m_LOG_DIR="$m_ROOT/log"
+m_RUN_DIR="$m_ROOT/run"
+m_TMP_DIR="$m_ROOT/tmp"
+export m_ROOT m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR
+export m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR
+
+reset_fixture || error "cannot initialize fixture"
+. "$integration_library" || error "cannot source pkg-integration library"
+
+# Absence of setuid_root preserves the existing integration path.
+new_case plain || error "cannot create plain fixture"
+printf -- '%s\n' payload > "$case_payload/payload" || error "cannot create plain payload"
+pkg_integrate plain 1 "$case_range" "$case_payload" || fail "plain integration regressed"
+[ -f "$m_PKG_DIR/plain@1/root/payload" ] || fail "plain package payload missing"
+[ ! -e "$m_PKG_DIR/plain@1/setuid-root-rollback" ] || fail "plain package gained transient setuid metadata"
+pkg_deintegrate plain 1 || fail "plain package deintegration failed"
+
+# Invalid platform is rejected before useful-root mutation.
+new_case generic || error "cannot create generic fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create generic setuid metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create generic target"
+expect_integration_failure generic 1 "$case_range" "$case_payload"
+
+new_case macos || error "cannot create macOS fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create macOS setuid metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create macOS target"
+expect_integration_failure macos 1 "$case_range" "$case_payload" macos-arm64
+
+# Declarative metadata shape and serialization.
+new_case metadata-symlink || error "cannot create metadata-symlink fixture"
+printf -- '%s\n' chrome-sandbox > "$tmp/setuid-metadata-target" || error "cannot create metadata target"
+command -p -- ln -s "$tmp/setuid-metadata-target" "$case_range/setuid_root" || error "cannot create metadata symlink"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create metadata-symlink target"
+expect_integration_failure metadata-symlink 1 "$case_range" "$case_payload" linux-arm64
+
+new_case metadata-executable || error "cannot create executable-metadata fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create executable metadata"
+command -p -- chmod 700 "$case_range/setuid_root" || error "cannot mark metadata executable"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create executable-metadata target"
+expect_integration_failure metadata-executable 1 "$case_range" "$case_payload" linux-arm64
+
+new_case metadata-empty || error "cannot create empty-metadata fixture"
+: > "$case_range/setuid_root" || error "cannot create empty metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create empty-metadata target"
+expect_integration_failure metadata-empty 1 "$case_range" "$case_payload" linux-arm64
+
+new_case metadata-no-lf || error "cannot create no-lf fixture"
+printf -- '%s' chrome-sandbox > "$case_range/setuid_root" || error "cannot create no-lf metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create no-lf target"
+expect_integration_failure metadata-no-lf 1 "$case_range" "$case_payload" linux-arm64
+
+new_case metadata-absolute || error "cannot create absolute-path fixture"
+printf -- '%s\n' /chrome-sandbox > "$case_range/setuid_root" || error "cannot create absolute metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create absolute-path target"
+expect_integration_failure metadata-absolute 1 "$case_range" "$case_payload" linux-arm64
+
+new_case metadata-dotdot || error "cannot create dotdot fixture"
+printf -- '%s\n' dir/../chrome-sandbox > "$case_range/setuid_root" || error "cannot create dotdot metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create dotdot target"
+expect_integration_failure metadata-dotdot 1 "$case_range" "$case_payload" linux-arm64
+
+new_case metadata-duplicate || error "cannot create duplicate fixture"
+printf -- '%s\n' chrome-sandbox chrome-sandbox > "$case_range/setuid_root" || error "cannot create duplicate metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create duplicate target"
+expect_integration_failure metadata-duplicate 1 "$case_range" "$case_payload" linux-arm64
+
+# Target must be a physical regular file.
+new_case target-symlink || error "cannot create target-symlink fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create target-symlink metadata"
+printf -- '%s\n' sandbox > "$case_payload/real-sandbox" || error "cannot create real sandbox"
+command -p -- ln -s real-sandbox "$case_payload/chrome-sandbox" || error "cannot create target symlink"
+expect_integration_failure target-symlink 1 "$case_range" "$case_payload" linux-arm64
+
+new_case target-directory || error "cannot create target-directory fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create target-directory metadata"
+command -p -- mkdir -- "$case_payload/chrome-sandbox" || error "cannot create target directory"
+expect_integration_failure target-directory 1 "$case_range" "$case_payload" linux-arm64
+
+new_case target-fifo || error "cannot create target-fifo fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create target-fifo metadata"
+command -p -- mkfifo -- "$case_payload/chrome-sandbox" || error "cannot create target FIFO"
+expect_integration_failure target-fifo 1 "$case_range" "$case_payload" linux-arm64
+
+new_case ancestor-symlink || error "cannot create ancestor-symlink fixture"
+printf -- '%s\n' alias/chrome-sandbox > "$case_range/setuid_root" || error "cannot create ancestor-symlink metadata"
+command -p -- mkdir -- "$case_payload/real" || error "cannot create real directory"
+make_regular_target "$case_payload/real" chrome-sandbox || error "cannot create ancestor target"
+command -p -- ln -s real "$case_payload/alias" || error "cannot create ancestor symlink"
+expect_integration_failure ancestor-symlink 1 "$case_range" "$case_payload" linux-arm64
+
+# Static state routing and setuid_root cannot own overlapping paths.
+new_case state-overlap || error "cannot create state-overlap fixture"
+command -p -- mkdir -- "$case_range/var" || error "cannot create state metadata directory"
+printf -- '%s\n' chrome-sandbox > "$case_range/var/conf" || error "cannot create state mapping"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create overlapping setuid metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create state-overlap target"
+expect_integration_failure state-overlap 1 "$case_range" "$case_payload" linux-arm64
+
+new_case state-ancestor-overlap || error "cannot create state-ancestor fixture"
+command -p -- mkdir -- "$case_range/var" "$case_payload/state" || error "cannot create state-ancestor directories"
+printf -- '%s\n' state > "$case_range/var/data" || error "cannot create state-ancestor mapping"
+printf -- '%s\n' state/chrome-sandbox > "$case_range/setuid_root" || error "cannot create descendant setuid metadata"
+make_regular_target "$case_payload/state" chrome-sandbox || error "cannot create state-ancestor target"
+expect_integration_failure state-ancestor-overlap 1 "$case_range" "$case_payload" linux-arm64
+
+# From here the privileged primitive is simulated; parsing/lifecycle remain the real product code.
+apply_log="$tmp/apply.log"
+apply_mode=success
+_pkg_setuid_apply_file()
+{
+  [ "$#" -eq 1 ] || return 2
+  printf -- 'chown 0:0\t%s\n' "$1" >> "$apply_log" || return 1
+  printf -- 'chmod 4755\t%s\n' "$1" >> "$apply_log" || return 1
+  command -p -- chmod 4755 "$1" || return 1
+  [ "$apply_mode" = success ]
+}
+
+provider_mode=success
+provider_seen="$tmp/provider-seen"
+_pkg_facility_provider_add()
+{
+  [ "$#" -eq 2 ] || return 2
+  case "$provider_mode" in
+    success) return 0 ;;
+    inspect)
+      [ -u "$1/root/chrome-sandbox" ] || return 1
+      [ -d "$1/setuid-root-rollback" ] && [ ! -L "$1/setuid-root-rollback" ] || return 1
+      : > "$provider_seen" || return 1
+      return 0
+      ;;
+    fail) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+# Electron-like Linux ARM64 integration transforms chrome-sandbox before provider publication.
+reset_fixture || error "cannot reset Electron fixture"
+: > "$apply_log" || error "cannot reset apply log"
+command -p -- rm -f -- "$provider_seen" || error "cannot reset provider marker"
+new_case electron || error "cannot create Electron fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create Electron setuid metadata"
+make_electron_command "$case_range" || error "cannot create Electron command"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create Electron sandbox"
+printf -- '%s\n' electron > "$case_payload/electron" || error "cannot create Electron executable"
+command -p -- chmod 700 "$case_payload/electron" || error "cannot mark Electron executable"
+printf -- '%s\n' sandbox > "$tmp/expected-sandbox" || error "cannot create expected sandbox"
+provider_mode=inspect
+pkg_integrate electron v44.3.0 "$case_range" "$case_payload" linux-arm64 || fail "Electron-like ARM64 integration failed"
+concrete="$m_PKG_DIR/electron@v44.3.0!linux-arm64"
+[ -u "$concrete/root/chrome-sandbox" ] || fail "Electron chrome-sandbox lacks setuid bit"
+[ -x "$concrete/root/chrome-sandbox" ] || fail "Electron chrome-sandbox is not executable"
+command -p -- cmp -- "$concrete/root/chrome-sandbox" "$tmp/expected-sandbox" >/dev/null 2>&1 || fail "Electron chrome-sandbox bytes changed"
+[ -f "$concrete/cmd/electron" ] && [ -x "$concrete/cmd/electron" ] || fail "Electron command was not materialized"
+[ "$(command -p -- readlink "$concrete/link/electron")" = '../root/electron' ] || fail "Electron command link is incorrect"
+[ -f "$provider_seen" ] || fail "provider publication was not reached after setuid materialization"
+[ ! -e "$concrete/setuid-root-rollback" ] && [ ! -L "$concrete/setuid-root-rollback" ] || fail "transient setuid rollback data survived success"
+[ "$(command -p -- wc -l < "$apply_log" | command -p -- tr -d ' ')" -eq 2 ] || fail "Electron setuid primitive call count is wrong"
+first_apply="$(command -p -- sed -n '1p' "$apply_log")"
+second_apply="$(command -p -- sed -n '2p' "$apply_log")"
+case "$first_apply" in 'chown 0:0'*) : ;; *) fail "simulated setuid operation did not start with chown" ;; esac
+case "$second_apply" in 'chmod 4755'*) : ;; *) fail "simulated setuid operation did not finish with chmod" ;; esac
+
+# Linux x86_64 is also an accepted target.
+reset_fixture || error "cannot reset x86_64 fixture"
+: > "$apply_log" || error "cannot reset x86_64 apply log"
+new_case electron-x86 || error "cannot create x86_64 fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create x86_64 setuid metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create x86_64 target"
+provider_mode=success
+pkg_integrate electron v44.3.0 "$case_range" "$case_payload" linux-x86_64 || fail "Electron-like x86_64 integration failed"
+[ -u "$m_PKG_DIR/electron@v44.3.0!linux-x86_64/root/chrome-sandbox" ] || fail "x86_64 sandbox lacks setuid bit"
+
+# External/upstream pathname bytes are preserved within the line-oriented domain.
+reset_fixture || error "cannot reset opaque-path fixture"
+new_case opaque-path || error "cannot create opaque-path fixture"
+printf -- '%s\n' 'space dir/-sandbox' > "$case_range/setuid_root" || error "cannot create opaque-path metadata"
+make_regular_target "$case_payload" 'space dir/-sandbox' || error "cannot create opaque-path target"
+provider_mode=success
+pkg_integrate opaque 1 "$case_range" "$case_payload" linux-arm64 || fail "opaque pathname setuid integration failed"
+[ -u "$m_PKG_DIR/opaque@1!linux-arm64/root/space dir/-sandbox" ] || fail "opaque pathname was not preserved/materialized"
+
+# A failure inside the privileged primitive restores the original useful root.
+reset_fixture || error "cannot reset apply-failure fixture"
+new_case apply-failure || error "cannot create apply-failure fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create apply-failure metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create apply-failure target"
+apply_mode=fail
+provider_mode=success
+expect_integration_failure apply-failure 1 "$case_range" "$case_payload" linux-arm64
+[ -f "$case_payload/chrome-sandbox" ] && [ ! -L "$case_payload/chrome-sandbox" ] || fail "apply failure did not restore original target"
+[ ! -u "$case_payload/chrome-sandbox" ] || fail "apply failure returned a setuid useful root"
+[ "$(command -p -- cat -- "$case_payload/chrome-sandbox")" = sandbox ] || fail "apply failure changed original bytes"
+apply_mode=success
+
+# A later provider-publication failure also rolls the setuid transformation back.
+reset_fixture || error "cannot reset provider-failure fixture"
+new_case provider-failure || error "cannot create provider-failure fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create provider-failure metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create provider-failure target"
+provider_mode=fail
+expect_integration_failure provider-failure 1 "$case_range" "$case_payload" linux-arm64
+[ -f "$case_payload/chrome-sandbox" ] && [ ! -L "$case_payload/chrome-sandbox" ] || fail "provider failure did not restore original target"
+[ ! -u "$case_payload/chrome-sandbox" ] || fail "provider failure returned a setuid useful root"
+[ "$(command -p -- cat -- "$case_payload/chrome-sandbox")" = sandbox ] || fail "provider failure changed original bytes"
+
+exit 0
