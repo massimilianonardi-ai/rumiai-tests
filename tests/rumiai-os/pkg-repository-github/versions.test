@@ -127,7 +127,6 @@ case "$status" in
     ;;
 esac
 
-
 library="$root/lib/sh/pkg-repository-github.lib.sh"
 [ -f "$library" ] || fail "lib/sh/pkg-repository-github.lib.sh is missing"
 [ ! -x "$library" ] || fail "pkg-repository-github.lib.sh must not be executable"
@@ -197,10 +196,25 @@ case "$url" in
     printf '%s\n' '{"tag_name":"v2","draft":false,"prerelease":false,"created_at":"2026-02-01T00:00:00Z"}'
     ;;
   *'/releases/tags/v1')
-    printf '%s\n' '{"tag_name":"v1","draft":false,"prerelease":false,"created_at":"2026-01-01T00:00:00Z"}'
+    printf '%s\n' '{"tag_name":"v1","draft":false,"prerelease":false,"created_at":"2026-01-01T00:00:00Z","published_at":"2026-01-02T00:00:00Z"}'
+    ;;
+  *'/releases/tags/v1a')
+    printf '%s\n' '{"tag_name":"v1a","draft":false,"prerelease":false,"created_at":"2026-01-15T00:00:00Z","published_at":"2026-01-16T00:00:00Z"}'
+    ;;
+  *'/releases/tags/v1b')
+    printf '%s\n' '{"tag_name":"v1b","draft":false,"prerelease":false,"created_at":"2026-01-15T00:00:00Z","published_at":"2026-01-17T00:00:00Z"}'
+    ;;
+  *'/releases/tags/v2')
+    printf '%s\n' '{"tag_name":"v2","draft":false,"prerelease":false,"created_at":"2026-02-01T00:00:00Z","published_at":"2026-02-02T00:00:00Z"}'
+    ;;
+  *'/releases/tags/same-a')
+    printf '%s\n' '{"tag_name":"same-a","draft":false,"prerelease":false,"created_at":"2026-01-20T00:00:00Z","published_at":"2026-01-21T00:00:00Z"}'
+    ;;
+  *'/releases/tags/same-b')
+    printf '%s\n' '{"tag_name":"same-b","draft":false,"prerelease":false,"created_at":"2026-01-20T00:00:00Z","published_at":"2026-01-21T00:00:00Z"}'
     ;;
   *'/releases/tags/v-pre')
-    printf '%s\n' '{"tag_name":"v-pre","draft":false,"prerelease":true,"created_at":"2026-01-15T00:00:00Z"}'
+    printf '%s\n' '{"tag_name":"v-pre","draft":false,"prerelease":true,"created_at":"2026-01-15T00:00:00Z","published_at":"2026-01-16T00:00:00Z"}'
     ;;
   *)
     exit 88
@@ -226,6 +240,36 @@ if pkg_repository_list_versions "$ambiguous_repository_dir" >/dev/null 2>&1
 then
   fail "releases with identical created_at and published_at were accepted as an ordered succession"
 fi
+
+compare="$(pkg_repository_compare_versions "$repository_dir" "v1" "v2")" || fail "ascending version comparison failed"
+[ "$compare" = -1 ] || fail "v1 versus v2 returned $compare instead of -1"
+
+compare="$(pkg_repository_compare_versions "$repository_dir" "v2" "v1")" || fail "descending version comparison failed"
+[ "$compare" = 1 ] || fail "v2 versus v1 returned $compare instead of 1"
+
+compare="$(pkg_repository_compare_versions "$repository_dir" "v1" "v1")" || fail "equal version comparison failed"
+[ "$compare" = 0 ] || fail "v1 versus v1 returned $compare instead of 0"
+
+compare="$(pkg_repository_compare_versions "$repository_dir" "v1a" "v1b")" || fail "published_at tie-break comparison failed"
+[ "$compare" = -1 ] || fail "v1a versus v1b returned $compare instead of -1"
+
+if pkg_repository_compare_versions "$repository_dir" "same-a" "same-b" >/dev/null 2>&1
+then
+  fail "distinct releases with identical created_at and published_at were ordered"
+fi
+
+if pkg_repository_compare_versions "$repository_dir" "v1" "v-pre" >/dev/null 2>&1
+then
+  fail "prerelease was accepted by version comparison"
+fi
+
+if pkg_repository_compare_versions "$repository_dir" "v1" "missing" >/dev/null 2>&1
+then
+  fail "missing release was accepted by version comparison"
+fi
+
+pkg_repository_compare_versions "$repository_dir" "v1" >/dev/null 2>&1
+[ "$?" -eq 2 ] || fail "invalid compare argument count did not return status 2"
 
 latest="$(pkg_repository_resolve_version "$repository_dir")" || fail "latest version resolution failed"
 [ "$latest" = "v2" ] || fail "latest version resolution returned $latest instead of v2"
