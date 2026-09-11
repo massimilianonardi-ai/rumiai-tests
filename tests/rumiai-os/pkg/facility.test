@@ -215,7 +215,7 @@ bad_range="$tmp/range-bad-$bad_index"
 bad_root="$tmp/root-bad-$bad_index"
 command -p -- mkdir -- "$bad_range" || error "cannot create executable-facility range"
 printf -- '%s\n' 'java 21' > "$bad_range/facility" || error "cannot write executable facility"
-command -p -- chmod +x -- "$bad_range/facility" || error "cannot mark facility executable"
+command -p -- chmod +x "$bad_range/facility" || error "cannot mark facility executable"
 make_root "$bad_root" || error "cannot create executable-facility root"
 expect_status 1 pkg_integrate bad "$bad_index" "$bad_range" "$bad_root"
 
