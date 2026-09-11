@@ -609,7 +609,14 @@ case $snapshot_scope in
 esac
 
 if [ "$runner_error" -eq 0 ]; then
-    while IFS= read -r test_id; do
+    if ! exec 9< "$tests_file"; then
+        say_error 'cannot open test execution list'
+        runner_error=1
+    fi
+fi
+
+if [ "$runner_error" -eq 0 ]; then
+    while IFS= read -r test_id <&9; do
         [ -n "$test_id" ] || continue
         test_path=$tests_root/$test_id
 
@@ -633,7 +640,7 @@ if [ "$runner_error" -eq 0 ]; then
 
         timing_raw=$run_dir/.work/timing
         (
-            time -p /bin/sh -c 'exec "$1" > "$2" 2>&1' sh "$test_path" "$log_file"
+            time -p /bin/sh -c 'exec 9<&-; exec "$1" > "$2" 2>&1' sh "$test_path" "$log_file"
         ) 2> "$timing_raw"
         observed=$?
         elapsed=$(timing_real_read "$timing_raw") || {
@@ -686,7 +693,8 @@ if [ "$runner_error" -eq 0 ]; then
                 fi
                 ;;
         esac
-    done < "$tests_file"
+    done
+    exec 9<&-
 fi
 
 if [ "$runner_error" -eq 0 ]; then
