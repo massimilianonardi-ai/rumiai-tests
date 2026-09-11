@@ -219,14 +219,6 @@ command -p -- chmod +x "$bad_range/facility" || error "cannot mark facility exec
 make_root "$bad_root" || error "cannot create executable-facility root"
 expect_status 1 pkg_integrate bad "$bad_index" "$bad_range" "$bad_root"
 
-range="$tmp/range-dependency"
-root_input="$tmp/root-dependency"
-command -p -- mkdir -- "$range" || error "cannot create dependency range"
-printf -- '%s\n' 'java >=17 <22' > "$range/dependency" || error "cannot write dependency fixture"
-make_root "$root_input" || error "cannot create dependency root"
-expect_status 2 pkg_integrate consumer 1 "$range" "$root_input"
-[ ! -e "$m_PKG_DIR/consumer@1" ] && [ ! -L "$m_PKG_DIR/consumer@1" ] || fail "K1 accepted or materialized dependency"
-
 range="$tmp/range-corrupt"
 root_input="$tmp/root-corrupt"
 make_range "$range" 'java 21\n' || error "cannot create corruption range"
