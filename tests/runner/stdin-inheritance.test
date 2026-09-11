@@ -1,0 +1,61 @@
+#!/bin/sh
+
+fail()
+{
+    printf '%s\n' "stdin-inheritance.test: $*" >&2
+    exit 1
+}
+
+error()
+{
+    printf '%s\n' "stdin-inheritance.test: $*" >&2
+    exit 3
+}
+
+resolve_test_dir()
+{
+    self=$0
+    case "$self" in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+tests_dir=${test_dir%/*}
+suite_root=${tests_dir%/*}
+runner=$suite_root/rumiai-test
+[ -x "$runner" ] || error 'runner is not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-test-stdin-inheritance-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fixture=$tmp/suite
+mkdir -p "$fixture/tests" "$fixture/sessions" || error 'cannot create fixture suite'
+cp "$runner" "$fixture/rumiai-test" || error 'cannot copy runner'
+chmod +x "$fixture/rumiai-test" || error 'cannot make runner executable'
+
+cat > "$fixture/tests/stdin.test" <<'EOF_TEST'
+#!/bin/sh
+
+IFS= read -r value || exit 1
+[ "$value" = "runner-stdin-marker" ] || exit 1
+exit 0
+EOF_TEST
+chmod +x "$fixture/tests/stdin.test" || error 'cannot make fixture test executable'
+
+printf '%s\n' 'runner-stdin-marker' | "$fixture/rumiai-test" stdin.test > "$tmp/output" 2>&1
+status=$?
+[ "$status" -eq 0 ] || fail "runner returned $status instead of 0"
+
+grep -F 'PASS   stdin.test' "$tmp/output" >/dev/null 2>&1 || fail 'fixture test did not pass'
+grep -F 'PASS   1' "$tmp/output" >/dev/null 2>&1 || fail 'runner summary does not report one pass'
+grep -F 'FAIL   0' "$tmp/output" >/dev/null 2>&1 || fail 'runner summary reports a failure'
+grep -F 'ERROR  0' "$tmp/output" >/dev/null 2>&1 || fail 'runner summary reports an error'
+
+exit 0
