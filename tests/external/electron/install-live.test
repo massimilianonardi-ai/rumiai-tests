@@ -1,0 +1,323 @@
+#!/bin/sh
+
+TEST_ID="external/electron/install-live.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+rumiai_test_fixture_rumiai_os_create()
+{
+  [ "$#" -eq 2 ] || return 3
+  source_root=$1
+  fixture_root=$2
+  [ -n "$source_root" ] || return 3
+  [ -n "$fixture_root" ] || return 3
+  [ -f "$source_root/rumiai-os" ] || return 1
+  [ -d "$source_root/bin" ] || return 1
+  [ -d "$source_root/lib" ] || return 1
+  [ -d "$source_root/lang" ] || return 1
+  [ ! -e "$fixture_root" ] || return 2
+
+  mkdir -p "$fixture_root/conf/bootstrap" || return 2
+  cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  cp -R "$source_root/bin" "$fixture_root/bin" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  cp -R "$source_root/lib" "$fixture_root/lib" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  cp -R "$source_root/lang" "$fixture_root/lang" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  chmod u+x "$fixture_root/rumiai-os" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  return 0
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) : ;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_live_install()
+{
+  if [ "$mirror_tty" -eq 1 ]
+  then
+    {
+      "$pkg_command" install electron
+      printf -- '%s\n' "$?" > "$pkg_status_file"
+    } 2>&1 | command -p -- tee "$pkg_output" /dev/tty
+  else
+    {
+      "$pkg_command" install electron
+      printf -- '%s\n' "$?" > "$pkg_status_file"
+    } 2>&1 | command -p -- tee "$pkg_output"
+  fi
+}
+
+command -v git >/dev/null 2>&1 || skip "git is unavailable"
+command -v tee >/dev/null 2>&1 || skip "tee is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+electron_group=${test_dir%/*}
+external_group=${electron_group%/*}
+tests_dir=${external_group%/*}
+suite_root=${tests_dir%/*}
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+tmp="${TMPDIR:-/tmp}/rumiai-electron-install-live-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture="$tmp/root"
+
+rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"
+status=$?
+case "$status" in
+  0) : ;;
+  1) fail "source checkout lacks required runtime material" ;;
+  2) error "cannot materialize isolated fixture" ;;
+  *) error "fixture primitive returned unexpected status $status" ;;
+esac
+fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize fixture root"
+mkdir -p \
+  "$fixture/pkg" \
+  "$fixture/src" \
+  "$fixture/data" \
+  "$fixture/home" \
+  "$fixture/cache" \
+  "$fixture/log" \
+  "$fixture/run" \
+  "$fixture/tmp" || error "cannot create isolated semantic roots"
+
+runtime_probe="$tmp/runtime-probe"
+cat > "$runtime_probe" <<'EOF_PROBE'
+#!/usr/bin/env rumiai-os
+
+. "$m_LIB_DIR/sh/osarch.lib.sh"
+
+printf -- '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
+
+PATH="$fixture/bin/sys:$PATH"
+export PATH
+osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
+[ -n "$osarch" ] || error "RumiAI osarch probe returned empty output"
+case "$osarch" in
+  linux-arm64|linux-x86_64) : ;;
+  *) skip "Electron live install is defined only for linux-arm64 and linux-x86_64; target is $osarch" ;;
+esac
+
+pkg_command="$fixture/bin/sys/pkg"
+[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
+
+effective_uid="$(command -p -- id -u 2>/dev/null)" || error "cannot determine effective uid"
+case "$effective_uid" in
+  ""|*[!0-9]*) error "invalid effective uid: $effective_uid" ;;
+esac
+
+mirror_tty=0
+if [ "$effective_uid" -ne 0 ]
+then
+  [ -t 0 ] || skip "interactive terminal input is required for real sudo authorization"
+  [ -r /dev/tty ] && [ -w /dev/tty ] || skip "/dev/tty is required for visible sudo authorization"
+  if [ ! -t 1 ] || [ ! -t 2 ]
+  then
+    mirror_tty=1
+  fi
+fi
+
+pkg_output="$tmp/pkg.output"
+pkg_status_file="$tmp/pkg.status"
+run_live_install || error "cannot capture live package installation output"
+[ -f "$pkg_status_file" ] || error "live package installation did not record an exit status"
+IFS= read -r status < "$pkg_status_file" || error "cannot read live package installation exit status"
+case "$status" in
+  ""|*[!0-9]*) error "invalid package installation exit status: $status" ;;
+esac
+[ "$status" -eq 0 ] || fail "pkg install electron failed with status $status"
+
+if [ "$effective_uid" -ne 0 ]
+then
+  sudo_bin="$(command -p -v sudo 2>/dev/null)" || fail "sudo is unavailable from the secure command -p path"
+  chown_bin="$(command -p -v chown 2>/dev/null)" || fail "chown is unavailable from the secure command -p path"
+  chmod_bin="$(command -p -v chmod 2>/dev/null)" || fail "chmod is unavailable from the secure command -p path"
+
+  message_en="$(cat "$fixture/lang/en_US/security/package-setuid-root-authorization-required")" || error "cannot read English authorization message"
+  message_it="$(cat "$fixture/lang/it_IT/security/package-setuid-root-authorization-required")" || error "cannot read Italian authorization message"
+  if ! LC_ALL=C command -p -- grep -F "$message_en" "$pkg_output" >/dev/null 2>&1 && \
+     ! LC_ALL=C command -p -- grep -F "$message_it" "$pkg_output" >/dev/null 2>&1
+  then
+    fail "live install did not report the administrative authorization reason"
+  fi
+
+  LC_ALL=C command -p -- grep -F "$sudo_bin -- $chown_bin 0:0 " "$pkg_output" >/dev/null 2>&1 || \
+    fail "live install did not display the privileged chown command"
+  LC_ALL=C command -p -- grep -F "$sudo_bin -- $chmod_bin 4755 " "$pkg_output" >/dev/null 2>&1 || \
+    fail "live install did not display the privileged chmod command"
+fi
+
+concrete=
+concrete_count=0
+for candidate in "$fixture/pkg"/electron@*"!$osarch"
+do
+  [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+  concrete_count=$((concrete_count + 1))
+  concrete=$candidate
+done
+[ "$concrete_count" -eq 1 ] || fail "expected one target-specific Electron concrete version, found $concrete_count"
+[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "Electron concrete version is not a real directory"
+
+identity=${concrete##*/}
+version_osarch=${identity#electron@}
+version=${version_osarch%"!$osarch"}
+[ -n "$version" ] && [ "$version" != "$version_osarch" ] || fail "cannot derive installed Electron version from $identity"
+
+[ -d "$concrete/root" ] && [ ! -L "$concrete/root" ] || fail "Electron root is missing"
+[ -f "$concrete/cmd/electron" ] && [ ! -L "$concrete/cmd/electron" ] && [ -x "$concrete/cmd/electron" ] || fail "Electron command entry is missing or not executable"
+[ -L "$concrete/link/electron" ] || fail "Electron direct-link is missing"
+resolved_target="$(command -p -- realpath -- "$concrete/link/electron" 2>/dev/null)" || fail "cannot resolve Electron direct-link"
+[ "$resolved_target" = "$concrete/root/electron" ] || fail "Electron direct-link resolves to unexpected target: $resolved_target"
+[ -f "$resolved_target" ] && [ ! -L "$resolved_target" ] && [ -x "$resolved_target" ] || fail "resolved Electron upstream target is not an executable regular file"
+
+if ! LC_ALL=C command -p -- grep -F '. "$m_LIB_DIR/sh/pkg-launch.lib.sh"' "$concrete/cmd/electron" >/dev/null 2>&1
+then
+  fail "installed Electron command does not load pkg-launch.lib.sh"
+fi
+
+sandbox="$concrete/root/chrome-sandbox"
+[ -f "$sandbox" ] && [ ! -L "$sandbox" ] || fail "chrome-sandbox is not a regular non-symlink file"
+
+sandbox_listing="$(LC_ALL=C command -p -- ls -ldn "$sandbox" 2>/dev/null)" || fail "cannot inspect chrome-sandbox ownership"
+set -- $sandbox_listing
+[ "$#" -ge 4 ] || error "cannot parse chrome-sandbox ownership"
+[ "$3" = 0 ] || fail "chrome-sandbox uid is $3, expected 0"
+[ "$4" = 0 ] || fail "chrome-sandbox gid is $4, expected 0"
+
+sandbox_mode_match="$(command -p -- find "$sandbox" -prune -perm 4755 -print 2>/dev/null)" || fail "cannot inspect chrome-sandbox mode"
+[ "$sandbox_mode_match" = "$sandbox" ] || fail "chrome-sandbox mode is not exactly 4755"
+[ ! -e "$concrete/setuid-root-rollback" ] && [ ! -L "$concrete/setuid-root-rollback" ] || fail "setuid rollback material persisted after successful install"
+
+for unexpected in \
+  "$fixture/pkg/electron" \
+  "$fixture/pkg/electron!$osarch" \
+  "$fixture/bin/ext/electron" \
+  "$fixture/bin/ext-$osarch/electron"
+do
+  if [ -e "$unexpected" ] || [ -L "$unexpected" ]
+  then
+    fail "pkg install selected Electron as default unexpectedly: $unexpected"
+  fi
+done
+
+catalog="$fixture/cache/sys/pkg/pkg-catalog"
+[ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "live pkg-catalog cache was not materialized"
+catalog_origin="$(git -C "$catalog" remote get-url origin 2>/dev/null)" || fail "cannot read cached catalog origin"
+[ "$catalog_origin" = "https://github.com/massimilianonardi-ai/pkg-catalog.git" ] || fail "unexpected cached catalog origin: $catalog_origin"
+catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
+case "$catalog_head" in
+  ""|*[!0-9a-f]*) fail "invalid cached catalog HEAD: $catalog_head" ;;
+esac
+
+catalog_range="$catalog/electron/catalog-$osarch/n0001=v44.3.0"
+[ -f "$catalog_range/setuid_root" ] && [ ! -L "$catalog_range/setuid_root" ] || fail "cached Electron range lacks setuid_root"
+[ "$(cat "$catalog_range/setuid_root")" = chrome-sandbox ] || fail "cached Electron setuid_root does not declare chrome-sandbox"
+
+printf -- 'installed=%s\n' "$identity"
+printf -- 'catalog-head=%s\n' "$catalog_head"
+printf -- 'electron-target=%s\n' "${resolved_target#"$concrete/root/"}"
+printf -- 'chrome-sandbox=uid:0 gid:0 mode:4755\n'
+
+exit 0
