@@ -49,6 +49,7 @@ rumiai_test_target_rumiai_os_find()
     rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
     return 0
   fi
+
   candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
   while :
   do
@@ -68,7 +69,10 @@ rumiai_test_target_rumiai_os_find()
 resolve_test_dir()
 {
   self=$0
-  case "$self" in */*) : ;; *) self="$(command -v -- "$self" 2>/dev/null)" || return 1 ;; esac
+  case "$self" in
+    */*) : ;;
+    *) self="$(command -v -- "$self" 2>/dev/null)" || return 1 ;;
+  esac
   self_dir=${self%/*}
   [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
@@ -77,7 +81,9 @@ resolve_test_dir()
 readpathce()
 {
   [ "$#" -eq 2 ] && [ -n "$1" ] && [ -n "$2" ] || return 1
-  case "$1" in "" | [0-9]* | *[!a-zA-Z0-9_]*) return 2 ;; esac
+  case "$1" in
+    "" | [0-9]* | *[!a-zA-Z0-9_]*) return 2 ;;
+  esac
   resolved="$(command -p -- realpath -- "$2" 2>/dev/null)" || return 1
   [ -e "$resolved" ] || return 1
   eval "$1=\$resolved"
@@ -180,28 +186,34 @@ integration_library="$root/lib/sh/pkg-integration.lib.sh"
 setuid_library="$root/lib/sh/pkg-setuid.lib.sh"
 message_en="$root/lang/en_US/security/package-setuid-root-authorization-required"
 message_it="$root/lang/it_IT/security/package-setuid-root-authorization-required"
+
 [ -f "$integration_library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
 [ -f "$setuid_library" ] || fail "lib/sh/pkg-setuid.lib.sh is missing"
 [ ! -x "$setuid_library" ] || fail "pkg-setuid library must not be executable"
-case "$(command -p -- sed -n '1p' "$setuid_library")" in '#!'*) fail "pkg-setuid library must not have a shebang" ;; esac
+case "$(command -p -- sed -n '1p' "$setuid_library")" in
+  '#!'*) fail "pkg-setuid library must not have a shebang" ;;
+esac
 [ -s "$message_en" ] || fail "English setuid authorization message is missing"
 [ -s "$message_it" ] || fail "Italian setuid authorization message is missing"
 
-command -p -- grep 'command -p -v sudo' "$setuid_library" >/dev/null 2>&1 || fail "sudo is not resolved through command -p"
-command -p -- grep 'package-setuid-root-authorization-required' "$setuid_library" >/dev/null 2>&1 || fail "setuid authorization reason is not reported"
-command -p -- grep '0:0' "$setuid_library" >/dev/null 2>&1 || fail "fixed root ownership is missing"
-command -p -- grep '4755' "$setuid_library" >/dev/null 2>&1 || fail "fixed setuid mode is missing"
+command -p -- grep -F -- 'command -p -v sudo' "$setuid_library" >/dev/null 2>&1 || fail "sudo is not resolved through command -p"
+command -p -- grep -F -- 'package-setuid-root-authorization-required' "$setuid_library" >/dev/null 2>&1 || fail "setuid authorization reason is not reported"
+command -p -- grep -F -- '0:0' "$setuid_library" >/dev/null 2>&1 || fail "fixed root ownership is missing"
+command -p -- grep -F -- '4755' "$setuid_library" >/dev/null 2>&1 || fail "fixed setuid mode is missing"
 if command -p -- grep -E 'sudo[[:space:]]+(sh|bash|zsh)[[:space:]]+-c|pkexec|(^|[[:space:]])su([[:space:]]|$)' "$setuid_library" >/dev/null 2>&1
 then
   fail "setuid path introduced a privileged shell or alternate escalation mechanism"
 fi
-if command -p -- grep -- '--no-sandbox' "$setuid_library" >/dev/null 2>&1
+if command -p -- grep -F -- '--no-sandbox' "$setuid_library" >/dev/null 2>&1
 then
   fail "setuid materialization introduced --no-sandbox fallback"
 fi
-notice_line="$(command -p -- grep -n '_pkg_setuid_privilege_notice "\$pkg_setuid_target"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "privilege notice call is missing"
-sudo_line="$(command -p -- grep -n '"\$pkg_setuid_sudo_bin" -- "\$pkg_setuid_chown_bin"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "sudo chown call is missing"
-case "$notice_line:$sudo_line" in *[!0-9:]* | :* | *:) fail "cannot parse privilege notice order" ;; esac
+
+notice_line="$(command -p -- grep -n -F -- '_pkg_setuid_privilege_notice "$pkg_setuid_target"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "privilege notice call is missing"
+sudo_line="$(command -p -- grep -n -F -- '"$pkg_setuid_sudo_bin" -- "$pkg_setuid_chown_bin"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "sudo chown call is missing"
+case "$notice_line:$sudo_line" in
+  *[!0-9:]* | :* | *:) fail "cannot parse privilege notice order" ;;
+esac
 [ "$notice_line" -lt "$sudo_line" ] || fail "privileged command can run before the user notice"
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-setuid-$$"
@@ -227,6 +239,10 @@ export m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DI
 reset_fixture || error "cannot initialize fixture"
 . "$integration_library" || error "cannot source pkg-integration library"
 
+# The quoting primitive is checked directly, not through a regular-expression parser.
+_pkg_setuid_shell_quote_set "a'b" || fail "setuid shell quoting failed"
+[ "$pkg_setuid_shell_quote" = "'a'\\''b'" ] || fail "single quote is not represented unambiguously"
+
 # Absence of setuid_root preserves the existing integration path.
 new_case plain || error "cannot create plain fixture"
 printf -- '%s\n' payload > "$case_payload/payload" || error "cannot create plain payload"
@@ -235,7 +251,7 @@ pkg_integrate plain 1 "$case_range" "$case_payload" || fail "plain integration r
 [ ! -e "$m_PKG_DIR/plain@1/setuid-root-rollback" ] || fail "plain package gained transient setuid metadata"
 pkg_deintegrate plain 1 || fail "plain package deintegration failed"
 
-# Generic and non-Linux definitions are rejected before mutation.
+# setuid_root is target-specific Linux-only.
 new_case generic || error "cannot create generic fixture"
 printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create generic metadata"
 make_regular_target "$case_payload" chrome-sandbox || error "cannot create generic target"
@@ -246,7 +262,7 @@ printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot cre
 make_regular_target "$case_payload" chrome-sandbox || error "cannot create macOS target"
 expect_integration_failure macos 1 "$case_range" "$case_payload" macos-arm64
 
-# Metadata serialization and target confinement.
+# Serialization and target confinement.
 for invalid in executable empty no-lf absolute dotdot duplicate
 do
   new_case "metadata-$invalid" || error "cannot create $invalid fixture"
@@ -304,19 +320,38 @@ make_regular_target "$case_payload/real" chrome-sandbox || error "cannot create 
 command -p -- ln -s real "$case_payload/alias" || error "cannot create ancestor symlink"
 expect_integration_failure ancestor-symlink 1 "$case_range" "$case_payload" linux-arm64
 
-new_case state-overlap || error "cannot create state overlap fixture"
-command -p -- mkdir -- "$case_range/var" || error "cannot create var fixture"
-printf -- '%s\n' chrome-sandbox > "$case_range/var/conf" || error "cannot create state mapping"
-printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create overlap metadata"
-make_regular_target "$case_payload" chrome-sandbox || error "cannot create overlap target"
-expect_integration_failure state-overlap 1 "$case_range" "$case_payload" linux-arm64
+# State ownership and setuid_root must not overlap in either direction.
+new_case state-exact || error "cannot create exact state overlap fixture"
+command -p -- mkdir -- "$case_range/var" || error "cannot create exact var fixture"
+printf -- '%s\n' chrome-sandbox > "$case_range/var/conf" || error "cannot create exact state mapping"
+printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create exact setuid metadata"
+make_regular_target "$case_payload" chrome-sandbox || error "cannot create exact overlap target"
+expect_integration_failure state-exact 1 "$case_range" "$case_payload" linux-arm64
 
-# Privilege helper: deterministic non-root path uses only fixed sudo commands.
+new_case state-ancestor || error "cannot create state ancestor fixture"
+command -p -- mkdir -- "$case_range/var" "$case_payload/state" || error "cannot create state ancestor directories"
+printf -- '%s\n' state > "$case_range/var/data" || error "cannot create state ancestor mapping"
+printf -- '%s\n' state/chrome-sandbox > "$case_range/setuid_root" || error "cannot create descendant setuid metadata"
+make_regular_target "$case_payload/state" chrome-sandbox || error "cannot create state ancestor target"
+expect_integration_failure state-ancestor 1 "$case_range" "$case_payload" linux-arm64
+
+new_case setuid-ancestor || error "cannot create setuid ancestor fixture"
+command -p -- mkdir -- "$case_range/var" "$case_payload/state" || error "cannot create setuid ancestor directories"
+printf -- '%s\n' state/config > "$case_range/var/data" || error "cannot create descendant state mapping"
+printf -- '%s\n' state > "$case_range/setuid_root" || error "cannot create ancestor setuid metadata"
+printf -- '%s\n' sandbox > "$case_payload/state" 2>/dev/null && fail "setuid ancestor fixture unexpectedly replaced directory"
+command -p -- rm -rf -- "$case_payload/state" || error "cannot reset setuid ancestor source"
+make_regular_target "$case_payload" state || error "cannot create setuid ancestor file"
+# The descendant state path cannot physically exist below a file; validation must reject before mutation.
+expect_integration_failure setuid-ancestor 1 "$case_range" "$case_payload" linux-arm64
+
+# Deterministic privilege helper tests.
 helper_bin="$tmp/helper-bin"
 command -p -- mkdir -- "$helper_bin" || error "cannot create helper bin"
 sudo_log="$tmp/sudo.log"
 notice_log="$tmp/notice.log"
 export sudo_log notice_log
+
 cat > "$helper_bin/chown" <<'EOF_CHOWN'
 #!/bin/sh
 printf -- 'chown\t%s\t%s\n' "$1" "$2" >> "$sudo_log"
@@ -334,9 +369,12 @@ shift
 printf -- 'sudo\t%s\t%s\t%s\n' "$1" "$2" "$3" >> "$sudo_log"
 "$@"
 EOF_SUDO
-command -p -- chmod 700 "$helper_bin/chown" "$helper_bin/chmod" "$helper_bin/sudo" || error "cannot chmod helper executables"
+cat > "$helper_bin/sudo-deny" <<'EOF_SUDO_DENY'
+#!/bin/sh
+exit 1
+EOF_SUDO_DENY
+command -p -- chmod 700 "$helper_bin/chown" "$helper_bin/chmod" "$helper_bin/sudo" "$helper_bin/sudo-deny" || error "cannot chmod helper executables"
 
-original_effective_uid_set='nonroot'
 _pkg_setuid_effective_uid_set()
 {
   pkg_setuid_effective_uid=1000
@@ -360,28 +398,55 @@ printf -- '%s\n' helper > "$helper_target" || error "cannot create helper target
 _pkg_setuid_apply_file "$helper_target" 2> "$tmp/helper.stderr" || fail "simulated non-root setuid helper failed"
 [ -u "$helper_target" ] || fail "simulated sudo chmod did not set setuid bit"
 [ "$(command -p -- wc -l < "$sudo_log" | command -p -- tr -d ' ')" -eq 4 ] || fail "unexpected privileged helper call count"
-command -p -- sed -n '1p' "$sudo_log" | command -p -- grep '^sudo.*/chown' >/dev/null 2>&1 || fail "first privileged command is not chown"
-command -p -- sed -n '3p' "$sudo_log" | command -p -- grep '^sudo.*/chmod' >/dev/null 2>&1 || fail "second privileged command is not chmod"
-command -p -- grep 'package-setuid-root-authorization-required' "$notice_log" >/dev/null 2>&1 || fail "authorization reason was not logged"
-command -p -- grep "$helper_bin/sudo -- $helper_bin/chown 0:0" "$tmp/helper.stderr" >/dev/null 2>&1 || fail "displayed sudo chown command is missing"
-command -p -- grep "$helper_bin/sudo -- $helper_bin/chmod 4755" "$tmp/helper.stderr" >/dev/null 2>&1 || fail "displayed sudo chmod command is missing"
-command -p -- grep "'helper target'" "$tmp/helper.stderr" >/dev/null 2>&1 && fail "display unexpectedly lost the full target path"
-command -p -- grep "'\\''" "$tmp/helper.stderr" >/dev/null 2>&1 || fail "single quote in displayed target is not shell-escaped"
+command -p -- sed -n '1p' "$sudo_log" | command -p -- grep -F -- 'sudo' >/dev/null 2>&1 || fail "first privileged operation did not pass through sudo"
+command -p -- sed -n '1p' "$sudo_log" | command -p -- grep -F -- '/chown' >/dev/null 2>&1 || fail "first privileged command is not chown"
+command -p -- sed -n '3p' "$sudo_log" | command -p -- grep -F -- '/chmod' >/dev/null 2>&1 || fail "second privileged command is not chmod"
+command -p -- grep -F -- 'package-setuid-root-authorization-required' "$notice_log" >/dev/null 2>&1 || fail "authorization reason was not logged"
+command -p -- grep -F -- "$helper_bin/sudo -- $helper_bin/chown 0:0" "$tmp/helper.stderr" >/dev/null 2>&1 || fail "displayed sudo chown command is missing"
+command -p -- grep -F -- "$helper_bin/sudo -- $helper_bin/chmod 4755" "$tmp/helper.stderr" >/dev/null 2>&1 || fail "displayed sudo chmod command is missing"
 
-# Root path bypasses sudo entirely.
+# No sudo available is an operational failure before privilege mutation.
+_pkg_setuid_command_paths_set()
+{
+  return 1
+}
+printf -- '%s\n' helper > "$helper_target" || error "cannot reset missing-sudo target"
+expect_status 1 _pkg_setuid_apply_file "$helper_target"
+[ ! -u "$helper_target" ] || fail "missing sudo altered target mode"
+
+# Authorization denial/failure propagates status 1.
+_pkg_setuid_command_paths_set()
+{
+  [ "$#" -eq 1 ] || return 2
+  pkg_setuid_chown_bin="$helper_bin/chown"
+  pkg_setuid_chmod_bin="$helper_bin/chmod"
+  pkg_setuid_sudo_bin="$helper_bin/sudo-deny"
+}
+printf -- '%s\n' helper > "$helper_target" || error "cannot reset denied-sudo target"
+expect_status 1 _pkg_setuid_apply_file "$helper_target"
+[ ! -u "$helper_target" ] || fail "denied sudo altered target mode"
+
+# euid 0 executes the fixed commands directly and never invokes sudo.
 _pkg_setuid_effective_uid_set()
 {
   pkg_setuid_effective_uid=0
 }
+_pkg_setuid_command_paths_set()
+{
+  [ "$#" -eq 1 ] || return 2
+  pkg_setuid_chown_bin="$helper_bin/chown"
+  pkg_setuid_chmod_bin="$helper_bin/chmod"
+  pkg_setuid_sudo_bin="$helper_bin/sudo"
+}
 : > "$sudo_log" || error "cannot reset root helper log"
-printf -- '%s\n' helper > "$helper_target" || error "cannot reset helper target"
+printf -- '%s\n' helper > "$helper_target" || error "cannot reset root helper target"
 _pkg_setuid_apply_file "$helper_target" >/dev/null 2>&1 || fail "simulated root setuid helper failed"
-if command -p -- grep '^sudo' "$sudo_log" >/dev/null 2>&1
+if command -p -- grep -F -- 'sudo' "$sudo_log" >/dev/null 2>&1
 then
   fail "root path invoked sudo"
 fi
-command -p -- grep '^chown' "$sudo_log" >/dev/null 2>&1 || fail "root path did not execute chown directly"
-command -p -- grep '^chmod' "$sudo_log" >/dev/null 2>&1 || fail "root path did not execute chmod directly"
+command -p -- grep -F -- 'chown' "$sudo_log" >/dev/null 2>&1 || fail "root path did not execute chown directly"
+command -p -- grep -F -- 'chmod' "$sudo_log" >/dev/null 2>&1 || fail "root path did not execute chmod directly"
 
 # Lifecycle tests use the real integration path with only the privileged primitive simulated.
 _pkg_setuid_apply_file()
@@ -439,7 +504,7 @@ provider_mode=success
 pkg_integrate opaque 1 "$case_range" "$case_payload" linux-arm64 || fail "opaque pathname integration failed"
 [ -u "$m_PKG_DIR/opaque@1!linux-arm64/root/space dir/-sandbox" ] || fail "opaque pathname was not preserved"
 
-# Failure in privileged materialization restores the useful root.
+# Failure during setuid materialization restores the useful root.
 reset_fixture || error "cannot reset apply failure fixture"
 new_case apply-failure || error "cannot create apply failure fixture"
 printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create apply failure metadata"
@@ -451,7 +516,7 @@ expect_integration_failure apply-failure 1 "$case_range" "$case_payload" linux-a
 [ "$(command -p -- cat -- "$case_payload/chrome-sandbox")" = sandbox ] || fail "apply failure changed original bytes"
 apply_mode=success
 
-# Provider failure occurs while backups are still intact and rolls back.
+# Provider failure occurs while backups are intact and rolls back.
 reset_fixture || error "cannot reset provider failure fixture"
 new_case provider-failure || error "cannot create provider failure fixture"
 printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create provider failure metadata"
@@ -461,7 +526,7 @@ expect_integration_failure provider-failure 1 "$case_range" "$case_payload" linu
 [ -f "$case_payload/chrome-sandbox" ] && [ ! -u "$case_payload/chrome-sandbox" ] || fail "provider failure did not restore original target"
 [ "$(command -p -- cat -- "$case_payload/chrome-sandbox")" = sandbox ] || fail "provider failure changed original bytes"
 
-# Cleanup failure after provider publication is post-commit and must not trigger partial rollback.
+# Cleanup failure after provider publication is post-commit and must not trigger rollback.
 reset_fixture || error "cannot reset cleanup failure fixture"
 new_case cleanup-failure || error "cannot create cleanup failure fixture"
 printf -- '%s\n' chrome-sandbox > "$case_range/setuid_root" || error "cannot create cleanup failure metadata"
