@@ -1,0 +1,370 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg/dependency.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+rumiai_test_target_have()
+{
+  command -v -- "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v -- "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+command -v -- git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) printf -- '%s\n' "$TEST_ID: rumiai-os target checkout not found" >&2; exit 2 ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+dependency_library="$root/lib/sh/pkg-dependency.lib.sh"
+integration_library="$root/lib/sh/pkg-integration.lib.sh"
+uninstall_library="$root/lib/sh/pkg-uninstall.lib.sh"
+[ -f "$dependency_library" ] || fail "lib/sh/pkg-dependency.lib.sh is missing"
+[ ! -x "$dependency_library" ] || fail "pkg-dependency library must not be executable"
+[ -f "$integration_library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
+[ ! -x "$integration_library" ] || fail "pkg-integration library must not be executable"
+[ -f "$uninstall_library" ] || fail "lib/sh/pkg-uninstall.lib.sh is missing"
+[ ! -x "$uninstall_library" ] || fail "pkg-uninstall library must not be executable"
+dependency_first_line=
+IFS= read -r dependency_first_line < "$dependency_library" || :
+case "$dependency_first_line" in '#!'*) fail "pkg-dependency library must not have a shebang" ;; esac
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-dependency-$$"
+umask 077
+command -p -- mkdir -- "$tmp" || error "cannot create temporary directory"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+m_LIB_DIR="$root/lib"
+m_PKG_DIR="$tmp/pkg"
+m_BIN_DIR="$tmp/bin"
+m_BIN_EXT_DIR="$m_BIN_DIR/ext"
+m_DATA_DIR="$tmp/data"
+m_OSARCH="linux-arm64"
+export m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_DATA_DIR m_OSARCH
+
+log()
+{
+  :
+}
+
+readpathce()
+{
+  [ "$#" -eq 2 ] || return 2
+  case "$2" in
+    */*) dir=${2%/*}; base=${2##*/}; [ -n "$dir" ] || dir=/ ;;
+    *) dir=.; base=$2 ;;
+  esac
+  physical_dir="$(CDPATH= cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
+  eval "$1=\$physical_dir/\$base"
+}
+
+. "$uninstall_library" || error "cannot source pkg-uninstall library"
+
+reset_fixture()
+{
+  command -p -- rm -rf -- "$m_PKG_DIR" "$m_BIN_DIR" "$m_DATA_DIR" || return 1
+  command -p -- mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" "$m_DATA_DIR" || return 1
+}
+
+make_root()
+{
+  [ "$#" -eq 1 ] || return 2
+  command -p -- mkdir -- "$1" || return 1
+  printf -- '%s\n' payload > "$1/payload" || return 1
+}
+
+make_command_root()
+{
+  [ "$#" -eq 1 ] || return 2
+  command -p -- mkdir -p -- "$1/bin" || return 1
+  printf -- '#!/bin/sh\nexit 0\n' > "$1/bin/provider-tool" || return 1
+  command -p -- chmod +x "$1/bin/provider-tool" || return 1
+}
+
+make_provider_range()
+{
+  [ "$#" -eq 3 ] || return 2
+  command -p -- mkdir -- "$1" || return 1
+  printf -- '%s %s\n' "$2" "$3" > "$1/facility" || return 1
+}
+
+install_provider()
+{
+  [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || return 2
+  provider_name=$1
+  provider_version=$2
+  provider_facility=$3
+  provider_compatibility=$4
+  provider_osarch=${5-}
+  provider_tag="$provider_name-$provider_version-${provider_osarch:-generic}"
+  provider_range="$tmp/range-$provider_tag"
+  provider_root="$tmp/root-$provider_tag"
+  make_provider_range "$provider_range" "$provider_facility" "$provider_compatibility" || return 1
+  make_root "$provider_root" || return 1
+  if [ -n "$provider_osarch" ]
+  then
+    pkg_integrate "$provider_name" "$provider_version" "$provider_range" "$provider_root" "$provider_osarch"
+  else
+    pkg_integrate "$provider_name" "$provider_version" "$provider_range" "$provider_root"
+  fi
+}
+
+make_consumer_range()
+{
+  [ "$#" -eq 2 ] || return 2
+  command -p -- mkdir -- "$1" || return 1
+  printf -- '%b' "$2" > "$1/dependency" || return 1
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"
+}
+
+reset_fixture || error "cannot reset fixture"
+install_provider api 1 example-api 3 || error "cannot install example-api provider"
+install_provider java17 1 java 17 || error "cannot install java 17 provider"
+install_provider java21 1 java 21 || error "cannot install java 21 provider"
+install_provider java22 1 java 22 || error "cannot install java 22 provider"
+range="$tmp/consumer-range-main"
+root_input="$tmp/consumer-root-main"
+make_consumer_range "$range" 'example-api =3\njava >=17 <22\n' || error "cannot create main dependency range"
+make_root "$root_input" || error "cannot create main consumer root"
+pkg_integrate consumer 1 "$range" "$root_input" || fail "dependency integration failed"
+source_serialized="$(command -p -- cat -- "$range/dependency"; printf -- '%s' x)" || error "cannot read source dependency"
+materialized_serialized="$(command -p -- cat -- "$m_PKG_DIR/consumer@1/dependency"; printf -- '%s' x)" || error "cannot read materialized dependency"
+[ "$source_serialized" = "$materialized_serialized" ] || fail "materialized dependency differs from catalog serialization"
+[ "$(command -p -- cat -- "$m_PKG_DIR/consumer@1/binding/example-api")" = 'api@1' ] || fail "example-api binding is incorrect"
+[ "$(command -p -- cat -- "$m_PKG_DIR/consumer@1/binding/java")" = 'java21@1' ] || fail "highest compatible java provider was not selected"
+for binding in "$m_PKG_DIR/consumer@1/binding/example-api" "$m_PKG_DIR/consumer@1/binding/java"
+do
+  [ -f "$binding" ] && [ ! -L "$binding" ] && [ ! -x "$binding" ] || fail "binding is not a regular non-executable data file"
+done
+
+reset_fixture || error "cannot reset fixture"
+install_provider hugea 1 huge 999999999999999999999999 || error "cannot install lower huge provider"
+install_provider hugeb 1 huge 1000000000000000000000000 || error "cannot install higher huge provider"
+range="$tmp/consumer-range-huge"
+root_input="$tmp/consumer-root-huge"
+make_consumer_range "$range" 'huge >=1\n' || error "cannot create huge dependency range"
+make_root "$root_input" || error "cannot create huge consumer root"
+pkg_integrate hugeconsumer 1 "$range" "$root_input" || fail "huge compatibility resolution failed"
+[ "$(command -p -- cat -- "$m_PKG_DIR/hugeconsumer@1/binding/huge")" = 'hugeb@1' ] || fail "huge compatibility comparison overflowed or selected incorrectly"
+
+reset_fixture || error "cannot reset fixture"
+install_provider generic 1 java 21 || error "cannot install generic target fixture"
+install_provider macprovider 1 java 21 macos-arm64 || error "cannot install foreign target fixture"
+range="$tmp/consumer-range-generic"
+root_input="$tmp/consumer-root-generic"
+make_consumer_range "$range" 'java =21\n' || error "cannot create generic target range"
+make_root "$root_input" || error "cannot create generic target root"
+pkg_integrate genericconsumer 1 "$range" "$root_input" || fail "generic consumer failed with ineligible target provider present"
+[ "$(command -p -- cat -- "$m_PKG_DIR/genericconsumer@1/binding/java")" = 'generic@1' ] || fail "generic consumer selected target-specific provider"
+install_provider linuxprovider 1 java 21 linux-arm64 || error "cannot install same-target fixture"
+range="$tmp/consumer-range-target-ambiguous"
+root_input="$tmp/consumer-root-target-ambiguous"
+make_consumer_range "$range" 'java =21\n' || error "cannot create target ambiguity range"
+make_root "$root_input" || error "cannot create target ambiguity root"
+expect_status 1 pkg_integrate targetconsumer 1 "$range" "$root_input" linux-arm64
+[ -d "$root_input" ] || fail "ambiguous target resolution consumed root input"
+[ ! -e "$m_PKG_DIR/targetconsumer@1!linux-arm64" ] || fail "ambiguous target resolution published consumer"
+pkg_deintegrate linuxprovider 1 linux-arm64 || error "cannot remove same-target ambiguity fixture"
+pkg_integrate targetconsumer 1 "$range" "$root_input" linux-arm64 || fail "target consumer failed to use generic provider"
+[ "$(command -p -- cat -- "$m_PKG_DIR/targetconsumer@1!linux-arm64/binding/java")" = 'generic@1' ] || fail "target consumer did not use eligible generic provider"
+
+reset_fixture || error "cannot reset fixture"
+install_provider lowa 1 java 17 || error "cannot install low ambiguity provider a"
+install_provider lowb 1 java 17 || error "cannot install low ambiguity provider b"
+install_provider higha 1 java 21 || error "cannot install selected provider"
+range="$tmp/consumer-range-low-ambiguity"
+root_input="$tmp/consumer-root-low-ambiguity"
+make_consumer_range "$range" 'java >=17 <=21\n' || error "cannot create lower ambiguity range"
+make_root "$root_input" || error "cannot create lower ambiguity root"
+pkg_integrate lowerambiguity 1 "$range" "$root_input" || fail "lower compatibility ambiguity incorrectly blocked higher unique provider"
+[ "$(command -p -- cat -- "$m_PKG_DIR/lowerambiguity@1/binding/java")" = 'higha@1' ] || fail "wrong provider selected above lower ambiguity"
+install_provider highb 1 java 21 || error "cannot install selected ambiguity provider"
+range="$tmp/consumer-range-selected-ambiguity"
+root_input="$tmp/consumer-root-selected-ambiguity"
+make_consumer_range "$range" 'java >=17 <=21\n' || error "cannot create selected ambiguity range"
+make_root "$root_input" || error "cannot create selected ambiguity root"
+expect_status 1 pkg_integrate selectedambiguity 1 "$range" "$root_input"
+[ -d "$root_input" ] || fail "selected ambiguity consumed root input"
+[ ! -e "$m_PKG_DIR/selectedambiguity@1" ] || fail "selected ambiguity published consumer"
+
+reset_fixture || error "cannot reset fixture"
+bad_index=0
+check_bad_dependency()
+{
+  [ "$#" -eq 1 ] || return 2
+  bad_index=$((bad_index + 1))
+  bad_range="$tmp/range-bad-$bad_index"
+  bad_root="$tmp/root-bad-$bad_index"
+  command -p -- mkdir -- "$bad_range" || error "cannot create malformed dependency range"
+  printf -- '%b' "$1" > "$bad_range/dependency" || error "cannot write malformed dependency"
+  make_root "$bad_root" || error "cannot create malformed dependency root"
+  expect_status 1 pkg_integrate bad "$bad_index" "$bad_range" "$bad_root"
+  [ -d "$bad_root" ] || fail "malformed dependency consumed root input"
+  [ ! -e "$m_PKG_DIR/bad@$bad_index" ] && [ ! -L "$m_PKG_DIR/bad@$bad_index" ] || fail "malformed dependency published package"
+}
+check_bad_dependency 'Java >=17\n'
+check_bad_dependency 'java >=17.0\n'
+check_bad_dependency 'java !=17\n'
+check_bad_dependency 'java >= 17\n'
+check_bad_dependency 'java  >=17\n'
+check_bad_dependency 'python =3\njava =21\n'
+check_bad_dependency 'java =17\njava =21\n'
+check_bad_dependency 'java >=17'
+check_bad_dependency ''
+bad_index=$((bad_index + 1))
+bad_range="$tmp/range-bad-$bad_index"
+bad_root="$tmp/root-bad-$bad_index"
+command -p -- mkdir -- "$bad_range" || error "cannot create executable dependency range"
+printf -- '%s\n' 'java >=17' > "$bad_range/dependency" || error "cannot write executable dependency"
+command -p -- chmod +x "$bad_range/dependency" || error "cannot mark dependency executable"
+make_root "$bad_root" || error "cannot create executable dependency root"
+expect_status 1 pkg_integrate bad "$bad_index" "$bad_range" "$bad_root"
+[ -d "$bad_root" ] || fail "executable dependency consumed root input"
+
+reset_fixture || error "cannot reset fixture"
+install_provider java21 1 java 21 || error "cannot install preflight java provider"
+range="$tmp/consumer-range-partial"
+root_input="$tmp/consumer-root-partial"
+make_consumer_range "$range" 'java =21\npython =3\n' || error "cannot create partial dependency range"
+make_root "$root_input" || error "cannot create partial dependency root"
+expect_status 1 pkg_integrate partial 1 "$range" "$root_input"
+[ -d "$root_input" ] || fail "unsatisfied dependency consumed root input"
+[ ! -e "$m_PKG_DIR/partial@1" ] || fail "consumer was partially published before all dependencies resolved"
+
+reset_fixture || error "cannot reset fixture"
+range="$tmp/self-range"
+root_input="$tmp/self-root"
+command -p -- mkdir -- "$range" || error "cannot create self-provider range"
+printf -- '%s\n' 'java 21' > "$range/facility" || error "cannot write self facility"
+printf -- '%s\n' 'java =21' > "$range/dependency" || error "cannot write self dependency"
+make_root "$root_input" || error "cannot create self-provider root"
+expect_status 1 pkg_integrate selfprovider 1 "$range" "$root_input"
+[ -d "$root_input" ] || fail "self-provider failure consumed root input"
+[ ! -e "$m_PKG_DIR/selfprovider@1" ] || fail "self-provider package was published"
+[ ! -e "$m_DATA_DIR/sys/pkg/providers/java/21/selfprovider@1" ] || fail "self provider was admitted before dependency resolution"
+
+reset_fixture || error "cannot reset fixture"
+install_provider provider 1 java 21 || error "cannot install referenced provider"
+range="$tmp/ref-consumer-range"
+root_input="$tmp/ref-consumer-root"
+make_consumer_range "$range" 'java =21\n' || error "cannot create reference consumer range"
+make_root "$root_input" || error "cannot create reference consumer root"
+pkg_integrate refconsumer 1 "$range" "$root_input" || fail "cannot install reference consumer"
+expect_status 1 pkg_deintegrate provider 1
+[ -d "$m_PKG_DIR/provider@1" ] || fail "referenced provider package was removed"
+[ -f "$m_DATA_DIR/sys/pkg/providers/java/21/provider@1" ] || fail "referenced provider marker was removed"
+[ "$(command -p -- cat -- "$m_PKG_DIR/refconsumer@1/binding/java")" = 'provider@1' ] || fail "consumer binding changed during rejected provider removal"
+pkg_deintegrate refconsumer 1 || error "cannot remove reference consumer"
+pkg_deintegrate provider 1 || fail "provider remained blocked after consumer removal"
+
+reset_fixture || error "cannot reset fixture"
+range="$tmp/current-provider-range"
+root_input="$tmp/current-provider-root"
+command -p -- mkdir -p -- "$range/cmd" "$range/link" || error "cannot create current provider range"
+printf -- '%s\n' 'java 21' > "$range/facility" || error "cannot write current provider facility"
+printf -- '#!/usr/bin/env rumiai-os\nexit 0\n' > "$range/cmd/provider-tool" || error "cannot write current provider command"
+printf -- '%s\n' 'bin/provider-tool' > "$range/link/provider-tool" || error "cannot write current provider link"
+make_command_root "$root_input" || error "cannot create current provider root"
+pkg_integrate currentprovider 1 "$range" "$root_input" || fail "cannot integrate current provider"
+pkg_default currentprovider 1 || fail "cannot select current provider"
+range="$tmp/current-consumer-range"
+root_input="$tmp/current-consumer-root"
+make_consumer_range "$range" 'java =21\n' || error "cannot create current consumer range"
+make_root "$root_input" || error "cannot create current consumer root"
+pkg_integrate currentconsumer 1 "$range" "$root_input" || fail "cannot install current provider consumer"
+expect_status 1 pkg_uninstall currentprovider
+[ -L "$m_PKG_DIR/currentprovider" ] || fail "rejected uninstall removed current selector"
+[ "$(command -p -- readlink "$m_PKG_DIR/currentprovider")" = 'currentprovider@1' ] || fail "rejected uninstall changed current selector"
+[ -L "$m_BIN_EXT_DIR/provider-tool" ] || fail "rejected uninstall removed public command binding"
+[ -d "$m_PKG_DIR/currentprovider@1" ] || fail "rejected uninstall removed provider package"
+[ -f "$m_DATA_DIR/sys/pkg/providers/java/21/currentprovider@1" ] || fail "rejected uninstall removed provider marker"
+[ ! -e "$m_DATA_DIR/sys/pkg/consumers" ] && [ ! -L "$m_DATA_DIR/sys/pkg/consumers" ] || fail "reverse consumer index was created"
+[ ! -e "$m_DATA_DIR/sys/pkg/references" ] && [ ! -L "$m_DATA_DIR/sys/pkg/references" ] || fail "reverse reference index was created"
+pkg_uninstall currentconsumer || fail "cannot uninstall current provider consumer"
+pkg_uninstall currentprovider || fail "provider remained blocked after consumer uninstall"
+[ ! -e "$m_PKG_DIR/currentprovider" ] && [ ! -L "$m_PKG_DIR/currentprovider" ] || fail "current selector survived successful provider uninstall"
+[ ! -e "$m_BIN_EXT_DIR/provider-tool" ] && [ ! -L "$m_BIN_EXT_DIR/provider-tool" ] || fail "public command binding survived successful provider uninstall"
+
+exit 0
