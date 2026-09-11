@@ -134,21 +134,7 @@ resolve_test_dir()
 
 run_live_install()
 {
-  if [ "$effective_uid" -ne 0 ]
-  then
-    if [ "$mirror_tty" -eq 1 ]
-    then
-      {
-        "$pkg_command" install electron <&3
-        printf -- '%s\n' "$?" > "$pkg_status_file"
-      } 2>&1 | command -p -- tee "$pkg_output" /dev/tty
-    else
-      {
-        "$pkg_command" install electron <&3
-        printf -- '%s\n' "$?" > "$pkg_status_file"
-      } 2>&1 | command -p -- tee "$pkg_output"
-    fi
-  elif [ "$mirror_tty" -eq 1 ]
+  if [ "$mirror_tty" -eq 1 ]
   then
     {
       "$pkg_command" install electron
@@ -234,8 +220,8 @@ esac
 mirror_tty=0
 if [ "$effective_uid" -ne 0 ]
 then
-  [ -r /dev/tty ] && [ -w /dev/tty ] || skip "/dev/tty is required for real sudo authorization"
-  exec 3<>/dev/tty || skip "controlling terminal is required for real sudo authorization"
+  [ -t 0 ] || skip "interactive terminal input is required for real sudo authorization"
+  [ -r /dev/tty ] && [ -w /dev/tty ] || skip "/dev/tty is required for visible sudo authorization"
   if [ ! -t 1 ] || [ ! -t 2 ]
   then
     mirror_tty=1
@@ -244,6 +230,12 @@ fi
 
 pkg_output="$tmp/pkg.output"
 pkg_status_file="$tmp/pkg.status"
+if [ "$mirror_tty" -eq 1 ]
+then
+  printf -- '%s\n' "$TEST_ID: live install started; repository resolution, download, digest verification and extraction may be silent before privileged authorization" > /dev/tty
+else
+  printf -- '%s\n' "$TEST_ID: live install started; repository resolution, download, digest verification and extraction may be silent before privileged authorization" >&2
+fi
 run_live_install || error "cannot capture live package installation output"
 [ -f "$pkg_status_file" ] || error "live package installation did not record an exit status"
 IFS= read -r status < "$pkg_status_file" || error "cannot read live package installation exit status"
