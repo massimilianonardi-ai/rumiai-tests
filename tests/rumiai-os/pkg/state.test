@@ -1,0 +1,404 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg/state.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+rumiai_test_target_have()
+{
+  command -v -- "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v -- "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+readpathce()
+{
+  [ "$#" -eq 2 ] && [ -n "$1" ] && [ -n "$2" ] || return 1
+  case "$1" in "" | [0-9]* | *[!a-zA-Z0-9_]*) return 2 ;; esac
+  resolved="$(command -p -- realpath -- "$2" 2>/dev/null)" || return 1
+  [ -e "$resolved" ] || return 1
+  eval "$1=\$resolved"
+}
+
+log()
+{
+  :
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"
+}
+
+expect_integration_failure()
+{
+  package=$1
+  version=$2
+  range=$3
+  payload=$4
+  expect_status 1 pkg_integrate "$package" "$version" "$range" "$payload"
+  [ -d "$payload" ] && [ ! -L "$payload" ] || fail "failed integration consumed useful root for $package"
+  [ ! -e "$m_PKG_DIR/$package@$version" ] && [ ! -L "$m_PKG_DIR/$package@$version" ] || fail "failed integration published $package@$version"
+}
+
+command -v -- git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
+command -v -- realpath >/dev/null 2>&1 || fail "realpath runtime dependency is unavailable"
+command -v -- mkfifo >/dev/null 2>&1 || fail "mkfifo runtime dependency is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) printf -- '%s\n' "$TEST_ID: rumiai-os target checkout not found" >&2; exit 2 ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+integration_library="$root/lib/sh/pkg-integration.lib.sh"
+state_library="$root/lib/sh/pkg-state.lib.sh"
+uninstall_library="$root/lib/sh/pkg-uninstall.lib.sh"
+[ -f "$integration_library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
+[ ! -x "$integration_library" ] || fail "pkg-integration library must not be executable"
+[ -f "$state_library" ] || fail "lib/sh/pkg-state.lib.sh is missing"
+[ ! -x "$state_library" ] || fail "pkg-state library must not be executable"
+case "$(command -p -- sed -n '1p' "$state_library")" in '#!'*) fail "pkg-state library must not have a shebang" ;; esac
+[ -f "$uninstall_library" ] || fail "lib/sh/pkg-uninstall.lib.sh is missing"
+[ ! -x "$uninstall_library" ] || fail "pkg-uninstall library must not be executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-state-$$"
+umask 077
+command -p -- mkdir -- "$tmp" || error "cannot create temporary directory"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+m_ROOT="$tmp/root"
+m_LIB_DIR="$root/lib"
+m_PKG_DIR="$m_ROOT/pkg"
+m_BIN_DIR="$m_ROOT/bin"
+m_BIN_EXT_DIR="$m_BIN_DIR/ext"
+m_CONF_DIR="$m_ROOT/conf"
+m_DATA_DIR="$m_ROOT/data"
+m_HOME_DIR="$m_ROOT/home"
+m_CACHE_DIR="$m_ROOT/cache"
+m_LOG_DIR="$m_ROOT/log"
+m_RUN_DIR="$m_ROOT/run"
+m_TMP_DIR="$m_ROOT/tmp"
+m_OSARCH=linux-arm64
+export m_ROOT m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR
+export m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR m_OSARCH
+
+. "$integration_library" || error "cannot source pkg-integration library"
+. "$uninstall_library" || error "cannot source pkg-uninstall library"
+
+reset_fixture()
+{
+  command -p -- rm -rf -- "$m_ROOT" || return 1
+  command -p -- mkdir -p -- \
+    "$m_PKG_DIR" \
+    "$m_BIN_DIR" \
+    "$m_CONF_DIR" \
+    "$m_DATA_DIR" \
+    "$m_HOME_DIR" \
+    "$m_CACHE_DIR" \
+    "$m_LOG_DIR" \
+    "$m_RUN_DIR" \
+    "$m_TMP_DIR" || return 1
+}
+
+new_case()
+{
+  case_name=$1
+  case_range="$tmp/$case_name-range"
+  case_payload="$tmp/$case_name-payload"
+  command -p -- rm -rf -- "$case_range" "$case_payload" || return 1
+  command -p -- mkdir -p -- "$case_range/var" "$case_payload" || return 1
+}
+
+reset_fixture || error "cannot initialize state fixture"
+
+# No state mapping means no synthetic var/default objects.
+new_case plain || error "cannot create plain fixture"
+printf -- '%s\n' payload > "$case_payload/payload" || error "cannot create plain payload"
+pkg_integrate plain 1 "$case_range" "$case_payload" || fail "plain integration failed"
+plain_concrete="$m_PKG_DIR/plain@1"
+[ ! -e "$plain_concrete/var" ] && [ ! -L "$plain_concrete/var" ] || fail "plain package gained synthetic var"
+[ ! -e "$plain_concrete/default" ] && [ ! -L "$plain_concrete/default" ] || fail "plain package gained synthetic default"
+pkg_deintegrate plain 1 || fail "plain deintegration failed"
+
+# First stateful version: file, directory, spaces and leading '-' remain literal upstream data.
+range1="$tmp/stateful-v1-range"
+payload1="$tmp/stateful-v1-payload"
+command -p -- mkdir -p -- "$range1/var" "$payload1/etc/tool" "$payload1/workspace" "$payload1/space dir" || error "cannot create v1 fixture"
+printf -- '%s\n' 'etc/tool/config' 'space dir/-settings' > "$range1/var/conf" || error "cannot create conf mapping"
+printf -- '%s\n' 'workspace' > "$range1/var/data" || error "cannot create data mapping"
+printf -- '%s\n' factory-v1 > "$payload1/etc/tool/config" || error "cannot create v1 config"
+printf -- '%s\n' spaced-v1 > "$payload1/space dir/-settings" || error "cannot create v1 spaced config"
+printf -- '%s\n' workspace-v1 > "$payload1/workspace/item" || error "cannot create v1 workspace"
+pkg_integrate stateful 1 "$range1" "$payload1" || fail "stateful v1 integration failed"
+concrete1="$m_PKG_DIR/stateful@1"
+
+[ "$(command -p -- readlink "$concrete1/var/conf")" = '../../../conf/stateful' ] || fail "var/conf is not the canonical relative link"
+[ "$(command -p -- readlink "$concrete1/var/data")" = '../../../data/stateful' ] || fail "var/data is not the canonical relative link"
+[ "$(command -p -- readlink "$concrete1/root/etc/tool/config")" = '../../../var/conf/etc/tool/config' ] || fail "nested root state link is incorrect"
+[ "$(command -p -- readlink "$concrete1/root/workspace")" = '../var/data/workspace' ] || fail "top-level root state link is incorrect"
+[ "$(command -p -- readlink "$concrete1/root/space dir/-settings")" = '../../var/conf/space dir/-settings' ] || fail "root link did not preserve external pathname bytes"
+[ "$(command -p -- cat -- "$concrete1/default/conf/etc/tool/config")" = factory-v1 ] || fail "v1 config factory default was not preserved"
+[ "$(command -p -- cat -- "$concrete1/default/conf/space dir/-settings")" = spaced-v1 ] || fail "v1 spaced factory default was not preserved"
+[ "$(command -p -- cat -- "$concrete1/default/data/workspace/item")" = workspace-v1 ] || fail "v1 directory factory default was not preserved"
+[ "$(command -p -- cat -- "$m_CONF_DIR/stateful/etc/tool/config")" = factory-v1 ] || fail "config state was not initialized"
+[ "$(command -p -- cat -- "$m_CONF_DIR/stateful/space dir/-settings")" = spaced-v1 ] || fail "spaced config state was not initialized"
+[ "$(command -p -- cat -- "$m_DATA_DIR/stateful/workspace/item")" = workspace-v1 ] || fail "directory state was not initialized"
+[ ! -e "$m_ROOT/var" ] && [ ! -L "$m_ROOT/var" ] || fail "global m_ROOT/var was materialized"
+
+printf -- '%s\n' user-config > "$concrete1/root/etc/tool/config" || fail "cannot write state through normalized root link"
+printf -- '%s\n' runtime-data > "$concrete1/root/workspace/runtime" || fail "cannot write directory state through normalized root link"
+[ "$(command -p -- cat -- "$m_CONF_DIR/stateful/etc/tool/config")" = user-config ] || fail "root -> var -> conf state chain does not resolve"
+[ "$(command -p -- cat -- "$m_DATA_DIR/stateful/workspace/runtime")" = runtime-data ] || fail "root -> var -> data state chain does not resolve"
+
+# A later concrete version keeps existing state but owns its own factory defaults.
+range2="$tmp/stateful-v2-range"
+payload2="$tmp/stateful-v2-payload"
+command -p -- mkdir -p -- "$range2/var" "$payload2/etc/tool" "$payload2/workspace" "$payload2/space dir" || error "cannot create v2 fixture"
+printf -- '%s\n' 'etc/tool/config' 'space dir/-settings' > "$range2/var/conf" || error "cannot create v2 conf mapping"
+printf -- '%s\n' 'workspace' > "$range2/var/data" || error "cannot create v2 data mapping"
+printf -- '%s\n' factory-v2 > "$payload2/etc/tool/config" || error "cannot create v2 config"
+printf -- '%s\n' spaced-v2 > "$payload2/space dir/-settings" || error "cannot create v2 spaced config"
+printf -- '%s\n' workspace-v2 > "$payload2/workspace/item" || error "cannot create v2 workspace"
+pkg_integrate stateful 2 "$range2" "$payload2" || fail "stateful v2 integration failed"
+concrete2="$m_PKG_DIR/stateful@2"
+[ "$(command -p -- cat -- "$m_CONF_DIR/stateful/etc/tool/config")" = user-config ] || fail "v2 overwrote existing config state"
+[ "$(command -p -- cat -- "$m_DATA_DIR/stateful/workspace/item")" = workspace-v1 ] || fail "v2 overwrote existing directory state"
+[ "$(command -p -- cat -- "$m_DATA_DIR/stateful/workspace/runtime")" = runtime-data ] || fail "v2 lost runtime-created state"
+[ "$(command -p -- cat -- "$concrete2/default/conf/etc/tool/config")" = factory-v2 ] || fail "v2 factory config was not preserved separately"
+[ "$(command -p -- cat -- "$concrete2/default/data/workspace/item")" = workspace-v2 ] || fail "v2 factory directory was not preserved separately"
+
+pkg_deintegrate stateful 1 || fail "stateful v1 deintegration failed"
+[ -f "$m_CONF_DIR/stateful/etc/tool/config" ] || fail "deintegration removed external config state"
+[ -f "$m_DATA_DIR/stateful/workspace/runtime" ] || fail "deintegration removed external data state"
+pkg_uninstall 'stateful@2' || fail "stateful v2 uninstall failed"
+[ ! -e "$concrete2" ] || fail "stateful v2 concrete survived uninstall"
+[ "$(command -p -- cat -- "$m_CONF_DIR/stateful/etc/tool/config")" = user-config ] || fail "uninstall removed or changed config state"
+[ "$(command -p -- cat -- "$m_DATA_DIR/stateful/workspace/runtime")" = runtime-data ] || fail "uninstall removed or changed data state"
+
+# Unknown area name.
+reset_fixture || error "cannot reset unknown-area fixture"
+new_case unknown-area || error "cannot create unknown-area fixture"
+printf -- '%s\n' item > "$case_range/var/other" || error "cannot create unknown area metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create unknown area payload"
+expect_integration_failure unknown-area 1 "$case_range" "$case_payload"
+
+# Metadata object shape and serialization.
+reset_fixture || error "cannot reset metadata fixture"
+new_case symlink-metadata || error "cannot create symlink metadata fixture"
+printf -- '%s\n' item > "$tmp/metadata-target" || error "cannot create metadata target"
+command -p -- ln -s "$tmp/metadata-target" "$case_range/var/conf" || error "cannot create metadata symlink"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create metadata payload"
+expect_integration_failure symlink-metadata 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset executable metadata fixture"
+new_case executable-metadata || error "cannot create executable metadata fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create executable metadata"
+command -p -- chmod 700 "$case_range/var/conf" || error "cannot make metadata executable"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create executable metadata payload"
+expect_integration_failure executable-metadata 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset empty metadata fixture"
+new_case empty-metadata || error "cannot create empty metadata fixture"
+: > "$case_range/var/conf" || error "cannot create empty metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create empty metadata payload"
+expect_integration_failure empty-metadata 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset unterminated metadata fixture"
+new_case unterminated || error "cannot create unterminated metadata fixture"
+printf -- '%s' item > "$case_range/var/conf" || error "cannot create unterminated metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create unterminated payload"
+expect_integration_failure unterminated 1 "$case_range" "$case_payload"
+
+# Invalid root-relative pathname forms and blank records.
+for invalid_spec in absolute:/item trailing:item/ double:item//child dot:./item parent:item/../child
+do
+  invalid_name=${invalid_spec%%:*}
+  invalid_path=${invalid_spec#*:}
+  reset_fixture || error "cannot reset invalid path fixture"
+  new_case "invalid-$invalid_name" || error "cannot create invalid path fixture"
+  printf -- '%s\n' "$invalid_path" > "$case_range/var/conf" || error "cannot write invalid path metadata"
+  printf -- '%s\n' value > "$case_payload/item" || error "cannot create invalid path payload"
+  expect_integration_failure "invalid-$invalid_name" 1 "$case_range" "$case_payload"
+done
+
+reset_fixture || error "cannot reset blank-line fixture"
+new_case blank-line || error "cannot create blank-line fixture"
+printf -- 'item\n\n' > "$case_range/var/conf" || error "cannot create blank-line metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create blank-line payload"
+expect_integration_failure blank-line 1 "$case_range" "$case_payload"
+
+# Duplicate and ancestor/descendant mappings are globally invalid.
+reset_fixture || error "cannot reset duplicate fixture"
+new_case duplicate || error "cannot create duplicate fixture"
+printf -- '%s\n' item item > "$case_range/var/conf" || error "cannot create duplicate metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create duplicate payload"
+expect_integration_failure duplicate 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset cross-area duplicate fixture"
+new_case cross-duplicate || error "cannot create cross-area duplicate fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create cross-area conf metadata"
+printf -- '%s\n' item > "$case_range/var/data" || error "cannot create cross-area data metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create cross-area payload"
+expect_integration_failure cross-duplicate 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset overlap fixture"
+new_case overlap || error "cannot create overlap fixture"
+printf -- '%s\n' etc > "$case_range/var/conf" || error "cannot create overlap conf metadata"
+printf -- '%s\n' etc/tool > "$case_range/var/data" || error "cannot create overlap data metadata"
+command -p -- mkdir -p -- "$case_payload/etc" || error "cannot create overlap payload directory"
+printf -- '%s\n' value > "$case_payload/etc/tool" || error "cannot create overlap payload file"
+expect_integration_failure overlap 1 "$case_range" "$case_payload"
+
+# Mapped source and ancestors must be physical file/directory objects.
+reset_fixture || error "cannot reset source symlink fixture"
+new_case source-symlink || error "cannot create source symlink fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create source symlink metadata"
+printf -- '%s\n' value > "$case_payload/real" || error "cannot create source symlink target"
+command -p -- ln -s real "$case_payload/item" || error "cannot create source symlink"
+expect_integration_failure source-symlink 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset ancestor symlink fixture"
+new_case ancestor-symlink || error "cannot create ancestor symlink fixture"
+printf -- '%s\n' alias/item > "$case_range/var/conf" || error "cannot create ancestor symlink metadata"
+command -p -- mkdir -- "$case_payload/physical" || error "cannot create physical ancestor target"
+printf -- '%s\n' value > "$case_payload/physical/item" || error "cannot create ancestor payload"
+command -p -- ln -s physical "$case_payload/alias" || error "cannot create ancestor symlink"
+expect_integration_failure ancestor-symlink 1 "$case_range" "$case_payload"
+
+reset_fixture || error "cannot reset special-file fixture"
+new_case special-file || error "cannot create special-file fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create special-file metadata"
+command -p -- mkfifo -- "$case_payload/item" || error "cannot create FIFO fixture"
+expect_integration_failure special-file 1 "$case_range" "$case_payload"
+
+# Direct-link executable may not be inside state-bearing root content.
+reset_fixture || error "cannot reset direct-link fixture"
+new_case direct-link || error "cannot create direct-link fixture"
+command -p -- mkdir -p -- "$case_range/cmd" "$case_range/link" "$case_payload/app/bin" || error "cannot create direct-link fixture dirs"
+printf -- '%s\n' app > "$case_range/var/data" || error "cannot create direct-link state metadata"
+printf -- '#!/bin/sh\nexit 0\n' > "$case_range/cmd/tool" || error "cannot create direct-link command"
+command -p -- chmod 600 "$case_range/cmd/tool" || error "cannot set direct-link command mode"
+printf -- '%s\n' app/bin/tool > "$case_range/link/tool" || error "cannot create direct-link target metadata"
+printf -- '#!/bin/sh\nexit 0\n' > "$case_payload/app/bin/tool" || error "cannot create direct-link executable"
+command -p -- chmod 700 "$case_payload/app/bin/tool" || error "cannot set executable mode"
+expect_integration_failure direct-link 1 "$case_range" "$case_payload"
+
+# sys is reserved as the system-state namespace when package state is materialized.
+reset_fixture || error "cannot reset sys namespace fixture"
+new_case sys || error "cannot create sys fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create sys metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create sys payload"
+expect_integration_failure sys 1 "$case_range" "$case_payload"
+
+# Existing state must be physical and type-compatible and must remain unchanged on failure.
+reset_fixture || error "cannot reset mismatched-state fixture"
+new_case mismatch || error "cannot create mismatched-state fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create mismatch metadata"
+printf -- '%s\n' factory > "$case_payload/item" || error "cannot create mismatch factory"
+command -p -- mkdir -p -- "$m_CONF_DIR/mismatch/item" || error "cannot create mismatched state directory"
+printf -- '%s\n' keep > "$m_CONF_DIR/mismatch/item/sentinel" || error "cannot create mismatch sentinel"
+expect_integration_failure mismatch 1 "$case_range" "$case_payload"
+[ "$(command -p -- cat -- "$m_CONF_DIR/mismatch/item/sentinel")" = keep ] || fail "failed mismatch integration modified existing state"
+
+# Semantic roots are fixed by the bootstrap contract, not caller-selectable aliases.
+reset_fixture || error "cannot reset semantic-root fixture"
+new_case wrong-root || error "cannot create semantic-root fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create semantic-root metadata"
+printf -- '%s\n' value > "$case_payload/item" || error "cannot create semantic-root payload"
+(
+  m_CONF_DIR="$tmp/not-conf"
+  export m_CONF_DIR
+  pkg_integrate wrong-root 1 "$case_range" "$case_payload"
+) >/dev/null 2>&1
+[ "$?" -eq 1 ] || fail "non-canonical semantic root was accepted"
+[ -d "$case_payload" ] || fail "semantic-root failure consumed useful root"
+
+# Failure after state materialization rolls back only state created by this integration and restores the useful root.
+reset_fixture || error "cannot reset rollback fixture"
+new_case rollback || error "cannot create rollback fixture"
+printf -- '%s\n' item > "$case_range/var/conf" || error "cannot create rollback state metadata"
+printf -- '%s\n' 'sample 1' > "$case_range/facility" || error "cannot create rollback facility metadata"
+printf -- '%s\n' factory > "$case_payload/item" || error "cannot create rollback factory"
+printf -- '%s\n' blocker > "$m_DATA_DIR/sys" || error "cannot create provider-index blocker"
+expect_integration_failure rollback 1 "$case_range" "$case_payload"
+[ -f "$case_payload/item" ] && [ ! -L "$case_payload/item" ] || fail "rollback did not restore useful-root object"
+[ "$(command -p -- cat -- "$case_payload/item")" = factory ] || fail "rollback restored wrong useful-root bytes"
+[ ! -e "$m_CONF_DIR/rollback" ] && [ ! -L "$m_CONF_DIR/rollback" ] || fail "rollback left state created by failed integration"
+
+exit 0
