@@ -134,7 +134,21 @@ resolve_test_dir()
 
 run_live_install()
 {
-  if [ "$mirror_tty" -eq 1 ]
+  if [ "$effective_uid" -ne 0 ]
+  then
+    if [ "$mirror_tty" -eq 1 ]
+    then
+      {
+        "$pkg_command" install electron <&3
+        printf -- '%s\n' "$?" > "$pkg_status_file"
+      } 2>&1 | command -p -- tee "$pkg_output" /dev/tty
+    else
+      {
+        "$pkg_command" install electron <&3
+        printf -- '%s\n' "$?" > "$pkg_status_file"
+      } 2>&1 | command -p -- tee "$pkg_output"
+    fi
+  elif [ "$mirror_tty" -eq 1 ]
   then
     {
       "$pkg_command" install electron
@@ -220,8 +234,8 @@ esac
 mirror_tty=0
 if [ "$effective_uid" -ne 0 ]
 then
-  [ -t 0 ] || skip "interactive terminal input is required for real sudo authorization"
-  [ -r /dev/tty ] && [ -w /dev/tty ] || skip "/dev/tty is required for visible sudo authorization"
+  [ -r /dev/tty ] && [ -w /dev/tty ] || skip "/dev/tty is required for real sudo authorization"
+  exec 3<>/dev/tty || skip "controlling terminal is required for real sudo authorization"
   if [ ! -t 1 ] || [ ! -t 2 ]
   then
     mirror_tty=1
