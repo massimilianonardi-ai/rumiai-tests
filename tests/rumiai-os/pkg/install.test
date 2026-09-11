@@ -144,7 +144,35 @@ mkdir -p "$fixture_lib/sh" || error "cannot create fixture lib"
 cat > "$fixture_lib/sh/pkg-repository-fixture.lib.sh" <<'EOF_ADAPTER'
 pkg_repository_list_versions()
 {
-  printf -- '%s\n' v9 2.0 v1
+  return 99
+}
+
+_pkg_repository_fixture_rank()
+{
+  [ "$#" -eq 1 ] || return 2
+  case "$1" in
+    v0) printf -- '0\n';;
+    v9) printf -- '1\n';;
+    2.0) printf -- '2\n';;
+    v1) printf -- '3\n';;
+    *) return 1;;
+  esac
+}
+
+pkg_repository_compare_versions()
+{
+  [ "$#" -eq 3 ] || return 2
+  left="$(_pkg_repository_fixture_rank "$2")" || return 1
+  right="$(_pkg_repository_fixture_rank "$3")" || return 1
+  if [ "$left" -lt "$right" ]
+  then
+    printf -- '%s\n' -1
+  elif [ "$left" -gt "$right" ]
+  then
+    printf -- '%s\n' 1
+  else
+    printf -- '%s\n' 0
+  fi
 }
 
 pkg_repository_resolve_version()
@@ -182,13 +210,24 @@ make_stream()
   printf -- '%s\n' appimage > "$base/n0002=v1/format" || return 1
 }
 
-for package in alpha beta gamma delta first unsupported
+for package in alpha beta gamma delta first unsupported before
 do
   make_stream "$package" catalog-linux-arm64 || error "cannot create target stream fixture"
 done
 make_stream generic catalog || error "cannot create generic stream fixture"
 make_stream broken catalog || error "cannot create malformed-target fallback fixture"
 printf -- '%s\n' invalid > "$fixture_catalog/broken/catalog-linux-arm64" || error "cannot create malformed target stream object"
+
+outoforder="$fixture_catalog/outoforder/catalog-linux-arm64"
+mkdir -p "$outoforder/repository" "$outoforder/n0001=v1" "$outoforder/n0002=v9" || error "cannot create out-of-order range fixture"
+printf -- '%s\n' fixture > "$outoforder/repository/type" || error "cannot create out-of-order repository descriptor"
+printf -- '%s\n' appimage > "$outoforder/n0001=v1/format" || error "cannot create out-of-order first range"
+printf -- '%s\n' appimage > "$outoforder/n0002=v9/format" || error "cannot create out-of-order second range"
+
+missinganchor="$fixture_catalog/missinganchor/catalog-linux-arm64"
+mkdir -p "$missinganchor/repository" "$missinganchor/n0001=missing" || error "cannot create missing-anchor fixture"
+printf -- '%s\n' fixture > "$missinganchor/repository/type" || error "cannot create missing-anchor repository descriptor"
+printf -- '%s\n' appimage > "$missinganchor/n0001=missing/format" || error "cannot create missing-anchor range"
 
 snapshot_calls="$tmp/snapshot-calls"
 : > "$snapshot_calls" || error "cannot initialize snapshot counter"
@@ -261,6 +300,20 @@ cmp "$integrations" "$tmp/expected-integrations" >/dev/null 2>&1 || fail "resolv
 [ ! -e "$m_PKG_DIR/generic" ] || fail "pkg install created generic current selector"
 [ ! -e "$m_BIN_DIR/ext-linux-arm64/alpha" ] || fail "pkg install created target public binding"
 [ ! -e "$m_BIN_EXT_DIR/generic" ] || fail "pkg install created generic public binding"
+
+for invalid_case in 'before@v0' 'outoforder@v1' 'missinganchor@v1'
+do
+  if pkg_install "$invalid_case" >/dev/null 2>&1
+  then
+    fail "invalid range ordering case was accepted: $invalid_case"
+  else
+    status=$?
+    [ "$status" -eq 1 ] || fail "$invalid_case returned $status instead of 1"
+  fi
+done
+[ ! -e "$m_PKG_DIR/before@v0!linux-arm64" ] || fail "version before first anchor was integrated"
+[ ! -e "$m_PKG_DIR/outoforder@v1!linux-arm64" ] || fail "out-of-order range package was integrated"
+[ ! -e "$m_PKG_DIR/missinganchor@v1!linux-arm64" ] || fail "package with missing anchor was integrated"
 
 before_snapshots="$(wc -l < "$snapshot_calls" | tr -d ' ')"
 if pkg_install alpha 'bad@' >/dev/null 2>&1
