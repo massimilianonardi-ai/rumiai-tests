@@ -222,7 +222,12 @@ direct_link="$concrete/link/electron"
 [ "$(command -p -- readlink "$direct_link")" = '../root/Electron.app/Contents/MacOS/Electron' ] || fail "Electron macOS direct runtime link has the wrong target"
 
 /usr/bin/plutil -lint "$plist" >/dev/null 2>&1 || fail "Electron Info.plist is invalid"
-/usr/bin/codesign --verify --deep --strict "$bundle" >/dev/null 2>&1 || fail "Electron.app code signature verification failed"
+codesign_output="$tmp/codesign.output"
+if ! /usr/bin/codesign --verify --deep --strict --verbose=4 "$bundle" > "$codesign_output" 2>&1
+then
+  command -p -- cat -- "$codesign_output" >&2
+  fail "Electron.app code signature verification failed"
+fi
 
 LC_ALL=C command -p -- grep -F 'launcher "electron" "$@"' "$command_entry" >/dev/null 2>&1 || \
   fail "Electron macOS command does not use the direct package launcher"
