@@ -1,0 +1,390 @@
+#!/bin/sh
+
+# Electron Linux live validation is intentionally self-contained. It exercises
+# a real package installation followed by normal launch through the installed
+# RumiAI public command. The Chromium sandbox remains enabled.
+
+TEST_ID="external/electron/linux-launch-live.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+rumiai_test_fixture_rumiai_os_create()
+{
+  [ "$#" -eq 2 ] || return 3
+  source_root=$1
+  fixture_root=$2
+  [ -n "$source_root" ] || return 3
+  [ -n "$fixture_root" ] || return 3
+  [ -f "$source_root/rumiai-os" ] || return 1
+  [ -d "$source_root/bin" ] || return 1
+  [ -d "$source_root/lib" ] || return 1
+  [ -d "$source_root/lang" ] || return 1
+  [ ! -e "$fixture_root" ] || return 2
+
+  mkdir -p "$fixture_root/conf/bootstrap" || return 2
+  cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  cp -R "$source_root/bin" "$fixture_root/bin" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  cp -R "$source_root/lib" "$fixture_root/lib" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  cp -R "$source_root/lang" "$fixture_root/lang" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  chmod u+x "$fixture_root/rumiai-os" || {
+    rm -rf "$fixture_root"
+    return 2
+  }
+  return 0
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) : ;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_live_install()
+{
+  if [ "$mirror_tty" -eq 1 ]
+  then
+    {
+      "$pkg_command" install electron
+      printf -- '%s\n' "$?" > "$pkg_status_file"
+    } 2>&1 | command -p -- tee "$pkg_output" /dev/tty
+  else
+    {
+      "$pkg_command" install electron
+      printf -- '%s\n' "$?" > "$pkg_status_file"
+    } 2>&1 | command -p -- tee "$pkg_output"
+  fi
+}
+
+run_electron_workload()
+{
+  if [ -n "${DISPLAY-}" ]
+  then
+    "$public_command" "$workload" 'rumiai-argument=a b'
+    return $?
+  fi
+
+  xvfb_run="$(command -v xvfb-run 2>/dev/null)" || return 2
+  "$xvfb_run" -a "$public_command" "$workload" 'rumiai-argument=a b'
+}
+
+command -v git >/dev/null 2>&1 || skip "git is unavailable"
+command -v tee >/dev/null 2>&1 || skip "tee is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+electron_group=${test_dir%/*}
+external_group=${electron_group%/*}
+tests_dir=${external_group%/*}
+suite_root=${tests_dir%/*}
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+tmp="${TMPDIR:-/tmp}/rumiai-electron-linux-launch-live-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture="$tmp/root"
+
+rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"
+status=$?
+case "$status" in
+  0) : ;;
+  1) fail "source checkout lacks required runtime material" ;;
+  2) error "cannot materialize isolated fixture" ;;
+  *) error "fixture primitive returned unexpected status $status" ;;
+esac
+fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize fixture root"
+mkdir -p \
+  "$fixture/pkg" \
+  "$fixture/src" \
+  "$fixture/data" \
+  "$fixture/home" \
+  "$fixture/cache" \
+  "$fixture/log" \
+  "$fixture/run" \
+  "$fixture/tmp" || error "cannot create isolated semantic roots"
+
+runtime_probe="$tmp/runtime-probe"
+cat > "$runtime_probe" <<'EOF_PROBE'
+#!/usr/bin/env rumiai-os
+
+. "$m_LIB_DIR/sh/osarch.lib.sh"
+
+printf -- '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
+
+PATH="$fixture/bin/sys:$PATH"
+export PATH
+osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
+[ -n "$osarch" ] || error "RumiAI osarch probe returned empty output"
+case "$osarch" in
+  linux-arm64|linux-x86_64) : ;;
+  *) skip "Electron Linux live launch requires linux-arm64 or linux-x86_64; target is $osarch" ;;
+esac
+
+pkg_command="$fixture/bin/sys/pkg"
+[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
+
+if [ -z "${DISPLAY-}" ] && ! command -v xvfb-run >/dev/null 2>&1
+then
+  skip "Electron requires a display driver; DISPLAY is unset and xvfb-run is unavailable"
+fi
+
+effective_uid="$(command -p -- id -u 2>/dev/null)" || error "cannot determine effective uid"
+case "$effective_uid" in
+  ""|*[!0-9]*) error "invalid effective uid: $effective_uid" ;;
+esac
+
+mirror_tty=0
+if [ "$effective_uid" -ne 0 ]
+then
+  [ -t 0 ] || skip "interactive terminal input is required for real sudo authorization"
+  [ -r /dev/tty ] && [ -w /dev/tty ] || skip "/dev/tty is required for visible sudo authorization"
+  if [ ! -t 1 ] || [ ! -t 2 ]
+  then
+    mirror_tty=1
+  fi
+fi
+
+pkg_output="$tmp/pkg.output"
+pkg_status_file="$tmp/pkg.status"
+if [ "$mirror_tty" -eq 1 ]
+then
+  printf -- '%s\n' "$TEST_ID: installing Electron before normal launch validation" > /dev/tty
+else
+  printf -- '%s\n' "$TEST_ID: installing Electron before normal launch validation" >&2
+fi
+run_live_install || error "cannot capture live package installation output"
+[ -f "$pkg_status_file" ] || error "live package installation did not record an exit status"
+IFS= read -r status < "$pkg_status_file" || error "cannot read live package installation exit status"
+case "$status" in
+  ""|*[!0-9]*) error "invalid package installation exit status: $status" ;;
+esac
+[ "$status" -eq 0 ] || fail "pkg install electron failed with status $status"
+
+concrete=
+concrete_count=0
+for candidate in "$fixture/pkg"/electron@*"!$osarch"
+do
+  [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+  concrete_count=$((concrete_count + 1))
+  concrete=$candidate
+done
+[ "$concrete_count" -eq 1 ] || fail "expected one target-specific Electron concrete version, found $concrete_count"
+[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "Electron concrete version is not a real directory"
+
+identity=${concrete##*/}
+version_osarch=${identity#electron@}
+version=${version_osarch%"!$osarch"}
+[ -n "$version" ] && [ "$version" != "$version_osarch" ] || fail "cannot derive installed Electron version from $identity"
+
+command_entry="$concrete/cmd/electron"
+main_executable="$concrete/root/electron"
+[ -f "$command_entry" ] && [ ! -L "$command_entry" ] && [ -x "$command_entry" ] || fail "Electron command entry is missing or not executable"
+[ -L "$concrete/link/electron" ] || fail "Electron direct-link is missing"
+[ "$(command -p -- readlink "$concrete/link/electron")" = '../root/electron' ] || fail "Electron direct-link target is unexpected"
+[ -f "$main_executable" ] && [ ! -L "$main_executable" ] && [ -x "$main_executable" ] || fail "Electron executable is missing or not executable"
+if LC_ALL=C command -p -- grep -F -- '--no-sandbox' "$command_entry" >/dev/null 2>&1
+then
+  fail "Electron Linux command disables the Chromium sandbox"
+fi
+
+"$pkg_command" default "electron@$version!$osarch" || fail "cannot select installed Electron as target default"
+selector="$fixture/pkg/electron!$osarch"
+public_command="$fixture/bin/ext-$osarch/electron"
+[ -L "$selector" ] || fail "Electron target selector was not created"
+[ "$(command -p -- readlink "$selector")" = "$identity" ] || fail "Electron target selector points to the wrong concrete version"
+[ -L "$public_command" ] || fail "Electron public command binding was not created"
+
+workload="$tmp/workload"
+mkdir "$workload" || error "cannot create Electron workload directory"
+cat > "$workload/package.json" <<'EOF_PACKAGE'
+{
+  "name": "rumiai-electron-linux-live",
+  "version": "1.0.0",
+  "main": "main.js"
+}
+EOF_PACKAGE
+cat > "$workload/index.html" <<'EOF_HTML'
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>rumiai-electron-linux-live</title></head>
+<body>RumiAI Electron Linux live validation</body>
+</html>
+EOF_HTML
+cat > "$workload/main.js" <<'EOF_MAIN'
+const { app, BrowserWindow } = require('electron')
+const fs = require('node:fs')
+const path = require('node:path')
+
+const marker = process.env.RUMIAI_ELECTRON_TEST_MARKER
+let window
+
+function writeResult(lines) {
+  if (marker) fs.writeFileSync(marker, `${lines.join('\n')}\n`, 'utf8')
+}
+
+const watchdog = setTimeout(() => {
+  writeResult(['error=timeout', `exec=${process.execPath}`, `home=${proces.env.HOME || ''}``])
+  app.exit(2)
+}, 15000)
+
+app.whenReady().then(async () => {
+  try {
+    window = new BrowserWindow({ show: false })
+    await window.loadFile(path.join(__dirname, 'index.html'))
+    clearTimeout(watchdog)
+    writeResult([
+      'ready=true',
+      `title=${window.getTitle()}`,
+      `exec=${process.execPath}`,
+      `home=${process.env.HOME || ''}`,
+      ...process.argv.map((value) => `argv=${value}`)
+    ])
+  } catch (failure) {
+    clearTimeout(watchdog)
+    writeResult([`error=${failure && failure.stack ? failure.stack : String(failure)}`])
+  } finally {
+    app.quit()
+  }
+})
+EOF_MAIN
+
+marker="$tmp/electron.marker"
+RUMIAI_ELECTRON_TEST_MARKER="$marker"
+export RUMIAI_ELECTRON_TEST_MARKER
+
+if [ -n "${DISPLAY-}" ]
+then
+  printf -- '%s\n' "$TEST_ID: launching Electron through the existing DISPLAY=$DISPLAY" >&2
+else
+  printf -- '%s\n' "$TEST_ID: DISPLAY is unset; launching Electron through xvfb-run" >&2
+fi
+
+run_electron_workload
+status=$?
+case "$status" in
+  0) : ;;
+  2) skip "Electron requires a display driver; xvfb-run is unavailable" ;;
+  *) fail "Electron public command launch failed with status $status" ;;
+esac
+
+[ -f "$marker" ] || fail "Electron workload did not produce its completion marker"
+if LC_ALL=C command -p -- grep -F 'error=' "$marker" >/dev/null 2>&1
+then
+  fail "Electron workload reported an error: $(cat "$marker")"
+fi
+LC_ALL=C command -p -- grep -Fx 'ready=true' "$marker" >/dev/null || fail "Electron app never reached ready state"
+LC_ALL=C command -p -- grep -Fx 'title=rumiai-electron-linux-live' "$marker" >/dev/null || fail "Electron BrowserWindow did not load the validation page"
+LC_ALL=C command -p -- grep -Fx "exec=$main_executable" "$marker" >/dev/null || fail "RumiAI command did not execute the package-local Electron binary"
+LC_ALL=C command -p -- grep -Fx "home=$fixture/home/electron" "$marker" >/dev/null || fail "Electron did not inherit the RumiAI package HOME"
+LC_ALL=C command -p -- grep -Fx 'argv=rumiai-argument=a b' "$marker" >/dev/null || fail "Electron did not receive the user argument"
+
+catalog="$fixture/cache/sys/pkg/pkg-catalog"
+[ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "live pkg-catalog cache was not materialized"
+catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
+case "$catalog_head" in
+  ""|*[!0-9a-f]*) fail "invalid cached catalog HEAD: $catalog_head" ;;
+esac
+
+printf -- 'installed=%s\n' "$identity"
+printf -- 'catalog-head=%s\n' "$catalog_head"
+printf -- 'electron-target=%s\n' "electron"
+printf -- 'display=%s\n' "${DISPLAY:-xvfb-run}"
+printf -- 'workload=BrowserWindow-ready\n'
+
+exit 0
