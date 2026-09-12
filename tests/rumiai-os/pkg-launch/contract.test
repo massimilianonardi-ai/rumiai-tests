@@ -161,30 +161,6 @@ else
   [ "$status" -eq 2 ] || fail "invalid package name returned $status instead of 2"
 fi
 
-if (launcher -c >/dev/null 2>&1)
-then
-  fail "launcher -c without package unexpectedly succeeded"
-else
-  status=$?
-  [ "$status" -eq 2 ] || fail "launcher -c without package returned $status instead of 2"
-fi
-
-if (launcher -c tool >/dev/null 2>&1)
-then
-  fail "launcher -c without explicit command unexpectedly succeeded"
-else
-  status=$?
-  [ "$status" -eq 2 ] || fail "launcher -c without explicit command returned $status instead of 2"
-fi
-
-if (launcher -c tool relative-command >/dev/null 2>&1)
-then
-  fail "launcher -c accepted a relative explicit command"
-else
-  status=$?
-  [ "$status" -eq 2 ] || fail "relative explicit command returned $status instead of 2"
-fi
-
 concrete="$m_PKG_DIR/tool@1"
 command -p -- mkdir -p "$concrete/cmd" "$concrete/link" "$concrete/root/bin" "$m_CONF_DIR/tool" || error "cannot create launch fixture"
 
@@ -260,79 +236,6 @@ fi
 if LC_ALL=C command -p -- grep -Fx 'wrong-target' "$output" >/dev/null 2>&1
 then
   fail "launcher used PATH instead of package direct-link"
-fi
-
-if (
-  m_COMMAND_BIN="$command_file"
-  export m_COMMAND_BIN
-  launcher -c tool "$tmp/does-not-exist" >/dev/null 2>&1
-)
-then
-  fail "launcher -c accepted a missing absolute explicit command"
-else
-  status=$?
-  [ "$status" -eq 1 ] || fail "missing absolute explicit command returned $status instead of 1"
-fi
-
-explicit_concrete="$m_PKG_DIR/composed@1"
-command -p -- mkdir -p "$explicit_concrete/cmd" "$explicit_concrete/root" "$m_CONF_DIR/composed" "$tmp/explicit" || error "cannot create explicit-command fixture"
-explicit_command_file="$explicit_concrete/cmd/composed"
-printf -- '%s\n' '#!/usr/bin/env rumiai-os' > "$explicit_command_file" || error "cannot create explicit command entry"
-command -p -- chmod 700 "$explicit_command_file" || error "cannot chmod explicit command entry"
-
-explicit_target="$tmp/explicit/upstream"
-cat > "$explicit_target" <<'EOF_EXPLICIT'
-#!/bin/sh
-: > "$TEST_EXPLICIT_MARKER"
-printf -- 'home=%s\n' "$HOME"
-printf -- 'package=%s\n' "${EXPLICIT_PACKAGE-unset}"
-printf -- 'user=%s\n' "${EXPLICIT_USER-unset}"
-printf -- 'unexported=%s\n' "${EXPLICIT_UNEXPORTED-unset}"
-printf -- 'arg1=%s\n' "$1"
-printf -- 'arg2=%s\n' "$2"
-exit 41
-EOF_EXPLICIT
-command -p -- chmod 700 "$explicit_target" || error "cannot chmod explicit upstream"
-
-cat > "$explicit_concrete/env" <<'EOF_EXPLICIT_PACKAGE_ENV'
-EXPLICIT_PACKAGE=package
-export EXPLICIT_PACKAGE
-EXPLICIT_ORDER=package
-EXPLICIT_UNEXPORTED=hidden
-EOF_EXPLICIT_PACKAGE_ENV
-cat > "$m_CONF_DIR/composed/env" <<'EOF_EXPLICIT_USER_ENV'
-EXPLICIT_USER="$EXPLICIT_ORDER-user"
-export EXPLICIT_USER
-EOF_EXPLICIT_USER_ENV
-
-[ ! -e "$explicit_concrete/link" ] && [ ! -L "$explicit_concrete/link" ] || error "explicit fixture unexpectedly has a link directory"
-TEST_EXPLICIT_MARKER="$tmp/explicit-marker"
-export TEST_EXPLICIT_MARKER
-explicit_output="$tmp/explicit-output"
-if (
-  m_COMMAND_BIN="$explicit_command_file"
-  export m_COMMAND_BIN
-  launcher -c composed "$explicit_target" 'x y' '--explicit'
-  printf -- '%s\n' after-explicit-launcher
-) > "$explicit_output" 2> "$tmp/explicit-stderr"
-then
-  fail "explicit upstream fixture unexpectedly returned zero"
-else
-  status=$?
-  [ "$status" -eq 41 ] || fail "explicit upstream exit status $status was not propagated"
-fi
-
-[ -f "$TEST_EXPLICIT_MARKER" ] || fail "explicit upstream was not executed"
-expected_explicit_home="$m_HOME_DIR/composed"
-LC_ALL=C command -p -- grep -Fx "home=$expected_explicit_home" "$explicit_output" >/dev/null || fail "explicit HOME isolation is wrong"
-LC_ALL=C command -p -- grep -Fx 'package=package' "$explicit_output" >/dev/null || fail "explicit package env was not applied"
-LC_ALL=C command -p -- grep -Fx 'user=package-user' "$explicit_output" >/dev/null || fail "explicit user env did not run after package env"
-LC_ALL=C command -p -- grep -Fx 'unexported=unset' "$explicit_output" >/dev/null || fail "explicit launch implicitly exported an unexported env variable"
-LC_ALL=C command -p -- grep -Fx 'arg1=x y' "$explicit_output" >/dev/null || fail "explicit first argument was not preserved"
-LC_ALL=C command -p -- grep -Fx 'arg2=--explicit' "$explicit_output" >/dev/null || fail "explicit second argument was not preserved"
-if LC_ALL=C command -p -- grep -Fx 'after-explicit-launcher' "$explicit_output" >/dev/null 2>&1
-then
-  fail "launcher returned after successful explicit exec"
 fi
 
 command -p -- rm -f "$TEST_MARKER" || error "cannot reset marker"

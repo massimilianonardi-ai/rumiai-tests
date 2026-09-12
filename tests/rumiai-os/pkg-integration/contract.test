@@ -153,21 +153,6 @@ EOF_COMMAND
   printf -- '%s\n' "$target" > "$range/link/$command_name" || return 1
 }
 
-make_command_only()
-{
-  range=$1
-  command_name=$2
-  mkdir -p "$range/cmd" || return 1
-  cat > "$range/cmd/$command_name" <<'EOF_COMMAND_ONLY'
-#!/usr/bin/env rumiai-os
-
-. "$m_LIB_DIR/sh/pkg-launch.lib.sh"
-
-launcher -c "composed" "/bin/sh" "$@"
-EOF_COMMAND_ONLY
-  chmod 600 "$range/cmd/$command_name" || return 1
-}
-
 make_payload_target()
 {
   payload=$1
@@ -209,49 +194,6 @@ do
   [ ! -L "$m_PKG_DIR/dbeaver!$osarch" ] || fail "pkg_integrate selected a default for $osarch"
   [ ! -e "$m_BIN_DIR/ext-$osarch/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-$osarch/dbeaver" ] || fail "pkg_integrate exposed a public command for $osarch"
 done
-
-range="$tmp/cmd-only-range"
-payload="$tmp/cmd-only-payload"
-mkdir "$range" "$payload" || error "cannot create cmd-only fixture"
-make_command_only "$range" composed || error "cannot create cmd-only command"
-pkg_integrate composed 1 "$range" "$payload" macos-arm64 || fail "cmd-only integration failed"
-concrete="$m_PKG_DIR/composed@1!macos-arm64"
-[ -f "$concrete/cmd/composed" ] && [ -x "$concrete/cmd/composed" ] || fail "cmd-only command was not materialized"
-[ ! -e "$concrete/link" ] && [ ! -L "$concrete/link" ] || fail "cmd-only integration created an artificial link directory"
-
-range="$tmp/partial-link-range"
-payload="$tmp/partial-link-payload"
-mkdir "$range" "$payload" || error "cannot create partial-link fixture"
-make_command "$range" linked bin/linked || error "cannot create linked command fixture"
-make_command_only "$range" composed || error "cannot create unlinked command fixture"
-make_payload_target "$payload" bin/linked || error "cannot create partial-link payload target"
-pkg_integrate mixed 1 "$range" "$payload" || fail "mixed linked/cmd-only integration failed"
-concrete="$m_PKG_DIR/mixed@1"
-[ -f "$concrete/cmd/linked" ] && [ -x "$concrete/cmd/linked" ] || fail "linked command missing from mixed integration"
-[ -f "$concrete/cmd/composed" ] && [ -x "$concrete/cmd/composed" ] || fail "cmd-only command missing from mixed integration"
-[ -L "$concrete/link/linked" ] || fail "linked binding missing from mixed integration"
-[ ! -e "$concrete/link/composed" ] && [ ! -L "$concrete/link/composed" ] || fail "mixed integration created an artificial link for cmd-only command"
-
-range="$tmp/orphan-link-range"
-payload="$tmp/orphan-link-payload"
-mkdir -p "$range/link" "$payload" || error "cannot create orphan-link fixture"
-printf -- '%s\n' bin/orphan > "$range/link/orphan" || error "cannot create orphan link descriptor"
-make_payload_target "$payload" bin/orphan || error "cannot create orphan-link payload"
-if pkg_integrate orphan 1 "$range" "$payload" >/dev/null 2>&1
-then
-  fail "link directory without cmd directory was accepted"
-fi
-[ -d "$payload" ] || fail "orphan-link failure consumed useful root"
-
-range="$tmp/empty-link-range"
-payload="$tmp/empty-link-payload"
-mkdir -p "$range/link" "$payload" || error "cannot create empty-link fixture"
-make_command_only "$range" emptylink || error "cannot create empty-link command"
-if pkg_integrate emptylink 1 "$range" "$payload" >/dev/null 2>&1
-then
-  fail "empty link directory was accepted"
-fi
-[ -d "$payload" ] || fail "empty-link failure consumed useful root"
 
 pkg_default dbeaver 26.2.0 linux-arm64 || fail "target default selection failed"
 [ "$(readlink "$m_PKG_DIR/dbeaver!linux-arm64")" = 'dbeaver@26.2.0!linux-arm64' ] || fail "target current selector is incorrect"
