@@ -209,7 +209,7 @@ then
   fail "setuid materialization introduced --no-sandbox fallback"
 fi
 
-notice_line="$(command -p -- grep -n -F -- '_pkg_setuid_privilege_notice "$pkg_setuid_target"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "privilege notice call is missing"
+notice_line="$(command -p -- grep -n -F -- '_pkg_setuid_privilege_notice "$pkg_setuid_apply_target"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "privilege notice call is missing"
 sudo_line="$(command -p -- grep -n -F -- '"$pkg_setuid_sudo_bin" -- "$pkg_setuid_chown_bin"' "$setuid_library" | command -p -- sed -n '1s/:.*//p')" || fail "sudo chown call is missing"
 case "$notice_line:$sudo_line" in
   *[!0-9:]* | :* | *:) fail "cannot parse privilege notice order" ;;
@@ -447,6 +447,32 @@ then
 fi
 command -p -- grep -F -- 'chown' "$sudo_log" >/dev/null 2>&1 || fail "root path did not execute chown directly"
 command -p -- grep -F -- 'chmod' "$sudo_log" >/dev/null 2>&1 || fail "root path did not execute chmod directly"
+
+# Real materialization must preserve the caller's final target while the apply helper runs.
+_pkg_setuid_effective_uid_set()
+{
+  pkg_setuid_effective_uid=1000
+}
+_pkg_setuid_command_paths_set()
+{
+  [ "$#" -eq 1 ] || return 2
+  pkg_setuid_chown_bin="$helper_bin/chown"
+  pkg_setuid_chmod_bin="$helper_bin/chmod"
+  pkg_setuid_sudo_bin="$helper_bin/sudo"
+}
+materialize_range="$tmp/materialize-range"
+materialize_concrete="$tmp/materialize-concrete"
+command -p -- mkdir -p -- "$materialize_range" "$materialize_concrete/root" || error "cannot create materialization regression fixture"
+printf -- '%s\n' chrome-sandbox > "$materialize_range/setuid_root" || error "cannot write materialization regression metadata"
+printf -- '%s\n' sandbox > "$materialize_concrete/root/chrome-sandbox" || error "cannot create materialization regression target"
+command -p -- chmod 700 "$materialize_concrete/root/chrome-sandbox" || error "cannot chmod materialization regression target"
+: > "$sudo_log" || error "cannot reset materialization sudo log"
+: > "$notice_log" || error "cannot reset materialization notice log"
+_pkg_setuid_materialize "$materialize_range" "$materialize_concrete" >/dev/null 2>&1 || fail "real setuid materialization failed with simulated sudo"
+[ -f "$materialize_concrete/root/chrome-sandbox" ] || fail "materialized setuid target did not reach its final pathname"
+[ -u "$materialize_concrete/root/chrome-sandbox" ] || fail "materialized setuid target lacks setuid bit"
+[ ! -e "$materialize_concrete/setuid-root-rollback/work-1" ] && [ ! -L "$materialize_concrete/setuid-root-rollback/work-1" ] || fail "materialized work file remained in rollback storage"
+[ -f "$materialize_concrete/setuid-root-rollback/original-1" ] || fail "materialization did not preserve rollback original"
 
 # Lifecycle tests use the real integration path with only the privileged primitive simulated.
 _pkg_setuid_apply_file()
