@@ -2,7 +2,7 @@
 
 # Electron macOS live validation is intentionally self-contained. It exercises
 # the real package catalog, package installation, default/public binding and
-# native application-bundle launch through the installed RumiAI command.
+# direct Electron runtime launch through the installed RumiAI command.
 
 TEST_ID="external/electron/macos-launch-live.test"
 
@@ -128,7 +128,6 @@ resolve_test_dir()
 }
 
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
-[ -x /usr/bin/open ] || skip "/usr/bin/open is unavailable"
 [ -x /usr/bin/codesign ] || skip "/usr/bin/codesign is unavailable"
 [ -x /usr/bin/plutil ] || skip "/usr/bin/plutil is unavailable"
 
@@ -213,24 +212,23 @@ bundle="$concrete/root/Electron.app"
 plist="$bundle/Contents/Info.plist"
 main_executable="$bundle/Contents/MacOS/Electron"
 command_entry="$concrete/cmd/electron"
+direct_link="$concrete/link/electron"
 
 [ -d "$bundle" ] && [ ! -L "$bundle" ] || fail "Electron.app bundle is missing"
 [ -f "$plist" ] && [ ! -L "$plist" ] || fail "Electron Info.plist is missing"
 [ -f "$main_executable" ] && [ ! -L "$main_executable" ] && [ -x "$main_executable" ] || fail "Electron main executable is missing or not executable"
 [ -f "$command_entry" ] && [ ! -L "$command_entry" ] && [ -x "$command_entry" ] || fail "Electron command entry is missing or not executable"
-[ ! -e "$concrete/link/electron" ] && [ ! -L "$concrete/link/electron" ] || fail "Electron macOS still materialized a direct executable link"
-[ ! -e "$concrete/link" ] && [ ! -L "$concrete/link" ] || fail "Electron macOS created an artificial link directory"
+[ -L "$direct_link" ] || fail "Electron macOS direct runtime link is missing"
+[ "$(command -p -- readlink "$direct_link")" = '../root/Electron.app/Contents/MacOS/Electron' ] || fail "Electron macOS direct runtime link has the wrong target"
 
 /usr/bin/plutil -lint "$plist" >/dev/null 2>&1 || fail "Electron Info.plist is invalid"
 /usr/bin/codesign --verify --deep --strict "$bundle" >/dev/null 2>&1 || fail "Electron.app code signature verification failed"
 
-LC_ALL=C command -p -- grep -F 'launcher -c "electron" "/usr/bin/open" -n -W "$electron_bundle"' "$command_entry" >/dev/null 2>&1 || \
-  fail "Electron macOS command does not use the package launcher with /usr/bin/open -n -W"
-LC_ALL=C command -p -- grep -F -- '--args "$@"' "$command_entry" >/dev/null 2>&1 || \
-  fail "Electron macOS command does not forward user arguments through --args"
-if LC_ALL=C command -p -- grep -E '/usr/bin/open[[:space:]].*(-a|-b)[[:space:]]' "$command_entry" >/dev/null 2>&1
+LC_ALL=C command -p -- grep -F 'launcher "electron" "$@"' "$command_entry" >/dev/null 2>&1 || \
+  fail "Electron macOS command does not use the direct package launcher"
+if LC_ALL=C command -p -- grep -F '/usr/bin/open' "$command_entry" >/dev/null 2>&1
 then
-  fail "Electron macOS command uses global application resolution"
+  fail "Electron macOS command still delegates runtime execution to /usr/bin/open"
 fi
 
 "$pkg_command" default "electron@$version!$osarch" || fail "cannot select installed Electron as target default"
@@ -298,7 +296,7 @@ marker="$tmp/electron.marker"
 RUMIAI_ELECTRON_TEST_MARKER="$marker"
 export RUMIAI_ELECTRON_TEST_MARKER
 
-printf -- '%s\n' "$TEST_ID: launching package-local Electron.app through the public RumiAI command" >&2
+printf -- '%s\n' "$TEST_ID: launching the package-local Electron runtime through the public RumiAI command" >&2
 "$public_command" "$workload" 'rumiai-argument=a b' || fail "Electron public command launch failed"
 
 [ -f "$marker" ] || fail "Electron workload did not produce its completion marker"
@@ -308,9 +306,10 @@ then
 fi
 LC_ALL=C command -p -- grep -Fx 'ready=true' "$marker" >/dev/null || fail "Electron app never reached ready state"
 LC_ALL=C command -p -- grep -Fx 'title=rumiai-electron-macos-live' "$marker" >/dev/null || fail "Electron BrowserWindow did not load the validation page"
-LC_ALL=C command -p -- grep -Fx "exec=$main_executable" "$marker" >/dev/null || fail "LaunchServices did not execute the package-local Electron bundle"
+LC_ALL=C command -p -- grep -Fx "exec=$main_executable" "$marker" >/dev/null || fail "RumiAI did not execute the package-local Electron runtime"
 LC_ALL=C command -p -- grep -Fx "home=$fixture/home/electron" "$marker" >/dev/null || fail "Electron did not inherit the RumiAI package HOME"
-LC_ALL=C command -p -- grep -Fx 'argv=rumiai-argument=a b' "$marker" >/dev/null || fail "Electron did not receive the user argument through open --args"
+LC_ALL=C command -p -- grep -Fx "argv=$workload" "$marker" >/dev/null || fail "Electron did not receive the workload path directly"
+LC_ALL=C command -p -- grep -Fx 'argv=rumiai-argument=a b' "$marker" >/dev/null || fail "Electron did not preserve the user argument"
 
 catalog="$fixture/cache/sys/pkg/pkg-catalog"
 [ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "live pkg-catalog cache was not materialized"
@@ -320,13 +319,14 @@ case "$catalog_head" in
 esac
 catalog_range="$catalog/electron/catalog-$osarch/n0001=v44.3.0"
 [ -d "$catalog_range" ] && [ ! -L "$catalog_range" ] || fail "cached Electron macOS range is missing"
-[ ! -e "$catalog_range/link/electron" ] && [ ! -L "$catalog_range/link/electron" ] || fail "cached Electron macOS range still declares a direct link"
+[ -f "$catalog_range/link/electron" ] && [ ! -L "$catalog_range/link/electron" ] || fail "cached Electron macOS range lacks the runtime link descriptor"
+[ "$(command -p -- cat -- "$catalog_range/link/electron")" = 'Electron.app/Contents/MacOS/Electron' ] || fail "cached Electron macOS runtime link descriptor is wrong"
 [ ! -e "$catalog_range/setuid_root" ] && [ ! -L "$catalog_range/setuid_root" ] || fail "Electron macOS range unexpectedly declares setuid_root"
 
 printf -- 'installed=%s\n' "$identity"
 printf -- 'catalog-head=%s\n' "$catalog_head"
 printf -- 'bundle=%s\n' "Electron.app"
-printf -- 'launch=/usr/bin/open -n -W\n'
+printf -- 'launch=direct-runtime\n'
 printf -- 'workload=BrowserWindow-ready\n'
 
 exit 0
