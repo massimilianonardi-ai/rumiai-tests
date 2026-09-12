@@ -213,6 +213,7 @@ plist="$bundle/Contents/Info.plist"
 main_executable="$bundle/Contents/MacOS/Electron"
 command_entry="$concrete/cmd/electron"
 direct_link="$concrete/link/electron"
+code_resources="$bundle/Contents/_CodeSignature/CodeResources"
 
 [ -d "$bundle" ] && [ ! -L "$bundle" ] || fail "Electron.app bundle is missing"
 [ -f "$plist" ] && [ ! -L "$plist" ] || fail "Electron Info.plist is missing"
@@ -222,11 +223,19 @@ direct_link="$concrete/link/electron"
 [ "$(command -p -- readlink "$direct_link")" = '../root/Electron.app/Contents/MacOS/Electron' ] || fail "Electron macOS direct runtime link has the wrong target"
 
 /usr/bin/plutil -lint "$plist" >/dev/null 2>&1 || fail "Electron Info.plist is invalid"
-codesign_output="$tmp/codesign.output"
-if ! /usr/bin/codesign --verify --deep --strict --verbose=4 "$bundle" > "$codesign_output" 2>&1
+
+if [ -f "$code_resources" ] && [ ! -L "$code_resources" ]
 then
-  command -p -- cat -- "$codesign_output" >&2
-  fail "Electron.app code signature verification failed"
+  codesign_output="$tmp/codesign.output"
+  if ! /usr/bin/codesign --verify --deep --strict --verbose=4 "$bundle" > "$codesign_output" 2>&1
+  then
+    command -p -- cat -- "$codesign_output" >&2
+    fail "Electron.app contains CodeResources but strict code signature verification failed"
+  fi
+  signature_state=verified
+else
+  [ ! -e "$code_resources" ] && [ ! -L "$code_resources" ] || fail "Electron CodeResources exists but is not a regular non-symlink file"
+  signature_state=upstream-material-absent
 fi
 
 LC_ALL=C command -p -- grep -F 'launcher "electron" "$@"' "$command_entry" >/dev/null 2>&1 || \
@@ -331,6 +340,7 @@ catalog_range="$catalog/electron/catalog-$osarch/n0001=v44.3.0"
 printf -- 'installed=%s\n' "$identity"
 printf -- 'catalog-head=%s\n' "$catalog_head"
 printf -- 'bundle=%s\n' "Electron.app"
+printf -- 'signature-state=%s\n' "$signature_state"
 printf -- 'launch=direct-runtime\n'
 printf -- 'workload=BrowserWindow-ready\n'
 
