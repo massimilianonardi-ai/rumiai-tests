@@ -1,14 +1,16 @@
 #!/bin/sh
 
-# Verify that RumiAI's current raw ZIP extraction preserves the official
-# Electron macOS ARM64 application bundle well enough for macOS code-signature
-# verification. On failure, compare the same archive extracted by macOS ditto
-# for diagnosis only; ditto is not selected as a RumiAI backend by this test.
+# Characterize the official Electron macOS ARM64 ZIP before attributing any
+# bundle-integrity property to an extraction backend. The same verified archive
+# is extracted with the current RumiAI ZIP backend and with macOS ditto, then
+# the resulting trees, framework symlinks, code-signature verification and
+# directly executable Electron runtime are compared.
 
 TEST_ID="external/electron/macos-archive-extraction-live.test"
 ELECTRON_VERSION="v44.3.0"
 ELECTRON_ARCHIVE="electron-v44.3.0-darwin-arm64.zip"
 ELECTRON_URL="https://github.com/electron/electron/releases/download/v44.3.0/electron-v44.3.0-darwin-arm64.zip"
+ELECTRON_CODE_RESOURCES="Electron.app/Contents/_CodeSignature/CodeResources"
 
 fail()
 {
@@ -95,6 +97,38 @@ resolve_test_dir()
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
+bundle_symlink_count()
+{
+  command -p -- find "$1" -type l -print 2>/dev/null | \
+    command -p -- wc -l | \
+    command -p -- tr -d '[:space:]'
+}
+
+bundle_framework_link_map()
+{
+  bundle=$1
+  framework="$bundle/Contents/Frameworks/Electron Framework.framework"
+
+  for relative in Versions/Current Resources 'Electron Framework'
+  do
+    candidate="$framework/$relative"
+    [ -L "$candidate" ] || return 1
+    link_target="$(command -p -- readlink "$candidate" 2>/dev/null)" || return 1
+    printf -- '%s=%s\n' "$relative" "$link_target"
+  done
+}
+
+bundle_tree_manifest()
+{
+  bundle=$1
+  output=$2
+
+  (
+    CDPATH= cd -- "$bundle" || exit 1
+    LC_ALL=C command -p -- find . -print | LC_ALL=C command -p -- sort
+  ) > "$output"
+}
+
 report_bundle_shape()
 {
   label=$1
@@ -103,7 +137,7 @@ report_bundle_shape()
   if [ ! -d "$bundle" ] || [ -L "$bundle" ]
   then
     printf -- '%s-bundle=missing\n' "$label" >&2
-    return
+    return 1
   fi
 
   if [ -f "$bundle/Contents/_CodeSignature/CodeResources" ]
@@ -120,26 +154,20 @@ report_bundle_shape()
     printf -- '%s-resources=missing-or-not-real-directory\n' "$label" >&2
   fi
 
-  symlink_count="$(command -p -- find "$bundle" -type l -print 2>/dev/null | command -p -- wc -l | command -p -- tr -d '[:space:]')"
+  symlink_count="$(bundle_symlink_count "$bundle")" || return 1
   printf -- '%s-symlinks=%s\n' "$label" "$symlink_count" >&2
 
-  framework="$bundle/Contents/Frameworks/Electron Framework.framework"
-  for relative in Versions/Current Resources 'Electron Framework'
+  link_map="$(bundle_framework_link_map "$bundle")" || return 1
+  printf -- '%s\n' "$link_map" | while IFS= read -r link_line
   do
-    candidate="$framework/$relative"
-    if [ -L "$candidate" ]
-    then
-      link_target="$(command -p -- readlink "$candidate" 2>/dev/null)" || link_target='(readlink-failed)'
-      printf -- '%s-framework-link[%s]=%s\n' "$label" "$relative" "$link_target" >&2
-    else
-      printf -- '%s-framework-link[%s]=not-symlink\n' "$label" "$relative" >&2
-    fi
+    printf -- '%s-framework-link[%s]\n' "$label" "$link_line" >&2
   done
 }
 
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
 [ -x /usr/bin/codesign ] || skip "/usr/bin/codesign is unavailable"
 [ -x /usr/bin/ditto ] || skip "/usr/bin/ditto is unavailable"
+[ -x /usr/bin/unzip ] || skip "/usr/bin/unzip is unavailable"
 
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 electron_group=${test_dir%/*}
@@ -185,6 +213,7 @@ umask 077
 mkdir "$tmp" || error "cannot create temporary directory"
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 archive="$tmp/$ELECTRON_ARCHIVE"
+archive_entries="$tmp/archive.entries"
 rumiai_destination="$tmp/rumiai"
 ditto_destination="$tmp/ditto"
 mkdir "$rumiai_destination" "$ditto_destination" || error "cannot create extraction destinations"
@@ -195,37 +224,114 @@ archive_digest="$($digest_command -a sha256 -- "$archive")" || fail "cannot comp
 printf -- 'electron-version=%s\n' "$ELECTRON_VERSION" >&2
 printf -- 'archive-sha256=%s\n' "$archive_digest" >&2
 
+/usr/bin/unzip -Z1 "$archive" > "$archive_entries" 2> "$tmp/archive-list.err" || {
+  command -p -- cat -- "$tmp/archive-list.err" >&2
+  fail "cannot inspect official Electron ZIP central directory"
+}
+
+archive_code_resources=missing
+if LC_ALL=C command -p -- grep -Fx "$ELECTRON_CODE_RESOURCES" "$archive_entries" >/dev/null 2>&1
+then
+  archive_code_resources=present
+fi
+archive_signature_entries="$(LC_ALL=C command -p -- grep -E '/_CodeSignature/CodeResources$' "$archive_entries" 2>/dev/null | command -p -- wc -l | command -p -- tr -d '[:space:]')"
+printf -- 'archive-outer-code-resources=%s\n' "$archive_code_resources" >&2
+printf -- 'archive-code-resources-entries=%s\n' "$archive_signature_entries" >&2
+
 printf -- '%s\n' "$TEST_ID: extracting with the current RumiAI zip backend" >&2
 "$extract_command" zip "$archive" "$rumiai_destination" || fail "RumiAI raw zip extraction failed"
 rumiai_bundle="$rumiai_destination/Electron.app"
-report_bundle_shape rumiai "$rumiai_bundle"
+report_bundle_shape rumiai "$rumiai_bundle" || fail "RumiAI extraction produced an invalid Electron bundle shape"
+
+printf -- '%s\n' "$TEST_ID: extracting the same archive with /usr/bin/ditto -x -k" >&2
+if ! /usr/bin/ditto -x -k "$archive" "$ditto_destination" >"$tmp/ditto.out" 2>&1
+then
+  command -p -- cat -- "$tmp/ditto.out" >&2
+  fail "diagnostic ditto extraction failed"
+fi
+ditto_bundle="$ditto_destination/Electron.app"
+report_bundle_shape ditto "$ditto_bundle" || fail "ditto extraction produced an invalid Electron bundle shape"
+
+rumiai_manifest="$tmp/rumiai.manifest"
+ditto_manifest="$tmp/ditto.manifest"
+bundle_tree_manifest "$rumiai_bundle" "$rumiai_manifest" || fail "cannot build RumiAI extraction tree manifest"
+bundle_tree_manifest "$ditto_bundle" "$ditto_manifest" || fail "cannot build ditto extraction tree manifest"
+if ! command -p -- diff "$rumiai_manifest" "$ditto_manifest" > "$tmp/tree.diff" 2>&1
+then
+  command -p -- cat -- "$tmp/tree.diff" >&2
+  fail "RumiAI and ditto extracted different Electron bundle path trees"
+fi
+
+rumiai_symlinks="$(bundle_symlink_count "$rumiai_bundle")" || fail "cannot count RumiAI bundle symlinks"
+ditto_symlinks="$(bundle_symlink_count "$ditto_bundle")" || fail "cannot count ditto bundle symlinks"
+[ "$rumiai_symlinks" = "$ditto_symlinks" ] || fail "RumiAI and ditto preserved different symlink counts"
+rumiai_link_map="$(bundle_framework_link_map "$rumiai_bundle")" || fail "RumiAI extraction did not preserve Electron framework symlinks"
+ditto_link_map="$(bundle_framework_link_map "$ditto_bundle")" || fail "ditto extraction did not preserve Electron framework symlinks"
+[ "$rumiai_link_map" = "$ditto_link_map" ] || fail "RumiAI and ditto preserved different Electron framework symlink targets"
+
 rumiai_codesign="$tmp/rumiai-codesign.out"
 if /usr/bin/codesign --verify --deep --strict --verbose=4 "$rumiai_bundle" >"$rumiai_codesign" 2>&1
 then
-  printf -- 'rumiai-codesign=PASS\n' >&2
-  exit 0
+  rumiai_codesign_status=PASS
+else
+  rumiai_codesign_status=FAIL
 fi
-
-printf -- 'rumiai-codesign=FAIL\n' >&2
-command -p -- cat -- "$rumiai_codesign" >&2
-
-printf -- '%s\n' "$TEST_ID: diagnostic comparison with /usr/bin/ditto -x -k" >&2
-if ! /usr/bin/ditto -x -k "$archive" "$ditto_destination" >"$tmp/ditto.out" 2>&1
+printf -- 'rumiai-codesign=%s\n' "$rumiai_codesign_status" >&2
+if [ "$rumiai_codesign_status" = FAIL ]
 then
-  printf -- 'ditto-extraction=FAIL\n' >&2
-  command -p -- cat -- "$tmp/ditto.out" >&2
-  fail "RumiAI extraction did not preserve a verifiable Electron.app; diagnostic ditto extraction also failed"
+  command -p -- cat -- "$rumiai_codesign" >&2
 fi
 
-ditto_bundle="$ditto_destination/Electron.app"
-report_bundle_shape ditto "$ditto_bundle"
 ditto_codesign="$tmp/ditto-codesign.out"
 if /usr/bin/codesign --verify --deep --strict --verbose=4 "$ditto_bundle" >"$ditto_codesign" 2>&1
 then
-  printf -- 'ditto-codesign=PASS\n' >&2
+  ditto_codesign_status=PASS
 else
-  printf -- 'ditto-codesign=FAIL\n' >&2
+  ditto_codesign_status=FAIL
+fi
+printf -- 'ditto-codesign=%s\n' "$ditto_codesign_status" >&2
+if [ "$ditto_codesign_status" = FAIL ]
+then
   command -p -- cat -- "$ditto_codesign" >&2
 fi
 
-fail "RumiAI raw zip extraction does not preserve the official Electron.app code signature"
+rumiai_executable="$rumiai_bundle/Contents/MacOS/Electron"
+ditto_executable="$ditto_bundle/Contents/MacOS/Electron"
+[ -f "$rumiai_executable" ] && [ ! -L "$rumiai_executable" ] && [ -x "$rumiai_executable" ] || fail "RumiAI extraction lacks executable Electron runtime"
+[ -f "$ditto_executable" ] && [ ! -L "$ditto_executable" ] && [ -x "$ditto_executable" ] || fail "ditto extraction lacks executable Electron runtime"
+rumiai_runtime_version="$("$rumiai_executable" --version 2> "$tmp/rumiai-runtime.err")" || {
+  command -p -- cat -- "$tmp/rumiai-runtime.err" >&2
+  fail "Electron runtime from RumiAI extraction is not executable"
+}
+ditto_runtime_version="$("$ditto_executable" --version 2> "$tmp/ditto-runtime.err")" || {
+  command -p -- cat -- "$tmp/ditto-runtime.err" >&2
+  fail "Electron runtime from ditto extraction is not executable"
+}
+printf -- 'rumiai-runtime-version=%s\n' "$rumiai_runtime_version" >&2
+printf -- 'ditto-runtime-version=%s\n' "$ditto_runtime_version" >&2
+[ "$rumiai_runtime_version" = "$ditto_runtime_version" ] || fail "RumiAI and ditto extractions execute different Electron runtime versions"
+[ "$rumiai_runtime_version" = "$ELECTRON_VERSION" ] || fail "extracted Electron runtime version does not match $ELECTRON_VERSION"
+
+if [ "$archive_code_resources" = present ]
+then
+  [ "$rumiai_codesign_status" = PASS ] || {
+    if [ "$ditto_codesign_status" = PASS ]
+    then
+      fail "official archive contains outer CodeResources and ditto preserves a valid signature while the current RumiAI ZIP backend does not"
+    fi
+    fail "official archive contains outer CodeResources but strict signature verification fails after both extraction backends"
+  }
+  printf -- 'signature-criterion=verified-from-upstream-archive\n'
+else
+  [ "$rumiai_codesign_status" = "$ditto_codesign_status" ] || fail "signature behavior differs between RumiAI and ditto despite outer CodeResources being absent upstream"
+  printf -- 'signature-criterion=outer-code-resources-absent-upstream\n'
+fi
+
+printf -- 'archive-outer-code-resources=%s\n' "$archive_code_resources"
+printf -- 'tree-comparison=equal\n'
+printf -- 'symlink-comparison=equal\n'
+printf -- 'runtime-version=%s\n' "$rumiai_runtime_version"
+printf -- 'rumiai-codesign=%s\n' "$rumiai_codesign_status"
+printf -- 'ditto-codesign=%s\n' "$ditto_codesign_status"
+
+exit 0
