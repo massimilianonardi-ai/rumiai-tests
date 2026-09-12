@@ -1,0 +1,231 @@
+#!/bin/sh
+
+# Verify that RumiAI's current raw ZIP extraction preserves the official
+# Electron macOS ARM64 application bundle well enough for macOS code-signature
+# verification. On failure, compare the same archive extracted by macOS ditto
+# for diagnosis only; ditto is not selected as a RumiAI backend by this test.
+
+TEST_ID="external/electron/macos-archive-extraction-live.test"
+ELECTRON_VERSION="v44.3.0"
+ELECTRON_ARCHIVE="electron-v44.3.0-darwin-arm64.zip"
+ELECTRON_URL="https://github.com/electron/electron/releases/download/v44.3.0/electron-v44.3.0-darwin-arm64.zip"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+rumiai_test_target_have()
+{
+  command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok()
+{
+  candidate=$1
+  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+rumiai_test_target_rumiai_os_validate()
+{
+  candidate=$1
+  [ -n "$candidate" ] || return 1
+  [ -f "$candidate/rumiai-os" ] || return 1
+  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/rumiai-os" ] || return 1
+  printf -- '%s\n' "$target_root"
+}
+
+rumiai_test_target_rumiai_os_find()
+{
+  start=$1
+  rumiai_test_target_have git || return 3
+
+  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+  then
+    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+    return 0
+  fi
+
+  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+  while :
+  do
+    if rumiai_test_target_rumiai_os_validate "$candidate"
+    then
+      return 0
+    fi
+    [ "$candidate" != / ] || break
+    parent=${candidate%/*}
+    [ -n "$parent" ] || parent=/
+    [ "$parent" != "$candidate" ] || break
+    candidate=$parent
+  done
+  return 1
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) : ;;
+    *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+report_bundle_shape()
+{
+  label=$1
+  bundle=$2
+
+  if [ ! -d "$bundle" ] || [ -L "$bundle" ]
+  then
+    printf -- '%s-bundle=missing\n' "$label" >&2
+    return
+  fi
+
+  if [ -f "$bundle/Contents/_CodeSignature/CodeResources" ]
+  then
+    printf -- '%s-code-resources=present\n' "$label" >&2
+  else
+    printf -- '%s-code-resources=missing\n' "$label" >&2
+  fi
+
+  if [ -d "$bundle/Contents/Resources" ] && [ ! -L "$bundle/Contents/Resources" ]
+  then
+    printf -- '%s-resources=present\n' "$label" >&2
+  else
+    printf -- '%s-resources=missing-or-not-real-directory\n' "$label" >&2
+  fi
+
+  symlink_count="$(command -p -- find "$bundle" -type l -print 2>/dev/null | command -p -- wc -l | command -p -- tr -d '[:space:]')"
+  printf -- '%s-symlinks=%s\n' "$label" "$symlink_count" >&2
+
+  framework="$bundle/Contents/Frameworks/Electron Framework.framework"
+  for relative in Versions/Current Resources 'Electron Framework'
+  do
+    candidate="$framework/$relative"
+    if [ -L "$candidate" ]
+    then
+      link_target="$(command -p -- readlink "$candidate" 2>/dev/null)" || link_target='(readlink-failed)'
+      printf -- '%s-framework-link[%s]=%s\n' "$label" "$relative" "$link_target" >&2
+    else
+      printf -- '%s-framework-link[%s]=not-symlink\n' "$label" "$relative" >&2
+    fi
+  done
+}
+
+command -v git >/dev/null 2>&1 || skip "git is unavailable"
+[ -x /usr/bin/codesign ] || skip "/usr/bin/codesign is unavailable"
+[ -x /usr/bin/ditto ] || skip "/usr/bin/ditto is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+electron_group=${test_dir%/*}
+external_group=${electron_group%/*}
+tests_dir=${external_group%/*}
+suite_root=${tests_dir%/*}
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+PATH="$source_root/bin/sys:$PATH"
+export PATH
+
+runtime_probe="${TMPDIR:-/tmp}/rumiai-electron-macos-archive-runtime-probe-$$"
+cat > "$runtime_probe" <<'EOF_PROBE'
+#!/usr/bin/env rumiai-os
+
+. "$m_LIB_DIR/sh/osarch.lib.sh"
+printf -- '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
+osarch="$($runtime_probe)" || {
+  command -p -- rm -f -- "$runtime_probe"
+  fail "cannot obtain RumiAI osarch"
+}
+command -p -- rm -f -- "$runtime_probe"
+[ "$osarch" = macos-arm64 ] || skip "Electron macOS archive extraction validation requires macos-arm64; target is $osarch"
+
+http_fetch="$source_root/bin/sys/http-fetch"
+extract_command="$source_root/bin/sys/extract"
+digest_command="$source_root/bin/sys/digest"
+[ -x "$http_fetch" ] || fail "RumiAI http-fetch command is unavailable"
+[ -x "$extract_command" ] || fail "RumiAI extract command is unavailable"
+[ -x "$digest_command" ] || fail "RumiAI digest command is unavailable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-electron-macos-archive-extraction-live-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+archive="$tmp/$ELECTRON_ARCHIVE"
+rumiai_destination="$tmp/rumiai"
+ditto_destination="$tmp/ditto"
+mkdir "$rumiai_destination" "$ditto_destination" || error "cannot create extraction destinations"
+
+printf -- '%s\n' "$TEST_ID: downloading $ELECTRON_ARCHIVE" >&2
+"$http_fetch" -o "$archive" -- "$ELECTRON_URL" || fail "cannot download official Electron archive"
+archive_digest="$($digest_command -a sha256 -- "$archive")" || fail "cannot compute Electron archive SHA-256"
+printf -- 'electron-version=%s\n' "$ELECTRON_VERSION" >&2
+printf -- 'archive-sha256=%s\n' "$archive_digest" >&2
+
+printf -- '%s\n' "$TEST_ID: extracting with the current RumiAI zip backend" >&2
+"$extract_command" zip "$archive" "$rumiai_destination" || fail "RumiAI raw zip extraction failed"
+rumiai_bundle="$rumiai_destination/Electron.app"
+report_bundle_shape rumiai "$rumiai_bundle"
+rumiai_codesign="$tmp/rumiai-codesign.out"
+if /usr/bin/codesign --verify --deep --strict --verbose=4 "$rumiai_bundle" >"$rumiai_codesign" 2>&1
+then
+  printf -- 'rumiai-codesign=PASS\n' >&2
+  exit 0
+fi
+
+printf -- 'rumiai-codesign=FAIL\n' >&2
+command -p -- cat -- "$rumiai_codesign" >&2
+
+printf -- '%s\n' "$TEST_ID: diagnostic comparison with /usr/bin/ditto -x -k" >&2
+if ! /usr/bin/ditto -x -k "$archive" "$ditto_destination" >"$tmp/ditto.out" 2>&1
+then
+  printf -- 'ditto-extraction=FAIL\n' >&2
+  command -p -- cat -- "$tmp/ditto.out" >&2
+  fail "RumiAI extraction did not preserve a verifiable Electron.app; diagnostic ditto extraction also failed"
+fi
+
+ditto_bundle="$ditto_destination/Electron.app"
+report_bundle_shape ditto "$ditto_bundle"
+ditto_codesign="$tmp/ditto-codesign.out"
+if /usr/bin/codesign --verify --deep --strict --verbose=4 "$ditto_bundle" >"$ditto_codesign" 2>&1
+then
+  printf -- 'ditto-codesign=PASS\n' >&2
+else
+  printf -- 'ditto-codesign=FAIL\n' >&2
+  command -p -- cat -- "$ditto_codesign" >&2
+fi
+
+fail "RumiAI raw zip extraction does not preserve the official Electron.app code signature"
