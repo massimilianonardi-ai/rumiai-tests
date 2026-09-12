@@ -126,6 +126,36 @@ case "${PKG_EXTRACT_LAYOUT-flat}" in
     mkdir -p "$3/product/26.2.0/root/bin" "$3/product/26.2.0/root/lib" || exit 1
     printf -- '%s\n' executable > "$3/product/26.2.0/root/bin/program"
     ;;
+  app)
+    mkdir -p "$3/Electron.app/Contents/MacOS" "$3/Electron.app/Contents/Resources" || exit 1
+    printf -- '%s\n' plist > "$3/Electron.app/Contents/Info.plist"
+    printf -- '%s\n' executable > "$3/Electron.app/Contents/MacOS/Electron"
+    ;;
+  app-wrapper)
+    mkdir -p "$3/release/Electron.app/Contents/MacOS" "$3/release/Electron.app/Contents/Resources" || exit 1
+    printf -- '%s\n' plist > "$3/release/Electron.app/Contents/Info.plist"
+    printf -- '%s\n' executable > "$3/release/Electron.app/Contents/MacOS/Electron"
+    ;;
+  app-missing-info)
+    mkdir -p "$3/Broken.app/Contents/MacOS" "$3/Broken.app/Contents/Resources" || exit 1
+    printf -- '%s\n' executable > "$3/Broken.app/Contents/MacOS/Broken"
+    ;;
+  app-contents-symlink)
+    mkdir -p "$PKG_EXTRACT_SYMLINK_TARGET/Contents/MacOS" || exit 1
+    printf -- '%s\n' plist > "$PKG_EXTRACT_SYMLINK_TARGET/Contents/Info.plist"
+    mkdir "$3/Broken.app" || exit 1
+    ln -s "$PKG_EXTRACT_SYMLINK_TARGET/Contents" "$3/Broken.app/Contents" || exit 1
+    ;;
+  app-info-symlink)
+    mkdir -p "$3/Broken.app/Contents/MacOS" || exit 1
+    printf -- '%s\n' plist > "$PKG_EXTRACT_SYMLINK_TARGET"
+    ln -s "$PKG_EXTRACT_SYMLINK_TARGET" "$3/Broken.app/Contents/Info.plist" || exit 1
+    ;;
+  app-macos-symlink)
+    mkdir -p "$3/Broken.app/Contents" "$PKG_EXTRACT_SYMLINK_TARGET" || exit 1
+    printf -- '%s\n' plist > "$3/Broken.app/Contents/Info.plist"
+    ln -s "$PKG_EXTRACT_SYMLINK_TARGET" "$3/Broken.app/Contents/MacOS" || exit 1
+    ;;
   hidden)
     mkdir "$3/wrapper" || exit 1
     printf -- '%s\n' payload > "$3/wrapper/program"
@@ -204,12 +234,66 @@ pkg_extract "$artifact" zip "$stage" || fail "deep-wrapper normalization failed"
 
 rm -rf "$stage"
 mkdir "$stage"
+PKG_EXTRACT_LAYOUT=app
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" zip "$stage" || fail "macOS application bundle identity case failed"
+[ -d "$stage/Electron.app" ] && [ ! -L "$stage/Electron.app" ] || fail "macOS application bundle was not preserved"
+[ -f "$stage/Electron.app/Contents/Info.plist" ] && [ ! -L "$stage/Electron.app/Contents/Info.plist" ] || fail "macOS application bundle Info.plist was not preserved"
+[ -d "$stage/Electron.app/Contents/MacOS" ] && [ ! -L "$stage/Electron.app/Contents/MacOS" ] || fail "macOS application bundle MacOS directory was not preserved"
+[ -f "$stage/Electron.app/Contents/MacOS/Electron" ] || fail "macOS application bundle executable was not preserved"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=app-wrapper
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" zip "$stage" || fail "wrapped macOS application bundle normalization failed"
+[ -d "$stage/Electron.app" ] && [ ! -L "$stage/Electron.app" ] || fail "wrapped macOS application bundle was not preserved"
+[ ! -e "$stage/release" ] && [ ! -L "$stage/release" ] || fail "wrapper outside macOS application bundle survived normalization"
+[ -f "$stage/Electron.app/Contents/Info.plist" ] || fail "wrapped macOS application bundle hierarchy was not preserved"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=app-missing-info
+export PKG_EXTRACT_LAYOUT
+pkg_extract "$artifact" zip "$stage" || fail "incomplete .app normalization failed"
+[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app without Info.plist was incorrectly treated as an application-bundle boundary"
+[ -d "$stage/MacOS" ] && [ -d "$stage/Resources" ] || fail "normal discovery did not continue through incomplete .app"
+
+rm -rf "$stage"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=app-contents-symlink
+PKG_EXTRACT_SYMLINK_TARGET="$tmp/app-contents-target"
+export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
+pkg_extract "$artifact" zip "$stage" || fail ".app with Contents symlink normalization failed"
+[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app with Contents symlink was incorrectly treated as an application-bundle boundary"
+[ -L "$stage/Contents" ] || fail "Contents symlink was not preserved by normal discovery"
+
+rm -rf "$stage" "$tmp/app-info-target"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=app-info-symlink
+PKG_EXTRACT_SYMLINK_TARGET="$tmp/app-info-target"
+export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
+pkg_extract "$artifact" zip "$stage" || fail ".app with Info.plist symlink normalization failed"
+[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app with Info.plist symlink was incorrectly treated as an application-bundle boundary"
+[ -L "$stage/Info.plist" ] && [ -d "$stage/MacOS" ] || fail "normal discovery did not continue through .app with Info.plist symlink"
+
+rm -rf "$stage" "$tmp/app-macos-target"
+mkdir "$stage"
+PKG_EXTRACT_LAYOUT=app-macos-symlink
+PKG_EXTRACT_SYMLINK_TARGET="$tmp/app-macos-target"
+export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
+pkg_extract "$artifact" zip "$stage" || fail ".app with MacOS symlink normalization failed"
+[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app with MacOS symlink was incorrectly treated as an application-bundle boundary"
+[ -f "$stage/Info.plist" ] && [ -L "$stage/MacOS" ] || fail "normal discovery did not continue through .app with MacOS symlink"
+
+rm -rf "$stage"
+mkdir "$stage"
 PKG_EXTRACT_LAYOUT=hidden
 export PKG_EXTRACT_LAYOUT
 pkg_extract "$artifact" tar "$stage" || fail "hidden-entry identity case failed"
 [ -f "$stage/.marker" ] && [ -d "$stage/wrapper" ] || fail "hidden entry was ignored by structural discovery"
 
-rm -rf "$stage"
+rm -rf "$stage" "$tmp/symlink-target"
 mkdir "$stage"
 PKG_EXTRACT_LAYOUT=symlink
 PKG_EXTRACT_SYMLINK_TARGET="$tmp/symlink-target"
