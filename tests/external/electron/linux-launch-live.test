@@ -172,9 +172,11 @@ case "$status" in
   *) error "target discovery failed" ;;
 esac
 
-tmp="${TMPDIR:-/tmp}/rumiai-electron-linux-launch-live-$$"
+source_parent=${source_root%/*}
+[ -n "$source_parent" ] || source_parent=/
+tmp="$source_parent/.rumiai-electron-linux-launch-live-$$"
 umask 077
-mkdir "$tmp" || error "cannot create temporary directory"
+mkdir "$tmp" || error "cannot create temporary directory on the rumiai-os target filesystem"
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 fixture="$tmp/root"
 
