@@ -39,10 +39,10 @@ rumiai_test_target_rumiai_os_validate()
 {
   candidate="$1"
   [ -n "$candidate" ] || return 1
-  [ -f "$candidate/rumiai-os" ] || return 1
+  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return 1
   rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
-  [ -f "$target_root/rumiai-os" ] || return 1
+  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return 1
   printf -- '%s\n' "$target_root"
 }
 
@@ -105,7 +105,7 @@ command_file="$root/bin/sys/pkg-analyze"
 [ -x "$command_file" ] || fail "bin/sys/pkg-analyze is not executable"
 
 case "$(command -p -- sed -n '1p' "$command_file")" in
-  '#!/usr/bin/env rumiai-os') :;;
+  '#!/usr/bin/env m') :;;
   *) fail "pkg-analyze has the wrong command entrypoint";;
 esac
 

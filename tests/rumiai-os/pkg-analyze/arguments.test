@@ -25,7 +25,7 @@ else
   root=
   while :
   do
-    if [ -f "$candidate/rumiai-os" ]
+    if [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ]
     then
       origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || origin=
       case "$origin" in
@@ -42,7 +42,7 @@ else
 fi
 
 [ -n "$root" ] || skip "rumiai-os target checkout not found"
-[ -f "$root/rumiai-os" ] || fail "invalid rumiai-os target"
+[ -f "$root/m" ] && [ -f "$root/rumiai-os" ] && [ -f "$root/rumiai-os-sh" ] || fail "invalid rumiai-os target"
 command_file="$root/bin/sys/pkg-analyze"
 [ -x "$command_file" ] || fail "pkg-analyze is missing or not executable"
 [ ! -e "$root/bin/sys/pkg_analyze" ] && [ ! -L "$root/bin/sys/pkg_analyze" ] || fail "superseded bin/sys/pkg_analyze still exists"
