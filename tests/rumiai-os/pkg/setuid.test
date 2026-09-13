@@ -33,10 +33,14 @@ rumiai_test_target_rumiai_os_validate()
 {
   candidate=$1
   [ -n "$candidate" ] || return 1
+  [ -f "$candidate/m" ] || return 1
   [ -f "$candidate/rumiai-os" ] || return 1
+  [ -f "$candidate/rumiai-os-sh" ] || return 1
   rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/m" ] || return 1
   [ -f "$target_root/rumiai-os" ] || return 1
+  [ -f "$target_root/rumiai-os-sh" ] || return 1
   printf -- '%s\n' "$target_root"
 }
 
@@ -155,13 +159,8 @@ reset_fixture()
   command -p -- mkdir -p -- \
     "$m_PKG_DIR" \
     "$m_BIN_DIR" \
-    "$m_CONF_DIR" \
-    "$m_DATA_DIR" \
-    "$m_HOME_DIR" \
-    "$m_CACHE_DIR" \
-    "$m_LOG_DIR" \
-    "$m_RUN_DIR" \
-    "$m_TMP_DIR" || return 1
+    "$m_STATE_SYS_DIR" \
+    "$m_STATE_USER_DIR" || return 1
 }
 
 command -v -- git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
@@ -182,13 +181,13 @@ case "$status" in
   *) error "target discovery failed" ;;
 esac
 
-integration_library="$root/lib/sh/pkg-integration.lib.sh"
-setuid_library="$root/lib/sh/pkg-setuid.lib.sh"
+integration_library="$root/lib/sys/sh/pkg-integration.lib.sh"
+setuid_library="$root/lib/sys/sh/pkg-setuid.lib.sh"
 message_en="$root/lang/en_US/security/package-setuid-root-authorization-required"
 message_it="$root/lang/it_IT/security/package-setuid-root-authorization-required"
 
-[ -f "$integration_library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
-[ -f "$setuid_library" ] || fail "lib/sh/pkg-setuid.lib.sh is missing"
+[ -f "$integration_library" ] || fail "lib/sys/sh/pkg-integration.lib.sh is missing"
+[ -f "$setuid_library" ] || fail "lib/sys/sh/pkg-setuid.lib.sh is missing"
 [ ! -x "$setuid_library" ] || fail "pkg-setuid library must not be executable"
 case "$(command -p -- sed -n '1p' "$setuid_library")" in
   '#!'*) fail "pkg-setuid library must not have a shebang" ;;
@@ -226,15 +225,20 @@ m_LIB_DIR="$root/lib"
 m_PKG_DIR="$m_ROOT/pkg"
 m_BIN_DIR="$m_ROOT/bin"
 m_BIN_EXT_DIR="$m_BIN_DIR/ext"
-m_CONF_DIR="$m_ROOT/conf"
-m_DATA_DIR="$m_ROOT/data"
-m_HOME_DIR="$m_ROOT/home"
-m_CACHE_DIR="$m_ROOT/cache"
-m_LOG_DIR="$m_ROOT/log"
-m_RUN_DIR="$m_ROOT/run"
-m_TMP_DIR="$m_ROOT/tmp"
-export m_ROOT m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR
-export m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR
+m_STATE_DIR="$m_ROOT/state"
+m_STATE_SYS_DIR="$m_STATE_DIR/system/profile/main"
+m_STATE_USER_DIR="$m_STATE_DIR/user/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-501"
+export m_ROOT m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_STATE_DIR m_STATE_SYS_DIR m_STATE_USER_DIR
+
+fake_bin="$tmp/fake-bin"
+command -p -- mkdir -- "$fake_bin" || error "cannot create fake PATH"
+{
+  printf '%s\n' '#!/bin/sh'
+  command -p -- sed '1d' "$root/bin/sys/state-path"
+} > "$fake_bin/state-path" || error "cannot prepare state-path fixture"
+command -p -- chmod 700 "$fake_bin/state-path" || error "cannot chmod state-path fixture"
+PATH="$fake_bin:$PATH"
+export PATH
 
 reset_fixture || error "cannot initialize fixture"
 . "$integration_library" || error "cannot source pkg-integration library"
