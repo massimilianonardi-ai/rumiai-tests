@@ -38,10 +38,10 @@ rumiai_test_target_validate()
 {
   candidate="$1"
   [ -n "$candidate" ] || return "1"
-  [ -f "$candidate/rumiai-os" ] || return "1"
+  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return "1"
   rumiai_test_target_origin_ok "$candidate" || return "1"
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
-  [ -f "$target_root/rumiai-os" ] || return "1"
+  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return "1"
   printf -- '%s\n' "$target_root"
 }
 
@@ -97,12 +97,16 @@ make_fixture()
   source_root="$1"
   fixture_root="$2"
 
-  mkdir "$fixture_root" || return "1"
-  cp "$source_root/rumiai-os" "$fixture_root/rumiai-os" || return "1"
-  cp -R "$source_root/bin" "$fixture_root/bin" || return "1"
-  cp -R "$source_root/lang" "$fixture_root/lang" || return "1"
-  cp -R "$source_root/lib" "$fixture_root/lib" || return "1"
-  chmod u+x "$fixture_root/rumiai-os" || return "1"
+  mkdir -p "$fixture_root/pkg" "$fixture_root/src" || return "1"
+  for fixture_file in m rumiai-os rumiai-os-sh product-name product-version
+  do
+    cp "$source_root/$fixture_file" "$fixture_root/$fixture_file" || return "1"
+  done
+  for fixture_dir in bin lang lib state
+  do
+    cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir" || return "1"
+  done
+  chmod u+x "$fixture_root/m" "$fixture_root/rumiai-os" "$fixture_root/rumiai-os-sh" || return "1"
 }
 
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
@@ -129,8 +133,8 @@ case "$status" in
 esac
 
 [ -x "$root/bin/sys/osarch-update" ] || fail "bin/sys/osarch-update is missing or not executable"
-[ -f "$root/lib/sh/osarch.lib.sh" ] || fail "lib/sh/osarch.lib.sh is missing"
-[ ! -x "$root/lib/sh/osarch.lib.sh" ] || fail "lib/sh/osarch.lib.sh must not be executable"
+[ -f "$root/lib/sys/sh/osarch.lib.sh" ] || fail "lib/sys/sh/osarch.lib.sh is missing"
+[ ! -x "$root/lib/sys/sh/osarch.lib.sh" ] || fail "lib/sys/sh/osarch.lib.sh must not be executable"
 command -v readlink >/dev/null 2>&1 || error "readlink is unavailable"
 
 case "$(command -p -- uname -s 2>/dev/null)" in
@@ -158,7 +162,7 @@ rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot reset
 stdout="$tmp/stdout"
 stderr="$tmp/stderr"
 
-"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
+"$fixture/m" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
   cat "$stderr" >&2
   fail "osarch-update failed on supported host"
 }
@@ -178,7 +182,7 @@ stderr="$tmp/stderr"
 rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot replace active links for refresh test"
 ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create stale sys-osarch link"
 ln -s "ext-bogus" "$fixture/bin/ext-osarch" || error "cannot create stale ext-osarch link"
-"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
+"$fixture/m" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
   cat "$stderr" >&2
   fail "osarch-update could not refresh stale active links"
 }
@@ -188,7 +192,7 @@ ln -s "ext-bogus" "$fixture/bin/ext-osarch" || error "cannot create stale ext-os
 rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot prepare non-symlink conflict fixture"
 ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create preflight sys link"
 printf -- '%s\n' "keep" > "$fixture/bin/ext-osarch" || error "cannot create non-symlink ext-osarch fixture"
-"$fixture/rumiai-os" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update overwrote non-symlink active-link pathname"
+"$fixture/m" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update overwrote non-symlink active-link pathname"
 [ "$(readlink "$fixture/bin/sys-osarch")" = "sys-bogus" ] || fail "osarch-update partially changed sys-osarch before rejecting ext-osarch conflict"
 [ -f "$fixture/bin/ext-osarch" ] && [ ! -L "$fixture/bin/ext-osarch" ] || fail "non-symlink ext-osarch object was replaced"
 [ "$(cat "$fixture/bin/ext-osarch")" = "keep" ] || fail "non-symlink ext-osarch content changed"
@@ -207,7 +211,7 @@ else
 fi
 stub_osarch="${stub_platform}-${stub_architecture}"
 
-cat > "$fixture_stub/lib/sh/osarch.lib.sh" <<EOF
+cat > "$fixture_stub/lib/sys/sh/osarch.lib.sh" <<EOF
 m_OSARCH_OS="$stub_platform"
 m_OSARCH_ARCH="$stub_architecture"
 m_OSARCH="$stub_osarch"
@@ -215,7 +219,7 @@ export -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
 readonly -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
 EOF
 
-"$fixture_stub/rumiai-os" "$fixture_stub/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
+"$fixture_stub/m" "$fixture_stub/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
   cat "$stderr" >&2
   fail "osarch-update failed with deterministic detection-library fixture"
 }
@@ -226,7 +230,7 @@ fixture_unsupported="$tmp/root-unsupported"
 make_fixture "$root" "$fixture_unsupported" || error "cannot materialize unsupported-osarch fixture"
 rm -f "$fixture_unsupported/bin/sys-osarch" "$fixture_unsupported/bin/ext-osarch" || error "cannot reset unsupported-osarch active links"
 
-cat > "$fixture_unsupported/lib/sh/osarch.lib.sh" <<'EOF'
+cat > "$fixture_unsupported/lib/sys/sh/osarch.lib.sh" <<'EOF'
 m_OSARCH_OS="unsupported-os"
 m_OSARCH_ARCH="x86_64"
 m_OSARCH="unsupported-os-x86_64"
@@ -234,13 +238,13 @@ export -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
 readonly -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
 EOF
 
-"$fixture_unsupported/rumiai-os" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported operating system"
+"$fixture_unsupported/m" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported operating system"
 [ ! -e "$fixture_unsupported/bin/sys-unsupported-os-x86_64" ] || fail "unsupported OS created a sys-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/ext-unsupported-os-x86_64" ] || fail "unsupported OS created an ext-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/sys-osarch" ] && [ ! -L "$fixture_unsupported/bin/sys-osarch" ] || fail "unsupported OS changed sys-osarch"
 [ ! -e "$fixture_unsupported/bin/ext-osarch" ] && [ ! -L "$fixture_unsupported/bin/ext-osarch" ] || fail "unsupported OS changed ext-osarch"
 
-cat > "$fixture_unsupported/lib/sh/osarch.lib.sh" <<'EOF'
+cat > "$fixture_unsupported/lib/sys/sh/osarch.lib.sh" <<'EOF'
 m_OSARCH_OS="linux"
 m_OSARCH_ARCH="unsupported-arch"
 m_OSARCH="linux-unsupported-arch"
@@ -248,7 +252,7 @@ export -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
 readonly -- m_OSARCH_OS m_OSARCH_ARCH m_OSARCH
 EOF
 
-"$fixture_unsupported/rumiai-os" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported architecture"
+"$fixture_unsupported/m" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported architecture"
 [ ! -e "$fixture_unsupported/bin/sys-linux-unsupported-arch" ] || fail "unsupported architecture created a sys-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/ext-linux-unsupported-arch" ] || fail "unsupported architecture created an ext-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/sys-osarch" ] && [ ! -L "$fixture_unsupported/bin/sys-osarch" ] || fail "unsupported architecture changed sys-osarch"

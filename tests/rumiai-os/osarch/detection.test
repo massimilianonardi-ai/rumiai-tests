@@ -38,10 +38,10 @@ rumiai_test_target_validate()
 {
   candidate="$1"
   [ -n "$candidate" ] || return "1"
-  [ -f "$candidate/rumiai-os" ] || return "1"
+  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return "1"
   rumiai_test_target_origin_ok "$candidate" || return "1"
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
-  [ -f "$target_root/rumiai-os" ] || return "1"
+  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return "1"
   printf -- '%s\n' "$target_root"
 }
 
@@ -115,13 +115,13 @@ case "$status" in
     ;;
 esac
 
-library="$root/lib/sh/osarch.lib.sh"
-[ -f "$library" ] || fail "lib/sh/osarch.lib.sh is missing"
-[ ! -x "$library" ] || fail "lib/sh/osarch.lib.sh must not be executable"
+library="$root/lib/sys/sh/osarch.lib.sh"
+[ -f "$library" ] || fail "lib/sys/sh/osarch.lib.sh is missing"
+[ ! -x "$library" ] || fail "lib/sys/sh/osarch.lib.sh must not be executable"
 
 IFS= read -r first_line < "$library" || first_line=""
 case "$first_line" in
-  "#!"*) fail "lib/sh/osarch.lib.sh must not contain a shebang" ;;
+  "#!"*) fail "lib/sys/sh/osarch.lib.sh must not contain a shebang" ;;
 esac
 
 raw_os="$(command -p -- uname -s 2>/dev/null)" || error "cannot detect host operating system"
@@ -148,12 +148,12 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 probe="$tmp/probe"
 cat > "$probe" <<'EOF'
-. "$m_LIB_DIR/sh/osarch.lib.sh"
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
 printf -- '%s|%s|%s\n' "$m_OSARCH_OS" "$m_OSARCH_ARCH" "$m_OSARCH"
 command -p -- sh -c 'printf -- "%s|%s|%s\n" "$m_OSARCH_OS" "$m_OSARCH_ARCH" "$m_OSARCH"'
 EOF
 
-output="$("$root/rumiai-os" "$probe")" || fail "osarch.lib.sh could not be sourced through the RumiAI runtime"
+output="$("$root/m" "$probe")" || fail "osarch.lib.sh could not be sourced through the m runtime"
 expected_line="${expected_os}|${expected_arch}|${expected_osarch}"
 expected_output="${expected_line}
 ${expected_line}"

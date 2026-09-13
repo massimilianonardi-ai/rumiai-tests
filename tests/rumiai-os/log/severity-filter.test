@@ -19,10 +19,10 @@ rumiai_test_target_validate()
 {
     candidate=$1
     [ -n "$candidate" ] || return 1
-    [ -f "$candidate/rumiai-os" ] || return 1
+    [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return 1
     rumiai_test_target_origin_ok "$candidate" || return 1
     target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
-    [ -f "$target_root/rumiai-os" ] || return 1
+    [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return 1
     printf '%s\n' "$target_root"
 }
 rumiai_test_target_find()
@@ -64,8 +64,8 @@ case $status in
     2) fail 'invalid explicit rumiai-os target' ;;
     *) error 'target discovery failed' ;;
 esac
-entry=$root/rumiai-os
-[ -x "$entry" ] || fail 'rumiai-os entrypoint is not executable'
+entry=$root/m
+[ -x "$entry" ] || fail 'm entrypoint is not executable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-log-severity-filter-$$
 umask 077
