@@ -15,7 +15,7 @@ error()
 }
 
 # Target discovery authoring reference:
-# massimilianonardi-ai/rumiai-tests@71963b08476ff5c4d5557ed593cd6c4c8414b63c:lib/rumiai-os-target.lib
+# massimilianonardi-ai/rumiai-tests@864de562066d1ab41193672874a37e1cb57a3b6c:lib/rumiai-os-target.lib
 # Kept inline intentionally so this permanent test remains historically independent.
 rumiai_test_target_have()
 {
@@ -36,10 +36,14 @@ rumiai_test_target_rumiai_os_validate()
 {
   candidate=$1
   [ -n "$candidate" ] || return 1
+  [ -f "$candidate/m" ] || return 1
   [ -f "$candidate/rumiai-os" ] || return 1
+  [ -f "$candidate/rumiai-os-sh" ] || return 1
   rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
+  [ -f "$target_root/m" ] || return 1
   [ -f "$target_root/rumiai-os" ] || return 1
+  [ -f "$target_root/rumiai-os-sh" ] || return 1
   printf -- '%s\n' "$target_root"
 }
 
@@ -99,14 +103,15 @@ case "$status" in
   *) error "target discovery failed" ;;
 esac
 
-library="$root/lib/sh/pkg-versions.lib.sh"
-local_library="$root/lib/sh/pkg-local.lib.sh"
+library="$root/lib/sys/sh/pkg-versions.lib.sh"
+local_library="$root/lib/sys/sh/pkg-local.lib.sh"
 command_path="$root/bin/sys/pkg"
-[ -f "$library" ] || fail "lib/sh/pkg-versions.lib.sh is missing"
+[ -f "$library" ] || fail "lib/sys/sh/pkg-versions.lib.sh is missing"
 [ ! -x "$library" ] || fail "pkg-versions library must not be executable"
-[ -f "$local_library" ] || fail "lib/sh/pkg-local.lib.sh is missing"
+[ -f "$local_library" ] || fail "lib/sys/sh/pkg-local.lib.sh is missing"
 [ ! -x "$local_library" ] || fail "pkg-local library must not be executable"
 [ -x "$command_path" ] || fail "bin/sys/pkg is missing or not executable"
+[ "$(sed -n '1p' "$command_path")" = '#!/usr/bin/env m' ] || fail "pkg command entry has wrong shebang"
 
 PATH="$root/bin/sys:$PATH"
 export PATH
@@ -123,9 +128,9 @@ m_PKG_DIR="$tmp/pkg"
 m_BIN_DIR="$tmp/bin"
 m_BIN_EXT_DIR="$m_BIN_DIR/ext"
 m_OSARCH="linux-arm64"
-m_CACHE_DIR="$tmp/cache-must-remain-absent"
+state_sentinel="$tmp/state-must-remain-absent"
 mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" || error "cannot create fixture roots"
-export m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_OSARCH m_CACHE_DIR
+export m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_OSARCH
 
 log()
 {
@@ -136,7 +141,7 @@ log()
 
 reset_fixture()
 {
-  rm -rf -- "$m_PKG_DIR" "$m_BIN_DIR" "$m_CACHE_DIR" || return 1
+  rm -rf -- "$m_PKG_DIR" "$m_BIN_DIR" "$state_sentinel" || return 1
   mkdir -p -- "$m_PKG_DIR" "$m_BIN_DIR" || return 1
 }
 
@@ -199,6 +204,6 @@ expect_status 2 pkg_versions Bad
 expect_status 2 pkg_versions 'tool!foo-bar'
 expect_status 2 pkg_versions tool extra
 
-[ ! -e "$m_CACHE_DIR" ] && [ ! -L "$m_CACHE_DIR" ] || fail "pkg versions touched catalog/cache state"
+[ ! -e "$state_sentinel" ] && [ ! -L "$state_sentinel" ] || fail "pkg versions touched state/catalog data"
 
 exit 0
