@@ -26,11 +26,15 @@ rumiai_test_target_rumiai_os_validate() {
     candidate=$1
 
     [ -n "$candidate" ] || return 1
+    [ -f "$candidate/m" ] || return 1
     [ -f "$candidate/rumiai-os" ] || return 1
+    [ -f "$candidate/rumiai-os-sh" ] || return 1
     rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
 
     target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
+    [ -f "$target_root/m" ] || return 1
     [ -f "$target_root/rumiai-os" ] || return 1
+    [ -f "$target_root/rumiai-os-sh" ] || return 1
 
     printf '%s\n' "$target_root"
 }
