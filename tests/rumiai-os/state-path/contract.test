@@ -1,0 +1,53 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/state-path/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
+validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
+find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
+resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
+expect_status() { expected=$1; shift; "$@" >/dev/null 2>&1; actual=$?; [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"; }
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
+root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
+
+tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture=$tmp/root
+mkdir -p "$fixture/pkg" "$fixture/src" || error 'cannot create fixture roots'
+for file in m rumiai-os rumiai-os-sh product-name product-version; do cp "$root/$file" "$fixture/$file" || error "cannot copy $file"; done
+for dir in bin lib lang state; do cp -R "$root/$dir" "$fixture/$dir" || error "cannot copy $dir"; done
+chmod u+x "$fixture/m" "$fixture/rumiai-os" "$fixture/rumiai-os-sh" || error 'cannot prepare fixture entrypoints'
+command=$fixture/bin/sys/state-path
+[ -x "$command" ] || fail 'state-path is not executable'
+
+before=$tmp/before; after=$tmp/after
+find "$fixture/state" -print | LC_ALL=C sort > "$before" || error 'cannot snapshot state before resolver calls'
+
+system_conf=$("$fixture/m" "$command" system pkg foo conf) || fail 'system package conf resolution failed'
+[ "$system_conf" = "$fixture/state/system/profile/main/pkg/foo/conf" ] || fail "unexpected system package conf path: $system_conf"
+system_tmp=$("$fixture/m" "$command" system sys worker tmp) || fail 'system sys tmp resolution failed'
+[ "$system_tmp" = "$fixture/state/system/profile/main/sys/worker/tmp" ] || fail "unexpected system sys tmp path: $system_tmp"
+user_home=$("$fixture/m" "$command" user pkg foo home) || fail 'user package home resolution failed'
+case "$user_home" in "$fixture/state/user/"*/pkg/foo/home) :;; *) fail "unexpected user package home path: $user_home";; esac
+user_root=${user_home%/pkg/foo/home}
+principal=${user_root#"$fixture/state/user/"}
+uid=$(id -u) || error 'cannot resolve effective uid'
+case "$principal" in *-"$uid") host_id=${principal%-"$uid"};; *) fail 'user principal does not end in effective uid';; esac
+[ "${#host_id}" -eq 32 ] || fail 'host id is not 32 characters'
+case "$host_id" in *[!0123456789abcdef]*) fail 'host id is not normalized lowercase hex';; esac
+user_instance=$("$fixture/m" "$command" user pkg foo conf test) || fail 'state instance resolution failed'
+[ "$user_instance" = "$user_root/pkg/foo@!test/conf" ] || fail "unexpected state instance path: $user_instance"
+
+expect_status 2 "$fixture/m" "$command" other pkg foo conf
+expect_status 2 "$fixture/m" "$command" user other foo conf
+expect_status 2 "$fixture/m" "$command" user pkg 'Bad!' conf
+expect_status 2 "$fixture/m" "$command" user pkg foo other
+expect_status 2 "$fixture/m" "$command" user sys foo conf test
+expect_status 2 "$fixture/m" "$command" user pkg foo conf 'Bad!'
+expect_status 2 "$fixture/m" "$command" user pkg foo
+
+find "$fixture/state" -print | LC_ALL=C sort > "$after" || error 'cannot snapshot state after resolver calls'
+cmp -s "$before" "$after" || fail 'state-path mutated state while resolving paths'
+exit 0
