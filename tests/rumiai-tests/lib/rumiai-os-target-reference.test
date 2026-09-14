@@ -2,22 +2,26 @@
 
 TEST_ID=rumiai-tests/lib/rumiai-os-target-reference.test
 
-fail() {
+fail()
+{
     printf '%s\n' "$TEST_ID: $*" >&2
     exit 1
 }
 
-error() {
+error()
+{
     printf '%s\n' "$TEST_ID: $*" >&2
     exit 3
 }
 
-skip() {
+skip()
+{
     printf '%s\n' "$TEST_ID: $*" >&2
     exit 2
 }
 
-resolve_test_dir() {
+resolve_test_dir()
+{
     self=$0
     case $self in
         */*) : ;;
@@ -32,8 +36,6 @@ test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 rumiai_tests_group=${test_dir%/*}
 tests_dir=${rumiai_tests_group%/*}
 suite_root=${tests_dir%/*}
-interactive_group=${suite_root##*/}
-[ -n "$interactive_group" ] || :
 
 target_lib=$suite_root/lib/rumiai-os-target.lib
 [ -f "$target_lib" ] || error 'lib/rumiai-os-target.lib is unavailable'
@@ -55,7 +57,9 @@ case $root in
     *) fail "discovered target root is not absolute: $root" ;;
 esac
 
+[ -f "$root/m" ] || fail 'discovered target has no m runtime'
 [ -f "$root/rumiai-os" ] || fail 'discovered target has no rumiai-os entrypoint'
+[ -f "$root/rumiai-os-sh" ] || fail 'discovered target has no rumiai-os-sh entrypoint'
 rumiai_test_target_rumiai_os_origin_ok "$root" || fail 'discovered target has unexpected Git origin'
 physical=$(CDPATH= cd -- "$root" 2>/dev/null && pwd -P) || error 'cannot canonicalize discovered root'
 [ "$physical" = "$root" ] || fail "discovered root is not physical: $root -> $physical"
