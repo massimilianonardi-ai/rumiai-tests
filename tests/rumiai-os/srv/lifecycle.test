@@ -57,6 +57,10 @@ cat > "$fixture/bin/ext/demo-start" <<'EOF_DEMO'
 #!/bin/sh
 trap 'exit 0' TERM HUP INT
 printf '%s\n' ready
+if [ -n "${TEST_SERVICE_STARTS-}" ]
+then
+  printf '%s\n' "$$" >> "$TEST_SERVICE_STARTS"
+fi
 while :
 do
   sleep 1
@@ -93,10 +97,12 @@ grep -Fx ready "$log_file" >/dev/null 2>&1 || fail 'service output was not redir
 pid_exists "$service_pid" || fail 'service died after idempotent start'
 
 rm "$runtime/owner" || error 'cannot prepare incomplete live metadata fixture'
-set +e
-"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/live-invalid.out" 2> "$tmp/live-invalid.err"
-status=$?
-set -e
+if "$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/live-invalid.out" 2> "$tmp/live-invalid.err"
+then
+  status=0
+else
+  status=$?
+fi
 [ "$status" -eq 1 ] || fail "incomplete live metadata returned $status instead of 1"
 pid_exists "$service_pid" || fail 'incomplete live metadata handling killed the service'
 [ -d "$runtime" ] || fail 'incomplete live metadata was removed while process remained alive'
@@ -106,6 +112,28 @@ printf '%s\n' "$(ps -p "$$" -o pid= | awk 'NR == 1 { print $1 }')" > "$runtime/o
 pid_exists "$service_pid" && fail 'service still alive after stop'
 [ ! -e "$runtime" ] || fail 'runtime metadata remained after stop'
 SERVICE_PIDS=
+
+TEST_SERVICE_STARTS=$tmp/service-starts
+export TEST_SERVICE_STARTS
+: > "$TEST_SERVICE_STARTS" || error 'cannot prepare concurrent start marker'
+"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/concurrent-a.out" 2> "$tmp/concurrent-a.err" &
+concurrent_a=$!
+"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/concurrent-b.out" 2> "$tmp/concurrent-b.err" &
+concurrent_b=$!
+wait "$concurrent_a"; concurrent_a_status=$?
+wait "$concurrent_b"; concurrent_b_status=$?
+[ "$concurrent_a_status" -eq 0 ] && [ "$concurrent_b_status" -eq 0 ] || fail 'concurrent srv start failed'
+concurrent_starts=$(awk 'END { print NR + 0 }' "$TEST_SERVICE_STARTS") || error 'cannot count concurrent starts'
+[ "$concurrent_starts" -eq 1 ] || fail "concurrent start launched $concurrent_starts service instances"
+concurrent_pid=$(cat "$runtime/pid") || fail 'cannot read concurrent service pid'
+SERVICE_PIDS="$concurrent_pid"
+pid_exists "$concurrent_pid" || fail 'concurrent start service is not alive'
+lock_entries=$(find "$run_root" -name '.demo.lock*' -print) || error 'cannot inspect srv lock state'
+[ -z "$lock_entries" ] || fail 'concurrent start left srv lock artifacts'
+"$fixture/m" "$fixture/bin/sys/srv" stop demo > "$tmp/concurrent-stop.out" 2> "$tmp/concurrent-stop.err" || fail 'concurrent service stop failed'
+pid_exists "$concurrent_pid" && fail 'concurrent service still alive after stop'
+SERVICE_PIDS=
+unset TEST_SERVICE_STARTS
 
 cat > "$tmp/foreign-start" <<EOF_FOREIGN
 #!/bin/sh
@@ -142,23 +170,29 @@ pid_exists "$stale_recovery_pid" || fail 'service not alive after stale recovery
 "$fixture/m" "$fixture/bin/sys/srv" stop -f demo >/dev/null 2>&1 || fail 'cleanup stop after stale recovery failed'
 SERVICE_PIDS=
 
-set +e
-"$fixture/m" "$fixture/bin/sys/srv" start fail > "$tmp/fail-start.out" 2> "$tmp/fail-start.err"
-status=$?
-set -e
+if "$fixture/m" "$fixture/bin/sys/srv" start fail > "$tmp/fail-start.out" 2> "$tmp/fail-start.err"
+then
+  status=0
+else
+  status=$?
+fi
 [ "$status" -eq 1 ] || fail "immediate startup failure returned $status instead of 1"
 [ ! -e "$run_root/fail" ] || fail 'failed startup published runtime metadata'
 
-set +e
-"$fixture/m" "$fixture/bin/sys/srv" start missing > "$tmp/missing.out" 2> "$tmp/missing.err"
-status=$?
-set -e
+if "$fixture/m" "$fixture/bin/sys/srv" start missing > "$tmp/missing.out" 2> "$tmp/missing.err"
+then
+  status=0
+else
+  status=$?
+fi
 [ "$status" -eq 127 ] || fail "missing service target returned $status instead of 127"
 
-set +e
-"$fixture/m" "$fixture/bin/sys/srv" start BadName > "$tmp/invalid.out" 2> "$tmp/invalid.err"
-status=$?
-set -e
+if "$fixture/m" "$fixture/bin/sys/srv" start BadName > "$tmp/invalid.out" 2> "$tmp/invalid.err"
+then
+  status=0
+else
+  status=$?
+fi
 [ "$status" -eq 2 ] || fail "invalid service name returned $status instead of 2"
 
 exit 0
