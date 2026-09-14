@@ -65,4 +65,5 @@ pkg_deintegrate stateful 1 || fail 'v1 deintegration failed'; pkg_uninstall 'sta
 bad_range=$tmp/bad-range; bad_root=$tmp/bad-root; mkdir -p "$bad_range/var" "$bad_root"; printf '%s\n' item > "$bad_range/var/other"; printf '%s\n' value > "$bad_root/item"; expect_integration_failure bad-area 1 "$bad_range" "$bad_root"
 rm -rf "$bad_range" "$bad_root"; mkdir -p "$bad_range/var" "$bad_root/dir"; printf '%s\n' dir 'dir/file' > "$bad_range/var/conf"; printf '%s\n' value > "$bad_root/dir/file"; expect_integration_failure overlap 1 "$bad_range" "$bad_root"
 rm -rf "$bad_range" "$bad_root"; mkdir -p "$bad_range/var" "$bad_root"; printf '%s\n' item > "$bad_range/var/conf"; printf '%s\n' value > "$bad_root/item"; expect_integration_failure sys 1 "$bad_range" "$bad_root"
+rm -rf "$bad_range" "$bad_root"; mkdir -p "$bad_range/var" "$bad_root/.m"; printf '%s\n' '.m/env' > "$bad_range/var/conf"; printf '%s\n' upstream > "$bad_root/.m/env"; expect_integration_failure reserved-conf 1 "$bad_range" "$bad_root"
 exit 0
