@@ -1,0 +1,165 @@
+#!/bin/sh
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@dd5862bbb5b3a596164a74554e6dd57ee1bad4f0:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+
+TEST_ID=rumiai-os/bootstrap/system-profile-selector.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
+    esac
+    return 1
+}
+rumiai_test_target_rumiai_os_validate() {
+    target_candidate=$1
+    [ -n "$target_candidate" ] || return 1
+    [ -d "$target_candidate" ] || return 1
+    target_candidate=$(CDPATH= cd -- "$target_candidate" 2>/dev/null && pwd -P) || return 1
+    target_repo_root=$(git -C "$target_candidate" rev-parse --show-toplevel 2>/dev/null) || return 1
+    target_repo_root=$(CDPATH= cd -- "$target_repo_root" 2>/dev/null && pwd -P) || return 1
+    [ "$target_repo_root" = "$target_candidate" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$target_candidate" || return 1
+    printf '%s\n' "$target_candidate"
+}
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    search_candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    while :; do
+        if rumiai_test_target_rumiai_os_validate "$search_candidate"; then return 0; fi
+        search_sibling="$search_candidate/rumiai-os"
+        if rumiai_test_target_rumiai_os_validate "$search_sibling"; then return 0; fi
+        [ "$search_candidate" != / ] || break
+        search_parent=${search_candidate%/*}; [ -n "$search_parent" ] || search_parent=/
+        [ "$search_parent" != "$search_candidate" ] || break
+        search_candidate=$search_parent
+    done
+    return 1
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+expect_boot_failure() {
+    if "$fixture/m" "$probe" >/dev/null 2>&1; then
+        fail "$1 unexpectedly booted"
+    fi
+}
+
+probe_profile() {
+    probe_output=$("$fixture/m" "$probe" 2>/dev/null) || fail "$1 did not boot"
+    probe_state=$(printf '%s\n' "$probe_output" | sed -n '1p')
+    probe_run=$(printf '%s\n' "$probe_output" | sed -n '2p')
+    probe_tmp=$(printf '%s\n' "$probe_output" | sed -n '3p')
+    [ "$probe_state" = "$selector_dir/profile/$1" ] || fail "$1 resolved unexpected m_STATE_SYS_DIR: $probe_state"
+    [ "$probe_run" = "$selector_dir/profile/$1/sys/selector-test/run" ] || fail "$1 resolved unexpected run path: $probe_run"
+    [ "$probe_tmp" = "$selector_dir/profile/$1/sys/selector-test/tmp" ] || fail "$1 resolved unexpected tmp path: $probe_tmp"
+}
+
+switch_profile() {
+    switch_target=$1
+    switch_new="$selector_dir/current-new.test"
+    switch_old="$selector_dir/current-old.test"
+    [ ! -e "$switch_new" ] && [ ! -L "$switch_new" ] || fail 'prepared selector pathname already exists'
+    [ ! -e "$switch_old" ] && [ ! -L "$switch_old" ] || fail 'old selector pathname already exists'
+    ln -s "profile/$switch_target" "$switch_new" || fail 'cannot prepare new selector'
+    mv "$selector_dir/current" "$switch_old" || fail 'cannot preserve old selector'
+    [ ! -e "$selector_dir/current" ] && [ ! -L "$selector_dir/current" ] || fail 'current remained present between selector moves'
+    if ! mv "$switch_new" "$selector_dir/current"; then
+        mv "$switch_old" "$selector_dir/current" >/dev/null 2>&1 || :
+        fail 'cannot publish prepared selector'
+    fi
+    rm "$switch_old" || fail 'cannot remove old selector after successful switch'
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
+root=$(rumiai_test_target_rumiai_os_find "$start")
+status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+for required in m bin lib lang state; do
+    [ -e "$root/$required" ] || fail "target lacks $required"
+done
+
+tmp=${TMPDIR:-/tmp}/rumiai-system-profile-selector-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fixture=$tmp/root
+mkdir "$fixture" || error 'cannot create fixture root'
+cp "$root/m" "$fixture/m" || error 'cannot copy m bootstrap'
+cp -R "$root/bin" "$fixture/bin" || error 'cannot copy bin tree'
+cp -R "$root/lib" "$fixture/lib" || error 'cannot copy lib tree'
+cp -R "$root/lang" "$fixture/lang" || error 'cannot copy lang tree'
+cp -R "$root/state" "$fixture/state" || error 'cannot copy state tree'
+
+selector_dir=$fixture/state/system
+[ -L "$selector_dir/current" ] || fail 'initial current selector is not a symlink'
+[ "$(readlink "$selector_dir/current")" = 'profile/main' ] || fail 'initial selector is not relative profile/main'
+mkdir -p "$selector_dir/profile/other" || error 'cannot create alternate profile'
+
+probe=$tmp/probe
+cat > "$probe" <<'EOF_PROBE'
+printf '%s\n' "$m_STATE_SYS_DIR"
+state-path system sys selector-test run
+state-path system sys selector-test tmp
+EOF_PROBE
+
+probe_profile main
+main_run=$probe_run
+main_tmp=$probe_tmp
+
+mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage missing-selector case'
+expect_boot_failure 'missing selector'
+mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore missing-selector case'
+
+mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage broken-selector case'
+ln -s profile/missing "$selector_dir/current" || error 'cannot create broken selector'
+expect_boot_failure 'broken selector'
+rm "$selector_dir/current" || error 'cannot remove broken selector'
+mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore broken-selector case'
+
+mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage invalid-selector case'
+ln -s "$selector_dir/profile/main" "$selector_dir/current" || error 'cannot create absolute selector'
+expect_boot_failure 'absolute selector'
+rm "$selector_dir/current" || error 'cannot remove absolute selector'
+mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore invalid-selector case'
+
+switch_profile other
+[ "$(readlink "$selector_dir/current")" = 'profile/other' ] || fail 'successful switch did not publish relative selector'
+probe_profile other
+[ "$probe_run" != "$main_run" ] || fail 'run state is shared across system profiles'
+[ "$probe_tmp" != "$main_tmp" ] || fail 'tmp state is shared across system profiles'
+
+switch_profile main
+probe_profile main
+
+ln -s profile/other "$selector_dir/current-new.test" || error 'cannot prepare recovery selector'
+mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot preserve selector for recovery case'
+rm "$selector_dir/current-new.test" || error 'cannot force prepared-selector loss'
+if mv "$selector_dir/current-new.test" "$selector_dir/current" >/dev/null 2>&1; then
+    fail 'forced selector publication failure unexpectedly succeeded'
+fi
+mv "$selector_dir/current-old.test" "$selector_dir/current" || fail 'cannot recover old selector after publication failure'
+[ "$(readlink "$selector_dir/current")" = 'profile/main' ] || fail 'recovery did not restore old relative selector'
+probe_profile main
+
+exit 0
