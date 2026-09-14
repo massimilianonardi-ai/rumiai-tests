@@ -1,0 +1,168 @@
+#!/bin/sh
+
+# Target discovery primitive copied from:
+# massimilianonardi-ai/rumiai-tests@37a460835e3970f2515e3dd593a310a026dad793:lib/rumiai-os-target.lib
+# Copied inline intentionally to preserve test independence.
+
+TEST_ID="rumiai-os/bootstrap/branded-path-prepend.test"
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+rumiai_test_target_have() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+rumiai_test_target_rumiai_os_origin_ok() {
+    candidate=$1
+    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
+    case $origin in
+        https://github.com/massimilianonardi-ai/rumiai-os.git|\
+        git@github.com:massimilianonardi-ai/rumiai-os.git|\
+        ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+rumiai_test_target_rumiai_os_validate() {
+    target_candidate="$1"
+    [ -n "$target_candidate" ] || return 1
+    [ -d "$target_candidate" ] || return 1
+    target_candidate="$(CDPATH= cd -- "$target_candidate" 2>/dev/null && pwd -P)" || return 1
+    target_repo_root="$(git -C "$target_candidate" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    target_repo_root="$(CDPATH= cd -- "$target_repo_root" 2>/dev/null && pwd -P)" || return 1
+    [ "$target_repo_root" = "$target_candidate" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$target_candidate" || return 1
+    printf '%s\n' "$target_candidate"
+}
+
+rumiai_test_target_rumiai_os_find() {
+    start=$1
+    rumiai_test_target_have git || return 3
+    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
+    then
+        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
+        return 0
+    fi
+    search_candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
+    while :
+    do
+        if rumiai_test_target_rumiai_os_validate "$search_candidate"
+        then
+            return 0
+        fi
+        search_sibling="$search_candidate/rumiai-os"
+        if rumiai_test_target_rumiai_os_validate "$search_sibling"
+        then
+            return 0
+        fi
+        [ "$search_candidate" != / ] || break
+        search_parent="${search_candidate%/*}"
+        [ -n "$search_parent" ] || search_parent="/"
+        [ "$search_parent" != "$search_candidate" ] || break
+        search_candidate="$search_parent"
+    done
+    return 1
+}
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+[ -x "$root/m" ] || fail 'm target runtime is not executable'
+[ -x "$root/rumiai-os-sh" ] || fail 'rumiai-os-sh target entrypoint is not executable'
+[ -x "$root/rumiai-os" ] || fail 'rumiai-os target entrypoint is not executable'
+
+tmp="${TMPDIR:-/tmp}/rumiai-branded-path-prepend-$$"
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fixture="$tmp/rumiai-os"
+mkdir -p "$fixture/pkg" "$fixture/src" || error 'cannot create fixture roots'
+
+for file in m rumiai-os-sh product-name product-version
+do
+    cp "$root/$file" "$fixture/$file" || error "cannot copy $file"
+done
+for dir in bin lib lang state
+do
+    cp -R "$root/$dir" "$fixture/$dir" || error "cannot copy $dir"
+done
+ln -s rumiai-os-sh "$fixture/rumiai-os" || error 'cannot create branded product entrypoint fixture'
+chmod u+x "$fixture/m" "$fixture/rumiai-os-sh" || error 'cannot prepare fixture entrypoints'
+
+probe_shell="$fixture/bin/sys/shell"
+cat > "$probe_shell" <<'EOT'
+#!/bin/sh
+printf '%s\n' "${PATH-}" > "$TEST_PATH_RECORD"
+printf '%s\n' "${1-}" > "$TEST_ARG_RECORD"
+exit 0
+EOT
+chmod 700 "$probe_shell" || error 'cannot make shell probe executable'
+
+input_path="/usr/bin:/bin"
+expected_path="$fixture/bin/ai-osarch:$fixture/bin/ai:$fixture/bin/sys-osarch:$fixture/bin/sys:$fixture/bin/ext-osarch:$fixture/bin/ext:$input_path"
+
+run_entry() {
+    entry="$1"
+    label="$2"
+    path_record="$tmp/$label.path"
+    arg_record="$tmp/$label.arg"
+    transcript="$tmp/$label.transcript"
+
+    (
+        unset LC_ALL LC_MESSAGES
+        LANG=C
+        PATH=$input_path
+        TEST_PATH_RECORD=$path_record
+        TEST_ARG_RECORD=$arg_record
+        export LANG PATH TEST_PATH_RECORD TEST_ARG_RECORD
+        "$entry" "sentinel-$label"
+    ) >"$transcript" 2>&1 || {
+        status=$?
+        cat "$transcript" >&2
+        fail "$label entrypoint returned $status"
+    }
+
+    [ -f "$path_record" ] || fail "$label entrypoint did not execute the shell probe"
+    [ "$(cat "$path_record")" = "$expected_path" ] || {
+        printf '%s\n' "$TEST_ID: expected PATH: $expected_path" >&2
+        printf '%s\n' "$TEST_ID: observed PATH: $(cat "$path_record")" >&2
+        exit 1
+    }
+    [ "$(cat "$arg_record")" = "sentinel-$label" ] || fail "$label entrypoint did not preserve arguments"
+    [ ! -s "$transcript" ] || {
+        cat "$transcript" >&2
+        fail "$label entrypoint produced unexpected output"
+    }
+}
+
+run_entry "$fixture/rumiai-os-sh" rumiai-os-sh
+run_entry "$fixture/rumiai-os" rumiai-os
+
+exit 0
