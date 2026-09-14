@@ -13,7 +13,7 @@ expect_status() { expected=$1; shift; "$@" >/dev/null 2>&1; actual=$?; [ "$actua
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
 root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
 
-tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; tmp=$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P) || error 'cannot canonicalize temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 fixture=$tmp/root
 mkdir -p "$fixture/pkg" "$fixture/src" || error 'cannot create fixture roots'
 for file in m rumiai-os rumiai-os-sh product-name product-version; do cp "$root/$file" "$fixture/$file" || error "cannot copy $file"; done

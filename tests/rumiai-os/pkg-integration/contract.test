@@ -41,10 +41,10 @@ rumiai_test_target_rumiai_os_validate()
 {
   candidate="$1"
   [ -n "$candidate" ] || return "1"
-  [ -f "$candidate/rumiai-os" ] || return "1"
+  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return "1"
   rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
-  [ -f "$target_root/rumiai-os" ] || return "1"
+  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return "1"
   printf -- '%s\n' "$target_root"
 }
 
@@ -99,8 +99,8 @@ case "$status" in
   *) error "target discovery failed";;
 esac
 
-library="$root/lib/sh/pkg-integration.lib.sh"
-[ -f "$library" ] || fail "lib/sh/pkg-integration.lib.sh is missing"
+library="$root/lib/sys/sh/pkg-integration.lib.sh"
+[ -f "$library" ] || fail "lib/sys/sh/pkg-integration.lib.sh is missing"
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-integration-contract-$$"
 umask "077"
@@ -140,13 +140,16 @@ make_command()
   target=$3
   mkdir -p "$range/cmd" "$range/link" || return 1
   cat > "$range/cmd/$command_name" <<'EOF_COMMAND'
-#!/usr/bin/env rumiai-os
+#!/usr/bin/env m
 
-. "$m_LIB_DIR/sh/pkg-launch.lib.sh"
+. "$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+
+dbeaver_conf="$(state-path user pkg dbeaver conf)" || exit 1
+dbeaver_home="$(state-path user pkg dbeaver home)" || exit 1
 
 launcher "dbeaver" \
-  -configuration "$m_CONF_DIR/dbeaver/configuration" \
-  -data "$m_HOME_DIR/dbeaver/.workspace" \
+  -configuration "$dbeaver_conf/configuration" \
+  -data "$dbeaver_home/.workspace" \
   "$@"
 EOF_COMMAND
   chmod 600 "$range/cmd/$command_name" || return 1

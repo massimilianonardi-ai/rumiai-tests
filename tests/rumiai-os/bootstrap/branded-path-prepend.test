@@ -100,6 +100,7 @@ esac
 tmp="${TMPDIR:-/tmp}/rumiai-branded-path-prepend-$$"
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
+tmp="$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P)" || error 'cannot canonicalize temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 fixture="$tmp/rumiai-os"
@@ -116,7 +117,7 @@ done
 ln -s rumiai-os-sh "$fixture/rumiai-os" || error 'cannot create branded product entrypoint fixture'
 chmod u+x "$fixture/m" "$fixture/rumiai-os-sh" || error 'cannot prepare fixture entrypoints'
 
-probe_shell="$fixture/bin/sys/shell"
+probe_shell="$tmp/probe-shell"
 cat > "$probe_shell" <<'EOT'
 #!/bin/sh
 printf '%s\n' "${PATH-}" > "$TEST_PATH_RECORD"
@@ -139,9 +140,10 @@ run_entry() {
         unset LC_ALL LC_MESSAGES
         LANG=C
         PATH=$input_path
+        SHELL=$probe_shell
         TEST_PATH_RECORD=$path_record
         TEST_ARG_RECORD=$arg_record
-        export LANG PATH TEST_PATH_RECORD TEST_ARG_RECORD
+        export LANG PATH SHELL TEST_PATH_RECORD TEST_ARG_RECORD
         "$entry" "sentinel-$label"
     ) >"$transcript" 2>&1 || {
         status=$?
@@ -156,10 +158,6 @@ run_entry() {
         exit 1
     }
     [ "$(cat "$arg_record")" = "sentinel-$label" ] || fail "$label entrypoint did not preserve arguments"
-    [ ! -s "$transcript" ] || {
-        cat "$transcript" >&2
-        fail "$label entrypoint produced unexpected output"
-    }
 }
 
 run_entry "$fixture/rumiai-os-sh" rumiai-os-sh

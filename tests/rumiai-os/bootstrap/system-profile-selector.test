@@ -102,6 +102,7 @@ done
 tmp=${TMPDIR:-/tmp}/rumiai-system-profile-selector-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
+tmp=$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P) || error 'cannot canonicalize temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 fixture=$tmp/root
 mkdir "$fixture" || error 'cannot create fixture root'

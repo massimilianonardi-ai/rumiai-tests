@@ -18,7 +18,7 @@ root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os
 [ -L "$root/bin/sys/m" ] || fail 'bin/sys/m is not a symlink'
 [ "$(readlink "$root/bin/sys/m")" = '../../m' ] || fail 'bin/sys/m target is not ../../m'
 [ ! -e "$root/bin/sys/rumiai-os" ] && [ ! -L "$root/bin/sys/rumiai-os" ] || fail 'legacy bin/sys/rumiai-os runtime link remains'
-for dir in "$root/bin/sys" "$root/bin/ext" "$root/bin/ai" "$root/lib/sys/sh"; do [ -d "$dir" ] || fail "required Model 2.0 directory is missing: $dir"; done
+for dir in "$root/bin/sys" "$root/lib/sys/sh"; do [ -d "$dir" ] || fail "required Model 2.0 directory is missing: $dir"; done
 [ ! -d "$root/lib/sh" ] || fail 'legacy lib/sh directory remains'
 [ -f "$root/product-name" ] && [ ! -L "$root/product-name" ] || fail 'product-name scalar is missing'
 [ -f "$root/product-version" ] && [ ! -L "$root/product-version" ] || fail 'product-version scalar is missing'

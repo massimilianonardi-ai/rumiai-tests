@@ -109,6 +109,17 @@ make_fixture()
   chmod u+x "$fixture_root/m" "$fixture_root/rumiai-os" "$fixture_root/rumiai-os-sh" || return "1"
 }
 
+stub_host_id()
+{
+  fixture_root="$1"
+  cat > "$fixture_root/lib/sys/sh/host-id.lib.sh" <<'EOF_HOST_ID'
+host_id_get()
+{
+  printf -- '%s\n' '0123456789abcdef0123456789abcdef'
+}
+EOF_HOST_ID
+}
+
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 group_dir="${test_dir%/*}"
 rumiai_os_group="${group_dir%/*}"
@@ -158,7 +169,7 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 fixture="$tmp/root"
 make_fixture "$root" "$fixture" || error "cannot materialize isolated rumiai-os fixture"
-rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot reset active osarch links"
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" "$fixture/bin/ai-osarch" || error "cannot reset active osarch links"
 stdout="$tmp/stdout"
 stderr="$tmp/stderr"
 
@@ -174,32 +185,50 @@ stderr="$tmp/stderr"
 }
 [ -d "$fixture/bin/sys-$expected" ] || fail "osarch-update did not create sys-<osarch> directory"
 [ -d "$fixture/bin/ext-$expected" ] || fail "osarch-update did not create ext-<osarch> directory"
+[ -d "$fixture/bin/ai-$expected" ] || fail "osarch-update did not create ai-<osarch> directory"
 [ -L "$fixture/bin/sys-osarch" ] || fail "sys-osarch is not a symlink"
 [ -L "$fixture/bin/ext-osarch" ] || fail "ext-osarch is not a symlink"
+[ -L "$fixture/bin/ai-osarch" ] || fail "ai-osarch is not a symlink"
 [ "$(readlink "$fixture/bin/sys-osarch")" = "sys-$expected" ] || fail "sys-osarch target is incorrect or not relative"
 [ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$expected" ] || fail "ext-osarch target is incorrect or not relative"
+[ "$(readlink "$fixture/bin/ai-osarch")" = "ai-$expected" ] || fail "ai-osarch target is incorrect or not relative"
 
-rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot replace active links for refresh test"
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" "$fixture/bin/ai-osarch" || error "cannot replace active links for refresh test"
 ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create stale sys-osarch link"
 ln -s "ext-bogus" "$fixture/bin/ext-osarch" || error "cannot create stale ext-osarch link"
+ln -s "ai-bogus" "$fixture/bin/ai-osarch" || error "cannot create stale ai-osarch link"
 "$fixture/m" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" || {
   cat "$stderr" >&2
   fail "osarch-update could not refresh stale active links"
 }
 [ "$(readlink "$fixture/bin/sys-osarch")" = "sys-$expected" ] || fail "sys-osarch stale link was not refreshed"
 [ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$expected" ] || fail "ext-osarch stale link was not refreshed"
+[ "$(readlink "$fixture/bin/ai-osarch")" = "ai-$expected" ] || fail "ai-osarch stale link was not refreshed"
 
-rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" || error "cannot prepare non-symlink conflict fixture"
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" "$fixture/bin/ai-osarch" || error "cannot prepare non-symlink conflict fixture"
 ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create preflight sys link"
+ln -s "ai-bogus" "$fixture/bin/ai-osarch" || error "cannot create preflight ai link"
 printf -- '%s\n' "keep" > "$fixture/bin/ext-osarch" || error "cannot create non-symlink ext-osarch fixture"
 "$fixture/m" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update overwrote non-symlink active-link pathname"
 [ "$(readlink "$fixture/bin/sys-osarch")" = "sys-bogus" ] || fail "osarch-update partially changed sys-osarch before rejecting ext-osarch conflict"
+[ "$(readlink "$fixture/bin/ai-osarch")" = "ai-bogus" ] || fail "osarch-update partially changed ai-osarch before rejecting ext-osarch conflict"
 [ -f "$fixture/bin/ext-osarch" ] && [ ! -L "$fixture/bin/ext-osarch" ] || fail "non-symlink ext-osarch object was replaced"
 [ "$(cat "$fixture/bin/ext-osarch")" = "keep" ] || fail "non-symlink ext-osarch content changed"
 
+rm -f "$fixture/bin/sys-osarch" "$fixture/bin/ext-osarch" "$fixture/bin/ai-osarch" || error "cannot prepare ai non-symlink conflict fixture"
+ln -s "sys-bogus" "$fixture/bin/sys-osarch" || error "cannot create ai-conflict sys link"
+ln -s "ext-bogus" "$fixture/bin/ext-osarch" || error "cannot create ai-conflict ext link"
+printf -- '%s\n' "keep" > "$fixture/bin/ai-osarch" || error "cannot create non-symlink ai-osarch fixture"
+"$fixture/m" "$fixture/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update overwrote non-symlink ai-osarch pathname"
+[ "$(readlink "$fixture/bin/sys-osarch")" = "sys-bogus" ] || fail "osarch-update partially changed sys-osarch before rejecting ai-osarch conflict"
+[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-bogus" ] || fail "osarch-update partially changed ext-osarch before rejecting ai-osarch conflict"
+[ -f "$fixture/bin/ai-osarch" ] && [ ! -L "$fixture/bin/ai-osarch" ] || fail "non-symlink ai-osarch object was replaced"
+[ "$(cat "$fixture/bin/ai-osarch")" = "keep" ] || fail "non-symlink ai-osarch content changed"
+
 fixture_stub="$tmp/root-stub"
 make_fixture "$root" "$fixture_stub" || error "cannot materialize library-driven fixture"
-rm -f "$fixture_stub/bin/sys-osarch" "$fixture_stub/bin/ext-osarch" || error "cannot reset stub active links"
+rm -f "$fixture_stub/bin/sys-osarch" "$fixture_stub/bin/ext-osarch" "$fixture_stub/bin/ai-osarch" || error "cannot reset stub active links"
+stub_host_id "$fixture_stub" || error "cannot isolate stub host id"
 
 if [ "$expected" = "linux-x86_64" ]
 then
@@ -225,10 +254,12 @@ EOF
 }
 [ "$(readlink "$fixture_stub/bin/sys-osarch")" = "sys-$stub_osarch" ] || fail "osarch-update did not consume m_OSARCH from osarch.lib.sh"
 [ "$(readlink "$fixture_stub/bin/ext-osarch")" = "ext-$stub_osarch" ] || fail "osarch-update duplicated host detection instead of consuming osarch.lib.sh"
+[ "$(readlink "$fixture_stub/bin/ai-osarch")" = "ai-$stub_osarch" ] || fail "osarch-update did not apply m_OSARCH to the ai executable class"
 
 fixture_unsupported="$tmp/root-unsupported"
 make_fixture "$root" "$fixture_unsupported" || error "cannot materialize unsupported-osarch fixture"
-rm -f "$fixture_unsupported/bin/sys-osarch" "$fixture_unsupported/bin/ext-osarch" || error "cannot reset unsupported-osarch active links"
+rm -f "$fixture_unsupported/bin/sys-osarch" "$fixture_unsupported/bin/ext-osarch" "$fixture_unsupported/bin/ai-osarch" || error "cannot reset unsupported-osarch active links"
+stub_host_id "$fixture_unsupported" || error "cannot isolate unsupported fixture host id"
 
 cat > "$fixture_unsupported/lib/sys/sh/osarch.lib.sh" <<'EOF'
 m_OSARCH_OS="unsupported-os"
@@ -241,8 +272,10 @@ EOF
 "$fixture_unsupported/m" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported operating system"
 [ ! -e "$fixture_unsupported/bin/sys-unsupported-os-x86_64" ] || fail "unsupported OS created a sys-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/ext-unsupported-os-x86_64" ] || fail "unsupported OS created an ext-<osarch> directory"
+[ ! -e "$fixture_unsupported/bin/ai-unsupported-os-x86_64" ] || fail "unsupported OS created an ai-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/sys-osarch" ] && [ ! -L "$fixture_unsupported/bin/sys-osarch" ] || fail "unsupported OS changed sys-osarch"
 [ ! -e "$fixture_unsupported/bin/ext-osarch" ] && [ ! -L "$fixture_unsupported/bin/ext-osarch" ] || fail "unsupported OS changed ext-osarch"
+[ ! -e "$fixture_unsupported/bin/ai-osarch" ] && [ ! -L "$fixture_unsupported/bin/ai-osarch" ] || fail "unsupported OS changed ai-osarch"
 
 cat > "$fixture_unsupported/lib/sys/sh/osarch.lib.sh" <<'EOF'
 m_OSARCH_OS="linux"
@@ -255,7 +288,9 @@ EOF
 "$fixture_unsupported/m" "$fixture_unsupported/bin/sys/osarch-update" >"$stdout" 2>"$stderr" && fail "osarch-update accepted an unsupported architecture"
 [ ! -e "$fixture_unsupported/bin/sys-linux-unsupported-arch" ] || fail "unsupported architecture created a sys-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/ext-linux-unsupported-arch" ] || fail "unsupported architecture created an ext-<osarch> directory"
+[ ! -e "$fixture_unsupported/bin/ai-linux-unsupported-arch" ] || fail "unsupported architecture created an ai-<osarch> directory"
 [ ! -e "$fixture_unsupported/bin/sys-osarch" ] && [ ! -L "$fixture_unsupported/bin/sys-osarch" ] || fail "unsupported architecture changed sys-osarch"
 [ ! -e "$fixture_unsupported/bin/ext-osarch" ] && [ ! -L "$fixture_unsupported/bin/ext-osarch" ] || fail "unsupported architecture changed ext-osarch"
+[ ! -e "$fixture_unsupported/bin/ai-osarch" ] && [ ! -L "$fixture_unsupported/bin/ai-osarch" ] || fail "unsupported architecture changed ai-osarch"
 
 exit "0"
