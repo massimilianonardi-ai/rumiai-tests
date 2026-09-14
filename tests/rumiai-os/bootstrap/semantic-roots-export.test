@@ -45,7 +45,6 @@ root=$(rumiai_test_target_rumiai_os_find "$start")
 status=$?
 case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
 entry=$root/m
-expected_system=$(CDPATH= cd -- "$root/state/system/profile/main" 2>/dev/null && pwd -P) || fail 'cannot resolve main system profile'
 
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-semantic-roots-export-$$
 umask 077
@@ -65,7 +64,7 @@ command -p sh -c '
 [ "${m_SRC_DIR-}" = "$EXPECTED_SRC_DIR" ] || exit 47
 [ "${m_STATE_DIR-}" = "$EXPECTED_STATE_DIR" ] || exit 48
 [ "${m_STATE_SYS_DIR-}" = "$EXPECTED_STATE_SYS_DIR" ] || exit 49
-case "${m_STATE_USER_DIR-}" in "$EXPECTED_STATE_DIR/user/"*) : ;; *) exit 50 ;; esac
+[ "${m_STATE_USER_DIR-}" = "$EXPECTED_STATE_USER_DIR" ] || exit 50
 for legacy in m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR m_VAR_DIR
 do
     eval "present=\${$legacy+x}"
@@ -82,8 +81,9 @@ EXPECTED_PKG_DIR=$root/pkg
 EXPECTED_LANG_DIR=$root/lang
 EXPECTED_SRC_DIR=$root/src
 EXPECTED_STATE_DIR=$root/state
-EXPECTED_STATE_SYS_DIR=$expected_system
-export EXPECTED_ROOT EXPECTED_BOOTSTRAP_BIN EXPECTED_BIN_DIR EXPECTED_LIB_DIR EXPECTED_PKG_DIR EXPECTED_LANG_DIR EXPECTED_SRC_DIR EXPECTED_STATE_DIR EXPECTED_STATE_SYS_DIR
+EXPECTED_STATE_SYS_DIR=$root/state/system/current
+EXPECTED_STATE_USER_DIR=$root/state/user/current
+export EXPECTED_ROOT EXPECTED_BOOTSTRAP_BIN EXPECTED_BIN_DIR EXPECTED_LIB_DIR EXPECTED_PKG_DIR EXPECTED_LANG_DIR EXPECTED_SRC_DIR EXPECTED_STATE_DIR EXPECTED_STATE_SYS_DIR EXPECTED_STATE_USER_DIR
 
 (
     unset LC_ALL LC_MESSAGES m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR m_VAR_DIR

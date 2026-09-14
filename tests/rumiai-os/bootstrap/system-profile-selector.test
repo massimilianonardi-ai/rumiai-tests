@@ -57,20 +57,14 @@ resolve_test_dir() {
     CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-expect_boot_failure() {
-    if "$fixture/m" "$probe" >/dev/null 2>&1; then
-        fail "$1 unexpectedly booted"
-    fi
-}
-
-probe_profile() {
+probe_semantic_paths() {
     probe_output=$("$fixture/m" "$probe" 2>/dev/null) || fail "$1 did not boot"
     probe_state=$(printf '%s\n' "$probe_output" | sed -n '1p')
     probe_run=$(printf '%s\n' "$probe_output" | sed -n '2p')
     probe_tmp=$(printf '%s\n' "$probe_output" | sed -n '3p')
-    [ "$probe_state" = "$selector_dir/profile/$1" ] || fail "$1 resolved unexpected m_STATE_SYS_DIR: $probe_state"
-    [ "$probe_run" = "$selector_dir/profile/$1/sys/selector-test/run" ] || fail "$1 resolved unexpected run path: $probe_run"
-    [ "$probe_tmp" = "$selector_dir/profile/$1/sys/selector-test/tmp" ] || fail "$1 resolved unexpected tmp path: $probe_tmp"
+    [ "$probe_state" = "$selector_dir/current" ] || fail "$1 exported unexpected m_STATE_SYS_DIR: $probe_state"
+    [ "$probe_run" = "$selector_dir/current/sys/selector-test/run" ] || fail "$1 resolved unexpected run path: $probe_run"
+    [ "$probe_tmp" = "$selector_dir/current/sys/selector-test/tmp" ] || fail "$1 resolved unexpected tmp path: $probe_tmp"
 }
 
 switch_profile() {
@@ -124,34 +118,30 @@ state-path system sys selector-test run
 state-path system sys selector-test tmp
 EOF_PROBE
 
-probe_profile main
-main_run=$probe_run
-main_tmp=$probe_tmp
+probe_semantic_paths 'initial selector'
 
 mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage missing-selector case'
-expect_boot_failure 'missing selector'
+probe_semantic_paths 'missing selector'
 mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore missing-selector case'
 
 mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage broken-selector case'
 ln -s profile/missing "$selector_dir/current" || error 'cannot create broken selector'
-expect_boot_failure 'broken selector'
+probe_semantic_paths 'broken selector'
 rm "$selector_dir/current" || error 'cannot remove broken selector'
 mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore broken-selector case'
 
-mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage invalid-selector case'
+mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot stage absolute-selector case'
 ln -s "$selector_dir/profile/main" "$selector_dir/current" || error 'cannot create absolute selector'
-expect_boot_failure 'absolute selector'
+probe_semantic_paths 'absolute selector'
 rm "$selector_dir/current" || error 'cannot remove absolute selector'
-mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore invalid-selector case'
+mv "$selector_dir/current-old.test" "$selector_dir/current" || error 'cannot restore absolute-selector case'
 
 switch_profile other
 [ "$(readlink "$selector_dir/current")" = 'profile/other' ] || fail 'successful switch did not publish relative selector'
-probe_profile other
-[ "$probe_run" != "$main_run" ] || fail 'run state is shared across system profiles'
-[ "$probe_tmp" != "$main_tmp" ] || fail 'tmp state is shared across system profiles'
+probe_semantic_paths 'other selector'
 
 switch_profile main
-probe_profile main
+probe_semantic_paths 'restored main selector'
 
 ln -s profile/other "$selector_dir/current-new.test" || error 'cannot prepare recovery selector'
 mv "$selector_dir/current" "$selector_dir/current-old.test" || error 'cannot preserve selector for recovery case'
@@ -161,6 +151,6 @@ if mv "$selector_dir/current-new.test" "$selector_dir/current" >/dev/null 2>&1; 
 fi
 mv "$selector_dir/current-old.test" "$selector_dir/current" || fail 'cannot recover old selector after publication failure'
 [ "$(readlink "$selector_dir/current")" = 'profile/main' ] || fail 'recovery did not restore old relative selector'
-probe_profile main
+probe_semantic_paths 'recovered main selector'
 
 exit 0

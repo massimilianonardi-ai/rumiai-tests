@@ -26,19 +26,13 @@ before=$tmp/before; after=$tmp/after
 find "$fixture/state" -print | LC_ALL=C sort > "$before" || error 'cannot snapshot state before resolver calls'
 
 system_conf=$("$fixture/m" "$command" system pkg foo conf) || fail 'system package conf resolution failed'
-[ "$system_conf" = "$fixture/state/system/profile/main/pkg/foo/conf" ] || fail "unexpected system package conf path: $system_conf"
+[ "$system_conf" = "$fixture/state/system/current/pkg/foo/conf" ] || fail "unexpected system package conf path: $system_conf"
 system_tmp=$("$fixture/m" "$command" system sys worker tmp) || fail 'system sys tmp resolution failed'
-[ "$system_tmp" = "$fixture/state/system/profile/main/sys/worker/tmp" ] || fail "unexpected system sys tmp path: $system_tmp"
-user_home=$("$fixture/m" "$command" user pkg foo home) || fail 'user package home resolution failed'
-case "$user_home" in "$fixture/state/user/"*/pkg/foo/home) :;; *) fail "unexpected user package home path: $user_home";; esac
-user_root=${user_home%/pkg/foo/home}
-principal=${user_root#"$fixture/state/user/"}
-uid=$(id -u) || error 'cannot resolve effective uid'
-case "$principal" in *-"$uid") host_id=${principal%-"$uid"};; *) fail 'user principal does not end in effective uid';; esac
-[ "${#host_id}" -eq 32 ] || fail 'host id is not 32 characters'
-case "$host_id" in *[!0123456789abcdef]*) fail 'host id is not normalized lowercase hex';; esac
-user_instance=$("$fixture/m" "$command" user pkg foo conf test) || fail 'state instance resolution failed'
-[ "$user_instance" = "$user_root/pkg/foo@!test/conf" ] || fail "unexpected state instance path: $user_instance"
+[ "$system_tmp" = "$fixture/state/system/current/sys/worker/tmp" ] || fail "unexpected system sys tmp path: $system_tmp"
+user_home=$("$fixture/m" "$command" user pkg foo home) || fail 'default user package home resolution failed'
+[ "$user_home" = "$fixture/state/user/default/pkg/foo/home" ] || fail "unexpected default user package home path: $user_home"
+user_instance=$("$fixture/m" "$command" user pkg foo conf test) || fail 'default state instance resolution failed'
+[ "$user_instance" = "$fixture/state/user/default/pkg/foo@!test/conf" ] || fail "unexpected default state instance path: $user_instance"
 
 expect_status 2 "$fixture/m" "$command" other pkg foo conf
 expect_status 2 "$fixture/m" "$command" user other foo conf
@@ -48,6 +42,24 @@ expect_status 2 "$fixture/m" "$command" user sys foo conf test
 expect_status 2 "$fixture/m" "$command" user pkg foo conf 'Bad!'
 expect_status 2 "$fixture/m" "$command" user pkg foo
 
-find "$fixture/state" -print | LC_ALL=C sort > "$after" || error 'cannot snapshot state after resolver calls'
-cmp -s "$before" "$after" || fail 'state-path mutated state while resolving paths'
+find "$fixture/state" -print | LC_ALL=C sort > "$after" || error 'cannot snapshot state after default resolver calls'
+cmp -s "$before" "$after" || fail 'state-path mutated state while resolving default paths'
+
+mkdir -p "$fixture/state/user/identity-a" || error 'cannot create bound user target'
+ln -s identity-a "$fixture/state/user/current" || error 'cannot create global user binding'
+bound_before=$tmp/bound-before; bound_after=$tmp/bound-after
+find "$fixture/state" -print | LC_ALL=C sort > "$bound_before" || error 'cannot snapshot bound state before resolver calls'
+
+bound_home=$("$fixture/m" "$command" user pkg foo home) || fail 'bound user package home resolution failed'
+[ "$bound_home" = "$fixture/state/user/current/pkg/foo/home" ] || fail "unexpected bound user package home path: $bound_home"
+bound_instance=$("$fixture/m" "$command" user pkg foo conf test) || fail 'bound state instance resolution failed'
+[ "$bound_instance" = "$fixture/state/user/current/pkg/foo@!test/conf" ] || fail "unexpected bound state instance path: $bound_instance"
+
+find "$fixture/state" -print | LC_ALL=C sort > "$bound_after" || error 'cannot snapshot bound state after resolver calls'
+cmp -s "$bound_before" "$bound_after" || fail 'state-path mutated state while resolving bound paths'
+
+rm "$fixture/state/user/current" || error 'cannot remove global user binding'
+fallback_home=$("$fixture/m" "$command" user pkg foo home) || fail 'fallback user package home resolution failed'
+[ "$fallback_home" = "$fixture/state/user/default/pkg/foo/home" ] || fail "user resolver did not return to default after binding removal: $fallback_home"
+
 exit 0

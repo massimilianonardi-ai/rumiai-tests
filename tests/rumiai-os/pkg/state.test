@@ -20,8 +20,17 @@ for lib in "$integration_library" "$state_library" "$uninstall_library"; do [ -f
 case "$(sed -n '1p' "$state_library")" in '#!'*) fail 'pkg-state library has a shebang';; esac
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-state-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
-m_ROOT=$tmp/root; m_LIB_DIR=$root/lib; m_PKG_DIR=$m_ROOT/pkg; m_BIN_DIR=$m_ROOT/bin; m_BIN_EXT_DIR=$m_BIN_DIR/ext; m_STATE_DIR=$m_ROOT/state; m_STATE_SYS_DIR=$m_STATE_DIR/system/profile/main; m_STATE_USER_DIR=$m_STATE_DIR/user/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-501; m_OSARCH=linux-arm64
-mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" "$m_STATE_SYS_DIR" "$m_STATE_USER_DIR" || error 'cannot create fixture root'; ln -s profile/main "$m_STATE_DIR/system/current" || error 'cannot create current selector'
+m_ROOT=$tmp/root
+m_LIB_DIR=$root/lib
+m_PKG_DIR=$m_ROOT/pkg
+m_BIN_DIR=$m_ROOT/bin
+m_BIN_EXT_DIR=$m_BIN_DIR/ext
+m_STATE_DIR=$m_ROOT/state
+m_STATE_SYS_DIR=$m_STATE_DIR/system/current
+m_STATE_USER_DIR=$m_STATE_DIR/user/current
+m_OSARCH=linux-arm64
+mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" "$m_STATE_DIR/system/profile/main" "$m_STATE_DIR/user/default" || error 'cannot create fixture root'
+ln -s profile/main "$m_STATE_SYS_DIR" || error 'cannot create current selector'
 export m_ROOT m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_STATE_DIR m_STATE_SYS_DIR m_STATE_USER_DIR m_OSARCH
 fake_bin=$tmp/fake-bin; mkdir "$fake_bin"; { printf '%s\n' '#!/bin/sh'; sed '1d' "$root/bin/sys/state-path"; } > "$fake_bin/state-path" || error 'cannot prepare state-path fixture'; chmod 700 "$fake_bin/state-path"; PATH=$fake_bin:$PATH; export PATH
 . "$integration_library" || error 'cannot source pkg-integration library'; . "$uninstall_library" || error 'cannot source pkg-uninstall library'
@@ -42,7 +51,8 @@ pkg_integrate stateful 1 "$range1" "$payload1" || fail 'stateful v1 integration 
 sys_conf=$m_STATE_SYS_DIR/pkg/stateful/conf; sys_data=$m_STATE_SYS_DIR/pkg/stateful/data
 [ "$(cat "$sys_conf/etc/tool/config")" = factory-v1 ] || fail 'system config state not initialized'; [ "$(cat "$sys_data/workspace/item")" = workspace-v1 ] || fail 'system data state not initialized'
 [ ! -e "$m_ROOT/conf" ] && [ ! -e "$m_ROOT/data" ] && [ ! -e "$m_ROOT/var" ] || fail 'legacy global state root was materialized'
-user_entries=$(find "$m_STATE_USER_DIR" ! -path "$m_STATE_USER_DIR" -print) || error 'cannot inspect user state'; [ -z "$user_entries" ] || fail 'var-backed package state leaked into user scope'
+user_root=$m_STATE_DIR/user/default
+user_entries=$(find "$user_root" ! -path "$user_root" -print) || error 'cannot inspect user state'; [ -z "$user_entries" ] || fail 'var-backed package state leaked into user scope'
 
 printf '%s\n' user-config > "$concrete1/root/etc/tool/config"; printf '%s\n' runtime-data > "$concrete1/root/workspace/runtime"
 [ "$(cat "$sys_conf/etc/tool/config")" = user-config ] || fail 'root -> var -> system conf chain failed'; [ "$(cat "$sys_data/workspace/runtime")" = runtime-data ] || fail 'root -> var -> system data chain failed'
@@ -55,7 +65,7 @@ pkg_integrate stateful 2 "$range2" "$payload2" || fail 'stateful v2 integration 
 other=$m_STATE_DIR/system/profile/other; mkdir -p "$other/pkg/stateful/conf/etc/tool" "$other/pkg/stateful/data/workspace"; printf '%s\n' other-config > "$other/pkg/stateful/conf/etc/tool/config"; printf '%s\n' other-data > "$other/pkg/stateful/data/workspace/item"
 rm "$m_STATE_DIR/system/current"; ln -s profile/other "$m_STATE_DIR/system/current" || error 'cannot switch selector fixture'
 [ "$(cat "$concrete2/root/etc/tool/config")" = other-config ] || fail 'var did not follow state/system/current after profile switch'
-[ "$(state-path system pkg stateful conf)" = "$m_STATE_SYS_DIR/pkg/stateful/conf" ] || fail 'state-path fixture did not stay bound to concrete process profile'
+[ "$(state-path system pkg stateful conf)" = "$m_STATE_SYS_DIR/pkg/stateful/conf" ] || fail 'state-path fixture did not preserve the semantic system selector path'
 rm "$m_STATE_DIR/system/current"; ln -s profile/main "$m_STATE_DIR/system/current" || error 'cannot restore selector fixture'
 [ "$(cat "$concrete2/root/etc/tool/config")" = user-config ] || fail 'restored selector did not expose main state'
 

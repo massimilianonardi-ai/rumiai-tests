@@ -64,7 +64,6 @@ case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail
 
 entry=$root/m
 [ -x "$entry" ] || fail 'm entrypoint is not executable'
-expected_system=$(CDPATH= cd -- "$root/state/system/profile/main" 2>/dev/null && pwd -P) || fail 'cannot resolve main system profile'
 
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-semantic-roots-$$
 umask 077
@@ -83,16 +82,11 @@ cat > "$probe" <<'EOT'
 [ "${m_SRC_DIR-}" = "$EXPECTED_SRC_DIR" ] || return 47
 [ "${m_STATE_DIR-}" = "$EXPECTED_STATE_DIR" ] || return 48
 [ "${m_STATE_SYS_DIR-}" = "$EXPECTED_STATE_SYS_DIR" ] || return 49
-case "${m_STATE_USER_DIR-}" in "$EXPECTED_STATE_DIR/user/"*) : ;; *) return 50 ;; esac
-principal=${m_STATE_USER_DIR#"$EXPECTED_STATE_DIR/user/"}
-uid=$(command -p -- id -u 2>/dev/null) || return 51
-case "$principal" in *-"$uid") host_id=${principal%-"$uid"} ;; *) return 52 ;; esac
-[ "${#host_id}" -eq 32 ] || return 53
-case "$host_id" in *[!0123456789abcdef]*) return 54 ;; esac
+[ "${m_STATE_USER_DIR-}" = "$EXPECTED_STATE_USER_DIR" ] || return 50
 for legacy in m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR m_VAR_DIR
 do
     eval "present=\${$legacy+x}"
-    [ "$present" != x ] || return 55
+    [ "$present" != x ] || return 51
 done
 return 0
 EOT
@@ -105,8 +99,9 @@ EXPECTED_PKG_DIR=$root/pkg
 EXPECTED_LANG_DIR=$root/lang
 EXPECTED_SRC_DIR=$root/src
 EXPECTED_STATE_DIR=$root/state
-EXPECTED_STATE_SYS_DIR=$expected_system
-export EXPECTED_ROOT EXPECTED_BOOTSTRAP_BIN EXPECTED_BIN_DIR EXPECTED_LIB_DIR EXPECTED_PKG_DIR EXPECTED_LANG_DIR EXPECTED_SRC_DIR EXPECTED_STATE_DIR EXPECTED_STATE_SYS_DIR
+EXPECTED_STATE_SYS_DIR=$root/state/system/current
+EXPECTED_STATE_USER_DIR=$root/state/user/current
+export EXPECTED_ROOT EXPECTED_BOOTSTRAP_BIN EXPECTED_BIN_DIR EXPECTED_LIB_DIR EXPECTED_PKG_DIR EXPECTED_LANG_DIR EXPECTED_SRC_DIR EXPECTED_STATE_DIR EXPECTED_STATE_SYS_DIR EXPECTED_STATE_USER_DIR
 
 (
     unset LC_ALL LC_MESSAGES m_CONF_DIR m_DATA_DIR m_HOME_DIR m_CACHE_DIR m_LOG_DIR m_RUN_DIR m_TMP_DIR m_VAR_DIR

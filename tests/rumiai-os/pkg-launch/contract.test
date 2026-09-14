@@ -22,8 +22,13 @@ grep -E '^[[:space:]]*launcher\(\)' "$core" >/dev/null 2>&1 && fail 'launcher is
 grep -F 'pkg-launch.lib.sh' "$bootstrap" >/dev/null 2>&1 && fail 'm bootstrap loads pkg-launch globally'
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-launch-contract-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
-m_ROOT=$tmp/root; m_PKG_DIR=$m_ROOT/pkg; m_STATE_DIR=$m_ROOT/state; m_STATE_SYS_DIR=$m_STATE_DIR/system/profile/main; m_STATE_USER_DIR=$m_STATE_DIR/user/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-501
-mkdir -p "$m_PKG_DIR" "$m_STATE_SYS_DIR" "$m_STATE_USER_DIR" || error 'cannot create fixture root'
+m_ROOT=$tmp/root
+m_PKG_DIR=$m_ROOT/pkg
+m_STATE_DIR=$m_ROOT/state
+m_STATE_SYS_DIR=$m_STATE_DIR/system/current
+m_STATE_USER_DIR=$m_STATE_DIR/user/current
+mkdir -p "$m_PKG_DIR" "$m_STATE_DIR/system/profile/main" "$m_STATE_DIR/user/default" || error 'cannot create fixture root'
+ln -s profile/main "$m_STATE_SYS_DIR" || error 'cannot create system selector'
 export m_ROOT m_PKG_DIR m_STATE_DIR m_STATE_SYS_DIR m_STATE_USER_DIR
 fake_bin=$tmp/bin; mkdir "$fake_bin" || error 'cannot create fixture bin'
 { printf '%s\n' '#!/bin/sh'; sed '1d' "$root/bin/sys/state-path"; } > "$fake_bin/state-path" || error 'cannot prepare state-path fixture'
@@ -57,7 +62,8 @@ export PKG_ENV
 ORDER=package
 UNEXPORTED=hidden
 EOF_PACKAGE_ENV
-user_conf=$m_STATE_USER_DIR/pkg/tool/conf; user_home=$m_STATE_USER_DIR/pkg/tool/home
+user_conf=$m_STATE_DIR/user/default/pkg/tool/conf
+user_home=$m_STATE_DIR/user/default/pkg/tool/home
 mkdir -p "$user_conf/.m" || error 'cannot create user conf fixture'
 cat > "$user_conf/.m/env" <<'EOF_USER_ENV'
 USER_ENV="$ORDER-user"

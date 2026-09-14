@@ -109,13 +109,13 @@ git -C "$tmp" config core.excludesFile /dev/null || error 'cannot isolate global
 : > "$tmp/.git/info/exclude" || error 'cannot isolate repository excludes'
 cp "$root_ignore" "$tmp/.gitignore" || error 'cannot copy root .gitignore'
 
-principal=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-501
+user_identity=default
 mkdir -p \
     "$tmp/src" \
     "$tmp/pkg" \
     "$tmp/nested/src" \
     "$tmp/nested" \
-    "$tmp/state/user/$principal/pkg/foo/conf" \
+    "$tmp/state/user/$user_identity/pkg/foo/conf" \
     "$tmp/state/system/profile/main/sys/shell/conf" \
     "$tmp/state/system/profile/main/pkg/data/conf" \
     "$tmp/state/system/profile/main/pkg/conf/data" || error 'cannot create probe directories'
@@ -123,7 +123,7 @@ mkdir -p \
 : > "$tmp/src/probe" || error 'cannot create src probe'
 : > "$tmp/pkg/probe" || error 'cannot create pkg probe'
 : > "$tmp/nested/src/probe" || error 'cannot create nested src probe'
-: > "$tmp/state/user/$principal/pkg/foo/conf/probe" || error 'cannot create user state probe'
+: > "$tmp/state/user/$user_identity/pkg/foo/conf/probe" || error 'cannot create user state probe'
 : > "$tmp/state/system/profile/main/sys/shell/conf/probe" || error 'cannot create system conf probe'
 : > "$tmp/state/system/profile/main/pkg/data/conf/probe" || error 'cannot create identity collision probe'
 : > "$tmp/state/system/profile/main/pkg/conf/data/probe" || error 'cannot create area collision probe'
@@ -132,7 +132,7 @@ mkdir -p \
 
 assert_ignored 'src/probe'
 assert_ignored 'pkg/probe'
-assert_ignored "state/user/$principal/pkg/foo/conf/probe"
+assert_ignored "state/user/$user_identity/pkg/foo/conf/probe"
 assert_ignored 'state/system/profile/main/pkg/conf/data/probe'
 assert_ignored '.DS_Store'
 assert_ignored 'nested/.DS_Store'
