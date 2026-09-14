@@ -16,17 +16,13 @@ I proof-of-concept restano separati in `rumiai-dev-PoCs`.
 
 ```text
 rumiai-test
+rumiai-validate
+rumiai-validate.conf
 lib/
-    test.lib
 tests/
     rumiai-os/
-        bootstrap/
-        command/
-        i18n/
-        log/
-        shell/
     rumiai-dev/
-        setup-dev/
+    rumiai-tests/
     runner/
     external/
 .runs/
@@ -143,13 +139,15 @@ Se un test fallisce solo su un determinato host, il progetto valuta il falliment
 
 ## Workspace locale consigliato
 
-Il clone può essere collocato accanto al runtime locale sotto:
+Per comodità di sviluppo i checkout possono essere collocati nello stesso workspace, per esempio:
 
 ```text
-$RumiAI_ROOT/src/rumiai-tests/
+<workspace>/
+├── rumiai-os/
+└── rumiai-tests/
 ```
 
-Questa collocazione è una convenienza di sviluppo. I test devono poter effettuare autonomamente il discovery necessario anche quando il repository è collocato altrove.
+Questa collocazione è una convenienza di sviluppo. I test devono poter effettuare autonomamente il discovery necessario anche quando i repository sono collocati altrove.
 
 ## Runner
 
