@@ -32,6 +32,15 @@ resolve_test_dir()
     CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
+make_target_checkout()
+{
+    target="$1"
+
+    mkdir -p "$target" || return 1
+    git -C "$target" init -q >/dev/null 2>&1 || return 1
+    git -C "$target" remote add origin https://github.com/massimilianonardi-ai/rumiai-os.git >/dev/null 2>&1 || return 1
+}
+
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 rumiai_tests_group=${test_dir%/*}
 tests_dir=${rumiai_tests_group%/*}
@@ -42,6 +51,30 @@ target_lib=$suite_root/lib/rumiai-os-target.lib
 
 # The library is intentionally sourced here because it is the target of this test.
 . "$target_lib" || error 'cannot load lib/rumiai-os-target.lib'
+
+command -v git >/dev/null 2>&1 || skip 'git is unavailable'
+
+tmp="${TMPDIR:-/tmp}/rumiai-os-target-reference-$$"
+umask 077
+mkdir "$tmp" || error 'cannot create temporary discovery workspace'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+nested_target="$tmp/nested/rumiai-os"
+nested_start="$nested_target/src/rumiai-tests"
+make_target_checkout "$nested_target" || error 'cannot create nested target fixture'
+mkdir -p "$nested_start" || error 'cannot create nested discovery start'
+nested_root=$(rumiai_test_target_rumiai_os_find "$nested_start") || fail 'cannot discover a pre-Model-2.0 target from a nested suite location'
+nested_physical=$(CDPATH= cd -- "$nested_target" 2>/dev/null && pwd -P) || error 'cannot canonicalize nested target fixture'
+[ "$nested_root" = "$nested_physical" ] || fail "nested discovery returned unexpected root: $nested_root"
+
+sibling_workspace="$tmp/sibling"
+sibling_target="$sibling_workspace/rumiai-os"
+sibling_start="$sibling_workspace/rumiai-tests"
+make_target_checkout "$sibling_target" || error 'cannot create sibling target fixture'
+mkdir -p "$sibling_start" || error 'cannot create sibling discovery start'
+sibling_root=$(rumiai_test_target_rumiai_os_find "$sibling_start") || fail 'cannot discover a pre-Model-2.0 target from a sibling suite location'
+sibling_physical=$(CDPATH= cd -- "$sibling_target" 2>/dev/null && pwd -P) || error 'cannot canonicalize sibling target fixture'
+[ "$sibling_root" = "$sibling_physical" ] || fail "sibling discovery returned unexpected root: $sibling_root"
 
 root=$(rumiai_test_target_rumiai_os_find "$suite_root")
 status=$?

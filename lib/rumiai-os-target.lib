@@ -23,20 +23,18 @@ rumiai_test_target_rumiai_os_origin_ok() {
 }
 
 rumiai_test_target_rumiai_os_validate() {
-    candidate=$1
+    target_candidate="$1"
 
-    [ -n "$candidate" ] || return 1
-    [ -f "$candidate/m" ] || return 1
-    [ -f "$candidate/rumiai-os" ] || return 1
-    [ -f "$candidate/rumiai-os-sh" ] || return 1
-    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
+    [ -n "$target_candidate" ] || return 1
+    [ -d "$target_candidate" ] || return 1
 
-    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
-    [ -f "$target_root/m" ] || return 1
-    [ -f "$target_root/rumiai-os" ] || return 1
-    [ -f "$target_root/rumiai-os-sh" ] || return 1
+    target_candidate="$(CDPATH= cd -- "$target_candidate" 2>/dev/null && pwd -P)" || return 1
+    target_repo_root="$(git -C "$target_candidate" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    target_repo_root="$(CDPATH= cd -- "$target_repo_root" 2>/dev/null && pwd -P)" || return 1
+    [ "$target_repo_root" = "$target_candidate" ] || return 1
+    rumiai_test_target_rumiai_os_origin_ok "$target_candidate" || return 1
 
-    printf '%s\n' "$target_root"
+    printf '%s\n' "$target_candidate"
 }
 
 rumiai_test_target_rumiai_os_find() {
@@ -50,20 +48,26 @@ rumiai_test_target_rumiai_os_find() {
         return 0
     fi
 
-    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
+    search_candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
 
     while :
     do
-        if rumiai_test_target_rumiai_os_validate "$candidate"
+        if rumiai_test_target_rumiai_os_validate "$search_candidate"
         then
             return 0
         fi
 
-        [ "$candidate" != / ] || break
-        parent=${candidate%/*}
-        [ -n "$parent" ] || parent=/
-        [ "$parent" != "$candidate" ] || break
-        candidate=$parent
+        search_sibling="$search_candidate/rumiai-os"
+        if rumiai_test_target_rumiai_os_validate "$search_sibling"
+        then
+            return 0
+        fi
+
+        [ "$search_candidate" != / ] || break
+        search_parent="${search_candidate%/*}"
+        [ -n "$search_parent" ] || search_parent="/"
+        [ "$search_parent" != "$search_candidate" ] || break
+        search_candidate="$search_parent"
     done
 
     return 1
