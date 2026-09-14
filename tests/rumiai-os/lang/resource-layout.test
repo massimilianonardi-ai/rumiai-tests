@@ -1,0 +1,35 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/lang/resource-layout.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;; esac; return 1; }
+validate_root() { [ -n "$1" ] && [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
+find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
+resolve_test_dir() { self=$0; case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" 2>/dev/null && pwd -P; }
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+root=$(find_root "$suite_root"); status=$?; case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+command -v readlink >/dev/null 2>&1 || error 'readlink is unavailable'
+
+[ ! -e "$root/lang" ] && [ ! -L "$root/lang" ] || fail 'superseded top-level lang root is still present'
+[ -d "$root/res" ] && [ ! -L "$root/res" ] || fail 'res semantic root is missing or not a directory'
+
+for owner in sys ai
+do
+    tree=$root/res/$owner/lang
+    [ -d "$tree" ] && [ ! -L "$tree" ] || fail "$owner language resource tree is missing or invalid"
+    [ -d "$tree/en_US" ] && [ ! -L "$tree/en_US" ] || fail "$owner en_US resource locale is missing or invalid"
+    [ -d "$tree/it_IT" ] && [ ! -L "$tree/it_IT" ] || fail "$owner it_IT resource locale is missing or invalid"
+    [ -L "$tree/current" ] || fail "$owner current selector is not a symbolic link"
+    target=$(readlink "$tree/current") || fail "$owner current selector cannot be read"
+    [ "$target" = en_US ] || fail "$owner distributed selector is not en_US"
+    case $target in */*|.|..) fail "$owner distributed selector is not a local relative locale name" ;; esac
+done
+
+[ -f "$root/res/sys/lang/en_US/execution/invalid-arguments" ] || fail 'technical en_US catalog was not migrated under res/sys/lang'
+[ -f "$root/res/sys/lang/it_IT/execution/invalid-arguments" ] || fail 'technical it_IT catalog was not migrated under res/sys/lang'
+
+exit 0

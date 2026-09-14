@@ -53,7 +53,7 @@ make_fixture() {
     do
         cp "$source_root/$fixture_file" "$fixture_root/$fixture_file" || return 1
     done
-    for fixture_dir in bin lib lang state
+    for fixture_dir in bin lib res state
     do
         cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir" || return 1
     done
@@ -75,28 +75,28 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 fixture=$tmp/root
 make_fixture "$root" "$fixture" || error 'cannot materialize isolated rumiai-os fixture'
 
-rm -rf "$fixture/lang" || error 'cannot reset fixture catalogs'
-mkdir -p "$fixture/lang/en_US/demo" "$fixture/lang/it_IT/demo" || error 'cannot create fixture catalogs'
-printf '%s\n' 'English message' > "$fixture/lang/en_US/demo/item" || error 'cannot write fallback message'
-printf '%s\n' 'Messaggio italiano' > "$fixture/lang/it_IT/demo/item" || error 'cannot write selected message'
-ln -s it_IT "$fixture/lang/current" || error 'cannot create selected language link'
+rm -rf "$fixture/res/sys/lang" || error 'cannot reset technical fixture catalogs'
+mkdir -p "$fixture/res/sys/lang/en_US/demo" "$fixture/res/sys/lang/it_IT/demo" || error 'cannot create technical fixture catalogs'
+printf '%s\n' 'English message' > "$fixture/res/sys/lang/en_US/demo/item" || error 'cannot write fallback message'
+printf '%s\n' 'Messaggio italiano' > "$fixture/res/sys/lang/it_IT/demo/item" || error 'cannot write selected message'
+ln -s it_IT "$fixture/res/sys/lang/current" || error 'cannot create selected language link'
 
 stdout=$tmp/stdout
 stderr=$tmp/stderr
 "$fixture/m" "$fixture/bin/sys/lang" demo item >"$stdout" 2>"$stderr"
 status=$?
 [ "$status" -eq 0 ] || { cat "$stderr" >&2; fail "selected-language command returned $status"; }
-[ "$(cat "$stdout")" = 'Messaggio italiano' ] || fail 'public lang command did not use selected catalog'
+[ "$(cat "$stdout")" = 'Messaggio italiano' ] || fail 'public lang command did not use selected technical catalog'
 [ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'selected-language command produced unexpected stderr'; }
 
-rm -f "$fixture/lang/current" || error 'cannot remove current language link'
+rm -f "$fixture/res/sys/lang/current" || error 'cannot remove current language link'
 "$fixture/m" "$fixture/bin/sys/lang" demo item >"$stdout" 2>"$stderr"
 status=$?
 [ "$status" -eq 0 ] || { cat "$stderr" >&2; fail "fallback command returned $status"; }
-[ "$(cat "$stdout")" = 'English message' ] || fail 'public lang command did not use fallback catalog'
+[ "$(cat "$stdout")" = 'English message' ] || fail 'public lang command did not use technical fallback catalog'
 [ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'fallback command produced unexpected stderr'; }
 
-rm -f "$fixture/lang/en_US/demo/item" || error 'cannot remove fallback message'
+rm -f "$fixture/res/sys/lang/en_US/demo/item" || error 'cannot remove fallback message'
 "$fixture/m" "$fixture/bin/sys/lang" demo item >"$stdout" 2>"$stderr"
 status=$?
 [ "$status" -eq 0 ] || { cat "$stderr" >&2; fail "identifier fallback command returned $status"; }

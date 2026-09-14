@@ -17,7 +17,7 @@ tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-language-fallback-$$; umask 077; mkdir "$tm
 probe=$tmp/probe; transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
 [ "${m_LANGUAGE_FALLBACK-}" = "en_US" ] || return 41
-[ "${m_LANG_FALLBACK_DIR-}" = "$m_ROOT/lang/en_US" ] || return 42
+[ "${m_LANG_FALLBACK_DIR-}" = "$m_ROOT/res/sys/lang/en_US" ] || return 42
 return 0
 EOT
 (LC_ALL=C; LANG=C; export LC_ALL LANG; "$entry" "$probe") >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "language fallback probe returned $status"; }
