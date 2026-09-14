@@ -25,7 +25,7 @@ for dir in "$root/bin/sys" "$root/lib/sys/sh"; do [ -d "$dir" ] || fail "require
 [ "$(cat "$root/product-name")" = RumiAI ] || fail 'product-name is not RumiAI'
 [ "$(wc -l < "$root/product-name" | tr -d ' ')" -eq 1 ] || fail 'product-name is not a one-line scalar'
 [ "$(wc -l < "$root/product-version" | tr -d ' ')" -eq 1 ] || fail 'product-version is not a one-line scalar'
-[ "$(cat "$root/product-version")" != 2.0.0 ] || fail 'product-version claims 2.0.0 before migration completion'
+[ "$(cat "$root/product-version")" = 2.0.0 ] || fail 'product-version is not 2.0.0 after migration completion'
 [ ! -d "$root/conf" ] || fail 'legacy top-level conf directory remains'
 for legacy in data home cache log run tmp; do [ ! -e "$root/$legacy" ] || fail "legacy top-level state root remains: $legacy"; done
 exit 0
