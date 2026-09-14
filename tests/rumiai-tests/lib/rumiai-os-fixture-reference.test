@@ -108,7 +108,8 @@ fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canon
 [ -x "$fixture/rumiai-os-sh" ] || fail 'fixture rumiai-os-sh entrypoint is not executable'
 [ -d "$fixture/bin" ] || fail 'fixture bin directory is missing'
 [ -d "$fixture/lib" ] || fail 'fixture lib directory is missing'
-[ -d "$fixture/lang" ] || fail 'fixture lang directory is missing'
+[ -d "$fixture/res" ] || fail 'fixture res directory is missing'
+[ ! -e "$fixture/lang" ] && [ ! -L "$fixture/lang" ] || fail 'fixture contains superseded top-level lang root'
 [ -d "$fixture/state/system/profile/main" ] || fail 'fixture main system profile is missing'
 [ -L "$fixture/state/system/current" ] || fail 'fixture system selector is missing'
 [ "$(readlink "$fixture/state/system/current")" = 'profile/main' ] || fail 'fixture system selector does not target profile/main'
@@ -125,6 +126,8 @@ probe=$tmp/probe
 cat > "$probe" <<'EOT'
 [ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
 [ "${m_LIB_DIR-}" = "$EXPECTED_ROOT/lib" ] || return 42
+[ "${m_RES_DIR-}" = "$EXPECTED_ROOT/res" ] || return 53
+[ "${m_LANG_DIR-}" = "$EXPECTED_ROOT/res/sys/lang" ] || return 54
 [ "${m_STATE_DIR-}" = "$EXPECTED_ROOT/state" ] || return 43
 [ "${m_STATE_SYS_DIR-}" = "$EXPECTED_ROOT/state/system/profile/main" ] || return 44
 case "${m_STATE_USER_DIR-}" in
