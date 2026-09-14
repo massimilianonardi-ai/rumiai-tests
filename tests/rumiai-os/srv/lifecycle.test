@@ -93,6 +93,16 @@ grep -Fx ready "$log_file" >/dev/null 2>&1 || fail 'service output was not redir
 [ "$(cat "$runtime/pid")" = "$service_pid" ] || fail 'second start replaced the running service'
 pid_exists "$service_pid" || fail 'service died after idempotent start'
 
+rm "$runtime/owner" || error 'cannot prepare incomplete live metadata fixture'
+set +e
+"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/live-invalid.out" 2> "$tmp/live-invalid.err"
+status=$?
+set -e
+[ "$status" -eq 1 ] || fail "incomplete live metadata returned $status instead of 1"
+pid_exists "$service_pid" || fail 'incomplete live metadata handling killed the service'
+[ -d "$runtime" ] || fail 'incomplete live metadata was removed while process remained alive'
+printf '%s\n' "$(ps -p "$$" -o pid= | awk 'NR == 1 { print $1 }')" > "$runtime/owner" || error 'cannot restore owner metadata'
+
 "$fixture/m" "$fixture/bin/sys/srv" stop demo > "$tmp/stop.out" 2> "$tmp/stop.err" || fail 'srv stop failed'
 pid_exists "$service_pid" && fail 'service still alive after stop'
 [ ! -e "$runtime" ] || fail 'runtime metadata remained after stop'
