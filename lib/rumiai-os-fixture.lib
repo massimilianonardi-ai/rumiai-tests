@@ -4,7 +4,7 @@
 # historical independence should copy the required functions inline and record the
 # immutable Git commit and pathname of the copied version.
 #
-# The fixture copies the Model 2.0 runtime/product material and its tracked initial
+# The fixture copies the current runtime/product material and its tracked initial
 # system profile. Runtime package/user state is intentionally created fresh inside the
 # fixture and never copied from the checkout under test.
 
@@ -21,7 +21,7 @@ rumiai_test_fixture_rumiai_os_create() {
     [ -f "$source_root/rumiai-os-sh" ] || return 1
     [ -d "$source_root/bin" ] || return 1
     [ -d "$source_root/lib" ] || return 1
-    [ -d "$source_root/lang" ] || return 1
+    [ -d "$source_root/res" ] || return 1
     [ -d "$source_root/state" ] || return 1
     [ -f "$source_root/product-name" ] || return 1
     [ -f "$source_root/product-version" ] || return 1
@@ -42,7 +42,7 @@ rumiai_test_fixture_rumiai_os_create() {
         fi
     done
 
-    for fixture_dir in bin lib lang state
+    for fixture_dir in bin lib res state
     do
         if ! cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir"
         then
