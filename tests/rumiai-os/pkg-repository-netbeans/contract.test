@@ -127,9 +127,9 @@ url=https://dlcdn.apache.org/netbeans/netbeans/31/netbeans-31-bin.zip
 size=123456789
 digest=sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 [ "$out" = "$expected_descriptor" ] || fail "artifact descriptor is incorrect"
-grep -F -- 'https://api.github.com/repos/apache/netbeans/releases/tags/31' "$NETBEANS_HTTP_LOG" >/dev/null || fail "exact GitHub release was not verified"
-grep -F -- 'https://dlcdn.apache.org/netbeans/netbeans/31/netbeans-31-bin.zip.sha512' "$NETBEANS_HTTP_LOG" >/dev/null || fail "SHA-512 sidecar URL is incorrect"
-grep -F -- '-l -- https://dlcdn.apache.org/netbeans/netbeans/31/netbeans-31-bin.zip' "$NETBEANS_HTTP_LOG" >/dev/null || fail "size did not use http-fetch -l on binary URL"
+grep -F -e 'https://api.github.com/repos/apache/netbeans/releases/tags/31' "$NETBEANS_HTTP_LOG" >/dev/null || fail "exact GitHub release was not verified"
+grep -F -e 'https://dlcdn.apache.org/netbeans/netbeans/31/netbeans-31-bin.zip.sha512' "$NETBEANS_HTTP_LOG" >/dev/null || fail "SHA-512 sidecar URL is incorrect"
+grep -F -e '-l -- https://dlcdn.apache.org/netbeans/netbeans/31/netbeans-31-bin.zip' "$NETBEANS_HTTP_LOG" >/dev/null || fail "size did not use http-fetch -l on binary URL"
 
 for mode in wrong-name duplicate bad-digest
 do
