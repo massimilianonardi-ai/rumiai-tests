@@ -83,8 +83,40 @@ printf '%s\n' 'broken implementation (' > "$tmp/suite-seed/lib/sh/rumiai-validat
 
 cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
 #!/bin/sh
-printf '%s\n' "$PWD" > "$FAKE_PWD"
-printf '%s\n' "$*" > "$FAKE_ARGS"
+suite_root=$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P) || exit 3
+printf '%s\n' "$PWD" > "$FAKE_PWD" || exit 3
+printf '%s\n' "$*" > "$FAKE_ARGS" || exit 3
+
+case $#:$1:${2-} in
+    1:--validation:)
+        selection=tests/
+        ;;
+    3:--validation:--)
+        selection=$3
+        ;;
+    *)
+        exit 3
+        ;;
+esac
+
+counter=0
+[ ! -f "$FAKE_SESSION_COUNTER" ] || counter=$(cat "$FAKE_SESSION_COUNTER") || exit 3
+counter=$((counter + 1))
+printf '%s\n' "$counter" > "$FAKE_SESSION_COUNTER" || exit 3
+session_name=$(printf 'fake-%04d' "$counter")
+session_dir=$suite_root/sessions/$session_name
+mkdir -p "$session_dir/logs" || exit 3
+suite_commit=$(git -C "$suite_root" rev-parse HEAD) || exit 3
+{
+    printf 'type\tvalidation\n'
+    printf 'start\t2026-09-15T00:00:00+0000\n'
+    printf 'end\t2026-09-15T00:00:01+0000\n'
+    printf 'selection\t%s\n' "$selection"
+    printf 'rumiai-tests-commit\t%s\n' "$suite_commit"
+    printf 'runner-exit-status\t0\n'
+} > "$session_dir/session" || exit 3
+printf 'PASS\tfake.test\t0\n' > "$session_dir/results" || exit 3
+: > "$session_dir/logs/fake.log" || exit 3
 exit 0
 EOT
 chmod +x "$tmp/suite-seed/rumiai-test" || error 'cannot make fake runner executable'
@@ -101,6 +133,9 @@ git -C "$tmp/suite-remote.git" symbolic-ref HEAD "refs/heads/$suite_branch" || e
 
 mkdir -p "$tmp/work/rumiai-os/src" || error 'cannot create target source directory'
 git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite worktree'
+work_suite=$tmp/work/rumiai-os/src/rumiai-tests
+git -C "$work_suite" config user.name RumiAI-Test || error 'cannot configure suite test identity'
+git -C "$work_suite" config user.email rumiai-test@example.invalid || error 'cannot configure suite test email'
 
 cp "$suite_root/lib/sh/rumiai-validate.lib.sh" "$tmp/suite-seed/lib/sh/rumiai-validate.lib.sh" ||
     error 'cannot install updated launcher implementation'
@@ -109,6 +144,8 @@ printf 'rumiai-os-commit\t%s\nselection\twrong-selection\n' "$expected_target" >
     error 'cannot write alpha validation scope'
 printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/validation/beta.conf" ||
     error 'cannot write beta validation scope'
+printf 'kind\thealth\nrumiai-os-commit\t%s\n' "$expected_target" > "$tmp/suite-seed/validation/rumiai-os-health.conf" ||
+    error 'cannot write full-suite health scope'
 git -C "$tmp/suite-seed" add -A lib/sh/rumiai-validate.lib.sh validation ||
     error 'cannot stage suite update'
 commit_repo "$tmp/suite-seed" updated-suite || error 'cannot commit suite update'
@@ -116,11 +153,10 @@ git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push su
 expected_suite=$(git -C "$tmp/suite-seed" rev-parse HEAD) || error 'cannot read expected suite commit'
 
 mkdir "$tmp/elsewhere" || error 'cannot create unrelated working directory'
-printf 'local residue\n' > "$tmp/work/rumiai-os/src/rumiai-tests/local-untracked" ||
-    error 'cannot create untracked suite residue'
+printf 'local residue\n' > "$work_suite/local-untracked" || error 'cannot create untracked suite residue'
 
-printf 'x\n2\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
-    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
+printf 'x\n2\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" FAKE_SESSION_COUNTER="$tmp/session-counter" \
+    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$work_suite/rumiai-validate" \
     > "$tmp/first-transcript" 2>&1
 first_status=$?
 
@@ -129,23 +165,25 @@ first_status=$?
     fail "launcher with untracked residue returned $first_status instead of 3"
 }
 
-actual_suite=$(git -C "$tmp/work/rumiai-os/src/rumiai-tests" rev-parse HEAD) ||
-    error 'cannot read suite commit after self-update'
-[ "$actual_suite" = "$expected_suite" ] ||
-    fail 'launcher did not fast-forward rumiai-tests before the interactive menu'
+actual_suite=$(git -C "$work_suite" rev-parse HEAD) || error 'cannot read suite commit after self-update'
+[ "$actual_suite" = "$expected_suite" ] || fail 'launcher did not fast-forward rumiai-tests before the interactive menu'
 [ ! -f "$tmp/runner-args" ] || fail 'runner executed despite dirty validation working tree'
+grep -F '  0) all tests' "$tmp/first-transcript" >/dev/null || fail 'full-suite option zero missing from menu'
 grep -F '  1) alpha' "$tmp/first-transcript" >/dev/null || fail 'updated alpha scope missing from menu'
 grep -F '  2) beta' "$tmp/first-transcript" >/dev/null || fail 'updated beta scope missing from menu'
+if grep -F ') rumiai-os-health' "$tmp/first-transcript" >/dev/null; then
+    fail 'full-suite health scope was duplicated in numbered task entries'
+fi
 if grep -F 'zzz-old' "$tmp/first-transcript" >/dev/null; then
     fail 'menu was built before self-update'
 fi
 grep -F 'enter the number of an available validation scope' "$tmp/first-transcript" >/dev/null ||
     fail 'invalid interactive choice did not request a new number'
 
-rm "$tmp/work/rumiai-os/src/rumiai-tests/local-untracked" || error 'cannot remove test residue'
+rm "$work_suite/local-untracked" || error 'cannot remove test residue'
 
-printf '2\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
-    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
+printf '2\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" FAKE_SESSION_COUNTER="$tmp/session-counter" \
+    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$work_suite/rumiai-validate" \
     > "$tmp/second-transcript" 2>&1
 second_status=$?
 if [ "$second_status" -ne 0 ]; then
@@ -157,11 +195,27 @@ actual_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot re
 [ "$actual_target" = "$expected_target" ] || fail 'launcher did not fast-forward rumiai-os before execution'
 [ -f "$tmp/runner-args" ] || fail 'configured runner was not executed'
 [ "$(cat "$tmp/runner-args")" = '--validation -- rumiai-os/bootstrap' ] ||
-    fail 'launcher did not use the numerically selected updated scope'
-[ "$(cat "$tmp/runner-pwd")" = "$tmp/work/rumiai-os/src/rumiai-tests" ] ||
-    fail 'launcher did not enter the rumiai-tests repository root before running'
+    fail 'launcher did not use the numerically selected updated task scope'
+[ "$(cat "$tmp/runner-pwd")" = "$work_suite" ] || fail 'launcher did not enter the rumiai-tests repository root before running'
+grep -F 'Scope:        beta (task)' "$tmp/second-transcript" >/dev/null || fail 'launcher did not report the selected task scope'
 
-grep -F 'Scope:        beta (task)' "$tmp/second-transcript" >/dev/null ||
-    fail 'launcher did not report the selected scope'
+printf '0\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" FAKE_SESSION_COUNTER="$tmp/session-counter" \
+    sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$work_suite/rumiai-validate" \
+    > "$tmp/full-transcript" 2>&1
+full_status=$?
+if [ "$full_status" -ne 0 ]; then
+    cat "$tmp/full-transcript" >&2
+    fail "full-suite option zero returned $full_status"
+fi
+[ "$(cat "$tmp/runner-args")" = '--validation' ] || fail 'option zero passed a selection instead of running the root suite'
+[ "$(cat "$tmp/runner-pwd")" = "$work_suite" ] || fail 'full-suite runner did not execute from the suite root'
+grep -F 'Scope:        rumiai-os-health (health)' "$tmp/full-transcript" >/dev/null ||
+    fail 'option zero did not select the canonical health scope'
+grep -F 'Selection:    tests/ (full suite)' "$tmp/full-transcript" >/dev/null ||
+    fail 'full-suite root selection was not reported'
+grep -F 'Health result: SUCCESS' "$tmp/full-transcript" >/dev/null || fail 'full-suite health run was not reported successful'
+
+publication_count=$(git -C "$tmp/suite-remote.git" for-each-ref --format='%(refname)' refs/heads/validation/ | wc -l | tr -d ' ')
+[ "$publication_count" -eq 2 ] || fail "expected two published sessions after one task run and one full-suite run, found $publication_count"
 
 exit 0
