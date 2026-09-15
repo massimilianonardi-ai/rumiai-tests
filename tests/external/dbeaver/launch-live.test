@@ -44,7 +44,7 @@ confirm_gui_visible()
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
 ( : < /dev/tty > /dev/tty ) 2>/dev/null || skip "interactive graphical confirmation requires /dev/tty"
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-dbeaver_group="${test_dir%/*}"; external_group="${dbeaver_group%/*}"; tests_dir="${external_group%/*}"; suite_root="${tests_dir%/*}"
+dbeaver_group="${test_dir%/*}"; external_group="${dbeaver_group%/*}"; suite_root="${external_group%/*}"
 target_lib="$suite_root/lib/rumiai-os-target.lib"
 fixture_lib="$suite_root/lib/rumiai-os-fixture.lib"
 [ -r "$target_lib" ] || error "rumiai-os target discovery library is unavailable"
