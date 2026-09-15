@@ -2,6 +2,7 @@
 
 LAUNCHER_STATUS_ERROR=3
 LAUNCHER_HOLD_ON_EXIT=0
+FULL_SUITE_SCOPE_NAME=rumiai-os-health
 validation_scope_name=
 
 say() {
@@ -208,10 +209,14 @@ $scope_name"
 choose_validation_scope() {
     scope_names=$(validation_scope_names) || fatal 'cannot discover validation scopes'
     [ -n "$scope_names" ] || fatal 'no validation scopes are available'
+    [ -f "$suite_root/validation/$FULL_SUITE_SCOPE_NAME.conf" ] ||
+        fatal "full-suite health scope is unavailable: $FULL_SUITE_SCOPE_NAME"
 
     say 'Available validation scopes:'
+    printf '  0) all tests\n'
     scope_number=1
     for scope_name in $scope_names; do
+        [ "$scope_name" = "$FULL_SUITE_SCOPE_NAME" ] && continue
         printf '  %d) %s\n' "$scope_number" "$scope_name"
         scope_number=$((scope_number + 1))
     done
@@ -226,9 +231,15 @@ choose_validation_scope() {
                 ;;
         esac
 
+        if [ "$choice" = 0 ]; then
+            validation_scope_name=$FULL_SUITE_SCOPE_NAME
+            return 0
+        fi
+
         selected_scope=
         scope_number=1
         for scope_name in $scope_names; do
+            [ "$scope_name" = "$FULL_SUITE_SCOPE_NAME" ] && continue
             if [ "$choice" = "$scope_number" ]; then
                 selected_scope=$scope_name
                 break
