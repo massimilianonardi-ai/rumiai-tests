@@ -380,16 +380,16 @@ rumiai_validate_run() {
 
     aggregate_status=0
     old_ifs=$IFS
-    IFS='
-'
+    selection_ifs=$(printf '\n_')
+    selection_ifs=${selection_ifs%_}
+    IFS=$selection_ifs
     for validation_selection in $validation_selections; do
         IFS=$old_ifs
         run_validation_selection "$validation_selection" "$runner"
         selection_status=$?
         aggregate_status=$(merge_scope_status "$aggregate_status" "$selection_status")
         [ "$aggregate_status" -ne 3 ] || break
-        IFS='
-'
+        IFS=$selection_ifs
     done
     IFS=$old_ifs
 
