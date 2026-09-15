@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# Electron Linux live validation is intentionally self-contained. It exercises
-# a real package installation followed by normal launch through the installed
-# RumiAI public command. The Chromium sandbox remains enabled.
+# Electron Linux live validation exercises a real package installation followed
+# by normal launch through the installed RumiAI public command. The Chromium
+# sandbox remains enabled.
 
 TEST_ID="external/electron/linux-launch-live.test"
 
@@ -10,50 +10,6 @@ fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-# Reference implementations copied from:
-# massimilianonardi-ai/rumiai-tests@20541774bab0d0a7d64bd9cd06833b14196bbdf9:lib/rumiai-os-target.lib
-# massimilianonardi-ai/rumiai-tests@20541774bab0d0a7d64bd9cd06833b14196bbdf9:lib/rumiai-os-fixture.lib
-# Copied inline intentionally to preserve test independence.
-rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
-rumiai_test_target_rumiai_os_origin_ok()
-{
-  candidate="$1"; origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
-  case "$origin" in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;; esac
-  return 1
-}
-rumiai_test_target_rumiai_os_validate()
-{
-  candidate="$1"; [ -n "$candidate" ] || return 1
-  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return 1
-  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
-  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
-  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return 1
-  printf -- '%s\n' "$target_root"
-}
-rumiai_test_target_rumiai_os_find()
-{
-  start="$1"; rumiai_test_target_have git || return 3
-  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; return 0; fi
-  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
-  while :; do
-    if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
-    [ "$candidate" != / ] || break
-    parent="${candidate%/*}"; [ -n "$parent" ] || parent=/; [ "$parent" != "$candidate" ] || break; candidate="$parent"
-  done
-  return 1
-}
-rumiai_test_fixture_rumiai_os_create()
-{
-  [ "$#" -eq 2 ] || return 3
-  source_root="$1"; fixture_root="$2"; [ -n "$source_root" ] && [ -n "$fixture_root" ] || return 3
-  for required in m rumiai-os rumiai-os-sh product-name product-version; do [ -f "$source_root/$required" ] || return 1; done
-  for required in bin lib lang state; do [ -d "$source_root/$required" ] || return 1; done
-  [ ! -e "$fixture_root" ] || return 2
-  mkdir -p "$fixture_root/pkg" "$fixture_root/src" || return 2
-  for fixture_file in m rumiai-os rumiai-os-sh product-name product-version; do cp "$source_root/$fixture_file" "$fixture_root/$fixture_file" || { rm -rf "$fixture_root"; return 2; }; done
-  for fixture_dir in bin lib lang state; do cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir" || { rm -rf "$fixture_root"; return 2; }; done
-  chmod u+x "$fixture_root/m" "$fixture_root/rumiai-os" "$fixture_root/rumiai-os-sh" || { rm -rf "$fixture_root"; return 2; }
-}
 resolve_test_dir()
 {
   self="$0"; case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
@@ -74,6 +30,12 @@ command -v git >/dev/null 2>&1 || skip "git is unavailable"
 command -v tee >/dev/null 2>&1 || skip "tee is unavailable"
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 electron_group="${test_dir%/*}"; external_group="${electron_group%/*}"; tests_dir="${external_group%/*}"; suite_root="${tests_dir%/*}"
+target_lib="$suite_root/lib/rumiai-os-target.lib"
+fixture_lib="$suite_root/lib/rumiai-os-fixture.lib"
+[ -r "$target_lib" ] || error "rumiai-os target discovery library is unavailable"
+[ -r "$fixture_lib" ] || error "rumiai-os fixture library is unavailable"
+. "$target_lib" || error "cannot load rumiai-os target discovery library"
+. "$fixture_lib" || error "cannot load rumiai-os fixture library"
 source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status="$?"
 case "$status" in 0) : ;; 1) skip "rumiai-os target checkout not found" ;; 2) fail "invalid explicit rumiai-os target" ;; *) error "target discovery failed" ;; esac
 
