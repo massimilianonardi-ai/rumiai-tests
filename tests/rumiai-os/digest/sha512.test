@@ -1,0 +1,86 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/digest/sha512.test"
+fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
+  self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source target discovery"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
+case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
+
+command_path="$root/bin/sys/digest"
+[ -f "$command_path" ] && [ -x "$command_path" ] || fail "bin/sys/digest is missing or not executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-digest-sha512-$$"
+umask 077
+mkdir "$tmp" "$tmp/bin" || error "cannot create temporary directories"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+fakebin="$tmp/bin"
+marker="$tmp/marker"
+export DIGEST_SHA512_MARKER="$marker"
+
+make_backend()
+{
+  name=$1
+  body=$2
+  cat > "$fakebin/$name" <<EOF_BACKEND
+#!/bin/sh
+printf -- '%s\n' '$name' >> "\$DIGEST_SHA512_MARKER"
+$body
+EOF_BACKEND
+  chmod 700 "$fakebin/$name" || error "cannot make fake $name executable"
+}
+
+hex_a='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+hex_b='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+hex_c='CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+hex_d='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+
+make_backend cksum "cat >/dev/null || exit 91
+case \"\$2\" in sha512) printf -- '%s\\n' 'SHA512 (-) = $hex_a';; *) exit 90;; esac"
+make_backend sha512sum "cat >/dev/null || exit 91
+printf -- '%s\\n' '$hex_b  -'"
+make_backend shasum "[ \"\$1\" = -a ] && [ \"\$2\" = 512 ] || exit 90
+cat >/dev/null || exit 91
+printf -- '%s\\n' '$hex_c  -'"
+make_backend openssl "[ \"\$1\" = dgst ] && [ \"\$2\" = -sha512 ] || exit 90
+cat >/dev/null || exit 91
+printf -- '%s\\n' 'SHA2-512(stdin)= $hex_d'"
+
+runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
+printf -- '%s' payload | PATH="$runtime_path" "$command_path" -a sha512 > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 stdin invocation failed"
+[ "$(cat "$tmp/out")" = "$(printf '%s' "$hex_a" | tr 'A-F' 'a-f')" ] || fail "SHA-512 output was not normalized"
+[ "$(sort -u "$marker")" = cksum ] || fail "SHA-512 did not prefer cksum"
+
+printf -- '%s' file-payload > "$tmp/input"
+PATH="$runtime_path" "$command_path" -a sha512 -- "$tmp/input" > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 file invocation failed"
+[ "$(cat "$tmp/out")" = "$(printf '%s' "$hex_a" | tr 'A-F' 'a-f')" ] || fail "SHA-512 file output is incorrect"
+
+rm "$fakebin/cksum"; : > "$marker"
+PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 sha512sum fallback failed"
+[ "$(cat "$marker")" = sha512sum ] || fail "SHA-512 did not fall back to sha512sum"
+
+rm "$fakebin/sha512sum"; : > "$marker"
+PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 shasum fallback failed"
+[ "$(cat "$marker")" = shasum ] || fail "SHA-512 did not fall back to shasum"
+
+rm "$fakebin/shasum"; : > "$marker"
+PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 openssl fallback failed"
+[ "$(cat "$marker")" = openssl ] || fail "SHA-512 did not fall back to openssl"
+
+rm "$fakebin/openssl"
+PATH="$root/bin/sys:$fakebin" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err"
+status=$?
+[ "$status" -eq 1 ] || fail "missing SHA-512 capability returned $status instead of 1"
+
+exit 0
