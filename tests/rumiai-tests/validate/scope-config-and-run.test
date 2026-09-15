@@ -143,7 +143,7 @@ git -C "$work_suite" config user.name RumiAI-Test || error 'cannot configure sui
 git -C "$work_suite" config user.email rumiai-test@example.invalid || error 'cannot configure suite test email'
 mkdir "$tmp/fake-state" || error 'cannot create fake runner state'
 
-FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" demo > "$tmp/pass-transcript" 2>&1
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" demo > "$tmp/pass-transcript" 2>&1
 pass_status=$?
 if [ "$pass_status" -ne 0 ]; then
     cat "$tmp/pass-transcript" >&2
@@ -160,7 +160,7 @@ git -C "$tmp/suite-seed" add fake-mode || error 'cannot stage fake mode'
 commit_repo "$tmp/suite-seed" skip-second-selection || error 'cannot commit fake mode'
 git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push fake mode update'
 
-FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" demo > "$tmp/skip-transcript" 2>&1
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" demo > "$tmp/skip-transcript" 2>&1
 skip_status=$?
 [ "$skip_status" -eq 1 ] || {
     cat "$tmp/skip-transcript" >&2
@@ -172,7 +172,7 @@ worktree_count=$(git -C "$tmp/work/rumiai-os" worktree list --porcelain | grep -
 [ "$worktree_count" -eq 1 ] || fail 'temporary worktree remained after non-validating task scope'
 
 # A health scope without selection means one root-suite validation session.
-FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" health > "$tmp/health-transcript" 2>&1
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" health > "$tmp/health-transcript" 2>&1
 health_status="$?"
 if [ "$health_status" -ne 0 ]; then
     cat "$tmp/health-transcript" >&2
@@ -184,7 +184,7 @@ grep -F 'Health result: SUCCESS' "$tmp/health-transcript" >/dev/null 2>&1 || fai
 
 # A task scope still requires at least one explicit selection.
 counter_before="$(cat "$tmp/fake-state/counter")" || error 'cannot read fake runner counter before invalid task scope'
-FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" bad-task > "$tmp/bad-task-transcript" 2>&1
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" bad-task > "$tmp/bad-task-transcript" 2>&1
 bad_task_status="$?"
 [ "$bad_task_status" -eq 3 ] || {
     cat "$tmp/bad-task-transcript" >&2
