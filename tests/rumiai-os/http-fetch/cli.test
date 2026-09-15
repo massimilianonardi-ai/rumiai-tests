@@ -127,7 +127,6 @@ case "$status" in
     ;;
 esac
 
-
 command_path="$root/bin/sys/http-fetch"
 [ -f "$command_path" ] || fail "bin/sys/http-fetch is missing"
 [ -x "$command_path" ] || fail "bin/sys/http-fetch is not executable"
@@ -152,9 +151,14 @@ fi
 
 : > "$HTTP_FETCH_ARGS" || exit 90
 output=
+head=0
 while [ "$#" -gt 0 ]
 do
   printf -- '%s\n' "$1" >> "$HTTP_FETCH_ARGS" || exit 90
+  if [ "$1" = "--head" ]
+  then
+    head=1
+  fi
   if [ "$1" = "--output" ]
   then
     shift
@@ -164,6 +168,27 @@ do
   fi
   shift
 done
+
+if [ "$head" -eq 1 ]
+then
+  case "${HTTP_FETCH_LENGTH_MODE-normal}" in
+    normal)
+      printf 'HTTP/1.1 302 Found\r\nContent-Length: 4\r\nLocation: /final\r\n\r\n'
+      printf 'HTTP/2 200\r\ncontent-length: 57818610\r\n\r\n'
+      ;;
+    missing)
+      printf 'HTTP/2 200\r\nServer: fake\r\n\r\n'
+      ;;
+    malformed)
+      printf 'HTTP/2 200\r\nContent-Length: 58 MB\r\n\r\n'
+      ;;
+    duplicate)
+      printf 'HTTP/2 200\r\nContent-Length: 57818610\r\ncontent-length: 57818610\r\n\r\n'
+      ;;
+    *) exit 93 ;;
+  esac
+  exit 0
+fi
 
 if [ -n "$output" ]
 then
@@ -243,6 +268,26 @@ PATH="$runtime_path" "$command_path" -o "$output_file" -- "https://example.test/
 actual_file="$(cat "$output_file")" || error "cannot read http-fetch output file"
 [ "$actual_file" = "body-from-curl" ] || fail "http-fetch -o did not write the backend body"
 
+HTTP_FETCH_LENGTH_MODE="normal"; export HTTP_FETCH_LENGTH_MODE
+length="$(PATH="$runtime_path" "$command_path" -l -- "https://example.test/file" 2>"$stderr")" || {
+  status="$?"
+  cat "$stderr" >&2
+  fail "http-fetch -l request returned $status"
+}
+[ "$length" = "57818610" ] || fail "http-fetch -l returned $length instead of final Content-Length 57818610"
+grep -F -x -e '--head' "$args_file" >/dev/null 2>&1 || fail "http-fetch -l did not use a no-body curl probe"
+if grep -F -x -e '--output' "$args_file" >/dev/null 2>&1; then fail "http-fetch -l unexpectedly configured a body output file"; fi
+
+for HTTP_FETCH_LENGTH_MODE in missing malformed duplicate
+do
+  export HTTP_FETCH_LENGTH_MODE
+  PATH="$runtime_path" "$command_path" -l -- "https://example.test/file" >"$tmp/length.stdout" 2>"$tmp/length.stderr"
+  status="$?"
+  [ "$status" -eq "1" ] || fail "http-fetch -l $HTTP_FETCH_LENGTH_MODE response returned status $status instead of 1"
+  [ ! -s "$tmp/length.stdout" ] || fail "http-fetch -l $HTTP_FETCH_LENGTH_MODE response produced an invalid length"
+done
+HTTP_FETCH_LENGTH_MODE="normal"; export HTTP_FETCH_LENGTH_MODE
+
 expect_invalid()
 {
   m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" "$@" >"$tmp/invalid.stdout" 2>"$tmp/invalid.stderr"
@@ -256,5 +301,6 @@ expect_invalid -- "ftp://example.test/file"
 expect_invalid -t "0" -- "https://example.test/"
 expect_invalid -H "HeaderWithoutColon" -- "https://example.test/"
 expect_invalid -H "" -- "https://example.test/"
+expect_invalid -l -o "$tmp/invalid-output" -- "https://example.test/"
 
 exit "0"
