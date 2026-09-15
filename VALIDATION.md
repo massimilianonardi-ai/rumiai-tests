@@ -39,6 +39,29 @@ Input vuoto, non numerico o fuori intervallo produce una nuova richiesta. EOF pr
 
 Questa modalità è adatta anche all'avvio da Finder/Files: il launcher non dipende dalla directory da cui è stato aperto.
 
+### Workspace condivisi macOS/Linux
+
+Nel layout canonico:
+
+```text
+<rumiai-os-root>/src/rumiai-tests
+```
+
+il workspace può risiedere su un volume condiviso tra host differenti. Git può in tal caso rifiutare il checkout per `safe.directory` quando l'ownership vista dall'host cambia.
+
+`rumiai-validate` gestisce questo caso senza modificare la configurazione persistente dell'utente: per la sola durata del launcher e dei suoi processi figli installa nella configurazione Git command-scope esclusivamente le root esatte:
+
+```text
+<rumiai-tests-root>
+<rumiai-os-root>
+```
+
+La seconda viene aggiunta soltanto quando il launcher riconosce il layout canonico e trova il metadata Git della root prodotto.
+
+Il launcher non usa `safe.directory=*`, non usa wildcard e non scrive `~/.gitconfig` o configurazioni system/repository. Il trust process-local viene ereditato da `rumiai-test` e dai test figli.
+
+Il primo `git rev-parse` non sopprime stderr: se Git rifiuta ancora il checkout per una causa diversa, il messaggio Git originale resta visibile.
+
 Per automazione o uso non interattivo resta disponibile la forma nominata:
 
 ```text
