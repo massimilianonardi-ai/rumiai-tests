@@ -1,0 +1,85 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-repository-chrome/descriptor.test"
+
+fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir=${test_dir%/*}; tests_dir=${group_dir%/*}; suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot load target discovery helper"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
+case "$status" in 0) : ;; 1) skip "rumiai-os target checkout not found" ;; 2) fail "invalid explicit rumiai-os target" ;; *) error "target discovery failed" ;; esac
+
+library="$root/lib/sys/sh/pkg-repository-chrome.lib.sh"
+[ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "Chrome repository adapter is missing or has invalid mode"
+command -p -- sh -n "$library" >/dev/null 2>&1 || fail "Chrome repository adapter is not POSIX-shell syntax valid"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-chrome-descriptor-$$"
+umask 077
+mkdir -p "$tmp/repository" "$tmp/bin" || error "cannot create fixture directories"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+repository_dir="$tmp/repository"
+
+cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
+#!/bin/sh
+cat <<'EOF_PACKAGES'
+Package: google-chrome-stable
+Version: 153.0.8010.36-1
+Architecture: amd64
+Filename: pool/main/g/google-chrome-stable/google-chrome-stable_153.0.8010.36-1_amd64.deb
+Size: 141931876
+SHA256: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+EOF_PACKAGES
+EOF_HTTP
+chmod 700 "$tmp/bin/http-fetch" || error "cannot make fake http-fetch executable"
+
+write_valid_repository()
+{
+  rm -rf "$repository_dir"
+  mkdir "$repository_dir" || error "cannot recreate repository descriptor"
+  printf -- '%s\n' chrome > "$repository_dir/type"
+}
+
+PATH="$tmp/bin:/usr/bin:/bin"; export PATH
+log() { printf -- '%s\n' "$*" >&2; }
+. "$library" || error "cannot source Chrome repository adapter"
+
+write_valid_repository
+[ "$(pkg_repository_resolve_version "$repository_dir")" = 153.0.8010.36-1 ] || fail "valid Chrome repository descriptor was rejected"
+
+write_valid_repository
+printf -- '%s\n' github > "$repository_dir/type"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "non-Chrome repository type was accepted"; fi
+
+write_valid_repository
+printf -- '%s\n' unexpected > "$repository_dir/extra"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "unknown repository descriptor field was accepted"; fi
+
+write_valid_repository
+chmod 700 "$repository_dir/type" || error "cannot make type executable"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "executable repository scalar was accepted"; fi
+
+write_valid_repository
+printf -- '%s' chrome > "$repository_dir/type"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "scalar without LF terminator was accepted"; fi
+
+write_valid_repository
+printf -- '%s\n%s\n' chrome second > "$repository_dir/type"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "multi-line repository scalar was accepted"; fi
+
+write_valid_repository
+mv "$repository_dir/type" "$tmp/type-value" || error "cannot prepare symlink fixture"
+ln -s "$tmp/type-value" "$repository_dir/type" || error "cannot create scalar symlink"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "symlink repository scalar was accepted"; fi
+
+exit 0
