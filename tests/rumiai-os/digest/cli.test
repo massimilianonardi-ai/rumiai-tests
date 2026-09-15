@@ -112,9 +112,13 @@ mkdir "$fakebin" || error "cannot create fake backend directory"
 
 cat > "$fakebin/cksum" <<'EOF_BACKEND'
 #!/bin/sh
-[ "${1-}" = "-a" ] && [ "${2-}" = "sha256" ] || exit 90
+[ "${1-}" = "-a" ] && [ "$#" -eq 2 ] || exit 90
 cat >/dev/null || exit 91
-printf -- '%s\n' 'SHA256 (-) = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+case "$2" in
+  sha256) printf -- '%s\n' 'SHA256 (-) = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';;
+  md5) printf -- '%s\n' 'MD5 (-) = BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';;
+  *) exit 90;;
+esac
 EOF_BACKEND
 chmod "700" "$fakebin/cksum" || error "cannot make fake cksum executable"
 
@@ -125,11 +129,20 @@ printf -- '%s' 'stdin-data' | PATH="$runtime_path" "$command_path" -a sha256 >"$
   cat "$stderr" >&2
   fail "digest stdin invocation failed"
 }
-[ "$(cat "$stdout")" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "digest did not normalize output"
+[ "$(cat "$stdout")" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "digest did not normalize SHA-256 output"
 
 printf -- '%s' 'file-data' > "$tmp/input"
-PATH="$runtime_path" "$command_path" -a sha256 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest file invocation failed"
-[ "$(cat "$stdout")" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "digest file output is incorrect"
+PATH="$runtime_path" "$command_path" -a sha256 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest SHA-256 file invocation failed"
+[ "$(cat "$stdout")" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "digest SHA-256 file output is incorrect"
+
+printf -- '%s' 'stdin-data' | PATH="$runtime_path" "$command_path" -a md5 >"$stdout" 2>"$stderr" || {
+  cat "$stderr" >&2
+  fail "digest MD5 stdin invocation failed"
+}
+[ "$(cat "$stdout")" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ] || fail "digest did not normalize MD5 output"
+
+PATH="$runtime_path" "$command_path" -a md5 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest MD5 file invocation failed"
+[ "$(cat "$stdout")" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ] || fail "digest MD5 file output is incorrect"
 
 expect_invalid()
 {
@@ -139,7 +152,7 @@ expect_invalid()
   grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || fail "invalid digest invocation was not reported as fatal"
 }
 expect_invalid
-expect_invalid -a md5
+expect_invalid -a unknown
 expect_invalid -a sha256 --
 expect_invalid -a sha256 -- "$tmp/input" extra
 expect_invalid -a sha256 -a sha256
