@@ -14,7 +14,7 @@ resolve_test_dir()
 }
 
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=$tests_dir
 . "$suite_root/lib/rumiai-os-target.lib" || error "cannot source target discovery"
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
@@ -48,12 +48,14 @@ write_valid_range()
 cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
 #!/bin/sh
 printf -- '%s\n' "$*" >> "$MAVEN_HTTP_LOG"
+
 length=0
 for arg
 do
   [ "$arg" = -l ] && length=1
 done
 for url do :; done
+
 case "$url" in
   https://dlcdn.apache.org/maven/maven-4/)
     case "${MAVEN_INDEX_MODE-ok}" in
@@ -68,8 +70,12 @@ case "$url" in
 <a href="4.0.0-rc-7/">4.0.0-rc-7/</a>
 EOF_INDEX
         ;;
-      duplicate) printf '%s\n' '<a href="4.0.0-rc-6/">first</a><a href="4.0.0-rc-6/">second</a>';;
-      malformed) printf '%s\n' '<html>no supported versions</html>';;
+      duplicate)
+        printf '%s\n' '<a href="4.0.0-rc-6/">first</a><a href="4.0.0-rc-6/">second</a>'
+        ;;
+      malformed)
+        printf '%s\n' '<html>no supported versions</html>'
+        ;;
     esac
     ;;
   https://downloads.apache.org/maven/maven-4/4.0.0-rc-6/binaries/apache-maven-4.0.0-rc-6-bin.tar.gz.sha512)
@@ -78,14 +84,33 @@ EOF_INDEX
       filename) printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  apache-maven-4.0.0-rc-6-bin.tar.gz';;
       duplicate) printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';;
       bad-digest) printf '%s\n' aaaa;;
-    esac;;
-  https://downloads.apache.org/maven/maven-4/4.0.0-rc-7/binaries/apache-maven-4.0.0-rc-7-bin.tar.gz.sha512) printf '%s\n' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';;
-  https://downloads.apache.org/maven/maven-4/4.0.0-rc-10/binaries/apache-maven-4.0.0-rc-10-bin.tar.gz.sha512) printf '%s\n' 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';;
-  https://downloads.apache.org/maven/maven-4/4.0.0/binaries/apache-maven-4.0.0-bin.tar.gz.sha512) printf '%s\n' 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';;
-  https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-6/binaries/apache-maven-4.0.0-rc-6-bin.tar.gz) [ "$length" -eq 1 ] || exit 89; printf -- '%s\n' 14000006;;
-  https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-7/binaries/apache-maven-4.0.0-rc-7-bin.tar.gz) [ "$length" -eq 1 ] || exit 89; printf -- '%s\n' 14000007;;
-  https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-10/binaries/apache-maven-4.0.0-rc-10-bin.tar.gz) [ "$length" -eq 1 ] || exit 89; printf -- '%s\n' 14000010;;
-  https://dlcdn.apache.org/maven/maven-4/4.0.0/binaries/apache-maven-4.0.0-bin.tar.gz) [ "$length" -eq 1 ] || exit 89; printf -- '%s\n' 14000100;;
+    esac
+    ;;
+  https://downloads.apache.org/maven/maven-4/4.0.0-rc-7/binaries/apache-maven-4.0.0-rc-7-bin.tar.gz.sha512)
+    printf '%s\n' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+    ;;
+  https://downloads.apache.org/maven/maven-4/4.0.0-rc-10/binaries/apache-maven-4.0.0-rc-10-bin.tar.gz.sha512)
+    printf '%s\n' 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+    ;;
+  https://downloads.apache.org/maven/maven-4/4.0.0/binaries/apache-maven-4.0.0-bin.tar.gz.sha512)
+    printf '%s\n' 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD'
+    ;;
+  https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-6/binaries/apache-maven-4.0.0-rc-6-bin.tar.gz)
+    [ "$length" -eq 1 ] || exit 89
+    printf -- '%s\n' 14000006
+    ;;
+  https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-7/binaries/apache-maven-4.0.0-rc-7-bin.tar.gz)
+    [ "$length" -eq 1 ] || exit 89
+    printf -- '%s\n' 14000007
+    ;;
+  https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-10/binaries/apache-maven-4.0.0-rc-10-bin.tar.gz)
+    [ "$length" -eq 1 ] || exit 89
+    printf -- '%s\n' 14000010
+    ;;
+  https://dlcdn.apache.org/maven/maven-4/4.0.0/binaries/apache-maven-4.0.0-bin.tar.gz)
+    [ "$length" -eq 1 ] || exit 89
+    printf -- '%s\n' 14000100
+    ;;
   *) exit 88;;
 esac
 EOF_HTTP
@@ -96,10 +121,12 @@ m_LIB_DIR="$root/lib"; export m_LIB_DIR
 MAVEN_HTTP_LOG="$tmp/http.log"; export MAVEN_HTTP_LOG
 MAVEN_INDEX_MODE=ok; export MAVEN_INDEX_MODE
 MAVEN_SIDECAR_MODE=ok; export MAVEN_SIDECAR_MODE
+
 . "$library" || error "cannot source Apache Maven repository adapter"
 
 write_valid_repository
 [ "$(pkg_repository_resolve_version "$repository_dir" 4.0.0-rc-6)" = 4.0.0-rc-6 ] || fail "exact release resolution failed"
+
 write_valid_repository
 printf -- '%s\n' maven > "$repository_dir/type"
 if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "common repository type maven was accepted"; fi
@@ -123,11 +150,13 @@ expected_versions='4.0.0-rc-6
 [ "$(pkg_repository_compare_versions "$repository_dir" 4.0.0-rc-6 4.0.0-rc-10)" = -1 ] || fail "RC numeric ordering is incorrect"
 [ "$(pkg_repository_compare_versions "$repository_dir" 4.0.0-rc-10 4.0.0)" = -1 ] || fail "RC must sort before the corresponding GA"
 [ "$(pkg_repository_compare_versions "$repository_dir" 4.0.0 4.0.0)" = 0 ] || fail "equal comparison is incorrect"
+
 for invalid_version in 4.0.0-beta-5 4.0.0-rc-0 4.0.0-rc-01 04.0.0 4.00.0
 do
   if pkg_repository_resolve_version "$repository_dir" "$invalid_version" >/dev/null 2>&1; then fail "invalid version $invalid_version was accepted"; fi
 done
 if pkg_repository_resolve_version "$repository_dir" 4.0.0-rc-8 >/dev/null 2>&1; then fail "version absent from current index was accepted"; fi
+
 MAVEN_INDEX_MODE=duplicate; export MAVEN_INDEX_MODE
 if pkg_repository_list_versions "$repository_dir" >/dev/null 2>&1; then fail "duplicate current-index version was accepted"; fi
 MAVEN_INDEX_MODE=malformed; export MAVEN_INDEX_MODE
@@ -147,12 +176,14 @@ grep -F -e 'https://dlcdn.apache.org/maven/maven-4/' "$MAVEN_HTTP_LOG" >/dev/nul
 grep -F -e 'https://downloads.apache.org/maven/maven-4/4.0.0-rc-6/binaries/apache-maven-4.0.0-rc-6-bin.tar.gz.sha512' "$MAVEN_HTTP_LOG" >/dev/null || fail "official SHA-512 sidecar URL is incorrect"
 grep -F -e '-l -- https://dlcdn.apache.org/maven/maven-4/4.0.0-rc-6/binaries/apache-maven-4.0.0-rc-6-bin.tar.gz' "$MAVEN_HTTP_LOG" >/dev/null || fail "size did not use http-fetch -l on user-selected binary URL"
 if grep -F -e 'archive.apache.org' "$MAVEN_HTTP_LOG" >/dev/null; then fail "archive fallback was used"; fi
+
 for mode in filename duplicate bad-digest
 do
   MAVEN_SIDECAR_MODE=$mode; export MAVEN_SIDECAR_MODE
   if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" 4.0.0-rc-6 >/dev/null 2>&1; then fail "$mode sidecar was accepted"; fi
 done
 MAVEN_SIDECAR_MODE=ok; export MAVEN_SIDECAR_MODE
+
 printf -- '%s\n' sha256 > "$range_dir/digest_type"
 if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" 4.0.0-rc-6 >/dev/null 2>&1; then fail "non-SHA-512 range was accepted"; fi
 write_valid_range
@@ -161,4 +192,5 @@ if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" 4.0.0-rc-6 >/d
 write_valid_range
 printf -- '%s\n' '^other\.tar\.gz$' > "$range_dir/archive_regex"
 if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" 4.0.0-rc-6 >/dev/null 2>&1; then fail "non-matching archive_regex was accepted"; fi
+
 exit 0
