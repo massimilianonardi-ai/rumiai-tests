@@ -46,18 +46,18 @@ hex_b='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 hex_c='CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
 hex_d='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
 
-make_backend cksum "cat >/dev/null || exit 91
+make_backend cksum "command -p cat >/dev/null || exit 91
 case \"\$2\" in sha512) printf -- '%s\\n' 'SHA512 (-) = $hex_a';; *) exit 90;; esac"
-make_backend sha512sum "cat >/dev/null || exit 91
+make_backend sha512sum "command -p cat >/dev/null || exit 91
 printf -- '%s\\n' '$hex_b  -'"
 make_backend shasum "[ \"\$1\" = -a ] && [ \"\$2\" = 512 ] || exit 90
-cat >/dev/null || exit 91
+command -p cat >/dev/null || exit 91
 printf -- '%s\\n' '$hex_c  -'"
 make_backend openssl "[ \"\$1\" = dgst ] && [ \"\$2\" = -sha512 ] || exit 90
-cat >/dev/null || exit 91
+command -p cat >/dev/null || exit 91
 printf -- '%s\\n' 'SHA2-512(stdin)= $hex_d'"
 
-runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
+runtime_path="$root/bin/sys:$fakebin"
 printf -- '%s' payload | PATH="$runtime_path" "$command_path" -a sha512 > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 stdin invocation failed"
 [ "$(cat "$tmp/out")" = "$(printf '%s' "$hex_a" | tr 'A-F' 'a-f')" ] || fail "SHA-512 output was not normalized"
 [ "$(sort -u "$marker")" = cksum ] || fail "SHA-512 did not prefer cksum"
@@ -79,7 +79,7 @@ PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/
 [ "$(cat "$marker")" = openssl ] || fail "SHA-512 did not fall back to openssl"
 
 rm "$fakebin/openssl"
-PATH="$root/bin/sys:$fakebin" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err"
+PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "missing SHA-512 capability returned $status instead of 1"
 
