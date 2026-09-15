@@ -19,21 +19,30 @@ il launcher:
 3. tenta ad ogni lancio `git pull --ff-only` su `rumiai-tests`;
 4. se la suite cambia, riavvia il bootstrap aggiornato;
 5. soltanto dopo il self-update scopre gli scope `validation/*.conf`;
-6. mostra gli scope in ordine deterministico con un elenco numerato;
-7. chiede all'utente il numero dello scope da eseguire.
+6. mostra `0) all tests` come full-suite health gate;
+7. mostra gli altri scope in ordine deterministico numerati da `1`;
+8. chiede all'utente il numero da eseguire.
 
-Esempio alla revisione corrente:
+Esempio:
 
 ```text
 Available validation scopes:
+  0) all tests
   1) nodejs-live
   2) resource-model
-  3) rumiai-os-health
-  4) srv
+  3) srv
 Select validation scope:
 ```
 
-L'esempio non è una lista hardcoded: gli scope effettivi sono sempre quelli materializzati sotto `validation/` nella revisione aggiornata.
+`0` non è il nome di un nuovo scope. Seleziona il backing scope canonico:
+
+```text
+validation/rumiai-os-health.conf
+```
+
+`rumiai-os-health` non viene quindi ripetuto tra le voci `1..N`.
+
+Le voci da `1` in poi non sono hardcoded: derivano dagli altri `validation/*.conf` presenti nella revisione aggiornata e sono ordinate con ordinamento C/bytewise.
 
 Input vuoto, non numerico o fuori intervallo produce una nuova richiesta. EOF prima di una scelta valida è un errore del launcher.
 
@@ -70,6 +79,14 @@ Per automazione o uso non interattivo resta disponibile la forma nominata:
 
 Lo scope nominato salta il menu, ma non salta self-location, `cd`, self-update, cleanliness gate, exact target revision o pubblicazione delle evidence.
 
+La forma:
+
+```text
+./rumiai-validate rumiai-os-health
+```
+
+è equivalente alla scelta interattiva `0`: esegue una singola validation session dell'intera root `tests/`.
+
 Il nome deve contenere soltanto lettere, cifre, `.`, `_` o `-` e non può iniziare con `.` o `-`.
 
 ## Discovery degli scope
@@ -80,7 +97,7 @@ Gli scope disponibili sono i file regolari versionati:
 validation/<scope-name>.conf
 ```
 
-Il menu non contiene una lista hardcoded: viene ricostruito dalla revisione corrente della suite **dopo** il self-update e ordinato con ordinamento C/bytewise.
+Il menu viene ricostruito dalla revisione corrente della suite **dopo** il self-update. `rumiai-os-health` è riservato alla voce `0`; tutti gli altri scope sono ordinati e numerati da `1`.
 
 Il file `rumiai-validate.conf` può restare nel repository per compatibilità o per work unit storiche/concorrenti, ma non è più selezionato implicitamente da `./rumiai-validate` senza argomenti.
 
@@ -102,13 +119,26 @@ rumiai-os-commit<TAB><commit>
 selection<TAB><test-or-group>
 ```
 
-`selection` è ripetibile. Almeno una selection è obbligatoria.
+`selection` è ripetibile.
 
-Per compatibilità, `kind` può essere assente; uno scope nominato senza `kind` viene interpretato come `task`.
+Per uno scope `task` almeno una `selection` è obbligatoria.
+
+Per uno scope `health`, l'assenza completa di record `selection` ha un significato preciso: seleziona la root completa `tests/` mediante una singola invocazione del runner senza selection. Non vengono usati sentinel o alias per rappresentare la root.
+
+Per compatibilità, `kind` può essere assente; uno scope nominato senza `kind` viene interpretato come `task`, e quindi deve avere almeno una `selection`.
+
+Il backing scope dell'opzione `0` segue questa forma:
+
+```text
+kind<TAB>health
+rumiai-os-commit<TAB><commit-esatto>
+```
+
+senza record `selection`.
 
 ## Semantica
 
-Ogni `selection` viene passata separatamente a:
+Ogni `selection` esplicita viene passata separatamente a:
 
 ```text
 rumiai-test --validation -- <selection>
@@ -116,9 +146,19 @@ rumiai-test --validation -- <selection>
 
 Il runner resta quindi a singola selection.
 
+Uno scope `health` senza selection viene invece eseguito una sola volta come:
+
+```text
+rumiai-test --validation
+```
+
+Per contratto del runner, l'assenza di selection seleziona l'intera root `tests/`; l'opzione `0` produce quindi **una sola sessione contenente tutti i test applicabili scoperti dalla suite**.
+
 Per uno scope `task`, il launcher considera lo scope `VALIDATED` soltanto quando tutti i test effettivamente richiesti hanno PASS. Un test richiesto con SKIP rende lo scope `NOT VALIDATED` senza cambiare retroattivamente lo status del test.
 
 Per uno scope `health`, gli exit status restano quelli aggregati del runner; gli SKIP restano visibili ma non trasformano automaticamente uno status 0 in failure.
+
+La full-suite health session non è il gate universale dei task: resta un controllo di salute, release o milestone secondo le regole task-scoped correnti.
 
 ## Target revision e parallelismo
 
@@ -146,7 +186,9 @@ validation/<run-id>
 
 La pubblicazione conserva il parent esatto `rumiai-tests-commit` registrato dalla sessione e non avanza `main`.
 
-Uno scope con più selection produce più sessioni elementari. L'insieme delle sessioni, la configurazione versionata dello scope e l'esatto commit della suite costituiscono l'evidenza del task scope.
+Uno scope task con più selection produce più sessioni elementari. L'insieme delle sessioni, la configurazione versionata dello scope e l'esatto commit della suite costituiscono l'evidenza del task scope.
+
+`rumiai-os-health`, invece, non contiene selection esplicite e produce una sola sessione della root `tests/`.
 
 Una full-suite session può ancora essere analizzata per subset: PASS dei test pertinenti restano evidence delle proprietà esercitate anche se la sessione complessiva contiene fallimenti estranei.
 
@@ -172,10 +214,10 @@ validation/rumiai-os-health.conf
 validation/srv.conf
 ```
 
-`nodejs-live`, `resource-model` e `srv` sono task scope. `rumiai-os-health` è il health gate della full suite.
+`nodejs-live`, `resource-model` e `srv` sono task scope. `rumiai-os-health` è il health gate della full suite ed è presentato nel menu come `0) all tests`.
 
 Lo scope `nodejs-live` corrente è quello materializzato dalla remediation Node.js attiva e contiene le selection richieste da quella decisione; non è il precedente gate live isolato.
 
-Nuovi scope compariranno automaticamente nel menu quando verranno materializzati con revisioni e selection corrette.
+Nuovi scope task compariranno automaticamente tra le voci `1..N` quando verranno materializzati con revisioni e selection corrette.
 
 Gli scope task non sostituiscono i controlli di salute complessivi: impediscono soltanto che un fallimento estraneo serializzi o invalidi artificialmente work unit indipendenti.
