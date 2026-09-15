@@ -133,7 +133,7 @@ git -C "$tmp/suite-remote.git" symbolic-ref HEAD "refs/heads/$suite_branch" || e
 
 mkdir -p "$tmp/work/rumiai-os/src" || error 'cannot create target source directory'
 git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite worktree'
-work_suite="$tmp/work/rumiai-os/src/rumiai-tests"
+work_suite="$(CDPATH= cd -- "$tmp/work/rumiai-os/src/rumiai-tests" 2>/dev/null && pwd -P)" || error 'cannot canonicalize suite worktree'
 git -C "$work_suite" config user.name RumiAI-Test || error 'cannot configure suite test identity'
 git -C "$work_suite" config user.email rumiai-test@example.invalid || error 'cannot configure suite test email'
 
