@@ -158,6 +158,69 @@ validate_scope_name() {
     return 0
 }
 
+validation_scope_names() {
+    validation_dir=$suite_root/validation
+    [ -d "$validation_dir" ] || return 1
+
+    scope_names_unsorted=
+    for scope_path in "$validation_dir"/*.conf; do
+        [ -f "$scope_path" ] || continue
+        scope_file=${scope_path##*/}
+        scope_name=${scope_file%.conf}
+        validate_scope_name "$scope_name" || {
+            say_error "invalid validation scope filename: $scope_file"
+            return 1
+        }
+        if [ -n "$scope_names_unsorted" ]; then
+            scope_names_unsorted="$scope_names_unsorted
+$scope_name"
+        else
+            scope_names_unsorted=$scope_name
+        fi
+    done
+    [ -n "$scope_names_unsorted" ] || return 1
+    printf '%s\n' "$scope_names_unsorted" | LC_ALL=C sort
+}
+
+choose_validation_scope() {
+    scope_names=$(validation_scope_names) || fatal 'cannot discover validation scopes'
+    [ -n "$scope_names" ] || fatal 'no validation scopes are available'
+
+    say 'Available validation scopes:'
+    scope_number=1
+    for scope_name in $scope_names; do
+        printf '  %d) %s\n' "$scope_number" "$scope_name"
+        scope_number=$((scope_number + 1))
+    done
+
+    while :; do
+        printf 'Select validation scope: '
+        IFS= read -r choice || fatal 'validation scope selection aborted'
+        case $choice in
+            ''|*[!0-9]*)
+                say_error 'enter the number of an available validation scope'
+                continue
+                ;;
+        esac
+
+        selected_scope=
+        scope_number=1
+        for scope_name in $scope_names; do
+            if [ "$choice" = "$scope_number" ]; then
+                selected_scope=$scope_name
+                break
+            fi
+            scope_number=$((scope_number + 1))
+        done
+
+        if [ -n "$selected_scope" ]; then
+            validation_scope_name=$selected_scope
+            return 0
+        fi
+        say_error 'enter the number of an available validation scope'
+    done
+}
+
 main() {
     [ "$#" -le 1 ] || fatal 'usage: rumiai-validate [scope-name]'
     if [ "$#" -eq 1 ]; then
@@ -194,6 +257,10 @@ main() {
             exec "$suite_root/rumiai-validate"
         fi
         fatal 'cannot restart updated launcher'
+    fi
+
+    if [ -z "$validation_scope_name" ]; then
+        choose_validation_scope
     fi
 
     implementation=$suite_root/lib/sh/rumiai-validate.lib.sh
