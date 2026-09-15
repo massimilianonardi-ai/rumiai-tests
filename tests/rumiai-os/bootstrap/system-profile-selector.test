@@ -89,7 +89,7 @@ root=$(rumiai_test_target_rumiai_os_find "$start")
 status=$?
 case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
 
-for required in m bin lib lang state; do
+for required in m bin lib res state; do
     [ -e "$root/$required" ] || fail "target lacks $required"
 done
 
@@ -103,7 +103,7 @@ mkdir "$fixture" || error 'cannot create fixture root'
 cp "$root/m" "$fixture/m" || error 'cannot copy m bootstrap'
 cp -R "$root/bin" "$fixture/bin" || error 'cannot copy bin tree'
 cp -R "$root/lib" "$fixture/lib" || error 'cannot copy lib tree'
-cp -R "$root/lang" "$fixture/lang" || error 'cannot copy lang tree'
+cp -R "$root/res" "$fixture/res" || error 'cannot copy resource tree'
 cp -R "$root/state" "$fixture/state" || error 'cannot copy state tree'
 
 selector_dir=$fixture/state/system
