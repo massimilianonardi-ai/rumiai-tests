@@ -1,0 +1,97 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/validate/shared-workspace-git-trust.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+command -v git >/dev/null 2>&1 || skip 'git is required'
+real_git=$(command -v git) || skip 'git is required'
+
+test_dir=${0%/*}
+[ "$test_dir" != "$0" ] || test_dir=.
+test_dir=$(CDPATH= cd "$test_dir" 2>/dev/null && pwd -P) || error 'cannot resolve test directory'
+suite_root=${test_dir%/*}
+suite_root=${suite_root%/*}
+suite_root=${suite_root%/*}
+[ -x "$suite_root/rumiai-validate" ] || error 'cannot locate rumiai-validate'
+
+tmp=${TMPDIR:-/tmp}/rumiai-validate-shared-trust-$$
+umask 077
+mkdir -p "$tmp/work/rumiai-os/src" "$tmp/seed/lib/sh" "$tmp/seed/validation" "$tmp/seed/sessions" "$tmp/fake-bin" ||
+    error 'cannot create fixture directories'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+"$real_git" -C "$tmp/work/rumiai-os" init -q || error 'cannot initialize product repository'
+"$real_git" -C "$tmp/work/rumiai-os" config user.name RumiAI-Test || error 'cannot configure product repository'
+"$real_git" -C "$tmp/work/rumiai-os" config user.email rumiai-test@example.invalid || error 'cannot configure product repository'
+printf 'product\n' > "$tmp/work/rumiai-os/product-marker" || error 'cannot write product marker'
+"$real_git" -C "$tmp/work/rumiai-os" add product-marker || error 'cannot stage product marker'
+"$real_git" -C "$tmp/work/rumiai-os" commit -qm product || error 'cannot commit product repository'
+
+cp "$suite_root/rumiai-validate" "$tmp/seed/rumiai-validate" || error 'cannot copy launcher'
+chmod +x "$tmp/seed/rumiai-validate" || error 'cannot make launcher executable'
+cat > "$tmp/seed/lib/sh/rumiai-validate.lib.sh" <<'EOT'
+rumiai_validate_run() {
+    [ "${GIT_CONFIG_COUNT-}" = 2 ] || return 3
+    [ "${GIT_CONFIG_KEY_0-}" = safe.directory ] || return 3
+    [ "${GIT_CONFIG_VALUE_0-}" = "$suite_root" ] || return 3
+    [ "${GIT_CONFIG_KEY_1-}" = safe.directory ] || return 3
+    [ "${GIT_CONFIG_VALUE_1-}" = "${suite_root%/src/rumiai-tests}" ] || return 3
+    sh -c '[ "$GIT_CONFIG_COUNT" = 2 ] && [ "$GIT_CONFIG_VALUE_0" = "$1" ] && [ "$GIT_CONFIG_VALUE_1" = "$2" ]' sh "$suite_root" "${suite_root%/src/rumiai-tests}"
+}
+EOT
+printf 'kind\ttask\nrumiai-os-commit\tunused\nselection\tunused\n' > "$tmp/seed/validation/probe.conf" ||
+    error 'cannot write validation scope'
+
+"$real_git" -C "$tmp/seed" init -q || error 'cannot initialize suite seed'
+"$real_git" -C "$tmp/seed" config user.name RumiAI-Test || error 'cannot configure suite seed'
+"$real_git" -C "$tmp/seed" config user.email rumiai-test@example.invalid || error 'cannot configure suite seed'
+"$real_git" -C "$tmp/seed" add . || error 'cannot stage suite seed'
+"$real_git" -C "$tmp/seed" commit -qm suite || error 'cannot commit suite seed'
+"$real_git" clone -q "$tmp/seed" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite fixture'
+
+cat > "$tmp/fake-bin/git" <<'EOT'
+#!/bin/sh
+repo=
+expect_c=0
+for arg in "$@"; do
+    if [ "$expect_c" -eq 1 ]; then
+        repo=$arg
+        break
+    fi
+    [ "$arg" = -C ] && expect_c=1
+done
+[ -n "$repo" ] || repo=$PWD
+case $repo in
+    "$EXPECTED_SUITE"|"$EXPECTED_PRODUCT")
+        [ "${GIT_CONFIG_COUNT-}" = 2 ] &&
+        [ "${GIT_CONFIG_KEY_0-}" = safe.directory ] &&
+        [ "${GIT_CONFIG_VALUE_0-}" = "$EXPECTED_SUITE" ] &&
+        [ "${GIT_CONFIG_KEY_1-}" = safe.directory ] &&
+        [ "${GIT_CONFIG_VALUE_1-}" = "$EXPECTED_PRODUCT" ] || {
+            printf 'fatal: detected dubious ownership in repository at %s\n' "$repo" >&2
+            exit 128
+        }
+        ;;
+esac
+exec "$REAL_GIT" "$@"
+EOT
+chmod +x "$tmp/fake-bin/git" || error 'cannot make fake Git executable'
+
+mkdir "$tmp/elsewhere" || error 'cannot create unrelated cwd'
+EXPECTED_SUITE="$tmp/work/rumiai-os/src/rumiai-tests" \
+EXPECTED_PRODUCT="$tmp/work/rumiai-os" \
+REAL_GIT="$real_git" \
+PATH="$tmp/fake-bin:$PATH" \
+sh -c 'cd "$1" && "$2" probe' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
+    > "$tmp/output" 2>&1
+status=$?
+
+if [ "$status" -ne 0 ]; then
+    cat "$tmp/output" >&2
+    fail "launcher returned $status for a shared-workspace ownership simulation"
+fi
+
+exit 0
