@@ -77,7 +77,28 @@ printf -- '%s\n' sha256 > "$tmp/range/digest_type"
 
 cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
 #!/bin/sh
-for url do :; done
+length_mode=0
+for argument
+do
+  [ "$argument" = "-l" ] && length_mode=1
+  url=$argument
+done
+
+if [ "$length_mode" -eq 1 ]
+then
+  [ "${NODEJS_ARTIFACT_MODE-normal}" != "missing-size" ] || exit 89
+  case "$url" in
+    https://nodejs.org/dist/v26.8.2/node-v26.8.2-linux-arm64.tar.xz) printf '%s\n' 32715752 ;;
+    https://nodejs.org/dist/v26.8.2/node-v26.8.2-linux-x64.tar.xz) printf '%s\n' 33720236 ;;
+    https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-arm64.tar.gz) printf '%s\n' 57818610 ;;
+    https://nodejs.org/dist/v26.8.2/node-v26.8.2-darwin-x64.tar.gz) printf '%s\n' 59215598 ;;
+    https://nodejs.org/dist/v26.8.2/node-v26.8.2-win-arm64.zip) printf '%s\n' 36945374 ;;
+    https://nodejs.org/dist/v26.8.2/node-v26.8.2-win-x64.zip) printf '%s\n' 41379367 ;;
+    *) exit 87 ;;
+  esac
+  exit 0
+fi
+
 case "$url" in
   https://api.github.com/repos/nodejs/node/releases/tags/v26.8.2)
     case "${NODEJS_ARTIFACT_MODE-normal}" in
@@ -104,19 +125,7 @@ case "$url" in
         ;;
     esac
     ;;
-  https://nodejs.org/dist/v26.8.2/)
-    case "${NODEJS_ARTIFACT_MODE-normal}" in
-      missing-size) printf '%s\n' '<a href="other">other</a> 09-Sep-2026 14:42 1' ;;
-      *)
-        printf '%s\n' '<a href="node-v26.8.2-linux-arm64.tar.xz">node-v26.8.2-linux-arm64.tar.xz</a> 09-Sep-2026 14:42 32715752'
-        printf '%s\n' '<a href="node-v26.8.2-linux-x64.tar.xz">node-v26.8.2-linux-x64.tar.xz</a> 09-Sep-2026 14:43 33720236'
-        printf '%s\n' '<a href="node-v26.8.2-darwin-arm64.tar.gz">node-v26.8.2-darwin-arm64.tar.gz</a> 09-Sep-2026 14:42 57818610'
-        printf '%s\n' '<a href="node-v26.8.2-darwin-x64.tar.gz">node-v26.8.2-darwin-x64.tar.gz</a> 09-Sep-2026 15:16 59215598'
-        printf '%s\n' '<a href="node-v26.8.2-win-arm64.zip">node-v26.8.2-win-arm64.zip</a> 09-Sep-2026 01:31 36945374'
-        printf '%s\n' '<a href="node-v26.8.2-win-x64.zip">node-v26.8.2-win-x64.zip</a> 09-Sep-2026 00:25 41379367'
-        ;;
-    esac
-    ;;
+  https://nodejs.org/dist/v26.8.2/) exit 92 ;;
   *index.tab*) exit 91 ;;
   *) exit 88 ;;
 esac
