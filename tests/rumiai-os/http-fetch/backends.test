@@ -127,7 +127,6 @@ case "$status" in
     ;;
 esac
 
-
 command_path="$root/bin/sys/http-fetch"
 [ -f "$command_path" ] || fail "bin/sys/http-fetch is missing"
 [ -x "$command_path" ] || fail "bin/sys/http-fetch is not executable"
@@ -168,6 +167,11 @@ status="$?"
 [ "$status" -eq "1" ] || fail "curl transfer failure returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl transfer with wget"
 
+PATH="$runtime_path" "$command_path" -l -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
+status="$?"
+[ "$status" -eq "1" ] || fail "curl Content-Length probe failure returned status $status instead of 1"
+[ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl Content-Length probe with wget"
+
 cat > "$fakebin/curl" <<'EOF_CURL_UNAVAILABLE'
 #!/bin/sh
 exit 127
@@ -183,12 +187,26 @@ then
 fi
 
 : > "$HTTP_FETCH_WGET_ARGS" || exit 90
+spider=0
 while [ "$#" -gt 0 ]
 do
   printf -- '%s\n' "$1" >> "$HTTP_FETCH_WGET_ARGS" || exit 90
+  if [ "$1" = "--spider" ]
+  then
+    spider=1
+  fi
   shift
 done
-printf -- '%s\n' 'body-from-wget'
+if [ "$spider" -eq 1 ]
+then
+  printf -- '%s\n' '  HTTP/1.1 301 Moved Permanently' >&2
+  printf -- '%s\n' '  Content-Length: 5' >&2
+  printf -- '%s\n' '  Location: /final' >&2
+  printf -- '%s\n' '  HTTP/1.1 200 OK' >&2
+  printf -- '%s\n' '  content-length: 33720236' >&2
+else
+  printf -- '%s\n' 'body-from-wget'
+fi
 EOF_WGET_GNU
 chmod "700" "$fakebin/wget" || error "cannot replace fake wget"
 rm -f "$wget_marker"
@@ -222,6 +240,16 @@ cmp "$expected_args" "$wget_args" >/dev/null 2>&1 || {
   cat "$wget_args" >&2
   fail "GNU Wget backend arguments do not match the http-fetch contract"
 }
+
+length="$(PATH="$runtime_path" "$command_path" -l -- "https://example.test/wget" 2>"$tmp/stderr")" || {
+  status="$?"
+  cat "$tmp/stderr" >&2
+  fail "GNU Wget Content-Length probe returned $status"
+}
+[ "$length" = "33720236" ] || fail "GNU Wget Content-Length probe returned $length instead of 33720236"
+grep -F -x -e '--spider' "$wget_args" >/dev/null 2>&1 || fail "GNU Wget Content-Length probe did not use spider mode"
+grep -F -x -e '--server-response' "$wget_args" >/dev/null 2>&1 || fail "GNU Wget Content-Length probe did not request response headers"
+if grep -F -x -e '--output-document=-' "$wget_args" >/dev/null 2>&1; then fail "GNU Wget Content-Length probe unexpectedly requested a body"; fi
 
 cat > "$fakebin/wget" <<'EOF_WGET_BUSYBOX'
 #!/bin/sh
