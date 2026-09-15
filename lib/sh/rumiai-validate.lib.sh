@@ -76,7 +76,6 @@ $value"
     done < "$config_path"
 
     [ "$commit_seen" -eq 1 ] || fatal 'configuration does not define rumiai-os-commit'
-    [ "$selection_count" -gt 0 ] || fatal 'configuration does not define selection'
 
     if [ "$kind_seen" -eq 0 ]; then
         if [ -n "${validation_scope_name-}" ]; then
@@ -84,6 +83,10 @@ $value"
         else
             validation_kind=health
         fi
+    fi
+
+    if [ "$selection_count" -eq 0 ] && [ "$validation_kind" != health ]; then
+        fatal 'task configuration does not define selection'
     fi
 }
 
@@ -300,11 +303,19 @@ run_validation_selection() {
     selection=$1
     runner=$2
 
-    say "Selection:    $selection"
+    if [ -n "$selection" ]; then
+        say "Selection:    $selection"
+    else
+        say 'Selection:    tests/ (full suite)'
+    fi
     say 'Starting validation...'
 
     session_before=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
-    "$runner" --validation -- "$selection"
+    if [ -n "$selection" ]; then
+        "$runner" --validation -- "$selection"
+    else
+        "$runner" --validation
+    fi
     runner_status=$?
     session_after=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
 
@@ -379,19 +390,24 @@ rumiai_validate_run() {
     say "Scope:        $scope_label ($validation_kind)"
 
     aggregate_status=0
-    old_ifs=$IFS
-    selection_ifs=$(printf '\n_')
-    selection_ifs=${selection_ifs%_}
-    IFS=$selection_ifs
-    for validation_selection in $validation_selections; do
-        IFS=$old_ifs
-        run_validation_selection "$validation_selection" "$runner"
-        selection_status=$?
-        aggregate_status=$(merge_scope_status "$aggregate_status" "$selection_status")
-        [ "$aggregate_status" -ne 3 ] || break
+    if [ "$selection_count" -eq 0 ]; then
+        run_validation_selection '' "$runner"
+        aggregate_status=$?
+    else
+        old_ifs=$IFS
+        selection_ifs=$(printf '\n_')
+        selection_ifs=${selection_ifs%_}
         IFS=$selection_ifs
-    done
-    IFS=$old_ifs
+        for validation_selection in $validation_selections; do
+            IFS=$old_ifs
+            run_validation_selection "$validation_selection" "$runner"
+            selection_status=$?
+            aggregate_status=$(merge_scope_status "$aggregate_status" "$selection_status")
+            [ "$aggregate_status" -ne 3 ] || break
+            IFS=$selection_ifs
+        done
+        IFS=$old_ifs
+    fi
 
     if ! validation_cleanup; then
         fatal 'cannot remove temporary rumiai-os worktree'
