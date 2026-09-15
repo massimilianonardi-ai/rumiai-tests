@@ -26,12 +26,13 @@ Esempio:
 
 ```text
 Available validation scopes:
-  1) nodejs-live
-  2) resource-model
-  3) rumiai-os-health
-  4) srv
+  1) resource-model
+  2) rumiai-os-health
+  3) srv
 Select validation scope:
 ```
+
+L'esempio non è una lista hardcoded: gli scope effettivi sono sempre quelli materializzati sotto `validation/` nella revisione aggiornata.
 
 Input vuoto, non numerico o fuori intervallo produce una nuova richiesta. EOF prima di una scelta valida è un errore del launcher.
 
@@ -57,7 +58,9 @@ validation/<scope-name>.conf
 
 Il menu non contiene una lista hardcoded: viene ricostruito dalla revisione corrente della suite **dopo** il self-update e ordinato con ordinamento C/bytewise.
 
-Il file `rumiai-validate.conf` può restare nel repository per compatibilità o per work unit storiche/concorrrenti, ma non è più selezionato implicitamente da `./rumiai-validate` senza argomenti.
+Il file `rumiai-validate.conf` può restare nel repository per compatibilità o per work unit storiche/concorrenti, ma non è più selezionato implicitamente da `./rumiai-validate` senza argomenti.
+
+Il launcher non sintetizza scope da configurazioni precedenti o da nomi di sottosistemi. Un nuovo task compare nel menu soltanto quando la relativa work unit materializza un `validation/<scope-name>.conf` coerente con l'autorità corrente.
 
 ## Configurazione di uno scope
 
@@ -136,15 +139,16 @@ Le working tree non vengono modificate con merge, rebase, reset o force push.
 
 ## Scope correnti
 
-Gli scope correnti comprendono:
+Alla revisione corrente gli scope materializzati comprendono:
 
 ```text
-validation/nodejs-live.conf
 validation/resource-model.conf
 validation/rumiai-os-health.conf
 validation/srv.conf
 ```
 
-`resource-model`, `srv` e `nodejs-live` sono task scope. `rumiai-os-health` è il health gate della full suite.
+`resource-model` e `srv` sono task scope. `rumiai-os-health` è il health gate della full suite.
+
+Ulteriori scope, incluso qualsiasi nuovo scope Node.js richiesto dalle decisioni correnti, compariranno automaticamente nel menu quando verranno materializzati con revisioni e selection corrette.
 
 Gli scope task non sostituiscono i controlli di salute complessivi: impediscono soltanto che un fallimento estraneo serializzi o invalidi artificialmente work unit indipendenti.
