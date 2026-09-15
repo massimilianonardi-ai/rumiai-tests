@@ -1,129 +1,130 @@
 # RumiAI validation launcher
 
-`rumiai-validate` è il launcher operativo per eseguire una validation run configurata sugli host disponibili senza ricostruire manualmente la CLI di `rumiai-test`.
+`rumiai-validate` è il launcher operativo delle validation run.
 
-Il contratto autorevole è definito in:
-
-```text
-massimilianonardi-ai/rumiai-dev/decisions/rumiai-tests/2026-09-08-validation-launcher.md
-```
+Il runner canonico resta `rumiai-test`; il launcher gestisce self-update, exact target revision, validation scope e pubblicazione dell'evidenza.
 
 ## Uso
 
-Il comando normale dell'operatore è soltanto:
+Configurazione predefinita/versionata storica:
 
 ```text
 ./rumiai-validate
 ```
 
-Non è necessario eseguire prima `git pull`, cambiare directory o gestire manualmente le sessioni completate.
-
-Il launcher usa due stadi:
+Validation scope nominato:
 
 ```text
-rumiai-validate
-    -> autodiscovery + cd nella root rumiai-tests
-    -> git pull --ff-only di rumiai-tests
-    -> eventuale restart del bootstrap aggiornato
-    -> lib/sh/rumiai-validate.lib.sh
-         -> pubblicazione di eventuali validation session completate e pendenti
-         -> gate completo di cleanliness della suite
-         -> configurazione + target discovery
-         -> git pull --ff-only di rumiai-os
-         -> gate completo di cleanliness del target
-         -> rumiai-test --validation -- <selection>
-         -> pubblicazione della nuova sessione completata
+./rumiai-validate <scope-name>
 ```
 
-Il bootstrap root resta intenzionalmente minimale. La logica evolutiva viene caricata soltanto dopo il self-update della suite.
-
-## Chiusura della finestra su Linux
-
-Quando `rumiai-validate` viene avviato su Linux in un terminale effimero, per esempio tramite un file manager che apre una finestra terminale destinata a chiudersi alla fine del comando, il launcher mantiene la finestra aperta e mostra:
+Il launcher accetta zero o un argomento. Senza argomenti usa `rumiai-validate.conf`, preservando il workflow operativo esistente. Uno scope nominato viene caricato da:
 
 ```text
-Press Enter to close...
+validation/<scope-name>.conf
 ```
 
-Il prompt viene attivato soltanto quando stdin e stdout sono terminali e il launcher rileva che non sta semplicemente girando come comando figlio di una normale shell interattiva. Un normale:
-
-```text
-./rumiai-validate
-```
-
-digitato in una shell Linux continua quindi a terminare senza richiedere Enter.
-
-Esecuzioni non interattive, redirect, pipe e automazioni non vengono mai bloccati dal meccanismo di hold. Il tasto Enter serve soltanto a chiudere la finestra dopo che tutto l'output è già stato prodotto; l'exit status originale del launcher o del runner viene preservato.
-
-Il finalizer appartiene al bootstrap root affinché funzioni anche per errori che avvengono prima del caricamento della logica evolutiva. Un `exec` riuscito durante il self-update sostituisce invece normalmente il processo con il launcher aggiornato senza mostrare un prompt intermedio.
-
-## Sessioni pendenti e cleanliness
-
-File untracked arbitrari continuano a non essere ammessi prima dell'effettiva validation.
-
-L'unica eccezione operativa è una directory visibile `sessions/<run-id>/` prodotta come validation session completata dal runner. Prima di eseguire una nuova validation, il launcher:
-
-1. verifica che la sessione abbia metadata e risultati completi;
-2. legge dalla sessione l'esatto `rumiai-tests-commit` contro cui è stata prodotta;
-3. costruisce un commit di sola evidenza basato su quel commit esatto, senza modificare HEAD o index della working tree;
-4. pubblica il commit sul remote configurato sotto:
-
-```text
-validation/<run-id>
-```
-
-5. verifica che il ref remoto punti all'evidenza attesa;
-6. soltanto dopo la verifica elimina la copia locale untracked della sessione.
-
-Se il push o la verifica falliscono, la sessione locale resta intatta e il launcher termina con errore. Alla successiva invocazione lo stesso `./rumiai-validate` ritenta la pubblicazione prima di una nuova validation.
-
-Una pubblicazione già presente con lo stesso contenuto viene riconosciuta in modo idempotente; un ref remoto omonimo con parent o tree differenti è un conflitto e non viene sovrascritto.
-
-Le sessioni con runner status `0`, `1` o `2` sono evidenza completata e vengono pubblicate. Le sessioni incomplete/nascoste, incluse quelle lasciate da un runner error prima della pubblicazione finale, non vengono pubblicate automaticamente e continuano a bloccare il gate di cleanliness.
-
-Dopo la gestione delle sessioni pendenti, la working tree di `rumiai-tests` deve essere completamente clean prima dell'invocazione di `rumiai-test --validation`.
-
-## Perché la pubblicazione non modifica `main`
-
-Le evidenze dei diversi host non vengono committate automaticamente su `main`.
-
-Questo mantiene invariato il commit della suite che deve essere validato da tutti gli host. Se una sessione del primo host avanzasse `main`, il secondo host validerebbe una revisione diversa della suite pur usando gli stessi test.
-
-Il ref `validation/<run-id>` è quindi un ref di conservazione dell'evidenza, non una nuova baseline della suite. Un'eventuale successiva consolidazione delle evidenze in `main` è una fase distinta e non appartiene al launcher.
-
-## Operazioni Git
-
-Gli aggiornamenti del codice restano esclusivamente:
-
-```text
-git pull --ff-only
-```
-
-Per la sola pubblicazione di una validation session completata il launcher può usare primitive Git equivalenti a `add` su index temporaneo, `commit-tree` e `push` verso il ref univoco di evidenza.
-
-Il launcher non esegue automaticamente:
-
-```text
-git merge
-git rebase
-git push --force
-```
-
-e non crea commit di codice, test, configurazione o altro contenuto locale.
+Il nome deve contenere soltanto lettere, cifre, `.`, `_` o `-` e non può iniziare con `.` o `-`.
 
 ## Configurazione
 
-`rumiai-validate.conf` è un file versionato con record:
+Formato record:
 
 ```text
 key<TAB>value
 ```
 
-Le chiavi correnti sono:
+Chiavi:
 
 ```text
-rumiai-os-commit
-selection
+kind<TAB>task|health
+rumiai-os-commit<TAB><commit>
+selection<TAB><test-or-group>
 ```
 
-La configurazione viene aggiornata insieme ai test quando una modifica richiede una nuova physical validation. La stessa configurazione viene eseguita sui diversi host di riferimento.
+`selection` è ripetibile. Almeno una selection è obbligatoria.
+
+Per compatibilità, `kind` può essere assente. Nel file predefinito viene allora interpretato come `health`, preservando la semantica aggregata storica; negli scope nominati viene interpretato come `task`.
+
+La full suite `rumiai-os` è disponibile come health scope esplicito in:
+
+```text
+validation/rumiai-os-health.conf
+```
+
+ed è eseguibile con:
+
+```text
+./rumiai-validate rumiai-os-health
+```
+
+## Semantica
+
+Ogni `selection` viene passata separatamente a:
+
+```text
+rumiai-test --validation -- <selection>
+```
+
+Il runner resta quindi a singola selection.
+
+Per uno scope `task`, il launcher considera lo scope `VALIDATED` soltanto quando tutti i test effettivamente richiesti hanno PASS. Un test richiesto con SKIP rende lo scope `NOT VALIDATED` senza cambiare retroattivamente lo status del test.
+
+Per uno scope `health`, gli exit status restano quelli aggregati del runner; gli SKIP restano visibili ma non trasformano automaticamente uno status 0 in failure.
+
+## Target revision e parallelismo
+
+Il launcher aggiorna il checkout principale `rumiai-os` con `git pull --ff-only` e richiede che sia clean.
+
+Se l'HEAD corrente coincide con `rumiai-os-commit`, usa il checkout principale.
+
+Se il commit configurato è diverso ma disponibile nel repository, il launcher crea un Git worktree detached temporaneo dell'esatta revisione e imposta il normale override di test:
+
+```text
+RUMIAI_TEST_RUMIAI_OS_ROOT
+```
+
+Il checkout principale non viene resettato né spostato. Questo permette a scope differenti di puntare a revisioni prodotto differenti senza serializzare lo sviluppo sul checkout dell'operatore.
+
+Il worktree temporaneo viene rimosso al termine; una mancata rimozione è errore del launcher.
+
+## Evidenza e pubblicazione
+
+Ogni validation run elementare produce la normale sessione sotto `sessions/` e viene pubblicata sul remote come:
+
+```text
+validation/<run-id>
+```
+
+La pubblicazione conserva il parent esatto `rumiai-tests-commit` registrato dalla sessione e non avanza `main`.
+
+Uno scope con più selection produce più sessioni elementari. L'insieme delle sessioni, la configurazione versionata dello scope e l'esatto commit della suite costituiscono l'evidenza del task scope.
+
+Una full-suite session può ancora essere analizzata per subset: PASS dei test pertinenti restano evidence delle proprietà esercitate anche se la sessione complessiva contiene fallimenti estranei.
+
+## Cleanliness
+
+Prima della validation effettiva:
+
+- `rumiai-tests` deve essere clean dopo l'eventuale pubblicazione di sessioni completate pendenti;
+- il checkout principale `rumiai-os` deve essere clean;
+- il commit target configurato deve esistere localmente dopo il pull.
+
+Le working tree non vengono modificate con merge, rebase, reset o force push.
+
+## Scope correnti
+
+La suite contiene scope task separati almeno per:
+
+```text
+validation/resource-model.conf
+validation/srv.conf
+```
+
+La full suite resta disponibile come health gate separato:
+
+```text
+validation/rumiai-os-health.conf
+```
+
+Gli scope task non sostituiscono i controlli di salute complessivi: impediscono soltanto che un fallimento estraneo serializzi o invalidi artificialmente work unit indipendenti.
