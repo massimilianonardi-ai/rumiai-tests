@@ -1,0 +1,103 @@
+#!/bin/sh
+
+TEST_ID="rumiai-tests/lib/package-release-reference.test"
+
+fail()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  package_release_reference_self=$0
+  case "$package_release_reference_self" in
+    */*) :;;
+    *) package_release_reference_self=$(command -v "$package_release_reference_self" 2>/dev/null) || return 1;;
+  esac
+  package_release_reference_self_dir=${package_release_reference_self%/*}
+  [ "$package_release_reference_self_dir" != "$package_release_reference_self" ] || package_release_reference_self_dir=.
+  CDPATH= cd -- "$package_release_reference_self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error "cannot resolve test directory"
+lib_tests_dir=${test_dir%/*}
+tests_dir=${lib_tests_dir%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/package-release.lib" || error "cannot load package release helper"
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot load target helper"
+
+source_root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) exit 2;;
+  2) fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+rumiai_test_package_release_fixture=$source_root
+
+tmp="${TMPDIR:-/tmp}/rumiai-package-release-reference-$$"
+umask 077
+command -p -- mkdir -- "$tmp" || error "cannot create temporary directory"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+root="$tmp/root"
+command -p -- mkdir -- "$root" "$root/sub" || error "cannot create inventory fixture"
+printf -- '%s\n' alpha > "$root/file" || error "cannot create inventory file"
+printf -- '%s\n' beta > "$root/other" || error "cannot create second inventory file"
+command -p -- chmod 640 "$root/file" || error "cannot set inventory mode"
+command -p -- ln -s file "$root/link" || error "cannot create inventory symlink"
+
+stat_style=$(rumiai_test_package_release_stat_style "$root") || error "supported stat implementation unavailable"
+baseline="$tmp/baseline"
+same="$tmp/same"
+changed="$tmp/changed"
+rumiai_test_package_release_inventory "$root" "$baseline" "$stat_style" || error "baseline inventory failed"
+rumiai_test_package_release_inventory "$root" "$same" "$stat_style" || error "repeat inventory failed"
+command -p -- cmp -s "$baseline" "$same" || fail "identical tree produced different inventory"
+
+printf -- '%s\n' changed > "$root/file" || error "cannot mutate inventory content"
+rumiai_test_package_release_inventory "$root" "$changed" "$stat_style" || error "content-change inventory failed"
+command -p -- cmp -s "$baseline" "$changed" && fail "content mutation was not detected"
+printf -- '%s\n' alpha > "$root/file" || error "cannot restore inventory content"
+
+command -p -- chmod 600 "$root/file" || error "cannot mutate inventory mode"
+rumiai_test_package_release_inventory "$root" "$changed" "$stat_style" || error "mode-change inventory failed"
+command -p -- cmp -s "$baseline" "$changed" && fail "mode mutation was not detected"
+command -p -- chmod 640 "$root/file" || error "cannot restore inventory mode"
+
+command -p -- rm -f -- "$root/link" || error "cannot replace inventory symlink"
+command -p -- ln -s other "$root/link" || error "cannot create replacement symlink"
+rumiai_test_package_release_inventory "$root" "$changed" "$stat_style" || error "symlink-change inventory failed"
+command -p -- cmp -s "$baseline" "$changed" && fail "symlink-target mutation was not detected"
+
+candidates="$tmp/candidates"
+printf -- '1\texecutable\tbin/tool\n2\tlaunch-like\tbin/other.sh\n' > "$candidates" || error "cannot create candidate fixture"
+[ "$(rumiai_test_package_release_candidate_id "$candidates" bin/tool)" = 1 ] || fail "candidate lookup failed"
+printf -- '3\texecutable\tbin/tool\n' >> "$candidates" || error "cannot extend candidate fixture"
+rumiai_test_package_release_candidate_id "$candidates" bin/tool >/dev/null 2>&1 && fail "ambiguous candidate was accepted"
+
+delta="$tmp/delta"
+cat > "$delta" <<'EOF_DELTA'
+  package-root path delta:
+  added:
+    (none)
+  removed:
+    (none)
+  redirected-environment path delta:
+  added:
+    state	D
+  removed:
+    (none)
+EOF_DELTA
+rumiai_test_package_release_delta_empty "$delta" '  package-root path delta:' || fail "empty delta was rejected"
+rumiai_test_package_release_delta_empty "$delta" '  redirected-environment path delta:' >/dev/null 2>&1 && fail "non-empty delta was accepted"
+
+exit 0

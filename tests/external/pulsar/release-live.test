@@ -1,0 +1,33 @@
+#!/bin/sh
+
+TEST_ID="external/pulsar/release-live.test"
+RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE="pulsar"
+RUMIAI_TEST_PACKAGE_RELEASE_COMMANDS="pulsar"
+RUMIAI_TEST_PACKAGE_RELEASE_ANALYZE_COMMAND="pulsar"
+RUMIAI_TEST_PACKAGE_RELEASE_TARGETS="linux-arm64 linux-x86_64 macos-arm64 macos-x86_64 windows-x86_64"
+RUMIAI_TEST_PACKAGE_RELEASE_MODE="gui"
+RUMIAI_TEST_PACKAGE_RELEASE_CATALOG_TREE="d3832f9a6ea99e28eb7e56744a1cfa03abae5be5"
+RUMIAI_TEST_PACKAGE_RELEASE_SETUID_LINUX_ARM64="chrome-sandbox"
+RUMIAI_TEST_PACKAGE_RELEASE_SETUID_LINUX_X86_64="chrome-sandbox"
+
+resolve_test_dir()
+{
+  rumiai_test_package_release_self=$0
+  case "$rumiai_test_package_release_self" in
+    */*) :;;
+    *) rumiai_test_package_release_self=$(command -v "$rumiai_test_package_release_self" 2>/dev/null) || return 1;;
+  esac
+  rumiai_test_package_release_self_dir=${rumiai_test_package_release_self%/*}
+  [ "$rumiai_test_package_release_self_dir" != "$rumiai_test_package_release_self" ] || rumiai_test_package_release_self_dir=.
+  CDPATH= cd -- "$rumiai_test_package_release_self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || { printf -- "%s: cannot resolve test directory\n" "$TEST_ID" >&2; exit 3; }
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+tests_dir=${external_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/package-release.lib" || { printf -- "%s: cannot load package release helper\n" "$TEST_ID" >&2; exit 3; }
+
+rumiai_test_package_release_run "$suite_root"
+exit $?
