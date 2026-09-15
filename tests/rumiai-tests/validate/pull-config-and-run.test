@@ -72,7 +72,8 @@ git -C "$tmp/suite-seed" init -q || error 'cannot initialize suite seed'
 suite_branch=$(git -C "$tmp/suite-seed" symbolic-ref --short HEAD) || error 'cannot determine suite branch'
 cp "$suite_root/rumiai-validate" "$tmp/suite-seed/rumiai-validate" || error 'cannot copy launcher bootstrap'
 chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher executable'
-mkdir -p "$tmp/suite-seed/lib/sh" "$tmp/suite-seed/sessions" || error 'cannot create suite support directories'
+mkdir -p "$tmp/suite-seed/lib/sh" "$tmp/suite-seed/sessions" "$tmp/suite-seed/validation" ||
+    error 'cannot create suite support directories'
 cp "$suite_root/lib/rumiai-os-target.lib" "$tmp/suite-seed/lib/rumiai-os-target.lib" || error 'cannot copy target discovery library'
 
 # The initial implementation is intentionally not valid shell. If the bootstrap
@@ -89,8 +90,8 @@ EOT
 chmod +x "$tmp/suite-seed/rumiai-test" || error 'cannot make fake runner executable'
 
 initial_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot read initial target commit'
-printf 'rumiai-os-commit\t%s\nselection\told-selection\n' "$initial_target" > "$tmp/suite-seed/rumiai-validate.conf" ||
-    error 'cannot write initial launcher configuration'
+printf 'rumiai-os-commit\t%s\nselection\told-selection\n' "$initial_target" > "$tmp/suite-seed/validation/zzz-old.conf" ||
+    error 'cannot write initial validation scope'
 
 git -C "$tmp/suite-seed" add . || error 'cannot stage initial suite'
 commit_repo "$tmp/suite-seed" initial-suite || error 'cannot commit initial suite'
@@ -103,9 +104,12 @@ git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || e
 
 cp "$suite_root/lib/sh/rumiai-validate.lib.sh" "$tmp/suite-seed/lib/sh/rumiai-validate.lib.sh" ||
     error 'cannot install updated launcher implementation'
-printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/rumiai-validate.conf" ||
-    error 'cannot update launcher configuration'
-git -C "$tmp/suite-seed" add lib/sh/rumiai-validate.lib.sh rumiai-validate.conf ||
+rm "$tmp/suite-seed/validation/zzz-old.conf" || error 'cannot remove stale validation scope'
+printf 'rumiai-os-commit\t%s\nselection\twrong-selection\n' "$expected_target" > "$tmp/suite-seed/validation/alpha.conf" ||
+    error 'cannot write alpha validation scope'
+printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/validation/beta.conf" ||
+    error 'cannot write beta validation scope'
+git -C "$tmp/suite-seed" add -A lib/sh/rumiai-validate.lib.sh validation ||
     error 'cannot stage suite update'
 commit_repo "$tmp/suite-seed" updated-suite || error 'cannot commit suite update'
 git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push suite update'
@@ -115,7 +119,7 @@ mkdir "$tmp/elsewhere" || error 'cannot create unrelated working directory'
 printf 'local residue\n' > "$tmp/work/rumiai-os/src/rumiai-tests/local-untracked" ||
     error 'cannot create untracked suite residue'
 
-FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
+printf 'x\n2\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
     sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
     > "$tmp/first-transcript" 2>&1
 first_status=$?
@@ -128,12 +132,19 @@ first_status=$?
 actual_suite=$(git -C "$tmp/work/rumiai-os/src/rumiai-tests" rev-parse HEAD) ||
     error 'cannot read suite commit after self-update'
 [ "$actual_suite" = "$expected_suite" ] ||
-    fail 'launcher did not fast-forward rumiai-tests before the full cleanliness gate'
+    fail 'launcher did not fast-forward rumiai-tests before the interactive menu'
 [ ! -f "$tmp/runner-args" ] || fail 'runner executed despite dirty validation working tree'
+grep -F '  1) alpha' "$tmp/first-transcript" >/dev/null || fail 'updated alpha scope missing from menu'
+grep -F '  2) beta' "$tmp/first-transcript" >/dev/null || fail 'updated beta scope missing from menu'
+if grep -F 'zzz-old' "$tmp/first-transcript" >/dev/null; then
+    fail 'menu was built before self-update'
+fi
+grep -F 'enter the number of an available validation scope' "$tmp/first-transcript" >/dev/null ||
+    fail 'invalid interactive choice did not request a new number'
 
 rm "$tmp/work/rumiai-os/src/rumiai-tests/local-untracked" || error 'cannot remove test residue'
 
-FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
+printf '2\n' | FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" \
     sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$tmp/work/rumiai-os/src/rumiai-tests/rumiai-validate" \
     > "$tmp/second-transcript" 2>&1
 second_status=$?
@@ -146,8 +157,11 @@ actual_target=$(git -C "$tmp/work/rumiai-os" rev-parse HEAD) || error 'cannot re
 [ "$actual_target" = "$expected_target" ] || fail 'launcher did not fast-forward rumiai-os before execution'
 [ -f "$tmp/runner-args" ] || fail 'configured runner was not executed'
 [ "$(cat "$tmp/runner-args")" = '--validation -- rumiai-os/bootstrap' ] ||
-    fail 'launcher did not use the updated configured selection'
+    fail 'launcher did not use the numerically selected updated scope'
 [ "$(cat "$tmp/runner-pwd")" = "$tmp/work/rumiai-os/src/rumiai-tests" ] ||
     fail 'launcher did not enter the rumiai-tests repository root before running'
+
+grep -F 'Scope:        beta (task)' "$tmp/second-transcript" >/dev/null ||
+    fail 'launcher did not report the selected scope'
 
 exit 0
