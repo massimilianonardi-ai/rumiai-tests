@@ -17,7 +17,7 @@ tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$; umask 077; mkdir "$tmp" || error 'cann
 fixture=$tmp/root
 mkdir -p "$fixture/pkg" "$fixture/src" || error 'cannot create fixture roots'
 for file in m rumiai-os rumiai-os-sh product-name product-version; do cp "$root/$file" "$fixture/$file" || error "cannot copy $file"; done
-for dir in bin lib lang state; do cp -R "$root/$dir" "$fixture/$dir" || error "cannot copy $dir"; done
+for dir in bin lib res state; do cp -R "$root/$dir" "$fixture/$dir" || error "cannot copy $dir"; done
 chmod u+x "$fixture/m" "$fixture/rumiai-os" "$fixture/rumiai-os-sh" || error 'cannot prepare fixture entrypoints'
 command=$fixture/bin/sys/state-path
 [ -x "$command" ] || fail 'state-path is not executable'
