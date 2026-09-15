@@ -88,33 +88,33 @@ cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
 #!/bin/sh
 case $#:$1:${2-} in
     1:--validation:)
-        selection=tests/
+        selection="tests/"
         ;;
     3:--validation:--)
-        selection=$3
+        selection="$3"
         ;;
     *)
         exit 3
         ;;
 esac
-suite_root=$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P) || exit 3
-observed_target=$(git -C "$RUMIAI_TEST_RUMIAI_OS_ROOT" rev-parse HEAD 2>/dev/null) || exit 3
+suite_root="$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P)" || exit 3
+observed_target="$(git -C "$RUMIAI_TEST_RUMIAI_OS_ROOT" rev-parse HEAD 2>/dev/null)" || exit 3
 [ "$observed_target" = "$FAKE_EXPECTED_TARGET" ] || exit 1
-counter_file=$FAKE_SCOPE_STATE/counter
-counter=0
-[ ! -f "$counter_file" ] || counter=$(cat "$counter_file") || exit 3
-counter=$((counter + 1))
+counter_file="$FAKE_SCOPE_STATE/counter"
+counter="0"
+[ ! -f "$counter_file" ] || counter="$(cat "$counter_file")" || exit 3
+counter="$((counter + 1))"
 printf '%s\n' "$counter" > "$counter_file" || exit 3
-run_id=$(printf 'scope-%04d' "$counter")
-session_dir=$suite_root/sessions/$run_id
+run_id="$(printf 'scope-%04d' "$counter")"
+session_dir="$suite_root/sessions/$run_id"
 mkdir -p "$session_dir/logs" || exit 3
-suite_commit=$(git -C "$suite_root" rev-parse HEAD) || exit 3
-mode=$(cat "$suite_root/fake-mode") || exit 3
-result=PASS
-termination=0
+suite_commit="$(git -C "$suite_root" rev-parse HEAD)" || exit 3
+mode="$(cat "$suite_root/fake-mode")" || exit 3
+result="PASS"
+termination="0"
 if [ "$mode" = skip-two ] && [ "$selection" = two ]; then
-    result=SKIP
-    termination=2
+    result="SKIP"
+    termination="2"
 fi
 {
     printf 'type\tvalidation\n'
@@ -138,7 +138,7 @@ git -C "$tmp/suite-remote.git" symbolic-ref HEAD "refs/heads/$suite_branch" || e
 
 mkdir -p "$tmp/work/rumiai-os/src" || error 'cannot create target src directory'
 git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite worktree'
-work_suite=$tmp/work/rumiai-os/src/rumiai-tests
+work_suite="$tmp/work/rumiai-os/src/rumiai-tests"
 git -C "$work_suite" config user.name RumiAI-Test || error 'cannot configure suite test identity'
 git -C "$work_suite" config user.email rumiai-test@example.invalid || error 'cannot configure suite test email'
 mkdir "$tmp/fake-state" || error 'cannot create fake runner state'
@@ -173,7 +173,7 @@ worktree_count=$(git -C "$tmp/work/rumiai-os" worktree list --porcelain | grep -
 
 # A health scope without selection means one root-suite validation session.
 FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" health > "$tmp/health-transcript" 2>&1
-health_status=$?
+health_status="$?"
 if [ "$health_status" -ne 0 ]; then
     cat "$tmp/health-transcript" >&2
     fail "root health scope returned $health_status"
@@ -183,15 +183,15 @@ grep -F 'Selection:    tests/ (full suite)' "$tmp/health-transcript" >/dev/null 
 grep -F 'Health result: SUCCESS' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope was not reported successful'
 
 # A task scope still requires at least one explicit selection.
-counter_before=$(cat "$tmp/fake-state/counter") || error 'cannot read fake runner counter before invalid task scope'
+counter_before="$(cat "$tmp/fake-state/counter")" || error 'cannot read fake runner counter before invalid task scope'
 FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" bad-task > "$tmp/bad-task-transcript" 2>&1
-bad_task_status=$?
+bad_task_status="$?"
 [ "$bad_task_status" -eq 3 ] || {
     cat "$tmp/bad-task-transcript" >&2
     fail "task scope without selection returned $bad_task_status instead of 3"
 }
 grep -F 'task configuration does not define selection' "$tmp/bad-task-transcript" >/dev/null 2>&1 || fail 'missing-selection task error was not reported'
-counter_after=$(cat "$tmp/fake-state/counter") || error 'cannot read fake runner counter after invalid task scope'
+counter_after="$(cat "$tmp/fake-state/counter")" || error 'cannot read fake runner counter after invalid task scope'
 [ "$counter_after" = "$counter_before" ] || fail 'runner executed for an invalid task scope without selection'
 
 exit 0
