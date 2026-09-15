@@ -15,7 +15,7 @@ resolve_test_dir()
 
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-dbeaver_group="${test_dir%/*}"; external_group="${dbeaver_group%/*}"; tests_dir="${external_group%/*}"; suite_root="${tests_dir%/*}"
+dbeaver_group="${test_dir%/*}"; external_group="${dbeaver_group%/*}"; suite_root="${external_group%/*}"
 target_lib="$suite_root/lib/rumiai-os-target.lib"
 fixture_lib="$suite_root/lib/rumiai-os-fixture.lib"
 [ -r "$target_lib" ] || error "rumiai-os target discovery library is unavailable"
