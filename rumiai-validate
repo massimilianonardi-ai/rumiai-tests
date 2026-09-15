@@ -138,6 +138,29 @@ canonical_dir() {
     (CDPATH= cd "$path" 2>/dev/null && pwd -P)
 }
 
+launcher_configure_git_safe_directories() {
+    suite_dir=$1
+
+    GIT_CONFIG_COUNT=1
+    GIT_CONFIG_KEY_0=safe.directory
+    GIT_CONFIG_VALUE_0=$suite_dir
+    unset GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
+
+    case $suite_dir in
+        */src/rumiai-tests)
+            product_dir=${suite_dir%/src/rumiai-tests}
+            if [ -e "$product_dir/.git" ]; then
+                GIT_CONFIG_COUNT=2
+                GIT_CONFIG_KEY_1=safe.directory
+                GIT_CONFIG_VALUE_1=$product_dir
+                export GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
+            fi
+            ;;
+    esac
+
+    export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+}
+
 repo_require_no_tracked_changes() {
     repo_dir=$1
     label=$2
@@ -234,8 +257,9 @@ main() {
     suite_root=${self_path%/*}
     [ -n "$suite_root" ] || suite_root=/
     suite_root=$(canonical_dir "$suite_root") || fatal 'cannot resolve rumiai-tests root'
+    launcher_configure_git_safe_directories "$suite_root"
 
-    git_top=$(git -C "$suite_root" rev-parse --show-toplevel 2>/dev/null) ||
+    git_top=$(git -C "$suite_root" rev-parse --show-toplevel) ||
         fatal 'launcher must be inside a rumiai-tests Git working tree'
     git_top=$(canonical_dir "$git_top") || fatal 'cannot canonicalize rumiai-tests Git root'
     [ "$git_top" = "$suite_root" ] || fatal 'launcher must be located in the rumiai-tests repository root'
