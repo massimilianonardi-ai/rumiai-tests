@@ -22,13 +22,14 @@ il launcher:
 6. mostra gli scope in ordine deterministico con un elenco numerato;
 7. chiede all'utente il numero dello scope da eseguire.
 
-Esempio:
+Esempio alla revisione corrente:
 
 ```text
 Available validation scopes:
-  1) resource-model
-  2) rumiai-os-health
-  3) srv
+  1) nodejs-live
+  2) resource-model
+  3) rumiai-os-health
+  4) srv
 Select validation scope:
 ```
 
@@ -142,13 +143,16 @@ Le working tree non vengono modificate con merge, rebase, reset o force push.
 Alla revisione corrente gli scope materializzati comprendono:
 
 ```text
+validation/nodejs-live.conf
 validation/resource-model.conf
 validation/rumiai-os-health.conf
 validation/srv.conf
 ```
 
-`resource-model` e `srv` sono task scope. `rumiai-os-health` è il health gate della full suite.
+`nodejs-live`, `resource-model` e `srv` sono task scope. `rumiai-os-health` è il health gate della full suite.
 
-Ulteriori scope, incluso qualsiasi nuovo scope Node.js richiesto dalle decisioni correnti, compariranno automaticamente nel menu quando verranno materializzati con revisioni e selection corrette.
+Lo scope `nodejs-live` corrente è quello materializzato dalla remediation Node.js attiva e contiene le selection richieste da quella decisione; non è il precedente gate live isolato.
+
+Nuovi scope compariranno automaticamente nel menu quando verranno materializzati con revisioni e selection corrette.
 
 Gli scope task non sostituiscono i controlli di salute complessivi: impediscono soltanto che un fallimento estraneo serializzi o invalidi artificialmente work unit indipendenti.
