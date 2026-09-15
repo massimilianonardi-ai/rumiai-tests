@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# Reference implementations copied from:
+# Reference target-discovery implementation derived from:
 # massimilianonardi-ai/rumiai-tests@d0617fdb3f7d7960e92cfdabef818a626eb22004:lib/rumiai-os-target.lib
-# and the current Model 2 fixture pattern used by external/electron/install-live.test.
+# Fixture layout aligned with the current Model 2 resource model.
 # Copied inline intentionally to preserve test independence.
 
 TEST_ID="external/nodejs/install-live.test"
@@ -14,14 +14,14 @@ skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
 rumiai_test_target_rumiai_os_origin_ok()
 {
-  candidate=$1
+  candidate="$1"
   origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
   case "$origin" in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;; esac
   return 1
 }
 rumiai_test_target_rumiai_os_validate()
 {
-  candidate=$1; [ -n "$candidate" ] || return 1
+  candidate="$1"; [ -n "$candidate" ] || return 1
   [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return 1
   rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
   target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
@@ -29,38 +29,38 @@ rumiai_test_target_rumiai_os_validate()
 }
 rumiai_test_target_rumiai_os_find()
 {
-  start=$1; rumiai_test_target_have git || return 3
+  start="$1"; rumiai_test_target_have git || return 3
   if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; return 0; fi
   candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
   while :; do
     if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
-    [ "$candidate" != / ] || break
-    parent=${candidate%/*}; [ -n "$parent" ] || parent=/; [ "$parent" != "$candidate" ] || break; candidate=$parent
+    [ "$candidate" != "/" ] || break
+    parent="${candidate%/*}"; [ -n "$parent" ] || parent="/"; [ "$parent" != "$candidate" ] || break; candidate="$parent"
   done
   return 1
 }
 rumiai_test_fixture_rumiai_os_create()
 {
   [ "$#" -eq 2 ] || return 3
-  source_root=$1; fixture_root=$2
+  source_root="$1"; fixture_root="$2"
   for required in m rumiai-os rumiai-os-sh product-name product-version; do [ -f "$source_root/$required" ] || return 1; done
-  for required in bin lib lang state; do [ -d "$source_root/$required" ] || return 1; done
+  for required in bin lib res state; do [ -d "$source_root/$required" ] || return 1; done
   [ ! -e "$fixture_root" ] || return 2
   mkdir -p "$fixture_root/pkg" "$fixture_root/src" || return 2
   for fixture_file in m rumiai-os rumiai-os-sh product-name product-version; do cp "$source_root/$fixture_file" "$fixture_root/$fixture_file" || { rm -rf "$fixture_root"; return 2; }; done
-  for fixture_dir in bin lib lang state; do cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir" || { rm -rf "$fixture_root"; return 2; }; done
+  for fixture_dir in bin lib res state; do cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir" || { rm -rf "$fixture_root"; return 2; }; done
   chmod u+x "$fixture_root/m" "$fixture_root/rumiai-os" "$fixture_root/rumiai-os-sh" || { rm -rf "$fixture_root"; return 2; }
 }
 resolve_test_dir()
 {
-  self=$0; case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
-  self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+  self="$0"; case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir="${self%/*}"; [ "$self_dir" != "$self" ] || self_dir="."; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
 command -v git >/dev/null 2>&1 || skip "git is unavailable"
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-nodejs_group=${test_dir%/*}; external_group=${nodejs_group%/*}; tests_dir=${external_group%/*}; suite_root=${tests_dir%/*}
-source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
+nodejs_group="${test_dir%/*}"; external_group="${nodejs_group%/*}"; tests_dir="${external_group%/*}"; suite_root="${tests_dir%/*}"
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status="$?"
 case "$status" in 0) : ;; 1) skip "rumiai-os target checkout not found" ;; 2) fail "invalid explicit rumiai-os target" ;; *) error "target discovery failed" ;; esac
 
 tmp="${TMPDIR:-/tmp}/rumiai-nodejs-install-live-$$"
@@ -90,14 +90,14 @@ pkg_command="$fixture/bin/sys/pkg"
 printf -- '%s\n' "$TEST_ID: live install started; this test downloads the official Node.js prebuilt archive" >&2
 "$pkg_command" install nodejs || fail "pkg install nodejs failed"
 
-concrete=; concrete_count=0
+concrete=""; concrete_count="0"
 for candidate in "$fixture/pkg"/nodejs@*"!$osarch"; do
   [ -e "$candidate" ] || [ -L "$candidate" ] || continue
-  concrete_count=$((concrete_count + 1)); concrete=$candidate
+  concrete_count="$((concrete_count + 1))"; concrete="$candidate"
 done
 [ "$concrete_count" -eq 1 ] || fail "expected one target-specific Node.js concrete version, found $concrete_count"
 [ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "Node.js concrete version is not a real directory"
-identity=${concrete##*/}; version_osarch=${identity#nodejs@}; version=${version_osarch%"!$osarch"}
+identity="${concrete##*/}"; version_osarch="${identity#nodejs@}"; version="${version_osarch%"!$osarch"}"
 [ -n "$version" ] && [ "$version" != "$version_osarch" ] || fail "cannot derive installed Node.js version"
 
 for command_name in node npm npx; do
@@ -108,14 +108,14 @@ done
 
 case "$osarch" in
   windows-*)
-    expected_node_link=../root/node.exe
-    expected_npm_link=../root/npm
-    expected_npx_link=../root/npx
+    expected_node_link="../root/node.exe"
+    expected_npm_link="../root/npm"
+    expected_npx_link="../root/npx"
     ;;
   *)
-    expected_node_link=../root/bin/node
-    expected_npm_link=../root/bin/npm
-    expected_npx_link=../root/bin/npx
+    expected_node_link="../root/bin/node"
+    expected_npm_link="../root/bin/npm"
+    expected_npx_link="../root/bin/npx"
     ;;
 esac
 [ "$(readlink "$concrete/link/node")" = "$expected_node_link" ] || fail "node direct-link target is incorrect"
@@ -139,10 +139,10 @@ catalog="$pkg_cache/pkg-catalog"
 catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
 stream="$catalog/nodejs/catalog-$osarch"
 range="$stream/n0001=v26.8.2"
-[ -f "$stream/repository/type" ] && [ "$(cat "$stream/repository/type")" = nodejs ] || fail "cached Node.js repository type is incorrect"
-[ -f "$stream/repository/owner" ] && [ "$(cat "$stream/repository/owner")" = nodejs ] || fail "cached Node.js GitHub owner is incorrect"
-[ -f "$stream/repository/repository" ] && [ "$(cat "$stream/repository/repository")" = node ] || fail "cached Node.js GitHub repository is incorrect"
-[ -f "$range/digest_type" ] && [ "$(cat "$range/digest_type")" = sha256 ] || fail "cached Node.js range lacks required SHA-256 policy"
+[ -f "$stream/repository/type" ] && [ "$(cat "$stream/repository/type")" = "nodejs" ] || fail "cached Node.js repository type is incorrect"
+[ -f "$stream/repository/owner" ] && [ "$(cat "$stream/repository/owner")" = "nodejs" ] || fail "cached Node.js GitHub owner is incorrect"
+[ -f "$stream/repository/repository" ] && [ "$(cat "$stream/repository/repository")" = "node" ] || fail "cached Node.js GitHub repository is incorrect"
+[ -f "$range/digest_type" ] && [ "$(cat "$range/digest_type")" = "sha256" ] || fail "cached Node.js range lacks required SHA-256 policy"
 [ -f "$range/env" ] && [ ! -x "$range/env" ] || fail "cached Node.js range lacks package env"
 
 printf -- 'installed=%s\n' "$identity"
