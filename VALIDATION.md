@@ -2,31 +2,64 @@
 
 `rumiai-validate` è il launcher operativo delle validation run.
 
-Il runner canonico resta `rumiai-test`; il launcher gestisce self-update, exact target revision, validation scope e pubblicazione dell'evidenza.
+Il runner canonico resta `rumiai-test`; il launcher gestisce self-location, self-update, exact target revision, validation scope e pubblicazione dell'evidenza.
 
 ## Uso
 
-Configurazione predefinita/versionata storica:
+Se avviato senza argomenti:
 
 ```text
 ./rumiai-validate
 ```
 
-Validation scope nominato:
+il launcher:
+
+1. risolve il proprio pathname e determina la root canonica di `rumiai-tests`;
+2. esegue `cd` nella root della suite, indipendentemente dalla current working directory iniziale;
+3. tenta ad ogni lancio `git pull --ff-only` su `rumiai-tests`;
+4. se la suite cambia, riavvia il bootstrap aggiornato;
+5. soltanto dopo il self-update scopre gli scope `validation/*.conf`;
+6. mostra gli scope in ordine deterministico con un elenco numerato;
+7. chiede all'utente il numero dello scope da eseguire.
+
+Esempio:
+
+```text
+Available validation scopes:
+  1) nodejs-live
+  2) resource-model
+  3) rumiai-os-health
+  4) srv
+Select validation scope:
+```
+
+Input vuoto, non numerico o fuori intervallo produce una nuova richiesta. EOF prima di una scelta valida è un errore del launcher.
+
+Questa modalità è adatta anche all'avvio da Finder/Files: il launcher non dipende dalla directory da cui è stato aperto.
+
+Per automazione o uso non interattivo resta disponibile la forma nominata:
 
 ```text
 ./rumiai-validate <scope-name>
 ```
 
-Il launcher accetta zero o un argomento. Senza argomenti usa `rumiai-validate.conf`, preservando il workflow operativo esistente. Uno scope nominato viene caricato da:
+Lo scope nominato salta il menu, ma non salta self-location, `cd`, self-update, cleanliness gate, exact target revision o pubblicazione delle evidence.
+
+Il nome deve contenere soltanto lettere, cifre, `.`, `_` o `-` e non può iniziare con `.` o `-`.
+
+## Discovery degli scope
+
+Gli scope disponibili sono i file regolari versionati:
 
 ```text
 validation/<scope-name>.conf
 ```
 
-Il nome deve contenere soltanto lettere, cifre, `.`, `_` o `-` e non può iniziare con `.` o `-`.
+Il menu non contiene una lista hardcoded: viene ricostruito dalla revisione corrente della suite **dopo** il self-update e ordinato con ordinamento C/bytewise.
 
-## Configurazione
+Il file `rumiai-validate.conf` può restare nel repository per compatibilità o per work unit storiche/concorrrenti, ma non è più selezionato implicitamente da `./rumiai-validate` senza argomenti.
+
+## Configurazione di uno scope
 
 Formato record:
 
@@ -44,19 +77,7 @@ selection<TAB><test-or-group>
 
 `selection` è ripetibile. Almeno una selection è obbligatoria.
 
-Per compatibilità, `kind` può essere assente. Nel file predefinito viene allora interpretato come `health`, preservando la semantica aggregata storica; negli scope nominati viene interpretato come `task`.
-
-La full suite `rumiai-os` è disponibile come health scope esplicito in:
-
-```text
-validation/rumiai-os-health.conf
-```
-
-ed è eseguibile con:
-
-```text
-./rumiai-validate rumiai-os-health
-```
+Per compatibilità, `kind` può essere assente; uno scope nominato senza `kind` viene interpretato come `task`.
 
 ## Semantica
 
@@ -106,6 +127,7 @@ Una full-suite session può ancora essere analizzata per subset: PASS dei test p
 
 Prima della validation effettiva:
 
+- il bootstrap rifiuta l'auto-update se `rumiai-tests` ha modifiche tracked locali;
 - `rumiai-tests` deve essere clean dopo l'eventuale pubblicazione di sessioni completate pendenti;
 - il checkout principale `rumiai-os` deve essere clean;
 - il commit target configurato deve esistere localmente dopo il pull.
@@ -114,17 +136,15 @@ Le working tree non vengono modificate con merge, rebase, reset o force push.
 
 ## Scope correnti
 
-La suite contiene scope task separati almeno per:
+Gli scope correnti comprendono:
 
 ```text
+validation/nodejs-live.conf
 validation/resource-model.conf
+validation/rumiai-os-health.conf
 validation/srv.conf
 ```
 
-La full suite resta disponibile come health gate separato:
-
-```text
-validation/rumiai-os-health.conf
-```
+`resource-model`, `srv` e `nodejs-live` sono task scope. `rumiai-os-health` è il health gate della full suite.
 
 Gli scope task non sostituiscono i controlli di salute complessivi: impediscono soltanto che un fallimento estraneo serializzi o invalidi artificialmente work unit indipendenti.
