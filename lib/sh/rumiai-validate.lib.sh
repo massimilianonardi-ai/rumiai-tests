@@ -1,3 +1,6 @@
+validation_worktree_path=
+validation_worktree_repo=
+
 repo_require_clean() {
     repo_dir=$1
     label=$2
@@ -20,10 +23,12 @@ repo_pull_ff_only() {
 
 load_config() {
     config_path=$1
-    validation_selection=
+    validation_kind=
+    validation_selections=
     expected_rumiai_os_commit=
-    selection_seen=0
+    kind_seen=0
     commit_seen=0
+    selection_count=0
     tab=$(printf '\t')
 
     [ -r "$config_path" ] || fatal "configuration file not found: $config_path"
@@ -33,12 +38,29 @@ load_config() {
             ''|'#'*)
                 continue
                 ;;
+            kind)
+                [ "$kind_seen" -eq 0 ] || fatal 'duplicate kind in configuration'
+                [ -z "$extra" ] || fatal 'invalid kind record in configuration'
+                case $value in task|health) validation_kind=$value ;; *) fatal "invalid validation kind: $value" ;; esac
+                kind_seen=1
+                ;;
             selection)
-                [ "$selection_seen" -eq 0 ] || fatal 'duplicate selection in configuration'
                 [ -n "$value" ] || fatal 'empty selection in configuration'
                 [ -z "$extra" ] || fatal 'invalid selection record in configuration'
-                validation_selection=$value
-                selection_seen=1
+                case "
+$validation_selections
+" in
+                    *"
+$value
+"*) fatal "duplicate selection in configuration: $value" ;;
+                esac
+                if [ -n "$validation_selections" ]; then
+                    validation_selections="$validation_selections
+$value"
+                else
+                    validation_selections=$value
+                fi
+                selection_count=$((selection_count + 1))
                 ;;
             rumiai-os-commit)
                 [ "$commit_seen" -eq 0 ] || fatal 'duplicate rumiai-os-commit in configuration'
@@ -53,8 +75,16 @@ load_config() {
         esac
     done < "$config_path"
 
-    [ "$selection_seen" -eq 1 ] || fatal 'configuration does not define selection'
     [ "$commit_seen" -eq 1 ] || fatal 'configuration does not define rumiai-os-commit'
+    [ "$selection_count" -gt 0 ] || fatal 'configuration does not define selection'
+
+    if [ "$kind_seen" -eq 0 ]; then
+        if [ -n "${validation_scope_name-}" ]; then
+            validation_kind=task
+        else
+            validation_kind=health
+        fi
+    fi
 }
 
 latest_completed_session() {
@@ -214,6 +244,94 @@ show_platform() {
     say "Platform: $host_os/$host_arch"
 }
 
+validation_cleanup() {
+    [ -n "$validation_worktree_path" ] || return 0
+    [ -n "$validation_worktree_repo" ] || return 1
+
+    if ! git -C "$validation_worktree_repo" worktree remove "$validation_worktree_path" >/dev/null 2>&1; then
+        return 1
+    fi
+    validation_worktree_path=
+    validation_worktree_repo=
+    return 0
+}
+
+prepare_target_revision() {
+    primary_root=$1
+    expected_commit=$2
+
+    git -C "$primary_root" cat-file -e "$expected_commit^{commit}" 2>/dev/null ||
+        fatal "configured rumiai-os commit is unavailable after update: $expected_commit"
+
+    primary_head=$(git -C "$primary_root" rev-parse HEAD 2>/dev/null) || fatal 'cannot read rumiai-os HEAD'
+    if [ "$primary_head" = "$expected_commit" ]; then
+        validation_target_root=$primary_root
+        return 0
+    fi
+
+    validation_worktree_repo=$primary_root
+    validation_worktree_path=${TMPDIR:-/tmp}/rumiai-validate-rumiai-os-$$
+    [ ! -e "$validation_worktree_path" ] || fatal "temporary target path already exists: $validation_worktree_path"
+
+    say "Preparing rumiai-os worktree at $expected_commit..." >&2
+    git -C "$primary_root" worktree add --detach "$validation_worktree_path" "$expected_commit" >/dev/null 2>&1 ||
+        fatal "cannot create temporary rumiai-os worktree for $expected_commit"
+
+    validation_target_root=$validation_worktree_path
+}
+
+session_has_skip() {
+    results_file=$1
+    awk -F '\t' '$1 == "SKIP" { found=1 } END { exit found ? 0 : 1 }' "$results_file"
+}
+
+merge_scope_status() {
+    current=$1
+    candidate=$2
+    case $candidate in
+        3) printf '%s\n' 3 ;;
+        2) case $current in 3) printf '%s\n' 3 ;; *) printf '%s\n' 2 ;; esac ;;
+        1) case $current in 3|2) printf '%s\n' "$current" ;; *) printf '%s\n' 1 ;; esac ;;
+        *) printf '%s\n' "$current" ;;
+    esac
+}
+
+run_validation_selection() {
+    selection=$1
+    runner=$2
+
+    say "Selection:    $selection"
+    say 'Starting validation...'
+
+    session_before=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
+    "$runner" --validation -- "$selection"
+    runner_status=$?
+    session_after=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
+
+    say 'Validation finished.'
+    say "Status: $runner_status"
+
+    case $runner_status in
+        0|1|2) scope_status=$runner_status ;;
+        *) scope_status=3 ;;
+    esac
+    if [ -n "$session_after" ] && [ "$session_after" != "$session_before" ]; then
+        say "Session: ${session_after##*/}"
+        if [ "$validation_kind" = task ] && [ "$runner_status" -eq 0 ] && session_has_skip "$session_after/results"; then
+            say 'Task scope contains SKIP: selection is not positively validated.'
+            scope_status=1
+        fi
+        publish_validation_session "$session_after"
+    else
+        say 'Session: no new completed validation session'
+        if [ "$validation_kind" = task ]; then
+            scope_status=3
+        fi
+    fi
+
+    return "$scope_status"
+}
+
 rumiai_validate_run() {
     command -v uname >/dev/null 2>&1 || fatal 'uname is required'
     command -v awk >/dev/null 2>&1 || fatal 'awk is required'
@@ -222,14 +340,20 @@ rumiai_validate_run() {
     publish_pending_validation_sessions
     repo_require_clean "$suite_root" 'rumiai-tests'
 
-    config_path=$suite_root/rumiai-validate.conf
+    if [ -n "${validation_scope_name-}" ]; then
+        config_path=$suite_root/validation/$validation_scope_name.conf
+        scope_label=$validation_scope_name
+    else
+        config_path=$suite_root/rumiai-validate.conf
+        scope_label=default
+    fi
     load_config "$config_path"
 
     target_lib=$suite_root/lib/rumiai-os-target.lib
     [ -r "$target_lib" ] || fatal "target discovery library not found: $target_lib"
     . "$target_lib"
 
-    target_root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+    primary_target_root=$(rumiai_test_target_rumiai_os_find "$suite_root")
     target_status=$?
     case $target_status in
         0) : ;;
@@ -238,35 +362,51 @@ rumiai_validate_run() {
         *) fatal 'rumiai-os target discovery failed' ;;
     esac
 
-    repo_pull_ff_only "$target_root" 'rumiai-os'
-    repo_require_clean "$target_root" 'rumiai-os'
+    repo_pull_ff_only "$primary_target_root" 'rumiai-os'
+    repo_require_clean "$primary_target_root" 'rumiai-os'
 
-    target_head=$(git -C "$target_root" rev-parse HEAD 2>/dev/null) || fatal 'cannot read rumiai-os HEAD'
-    [ "$target_head" = "$expected_rumiai_os_commit" ] ||
-        fatal "rumiai-os HEAD $target_head does not match configured commit $expected_rumiai_os_commit"
+    prepare_target_revision "$primary_target_root" "$expected_rumiai_os_commit" ||
+        fatal 'cannot prepare configured rumiai-os revision'
+    RUMIAI_TEST_RUMIAI_OS_ROOT=$validation_target_root
+    export RUMIAI_TEST_RUMIAI_OS_ROOT
 
     runner=$suite_root/rumiai-test
     [ -x "$runner" ] || fatal 'rumiai-test is not executable'
 
     show_platform
     say "rumiai-tests: $(git -C "$suite_root" rev-parse HEAD 2>/dev/null)"
-    say "rumiai-os:    $target_head"
-    say "Selection:    $validation_selection"
-    say 'Starting validation...'
+    say "rumiai-os:    $expected_rumiai_os_commit"
+    say "Scope:        $scope_label ($validation_kind)"
 
-    session_before=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
-    "$runner" --validation -- "$validation_selection"
-    runner_status=$?
-    session_after=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
+    aggregate_status=0
+    old_ifs=$IFS
+    IFS='
+'
+    for validation_selection in $validation_selections; do
+        IFS=$old_ifs
+        run_validation_selection "$validation_selection" "$runner"
+        selection_status=$?
+        aggregate_status=$(merge_scope_status "$aggregate_status" "$selection_status")
+        [ "$aggregate_status" -ne 3 ] || break
+        IFS='
+'
+    done
+    IFS=$old_ifs
 
-    say 'Validation finished.'
-    say "Status: $runner_status"
-    if [ -n "$session_after" ] && [ "$session_after" != "$session_before" ]; then
-        say "Session: ${session_after##*/}"
-        publish_validation_session "$session_after"
-    else
-        say 'Session: no new completed validation session'
+    if ! validation_cleanup; then
+        fatal 'cannot remove temporary rumiai-os worktree'
     fi
+    unset RUMIAI_TEST_RUMIAI_OS_ROOT
 
-    return "$runner_status"
+    case $validation_kind:$aggregate_status in
+        task:0) say 'Scope result: VALIDATED' ;;
+        task:1) say 'Scope result: NOT VALIDATED' ;;
+        task:2) say 'Scope result: TEST ERROR' ;;
+        health:0) say 'Health result: SUCCESS' ;;
+        health:1) say 'Health result: FAIL' ;;
+        health:2) say 'Health result: TEST ERROR' ;;
+        *) say 'Validation result: ERROR' ;;
+    esac
+
+    return "$aggregate_status"
 }
