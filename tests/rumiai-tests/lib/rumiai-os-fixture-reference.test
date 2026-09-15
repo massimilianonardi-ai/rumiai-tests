@@ -1,63 +1,10 @@
 #!/bin/sh
 
-# Target discovery primitive copied from:
-# massimilianonardi-ai/rumiai-tests@20541774bab0d0a7d64bd9cd06833b14196bbdf9:lib/rumiai-os-target.lib
-# Copied inline intentionally to preserve test independence.
-
 TEST_ID=rumiai-tests/lib/rumiai-os-fixture-reference.test
 
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
-
-rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
-rumiai_test_target_rumiai_os_origin_ok()
-{
-    candidate=$1
-    origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 1
-    case $origin in
-        https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
-    esac
-    return 1
-}
-rumiai_test_target_rumiai_os_validate()
-{
-    candidate=$1
-    [ -n "$candidate" ] || return 1
-    [ -f "$candidate/m" ] || return 1
-    [ -f "$candidate/rumiai-os" ] || return 1
-    [ -f "$candidate/rumiai-os-sh" ] || return 1
-    rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
-    target_root=$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P) || return 1
-    [ -f "$target_root/m" ] || return 1
-    [ -f "$target_root/rumiai-os" ] || return 1
-    [ -f "$target_root/rumiai-os-sh" ] || return 1
-    printf '%s\n' "$target_root"
-}
-rumiai_test_target_rumiai_os_find()
-{
-    start=$1
-    rumiai_test_target_have git || return 3
-    if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
-    then
-        rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
-        return 0
-    fi
-    candidate=$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P) || return 3
-    while :
-    do
-        if rumiai_test_target_rumiai_os_validate "$candidate"
-        then
-            return 0
-        fi
-        [ "$candidate" != / ] || break
-        parent=${candidate%/*}
-        [ -n "$parent" ] || parent=/
-        [ "$parent" != "$candidate" ] || break
-        candidate=$parent
-    done
-    return 1
-}
 
 resolve_test_dir()
 {
@@ -72,6 +19,14 @@ test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 rumiai_tests_group=${test_dir%/*}
 tests_dir=${rumiai_tests_group%/*}
 suite_root=${tests_dir%/*}
+
+target_lib=$suite_root/lib/rumiai-os-target.lib
+fixture_lib=$suite_root/lib/rumiai-os-fixture.lib
+[ -f "$target_lib" ] || error 'lib/rumiai-os-target.lib is unavailable'
+[ -f "$fixture_lib" ] || error 'lib/rumiai-os-fixture.lib is unavailable'
+. "$target_lib" || error 'cannot load lib/rumiai-os-target.lib'
+. "$fixture_lib" || error 'cannot load lib/rumiai-os-fixture.lib'
+
 source_root=$(rumiai_test_target_rumiai_os_find "$suite_root")
 status=$?
 case $status in
@@ -80,12 +35,6 @@ case $status in
     2) fail 'invalid explicit rumiai-os target' ;;
     *) error 'target discovery failed' ;;
 esac
-
-fixture_lib=$suite_root/lib/rumiai-os-fixture.lib
-[ -f "$fixture_lib" ] || error 'lib/rumiai-os-fixture.lib is unavailable'
-
-# The library is intentionally sourced here because it is the target of this test.
-. "$fixture_lib" || error 'cannot load lib/rumiai-os-fixture.lib'
 
 tmp=${TMPDIR:-/tmp}/rumiai-os-fixture-reference-$$
 umask 077
@@ -129,11 +78,8 @@ cat > "$probe" <<'EOT'
 [ "${m_RES_DIR-}" = "$EXPECTED_ROOT/res" ] || return 53
 [ "${m_LANG_DIR-}" = "$EXPECTED_ROOT/res/sys/lang" ] || return 54
 [ "${m_STATE_DIR-}" = "$EXPECTED_ROOT/state" ] || return 43
-[ "${m_STATE_SYS_DIR-}" = "$EXPECTED_ROOT/state/system/profile/main" ] || return 44
-case "${m_STATE_USER_DIR-}" in
-    "$EXPECTED_ROOT/state/user/"*) : ;;
-    *) return 45 ;;
-esac
+[ "${m_STATE_SYS_DIR-}" = "$EXPECTED_ROOT/state/system/current" ] || return 44
+[ "${m_STATE_USER_DIR-}" = "$EXPECTED_ROOT/state/user/current" ] || return 45
 [ "${m_CONF_DIR+x}" != x ] || return 46
 [ "${m_DATA_DIR+x}" != x ] || return 47
 [ "${m_HOME_DIR+x}" != x ] || return 48
