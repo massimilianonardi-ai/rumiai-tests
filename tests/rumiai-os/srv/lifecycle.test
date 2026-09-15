@@ -89,7 +89,7 @@ case $service_pid in ''|*[!0-9]*) fail 'invalid service pid metadata';; esac
 SERVICE_PIDS="$service_pid"
 pid_exists "$service_pid" || fail 'started service is not alive'
 service_command=$(cat "$runtime/command") || fail 'cannot read service command metadata'
-expected_service_command="$fixture/bin/ext/demo-start"
+expected_service_command=$(command -p -- realpath -- "$fixture/bin/ext/demo-start" 2>/dev/null) || error 'cannot canonicalize expected service command'
 [ "$service_command" = "$expected_service_command" ] || fail "service target was not canonicalized to fixture command: expected=$expected_service_command observed=$service_command"
 [ -f "$log_file" ] || fail 'service log was not created'
 grep -Fx ready "$log_file" >/dev/null 2>&1 || fail 'service output was not redirected to log'
