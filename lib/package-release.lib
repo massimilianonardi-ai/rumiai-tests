@@ -1,7 +1,9 @@
 # Shared physical release validation for package definitions.
 #
-# This helper intentionally complements pkg-analyze's pathname/type delta with a
-# content/mode/symlink inventory of the concrete package root materialized by pkg.
+# This helper complements pkg-analyze candidate discovery with a content/mode/symlink
+# inventory of the concrete package root materialized by pkg. CLI validations also
+# use pkg-analyze dynamic probing; GUI validations reserve the single interactive
+# launch for the normal integrated RumiAI command.
 
 rumiai_test_package_release_fail()
 {
@@ -416,16 +418,8 @@ EOF_OSARCH
       rumiai_test_package_release_analysis_status=$?
       ;;
     gui)
-      [ -r /dev/tty ] && [ -w /dev/tty ] || rumiai_test_package_release_skip "GUI release validation requires an interactive TTY"
-      printf -- '%s\n' "$TEST_ID: pkg-analyze candidate $rumiai_test_package_release_candidate_id is $rumiai_test_package_release_analyze_relative." >/dev/tty
-      printf -- '%s\n' "$TEST_ID: enter that number, approve the dynamic probe, verify the GUI opens, close it, then press Enter only when its children are finished." >/dev/tty
-      rumiai_test_package_release_analysis_status_file="$rumiai_test_package_release_tmp/pkg-analyze.status"
-      (
-        HOME="$rumiai_test_package_release_analysis_home" "$rumiai_test_package_release_fixture/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" </dev/tty
-        printf -- '%s\n' "$?" > "$rumiai_test_package_release_analysis_status_file"
-      ) 2>&1 | command -p -- tee "$rumiai_test_package_release_analysis"
-      [ -f "$rumiai_test_package_release_analysis_status_file" ] || rumiai_test_package_release_error "pkg-analyze GUI status missing"
-      IFS= read -r rumiai_test_package_release_analysis_status < "$rumiai_test_package_release_analysis_status_file" || rumiai_test_package_release_error "cannot read pkg-analyze GUI status"
+      command -p -- cp "$rumiai_test_package_release_discovery" "$rumiai_test_package_release_analysis" || rumiai_test_package_release_error "cannot preserve pkg-analyze GUI discovery report"
+      rumiai_test_package_release_analysis_status=0
       ;;
     *) rumiai_test_package_release_error "invalid release mode: $RUMIAI_TEST_PACKAGE_RELEASE_MODE";;
   esac
@@ -435,35 +429,31 @@ EOF_OSARCH
   printf -- 'pkg-analyze-report-end\n'
 
   [ "$rumiai_test_package_release_analysis_status" -eq 0 ] || rumiai_test_package_release_fail "pkg-analyze dynamic probe failed with status $rumiai_test_package_release_analysis_status"
-  command -p -- grep -F -- "Probe $rumiai_test_package_release_candidate_id: $rumiai_test_package_release_analyze_relative" "$rumiai_test_package_release_analysis" >/dev/null 2>&1 || rumiai_test_package_release_fail "expected pkg-analyze candidate was not probed: $rumiai_test_package_release_analyze_relative"
-  command -p -- grep -F -- '  exit-status: 0' "$rumiai_test_package_release_analysis" >/dev/null 2>&1 || rumiai_test_package_release_fail "pkg-analyze candidate did not exit successfully"
 
-  rumiai_test_package_release_delta_empty "$rumiai_test_package_release_analysis" '  package-root path delta:'
-  rumiai_test_package_release_status=$?
-  case "$rumiai_test_package_release_status" in
-    0) :;;
-    1) rumiai_test_package_release_fail "pkg-analyze reported package-root pathname/type changes";;
-    *) rumiai_test_package_release_fail "pkg-analyze package-root delta evidence missing or malformed";;
-  esac
-
-  rumiai_test_package_release_delta_empty "$rumiai_test_package_release_analysis" '  original-HOME path delta:'
-  rumiai_test_package_release_status=$?
-  case "$rumiai_test_package_release_status" in
-    0) :;;
-    1) rumiai_test_package_release_fail "pkg-analyze reported writes to original HOME";;
-    *) rumiai_test_package_release_fail "pkg-analyze original-HOME delta evidence missing or malformed";;
-  esac
-
-  command -p -- grep -F -- '  redirected-environment path delta:' "$rumiai_test_package_release_analysis" >/dev/null 2>&1 || rumiai_test_package_release_fail "pkg-analyze redirected-environment evidence missing"
-
-  if [ "$RUMIAI_TEST_PACKAGE_RELEASE_MODE" = gui ]
+  if [ "$RUMIAI_TEST_PACKAGE_RELEASE_MODE" = cli ]
   then
-    printf -- '%s' "$TEST_ID: did the pkg-analyze dynamic probe open the GUI correctly? [y/N] " >/dev/tty
-    IFS= read -r rumiai_test_package_release_probe_reply </dev/tty || rumiai_test_package_release_error "cannot read GUI probe confirmation"
-    case "$rumiai_test_package_release_probe_reply" in
-      y|Y|yes|YES|Yes) :;;
-      *) rumiai_test_package_release_fail "GUI dynamic probe was not positively confirmed";;
+    command -p -- grep -F -- "Probe $rumiai_test_package_release_candidate_id: $rumiai_test_package_release_analyze_relative" "$rumiai_test_package_release_analysis" >/dev/null 2>&1 || rumiai_test_package_release_fail "expected pkg-analyze candidate was not probed: $rumiai_test_package_release_analyze_relative"
+    command -p -- grep -F -- '  exit-status: 0' "$rumiai_test_package_release_analysis" >/dev/null 2>&1 || rumiai_test_package_release_fail "pkg-analyze candidate did not exit successfully"
+
+    rumiai_test_package_release_delta_empty "$rumiai_test_package_release_analysis" '  package-root path delta:'
+    rumiai_test_package_release_status=$?
+    case "$rumiai_test_package_release_status" in
+      0) :;;
+      1) rumiai_test_package_release_fail "pkg-analyze reported package-root pathname/type changes";;
+      *) rumiai_test_package_release_fail "pkg-analyze package-root delta evidence missing or malformed";;
     esac
+
+    rumiai_test_package_release_delta_empty "$rumiai_test_package_release_analysis" '  original-HOME path delta:'
+    rumiai_test_package_release_status=$?
+    case "$rumiai_test_package_release_status" in
+      0) :;;
+      1) rumiai_test_package_release_fail "pkg-analyze reported writes to original HOME";;
+      *) rumiai_test_package_release_fail "pkg-analyze original-HOME delta evidence missing or malformed";;
+    esac
+
+    command -p -- grep -F -- '  redirected-environment path delta:' "$rumiai_test_package_release_analysis" >/dev/null 2>&1 || rumiai_test_package_release_fail "pkg-analyze redirected-environment evidence missing"
+  else
+    printf -- '%s\n' "$TEST_ID: GUI mode uses pkg-analyze for candidate discovery only; runtime GUI validation is performed once through the integrated RumiAI command." >&2
   fi
 
   rumiai_test_package_release_after_analyze="$rumiai_test_package_release_tmp/root.after-analyze"
@@ -511,6 +501,12 @@ EOF_OSARCH
   printf -- 'catalog-head=%s\n' "$rumiai_test_package_release_catalog_head"
   printf -- 'package-tree=%s\n' "$rumiai_test_package_release_catalog_tree"
   printf -- 'analyzed-candidate=%s\n' "$rumiai_test_package_release_analyze_relative"
+  if [ "$RUMIAI_TEST_PACKAGE_RELEASE_MODE" = gui ]
+  then
+    printf -- 'analysis=discovery-only\n'
+  else
+    printf -- 'analysis=dynamic-probe\n'
+  fi
   printf -- 'package-root=runtime-immutable\n'
   return 0
 }
