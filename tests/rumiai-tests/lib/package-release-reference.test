@@ -110,6 +110,18 @@ rumiai_test_package_release_delta_empty "$delta" '  original-HOME path delta:'
 status=$?
 [ "$status" -eq 2 ] || fail "missing delta was not classified as missing or malformed"
 
+prefixed="$tmp/delta-prefixed"
+cat > "$prefixed" <<'EOF_PREFIXED'
+Press Enter to continue.  package-root path delta:
+  added:
+    (none)
+  removed:
+    (none)
+EOF_PREFIXED
+rumiai_test_package_release_delta_empty "$prefixed" '  package-root path delta:'
+status=$?
+[ "$status" -eq 0 ] || fail "prompt-prefixed empty delta was not classified as empty"
+
 malformed="$tmp/delta-malformed"
 cat > "$malformed" <<'EOF_MALFORMED'
   package-root path delta:
