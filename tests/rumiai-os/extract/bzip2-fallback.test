@@ -1,0 +1,168 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/extract/bzip2-fallback.test"
+
+fail()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 3
+}
+
+skip()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 2
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) :;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot load target discovery helper"
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) skip "rumiai-os target checkout not found";;
+  2) fail "invalid explicit rumiai-os target";;
+  *) error "target discovery failed";;
+esac
+
+command_path="$root/bin/sys/extract"
+[ -f "$command_path" ] && [ ! -L "$command_path" ] && [ -x "$command_path" ] || fail "bin/sys/extract is missing or invalid"
+
+tmp="${TMPDIR:-/tmp}/rumiai-extract-bzip2-fallback-$$"
+umask 077
+command -p -- mkdir -- "$tmp" || error "cannot create temporary directory"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+fakebin="$tmp/bin"
+destination="$tmp/destination"
+marker="$tmp/marker"
+tar_args="$tmp/tar-args"
+command -p -- mkdir -- "$fakebin" || error "cannot create fake backend directory"
+
+export EXTRACT_MARKER="$marker"
+export EXTRACT_TAR_ARGS="$tar_args"
+
+cat > "$fakebin/tar" <<'EOF_TAR'
+#!/bin/sh
+printf -- '%s\n' tar >> "$EXTRACT_MARKER"
+: > "$EXTRACT_TAR_ARGS"
+for arg
+do
+  printf -- '%s\n' "$arg" >> "$EXTRACT_TAR_ARGS"
+done
+[ "${EXTRACT_TAR_FAIL-}" = 1 ] && exit 9
+exit 0
+EOF_TAR
+command -p -- chmod 700 "$fakebin/tar" || error "cannot make fake tar executable"
+
+cat > "$fakebin/bzip2" <<'EOF_BZIP2'
+#!/bin/sh
+printf -- '%s\n' bzip2 >> "$EXTRACT_MARKER"
+[ "${EXTRACT_BZIP2_FAIL-}" = 1 ] && exit 9
+exit 0
+EOF_BZIP2
+command -p -- chmod 700 "$fakebin/bzip2" || error "cannot make fake bzip2 executable"
+
+artifact="$tmp/archive.tar.bz2"
+printf -- '%s' payload > "$artifact" || error "cannot create archive fixture"
+single_stream="$tmp/payload.bz2"
+printf -- '%s' payload > "$single_stream" || error "cannot create single-stream fixture"
+
+runtime_path="$root/bin/sys:$fakebin"
+
+reset_case()
+{
+  : > "$marker" || return 1
+  : > "$tar_args" || return 1
+  command -p -- rm -rf -- "$destination" || return 1
+  command -p -- mkdir -- "$destination" || return 1
+}
+
+assert_tar_stream_args()
+{
+  expected='-xf
+-'
+  actual=$(cat "$tar_args") || error "cannot read tar arguments"
+  [ "$actual" = "$expected" ] || fail "tar received unexpected decompressed-stream arguments: $actual"
+}
+
+assert_tar_artifact_args()
+{
+  expected="-xf
+$artifact"
+  actual=$(cat "$tar_args") || error "cannot read tar arguments"
+  [ "$actual" = "$expected" ] || fail "tar received unexpected direct-archive arguments: $actual"
+}
+
+reset_case || error "cannot reset preferred-path fixture"
+PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+  command -p -- cat "$tmp/err" >&2
+  fail "tar.bz2 failed with bzip2 available"
+}
+actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read preferred-path marker"
+[ "$actual" = "bzip2 tar" ] || fail "tar.bz2 selected '$actual' instead of 'bzip2 tar'"
+assert_tar_stream_args
+
+reset_case || error "cannot reset bzip2-failure fixture"
+EXTRACT_BZIP2_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+status=$?
+[ "$status" -eq 1 ] || fail "bzip2 operational failure returned status $status instead of 1"
+actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read bzip2-failure marker"
+[ "$actual" = bzip2 ] || fail "extract retried after bzip2 operational failure: $actual"
+grep -F -- 'reason decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "bzip2 operational failure lacked decompression-failed diagnostics"
+
+command -p -- mv -- "$fakebin/bzip2" "$tmp/bzip2" || error "cannot remove bzip2 capability"
+
+for format in tar.bz2 tar.bzip2 tbz tbz2
+do
+  reset_case || error "cannot reset $format fallback fixture"
+  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+    command -p -- cat "$tmp/err" >&2
+    fail "$format did not fall back to tar when bzip2 was unavailable"
+  }
+  actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read $format fallback marker"
+  [ "$actual" = tar ] || fail "$format selected '$actual' instead of direct tar"
+  assert_tar_artifact_args
+done
+
+reset_case || error "cannot reset tar-failure fixture"
+EXTRACT_TAR_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+status=$?
+[ "$status" -eq 1 ] || fail "direct tar failure returned status $status instead of 1"
+actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read tar-failure marker"
+[ "$actual" = tar ] || fail "direct tar failure used unexpected backend sequence: $actual"
+grep -F -- 'reason extraction-failed' "$tmp/err" >/dev/null 2>&1 || fail "direct tar failure lacked extraction-failed diagnostics"
+
+reset_case || error "cannot reset single-stream fixture"
+PATH="$runtime_path" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err"
+status=$?
+[ "$status" -eq 1 ] || fail "single-stream bzip2 without bzip2 returned status $status instead of 1"
+[ ! -s "$marker" ] || fail "single-stream bzip2 unexpectedly used another backend"
+grep -F -- 'command-not-found' "$tmp/err" >/dev/null 2>&1 || fail "single-stream bzip2 missing command-not-found diagnostics"
+grep -F -- 'command=bzip2' "$tmp/err" >/dev/null 2>&1 || grep -F -- 'command bzip2' "$tmp/err" >/dev/null 2>&1 || fail "single-stream bzip2 diagnostics did not identify bzip2"
+
+exit 0
