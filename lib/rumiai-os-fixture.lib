@@ -17,7 +17,6 @@ rumiai_test_fixture_rumiai_os_create() {
     [ -n "$source_root" ] || return 3
     [ -n "$fixture_root" ] || return 3
     [ -f "$source_root/m" ] || return 1
-    [ -f "$source_root/m.lib.sh" ] || return 1
     [ -f "$source_root/rumiai-os" ] || return 1
     [ -f "$source_root/rumiai-os-sh" ] || return 1
     [ -d "$source_root/bin" ] || return 1
@@ -34,7 +33,7 @@ rumiai_test_fixture_rumiai_os_create() {
         return 2
     fi
 
-    for fixture_file in m m.lib.sh rumiai-os rumiai-os-sh product-name product-version
+    for fixture_file in m rumiai-os rumiai-os-sh product-name product-version
     do
         if ! cp "$source_root/$fixture_file" "$fixture_root/$fixture_file"
         then

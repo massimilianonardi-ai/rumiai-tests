@@ -53,7 +53,6 @@ esac
 
 fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canonicalize fixture root'
 [ -x "$fixture/m" ] || fail 'fixture m runtime is not executable'
-[ -f "$fixture/m.lib.sh" ] && [ ! -L "$fixture/m.lib.sh" ] || fail 'fixture m bootstrap library is missing or invalid'
 [ -x "$fixture/rumiai-os" ] || fail 'fixture rumiai-os entrypoint is not executable'
 [ -x "$fixture/rumiai-os-sh" ] || fail 'fixture rumiai-os-sh entrypoint is not executable'
 [ -d "$fixture/bin" ] || fail 'fixture bin directory is missing'
