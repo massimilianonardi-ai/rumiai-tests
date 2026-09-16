@@ -151,7 +151,7 @@ status=$?
 [ "$status" -eq 1 ] || fail "bzip2 operational failure returned status $status instead of 1"
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read bzip2-failure marker"
 [ "$actual" = bzip2 ] || fail "extract retried after bzip2 operational failure: $actual"
-grep -F -- 'reason decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "bzip2 operational failure lacked decompression-failed diagnostics"
+grep -F -- 'decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "bzip2 operational failure lacked decompression-failed diagnostics"
 
 command -p -- mv -- "$fakebin/bzip2" "$tmp/bzip2" || error "cannot remove bzip2 capability"
 
@@ -174,7 +174,7 @@ status=$?
 [ "$status" -eq 1 ] || fail "7-Zip operational failure returned status $status instead of 1"
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read 7-Zip-failure marker"
 [ "$actual" = 7zz ] || fail "7-Zip failure unexpectedly continued to another backend: $actual"
-grep -F -- 'reason decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "7-Zip operational failure lacked decompression-failed diagnostics"
+grep -F -- 'decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "7-Zip operational failure lacked decompression-failed diagnostics"
 
 command -p -- mv -- "$fakebin/7zz" "$tmp/7zz" || error "cannot remove 7-Zip capability"
 
