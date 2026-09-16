@@ -60,10 +60,12 @@ fakebin="$tmp/bin"
 destination="$tmp/destination"
 marker="$tmp/marker"
 tar_args="$tmp/tar-args"
+seven_args="$tmp/7z-args"
 command -p -- mkdir -- "$fakebin" || error "cannot create fake backend directory"
 
 export EXTRACT_MARKER="$marker"
 export EXTRACT_TAR_ARGS="$tar_args"
+export EXTRACT_7Z_ARGS="$seven_args"
 
 cat > "$fakebin/tar" <<'EOF_TAR'
 #!/bin/sh
@@ -86,6 +88,19 @@ exit 0
 EOF_BZIP2
 command -p -- chmod 700 "$fakebin/bzip2" || error "cannot make fake bzip2 executable"
 
+cat > "$fakebin/7zz" <<'EOF_7Z'
+#!/bin/sh
+printf -- '%s\n' 7zz >> "$EXTRACT_MARKER"
+: > "$EXTRACT_7Z_ARGS"
+for arg
+do
+  printf -- '%s\n' "$arg" >> "$EXTRACT_7Z_ARGS"
+done
+[ "${EXTRACT_7Z_FAIL-}" = 1 ] && exit 9
+printf -- '%s' decompressed-tar
+EOF_7Z
+command -p -- chmod 700 "$fakebin/7zz" || error "cannot make fake 7-Zip executable"
+
 artifact="$tmp/archive.tar.bz2"
 printf -- '%s' payload > "$artifact" || error "cannot create archive fixture"
 single_stream="$tmp/payload.bz2"
@@ -97,6 +112,7 @@ reset_case()
 {
   : > "$marker" || return 1
   : > "$tar_args" || return 1
+  : > "$seven_args" || return 1
   command -p -- rm -rf -- "$destination" || return 1
   command -p -- mkdir -- "$destination" || return 1
 }
@@ -109,12 +125,14 @@ assert_tar_stream_args()
   [ "$actual" = "$expected" ] || fail "tar received unexpected decompressed-stream arguments: $actual"
 }
 
-assert_tar_artifact_args()
+assert_7z_stream_args()
 {
-  expected="-xf
+  expected="x
+-so
+--
 $artifact"
-  actual=$(cat "$tar_args") || error "cannot read tar arguments"
-  [ "$actual" = "$expected" ] || fail "tar received unexpected direct-archive arguments: $actual"
+  actual=$(cat "$seven_args") || error "cannot read 7-Zip arguments"
+  [ "$actual" = "$expected" ] || fail "7-Zip received unexpected decompression arguments: $actual"
 }
 
 reset_case || error "cannot reset preferred-path fixture"
@@ -125,6 +143,7 @@ PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/o
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read preferred-path marker"
 [ "$actual" = "bzip2 tar" ] || fail "tar.bz2 selected '$actual' instead of 'bzip2 tar'"
 assert_tar_stream_args
+[ ! -s "$seven_args" ] || fail "preferred bzip2 path unexpectedly invoked 7-Zip"
 
 reset_case || error "cannot reset bzip2-failure fixture"
 EXTRACT_BZIP2_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
@@ -141,20 +160,31 @@ do
   reset_case || error "cannot reset $format fallback fixture"
   PATH="$runtime_path" "$command_path" "$format" "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
     command -p -- cat "$tmp/err" >&2
-    fail "$format did not fall back to tar when bzip2 was unavailable"
+    fail "$format did not fall back to 7-Zip when bzip2 was unavailable"
   }
   actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read $format fallback marker"
-  [ "$actual" = tar ] || fail "$format selected '$actual' instead of direct tar"
-  assert_tar_artifact_args
+  [ "$actual" = "7zz tar" ] || fail "$format selected '$actual' instead of '7zz tar'"
+  assert_7z_stream_args
+  assert_tar_stream_args
 done
 
-reset_case || error "cannot reset tar-failure fixture"
-EXTRACT_TAR_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+reset_case || error "cannot reset 7-Zip-failure fixture"
+EXTRACT_7Z_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
 status=$?
-[ "$status" -eq 1 ] || fail "direct tar failure returned status $status instead of 1"
-actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read tar-failure marker"
-[ "$actual" = tar ] || fail "direct tar failure used unexpected backend sequence: $actual"
-grep -F -- 'reason extraction-failed' "$tmp/err" >/dev/null 2>&1 || fail "direct tar failure lacked extraction-failed diagnostics"
+[ "$status" -eq 1 ] || fail "7-Zip operational failure returned status $status instead of 1"
+actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read 7-Zip-failure marker"
+[ "$actual" = 7zz ] || fail "7-Zip failure unexpectedly continued to another backend: $actual"
+grep -F -- 'reason decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "7-Zip operational failure lacked decompression-failed diagnostics"
+
+command -p -- mv -- "$fakebin/7zz" "$tmp/7zz" || error "cannot remove 7-Zip capability"
+
+reset_case || error "cannot reset missing-7-Zip fixture"
+PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+status=$?
+[ "$status" -eq 1 ] || fail "tar.bz2 without bzip2 or 7-Zip returned status $status instead of 1"
+[ ! -s "$marker" ] || fail "missing-backend case unexpectedly invoked a backend"
+grep -F -- 'command-not-found' "$tmp/err" >/dev/null 2>&1 || fail "missing 7-Zip fallback lacked command-not-found diagnostics"
+grep -F -- 'command=7z' "$tmp/err" >/dev/null 2>&1 || grep -F -- 'command 7z' "$tmp/err" >/dev/null 2>&1 || fail "missing fallback diagnostics did not identify 7z"
 
 reset_case || error "cannot reset single-stream fixture"
 PATH="$runtime_path" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err"
