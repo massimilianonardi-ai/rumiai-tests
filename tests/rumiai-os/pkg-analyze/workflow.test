@@ -115,7 +115,8 @@ command -p -- mkdir -p -- \
   "$tmp/input/wrapper/root/bin" \
   "$tmp/input/wrapper/root/scripts" \
   "$tmp/input/wrapper/root/share" \
-  "$tmp/original-home" || error "cannot create fixture directories"
+  "$tmp/original-home" \
+  "$tmp/session-runtime" || error "cannot create fixture directories"
 trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
 
 cat > "$tmp/input/wrapper/root/bin/tool" <<'EOF_TOOL'
@@ -123,6 +124,8 @@ cat > "$tmp/input/wrapper/root/bin/tool" <<'EOF_TOOL'
 printf -- '%s\n' state > "$HOME/probe-home"
 printf -- '%s\n' config > "$XDG_CONFIG_HOME/probe-config"
 printf -- '%s\n' temp > "$TMPDIR/probe-tmp"
+printf -- '%s\n' runtime > "$XDG_RUNTIME_DIR/probe-runtime"
+printf -- '%s\n' "$XDG_RUNTIME_DIR" > ./runtime-dir-observed
 printf -- '%s\n' root > ./runtime-created
 exit 7
 EOF_TOOL
@@ -134,7 +137,8 @@ printf -- 'baseline\n' > "$tmp/original-home/baseline"
 
 PATH="$root/bin/sys:$PATH"
 HOME="$tmp/original-home"
-export PATH HOME
+XDG_RUNTIME_DIR="$tmp/session-runtime"
+export PATH HOME XDG_RUNTIME_DIR
 
 printf -- '2\ny\n\n' | "$command_file" "$tmp/input/wrapper/root" > "$tmp/report" 2> "$tmp/diagnostic"
 status=$?
@@ -155,12 +159,19 @@ command -p -- grep -F 'launch-like' "$tmp/report" | command -p -- grep -F 'scrip
 command -p -- grep -F 'Probe 2: bin/tool' "$tmp/report" >/dev/null || fail "selected candidate was not probed"
 command -p -- grep -F 'exit-status: 7' "$tmp/report" >/dev/null || fail "candidate exit status was not reported"
 command -p -- grep -F 'runtime-created' "$tmp/report" >/dev/null || fail "package-root path delta was not reported"
+command -p -- grep -F 'runtime-dir-observed' "$tmp/report" >/dev/null || fail "runtime-directory observation was not reported in the package-root delta"
 command -p -- grep -F 'home/probe-home' "$tmp/report" >/dev/null || fail "redirected HOME delta was not reported"
 command -p -- grep -F 'xdg-config/probe-config' "$tmp/report" >/dev/null || fail "redirected XDG delta was not reported"
 command -p -- grep -F 'tmp/probe-tmp' "$tmp/report" >/dev/null || fail "redirected temporary-state delta was not reported"
+command -p -- grep -F 'original-XDG_RUNTIME_DIR path delta:' "$tmp/report" >/dev/null || fail "session runtime delta section is missing"
+command -p -- grep -F 'probe-runtime' "$tmp/report" >/dev/null || fail "session runtime mutation was not reported"
 command -p -- grep -F 'WARNING: dynamic probing is diagnostic only; it is not a sandbox.' "$tmp/diagnostic" >/dev/null || fail "non-sandbox warning is missing"
+command -p -- grep -F 'XDG_RUNTIME_DIR is preserved so graphical/session services remain reachable' "$tmp/diagnostic" >/dev/null || fail "preserved runtime-directory diagnostic is missing"
 
 [ -f "$tmp/input/wrapper/root/runtime-created" ] || fail "fixture package-root mutation did not occur"
+[ -f "$tmp/input/wrapper/root/runtime-dir-observed" ] || fail "fixture did not record the inherited runtime directory"
+[ "$(command -p -- cat "$tmp/input/wrapper/root/runtime-dir-observed")" = "$tmp/session-runtime" ] || fail "pkg-analyze replaced XDG_RUNTIME_DIR instead of preserving the session runtime"
+[ -f "$tmp/session-runtime/probe-runtime" ] || fail "candidate did not use the preserved session runtime directory"
 [ ! -e "$tmp/original-home/probe-home" ] || fail "candidate escaped redirected HOME in the fixture"
 [ -f "$tmp/original-home/baseline" ] || fail "original HOME baseline was damaged"
 
