@@ -75,7 +75,7 @@ command -p -- chmod 640 "$root/file" || error "cannot restore inventory mode"
 
 command -p -- rm -f -- "$root/link" || error "cannot replace inventory symlink"
 command -p -- ln -s other "$root/link" || error "cannot create replacement symlink"
-rumiai_test_package_release_inventory "$root" "$changed" "$stat_style" || error "symlink-change inventory failed"
+rumiai_test_package_release_inventory "$root" "$changed" "$stat_style" || error "symlink-target inventory failed"
 command -p -- cmp -s "$baseline" "$changed" && fail "symlink-target mutation was not detected"
 
 candidates="$tmp/candidates"
@@ -97,7 +97,27 @@ cat > "$delta" <<'EOF_DELTA'
   removed:
     (none)
 EOF_DELTA
-rumiai_test_package_release_delta_empty "$delta" '  package-root path delta:' || fail "empty delta was rejected"
-rumiai_test_package_release_delta_empty "$delta" '  redirected-environment path delta:' >/dev/null 2>&1 && fail "non-empty delta was accepted"
+
+rumiai_test_package_release_delta_empty "$delta" '  package-root path delta:'
+status=$?
+[ "$status" -eq 0 ] || fail "empty delta was not classified as empty"
+
+rumiai_test_package_release_delta_empty "$delta" '  redirected-environment path delta:'
+status=$?
+[ "$status" -eq 1 ] || fail "non-empty delta was not classified as non-empty"
+
+rumiai_test_package_release_delta_empty "$delta" '  original-HOME path delta:'
+status=$?
+[ "$status" -eq 2 ] || fail "missing delta was not classified as missing or malformed"
+
+malformed="$tmp/delta-malformed"
+cat > "$malformed" <<'EOF_MALFORMED'
+  package-root path delta:
+  unexpected:
+    (none)
+EOF_MALFORMED
+rumiai_test_package_release_delta_empty "$malformed" '  package-root path delta:'
+status=$?
+[ "$status" -eq 2 ] || fail "malformed delta was not classified as missing or malformed"
 
 exit 0
