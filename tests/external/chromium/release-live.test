@@ -24,8 +24,7 @@ resolve_test_dir()
 test_dir=$(resolve_test_dir) || { printf -- "%s: cannot resolve test directory\n" "$TEST_ID" >&2; exit 3; }
 package_group=${test_dir%/*}
 external_group=${package_group%/*}
-tests_dir=${external_group%/*}
-suite_root=${tests_dir%/*}
+suite_root=${external_group%/*}
 . "$suite_root/lib/package-release.lib" || { printf -- "%s: cannot load package release helper\n" "$TEST_ID" >&2; exit 3; }
 
 rumiai_test_package_release_run "$suite_root"
