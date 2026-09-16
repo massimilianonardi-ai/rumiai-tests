@@ -134,7 +134,7 @@ rumiai_test_package_release_delta_empty()
   rumiai_test_package_release_delta_file=$1
   rumiai_test_package_release_delta_label=$2
   LC_ALL=C command -p -- awk -v wanted="$rumiai_test_package_release_delta_label" '
-$0 == wanted {
+length($0) >= length(wanted) && substr($0, length($0) - length(wanted) + 1) == wanted {
   found=1
   if ((getline added) <= 0 || added != "  added:") { malformed=1; exit }
   if ((getline added_value) <= 0) { malformed=1; exit }
