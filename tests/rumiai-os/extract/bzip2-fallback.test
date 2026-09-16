@@ -268,7 +268,7 @@ status=$?
 [ "$status" -eq 1 ] || fail "tar.bz2 without bzip2, 7-Zip or python3 returned status $status instead of 1"
 [ ! -s "$marker" ] || fail "missing-backend tar case unexpectedly invoked a backend"
 grep -F -- 'command-not-found' "$tmp/err" >/dev/null 2>&1 || fail "missing python3 fallback lacked command-not-found diagnostics"
-grep -F -- 'command=python3' "$tmp/err" >/dev/null 2>&1 || grep -F -- 'command python3' "$tmp/err" >/dev/null 2>&1 || fail "missing fallback diagnostics did not identify python3"
+grep -F -- '[command="python3"]' "$tmp/err" >/dev/null 2>&1 || fail "missing fallback diagnostics did not identify python3"
 
 reset_case || error "cannot reset missing-backend single-stream fixture"
 PATH="$runtime_path" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err"
@@ -276,6 +276,6 @@ status=$?
 [ "$status" -eq 1 ] || fail "single-stream bzip2 without bzip2, 7-Zip or python3 returned status $status instead of 1"
 [ ! -s "$marker" ] || fail "missing-backend single-stream case unexpectedly invoked a backend"
 grep -F -- 'command-not-found' "$tmp/err" >/dev/null 2>&1 || fail "single-stream missing python3 fallback lacked command-not-found diagnostics"
-grep -F -- 'command=python3' "$tmp/err" >/dev/null 2>&1 || grep -F -- 'command python3' "$tmp/err" >/dev/null 2>&1 || fail "single-stream missing fallback diagnostics did not identify python3"
+grep -F -- '[command="python3"]' "$tmp/err" >/dev/null 2>&1 || fail "single-stream missing fallback diagnostics did not identify python3"
 
 exit 0
