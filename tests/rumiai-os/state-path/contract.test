@@ -4,21 +4,39 @@ TEST_ID=rumiai-os/state-path/contract.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
-origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
-validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
-find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
-resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
+
+resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" 2>/dev/null && pwd -P; }
 expect_status() { expected=$1; shift; "$@" >/dev/null 2>&1; actual=$?; [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"; }
 
-test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
-root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group=${test_dir%/*}; rumiai_os_group=${group%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
 
-tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; tmp=$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P) || error 'cannot canonicalize temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+target_library=$suite_root/lib/rumiai-os-target.lib
+fixture_library=$suite_root/lib/rumiai-os-fixture.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+[ -f "$fixture_library" ] || error 'rumiai-os fixture helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+. "$fixture_library" || error 'cannot source rumiai-os fixture helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
+case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
+
+tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+tmp=$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P) || error 'cannot canonicalize temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
 fixture=$tmp/root
-mkdir -p "$fixture/pkg" "$fixture/src" || error 'cannot create fixture roots'
-for file in m rumiai-os rumiai-os-sh product-name product-version; do cp "$root/$file" "$fixture/$file" || error "cannot copy $file"; done
-for dir in bin lib res state; do cp -R "$root/$dir" "$fixture/$dir" || error "cannot copy $dir"; done
-chmod u+x "$fixture/m" "$fixture/rumiai-os" "$fixture/rumiai-os-sh" || error 'cannot prepare fixture entrypoints'
+
+rumiai_test_fixture_rumiai_os_create "$root" "$fixture"
+status=$?
+case $status in
+  0) : ;;
+  1) fail 'source checkout lacks required runtime material' ;;
+  2) error 'cannot materialize isolated fixture' ;;
+  *) error "fixture primitive returned unexpected status $status" ;;
+esac
+
 command=$fixture/bin/sys/state-path
 [ -x "$command" ] || fail 'state-path is not executable'
 
