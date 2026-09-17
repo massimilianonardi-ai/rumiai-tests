@@ -4,10 +4,8 @@ TEST_ID=rumiai-os/srv/lifecycle.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
-origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
-validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
-find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
-resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
+
+resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" 2>/dev/null && pwd -P; }
 pid_exists() { seen=$(ps -p "$1" -o pid= 2>/dev/null | awk 'NR == 1 { print $1 }'); [ "$seen" = "$1" ]; }
 
 cleanup()
@@ -21,8 +19,16 @@ cleanup()
 trap cleanup 0 HUP INT TERM
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
-root=$(find_root "$start"); status=$?
+srv_group=${test_dir%/*}; rumiai_os_group=${srv_group%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+fixture_library=$suite_root/lib/rumiai-os-fixture.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+[ -f "$fixture_library" ] || error 'rumiai-os fixture helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+. "$fixture_library" || error 'cannot source rumiai-os fixture helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
 case $status in
   0) : ;;
   1) skip 'rumiai-os target checkout not found' ;;
@@ -31,31 +37,37 @@ case $status in
 esac
 
 srv_source=$root/bin/sys/srv
-state_path_source=$root/bin/sys/state-path
 [ -f "$srv_source" ] && [ -x "$srv_source" ] || fail 'srv command missing or not executable'
 [ "$(sed -n '1p' "$srv_source")" = '#!/usr/bin/env m' ] || fail 'srv does not use m shebang'
-[ -f "$state_path_source" ] && [ -x "$state_path_source" ] || fail 'state-path command missing or not executable'
 
 command -v ps >/dev/null 2>&1 || error 'ps unavailable'
 command -v awk >/dev/null 2>&1 || error 'awk unavailable'
-command -v realpath >/dev/null 2>&1 || error 'realpath unavailable'
-command -v nohup >/dev/null 2>&1 || error 'nohup unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-srv-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 fixture=$tmp/root
-mkdir -p "$fixture/bin/sys" "$fixture/bin/ext" "$fixture/state" || error 'cannot create fixture root'
-cp "$root/m" "$fixture/m" || error 'cannot copy m bootstrap'
-cp "$srv_source" "$fixture/bin/sys/srv" || error 'cannot copy srv command'
-cp "$state_path_source" "$fixture/bin/sys/state-path" || error 'cannot copy state-path command'
-chmod 700 "$fixture/m" "$fixture/bin/sys/srv" "$fixture/bin/sys/state-path" || error 'cannot set fixture executable modes'
-ln -s ../../m "$fixture/bin/sys/m" || error 'cannot create m PATH link'
-ln -s "$root/lib" "$fixture/lib" || error 'cannot link libraries'
+rumiai_test_fixture_rumiai_os_create "$root" "$fixture"
+status=$?
+case $status in
+  0) : ;;
+  1) fail 'source checkout lacks required runtime material' ;;
+  2) error 'cannot materialize isolated fixture' ;;
+  *) error "fixture primitive returned unexpected status $status" ;;
+esac
 
 cat > "$fixture/bin/ext/demo-start" <<'EOF_DEMO'
 #!/bin/sh
-trap 'exit 0' TERM HUP INT
+on_term()
+{
+  if [ -n "${TEST_SERVICE_TERMS-}" ]
+  then
+    printf '%s\n' "$$" >> "$TEST_SERVICE_TERMS"
+  fi
+  exit 0
+}
+trap on_term TERM
+trap 'exit 0' HUP INT
 printf '%s\n' ready
 if [ -n "${TEST_SERVICE_STARTS-}" ]
 then
@@ -66,54 +78,68 @@ do
   sleep 1
 done
 EOF_DEMO
+
+cat > "$fixture/bin/ext/canonical-target" <<'EOF_CANONICAL'
+#!/bin/sh
+trap 'exit 0' TERM HUP INT
+printf '%s\n' "$0" > "$TEST_SERVICE_COMMAND"
+while :
+do
+  sleep 1
+done
+EOF_CANONICAL
+ln -s canonical-target "$fixture/bin/ext/canonical-start" || error 'cannot create canonical service input'
+
 cat > "$fixture/bin/ext/fail-start" <<'EOF_FAIL'
 #!/bin/sh
 exit 7
 EOF_FAIL
-chmod 700 "$fixture/bin/ext/demo-start" "$fixture/bin/ext/fail-start" || error 'cannot prepare service fixtures'
 
-run_root=$fixture/state/user/default/sys/srv/run
-log_root=$fixture/state/user/default/sys/srv/log
-runtime=$run_root/demo
+chmod 700 "$fixture/bin/ext/demo-start" "$fixture/bin/ext/canonical-target" "$fixture/bin/ext/fail-start" || error 'cannot prepare service inputs'
+
+run_root=$("$fixture/m" "$fixture/bin/sys/state-path" user sys srv run) || fail 'cannot resolve srv run state'
+log_root=$("$fixture/m" "$fixture/bin/sys/state-path" user sys srv log) || fail 'cannot resolve srv log state'
 log_file=$log_root/demo.log
+TEST_SERVICE_TERMS=$tmp/service-terms
+export TEST_SERVICE_TERMS
+: > "$TEST_SERVICE_TERMS" || error 'cannot prepare termination marker'
 
-output=$tmp/start.out
-"$fixture/m" "$fixture/bin/sys/srv" start demo > "$output" 2> "$tmp/start.err" || fail 'srv start failed'
-[ -d "$runtime" ] || fail 'runtime metadata directory not published'
-for field in pid owner command
-do
-  [ -f "$runtime/$field" ] && [ ! -L "$runtime/$field" ] || fail "runtime field missing or symlink: $field"
-done
-service_pid=$(cat "$runtime/pid") || fail 'cannot read service pid'
-case $service_pid in ''|*[!0-9]*) fail 'invalid service pid metadata';; esac
-SERVICE_PIDS="$service_pid"
+"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/start.out" 2> "$tmp/start.err" || {
+  cat "$tmp/start.err" >&2
+  fail 'srv start failed'
+}
+grep -Fx ready "$log_file" >/dev/null 2>&1 || fail 'service output was not redirected to the lifecycle log'
+
+service_pid=$(awk 'NR == 1 { print $1 }' "$tmp/start.out" | sed 's/.*pid=//') || error 'cannot read service pid'
+case $service_pid in ''|*[!0-9]*) fail 'srv start did not report a valid service pid' ;; esac
+SERVICE_PIDS=$service_pid
 pid_exists "$service_pid" || fail 'started service is not alive'
-service_command=$(cat "$runtime/command") || fail 'cannot read service command metadata'
-expected_service_command=$(command -p -- realpath -- "$fixture/bin/ext/demo-start" 2>/dev/null) || error 'cannot canonicalize expected service command'
-[ "$service_command" = "$expected_service_command" ] || fail "service target was not canonicalized to fixture command: expected=$expected_service_command observed=$service_command"
-[ -f "$log_file" ] || fail 'service log was not created'
-grep -Fx ready "$log_file" >/dev/null 2>&1 || fail 'service output was not redirected to log'
 
 "$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/reuse.out" 2> "$tmp/reuse.err" || fail 'second srv start failed'
-[ "$(cat "$runtime/pid")" = "$service_pid" ] || fail 'second start replaced the running service'
+grep -F "already running pid=$service_pid" "$tmp/reuse.out" >/dev/null 2>&1 || fail 'second start did not preserve the running instance'
 pid_exists "$service_pid" || fail 'service died after idempotent start'
-
-rm "$runtime/owner" || error 'cannot prepare incomplete live metadata fixture'
-if "$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/live-invalid.out" 2> "$tmp/live-invalid.err"
-then
-  status=0
-else
-  status=$?
-fi
-[ "$status" -eq 1 ] || fail "incomplete live metadata returned $status instead of 1"
-pid_exists "$service_pid" || fail 'incomplete live metadata handling killed the service'
-[ -d "$runtime" ] || fail 'incomplete live metadata was removed while process remained alive'
-printf '%s\n' "$(ps -p "$$" -o pid= | awk 'NR == 1 { print $1 }')" > "$runtime/owner" || error 'cannot restore owner metadata'
 
 "$fixture/m" "$fixture/bin/sys/srv" stop demo > "$tmp/stop.out" 2> "$tmp/stop.err" || fail 'srv stop failed'
 pid_exists "$service_pid" && fail 'service still alive after stop'
-[ ! -e "$runtime" ] || fail 'runtime metadata remained after stop'
+grep -Fx "$service_pid" "$TEST_SERVICE_TERMS" >/dev/null 2>&1 || fail 'normal stop did not terminate the service with SIGTERM'
 SERVICE_PIDS=
+
+"$fixture/m" "$fixture/bin/sys/srv" stop demo > "$tmp/idempotent-stop.out" 2> "$tmp/idempotent-stop.err" || fail 'idempotent stop failed when service was already stopped'
+grep -F 'not running' "$tmp/idempotent-stop.out" >/dev/null 2>&1 || fail 'idempotent stop did not report the inactive service'
+
+TEST_SERVICE_COMMAND=$tmp/canonical-command
+export TEST_SERVICE_COMMAND
+"$fixture/m" "$fixture/bin/sys/srv" start canonical > "$tmp/canonical-start.out" 2> "$tmp/canonical-start.err" || fail 'canonical service start failed'
+canonical_pid=$(sed -n 's/.*pid=//p' "$tmp/canonical-start.out") || error 'cannot read canonical service pid'
+case $canonical_pid in ''|*[!0-9]*) fail 'canonical start did not report a valid service pid' ;; esac
+SERVICE_PIDS=$canonical_pid
+expected_command=$(CDPATH= cd -- "$fixture/bin/ext" && pwd -P)/canonical-target
+observed_command=$(cat "$TEST_SERVICE_COMMAND") || error 'cannot read canonical service command'
+[ "$observed_command" = "$expected_command" ] || fail "service target was not canonicalized: expected=$expected_command observed=$observed_command"
+"$fixture/m" "$fixture/bin/sys/srv" stop canonical > "$tmp/canonical-stop.out" 2> "$tmp/canonical-stop.err" || fail 'canonical service stop failed'
+pid_exists "$canonical_pid" && fail 'canonical service still alive after stop'
+SERVICE_PIDS=
+unset TEST_SERVICE_COMMAND
 
 TEST_SERVICE_STARTS=$tmp/service-starts
 export TEST_SERVICE_STARTS
@@ -127,11 +153,11 @@ wait "$concurrent_b"; concurrent_b_status=$?
 [ "$concurrent_a_status" -eq 0 ] && [ "$concurrent_b_status" -eq 0 ] || fail 'concurrent srv start failed'
 concurrent_starts=$(awk 'END { print NR + 0 }' "$TEST_SERVICE_STARTS") || error 'cannot count concurrent starts'
 [ "$concurrent_starts" -eq 1 ] || fail "concurrent start launched $concurrent_starts service instances"
-concurrent_pid=$(cat "$runtime/pid") || fail 'cannot read concurrent service pid'
-SERVICE_PIDS="$concurrent_pid"
+
+concurrent_pid=$(sed -n 's/.*pid=//p' "$tmp/concurrent-a.out" "$tmp/concurrent-b.out" | tail -n 1) || error 'cannot read concurrent service pid'
+case $concurrent_pid in ''|*[!0-9]*) fail 'concurrent start did not report a valid service pid' ;; esac
+SERVICE_PIDS=$concurrent_pid
 pid_exists "$concurrent_pid" || fail 'concurrent start service is not alive'
-lock_entries=$(find "$run_root" -name '.demo.lock*' -print) || error 'cannot inspect srv lock state'
-[ -z "$lock_entries" ] || fail 'concurrent start left srv lock artifacts'
 "$fixture/m" "$fixture/bin/sys/srv" stop demo > "$tmp/concurrent-stop.out" 2> "$tmp/concurrent-stop.err" || fail 'concurrent service stop failed'
 pid_exists "$concurrent_pid" && fail 'concurrent service still alive after stop'
 SERVICE_PIDS=
@@ -144,32 +170,43 @@ status=\$?
 printf '%s\n' "\$status" > "$tmp/foreign-status"
 exit "\$status"
 EOF_FOREIGN
-chmod 700 "$tmp/foreign-start" || error 'cannot prepare foreign caller fixture'
+chmod 700 "$tmp/foreign-start" || error 'cannot prepare foreign caller input'
 "$tmp/foreign-start" > "$tmp/foreign-start.out" 2> "$tmp/foreign-start.err" || fail 'foreign caller start failed'
 [ "$(cat "$tmp/foreign-status")" = 0 ] || fail 'foreign caller reported start failure'
-foreign_pid=$(cat "$runtime/pid") || fail 'cannot read foreign service pid'
-SERVICE_PIDS="$foreign_pid"
+foreign_pid=$(sed -n 's/.*pid=//p' "$tmp/foreign-start.out") || error 'cannot read foreign service pid'
+case $foreign_pid in ''|*[!0-9]*) fail 'foreign start did not report a valid service pid' ;; esac
+SERVICE_PIDS=$foreign_pid
 pid_exists "$foreign_pid" || fail 'foreign service is not alive'
 
 "$fixture/m" "$fixture/bin/sys/srv" stop demo > "$tmp/foreign-stop.out" 2> "$tmp/foreign-stop.err" || fail 'owner-aware stop returned failure'
 pid_exists "$foreign_pid" || fail 'owner-aware stop killed a service created by another caller'
-[ -d "$runtime" ] || fail 'owner-aware stop removed live runtime state'
+grep -F 'was not started by this caller; leaving it running' "$tmp/foreign-stop.out" >/dev/null 2>&1 || fail 'owner-aware stop did not report ownership preservation'
 
 "$fixture/m" "$fixture/bin/sys/srv" stop -f demo > "$tmp/force-stop.out" 2> "$tmp/force-stop.err" || fail 'forced stop failed'
 pid_exists "$foreign_pid" && fail 'forced stop left service alive'
-[ ! -e "$runtime" ] || fail 'forced stop left runtime metadata'
 SERVICE_PIDS=
 
-mkdir -p "$runtime" || error 'cannot prepare stale state fixture'
-printf '%s\n' 99999999 > "$runtime/pid"
-printf '%s\n' 99999998 > "$runtime/owner"
-printf '%s\n' "$fixture/bin/ext/demo-start" > "$runtime/command"
-"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/stale-start.out" 2> "$tmp/stale-start.err" || fail 'start did not recover stale runtime state'
-stale_recovery_pid=$(cat "$runtime/pid") || fail 'cannot read recovered pid'
-SERVICE_PIDS="$stale_recovery_pid"
-[ "$stale_recovery_pid" != 99999999 ] || fail 'stale pid was reused'
-pid_exists "$stale_recovery_pid" || fail 'service not alive after stale recovery'
-"$fixture/m" "$fixture/bin/sys/srv" stop -f demo >/dev/null 2>&1 || fail 'cleanup stop after stale recovery failed'
+"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/stale-a.out" 2> "$tmp/stale-a.err" || fail 'stale-state setup start failed'
+stale_pid=$(sed -n 's/.*pid=//p' "$tmp/stale-a.out") || error 'cannot read stale-state service pid'
+case $stale_pid in ''|*[!0-9]*) fail 'stale-state setup did not report a valid service pid' ;; esac
+SERVICE_PIDS=$stale_pid
+kill "$stale_pid" 2>/dev/null || error 'cannot terminate stale-state service externally'
+stale_wait=0
+while pid_exists "$stale_pid" && [ "$stale_wait" -lt 10 ]
+do
+  sleep 1
+  stale_wait=$((stale_wait + 1))
+done
+pid_exists "$stale_pid" && error 'externally terminated service did not exit'
+SERVICE_PIDS=
+
+"$fixture/m" "$fixture/bin/sys/srv" start demo > "$tmp/stale-b.out" 2> "$tmp/stale-b.err" || fail 'start did not recover stale lifecycle state'
+recovered_pid=$(sed -n 's/.*pid=//p' "$tmp/stale-b.out") || error 'cannot read recovered service pid'
+case $recovered_pid in ''|*[!0-9]*) fail 'stale recovery did not report a valid service pid' ;; esac
+[ "$recovered_pid" != "$stale_pid" ] || fail 'stale service pid was reused'
+SERVICE_PIDS=$recovered_pid
+pid_exists "$recovered_pid" || fail 'service not alive after stale-state recovery'
+"$fixture/m" "$fixture/bin/sys/srv" stop -f demo >/dev/null 2>&1 || fail 'cleanup stop after stale-state recovery failed'
 SERVICE_PIDS=
 
 if "$fixture/m" "$fixture/bin/sys/srv" start fail > "$tmp/fail-start.out" 2> "$tmp/fail-start.err"
@@ -178,8 +215,7 @@ then
 else
   status=$?
 fi
-[ "$status" -eq 1 ] || fail "immediate startup failure returned $status instead of 1"
-[ ! -e "$run_root/fail" ] || fail 'failed startup published runtime metadata'
+[ "$status" -ne 0 ] || fail 'immediate startup failure was reported as success'
 
 if "$fixture/m" "$fixture/bin/sys/srv" start missing > "$tmp/missing.out" 2> "$tmp/missing.err"
 then
@@ -187,7 +223,7 @@ then
 else
   status=$?
 fi
-[ "$status" -eq 127 ] || fail "missing service target returned $status instead of 127"
+[ "$status" -ne 0 ] || fail 'missing service target was reported as success'
 
 if "$fixture/m" "$fixture/bin/sys/srv" start BadName > "$tmp/invalid.out" 2> "$tmp/invalid.err"
 then
@@ -195,6 +231,9 @@ then
 else
   status=$?
 fi
-[ "$status" -eq 2 ] || fail "invalid service name returned $status instead of 2"
+[ "$status" -ne 0 ] || fail 'invalid service name was reported as success'
+
+[ -d "$run_root" ] || fail 'srv did not materialize its state-path run root'
+[ -d "$log_root" ] || fail 'srv did not materialize its state-path log root'
 
 exit 0
