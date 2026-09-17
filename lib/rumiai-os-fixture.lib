@@ -6,7 +6,8 @@
 #
 # The fixture copies the current runtime/product material and its tracked initial
 # system profile. Runtime package/user state is intentionally created fresh inside the
-# fixture and never copied from the checkout under test.
+# fixture and never copied from the checkout under test. The package store itself is
+# not pre-created: pkg owns materialization of $m_PKG_DIR when package operations need it.
 
 rumiai_test_fixture_rumiai_os_create() {
     [ "$#" -eq 2 ] || return 3
@@ -28,7 +29,7 @@ rumiai_test_fixture_rumiai_os_create() {
 
     [ ! -e "$fixture_root" ] || return 2
 
-    if ! mkdir -p "$fixture_root/pkg" "$fixture_root/src"
+    if ! mkdir -p "$fixture_root/src"
     then
         return 2
     fi

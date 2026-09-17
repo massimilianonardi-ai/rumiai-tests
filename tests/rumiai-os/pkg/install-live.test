@@ -1,0 +1,126 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg/install-live.test"
+
+fail()
+{
+    printf -- '%s\n' "$TEST_ID: $*" >&2
+    exit 1
+}
+
+error()
+{
+    printf -- '%s\n' "$TEST_ID: $*" >&2
+    exit 3
+}
+
+skip()
+{
+    printf -- '%s\n' "$TEST_ID: $*" >&2
+    exit 2
+}
+
+resolve_test_dir()
+{
+    self=$0
+    case "$self" in
+        */*) : ;;
+        *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+command -v git >/dev/null 2>&1 || skip "git is unavailable"
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library="$suite_root/lib/rumiai-os-target.lib"
+fixture_library="$suite_root/lib/rumiai-os-fixture.lib"
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+[ -f "$fixture_library" ] || error "rumiai-os fixture helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+. "$fixture_library" || error "cannot source rumiai-os fixture helper"
+
+source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+    0) : ;;
+    1) skip "rumiai-os target checkout not found" ;;
+    2) fail "invalid explicit rumiai-os target" ;;
+    *) error "target discovery failed" ;;
+esac
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-install-live-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+fixture="$tmp/root"
+rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture" || error "cannot materialize isolated rumiai-os replica"
+fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize isolated root"
+
+if [ -e "$fixture/pkg" ] || [ -L "$fixture/pkg" ]
+then
+    fail "isolated replica pre-created the package store"
+fi
+
+PATH="$fixture/bin/sys:$PATH"
+export PATH
+
+runtime_probe="$tmp/runtime-probe"
+cat > "$runtime_probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf -- '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
+osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
+case "$osarch" in
+    linux-arm64|linux-x86_64|macos-arm64|macos-x86_64|windows-arm64|windows-x86_64) : ;;
+    *) skip "jq package is not declared for $osarch" ;;
+esac
+
+pkg_command="$fixture/bin/sys/pkg"
+[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
+
+"$pkg_command" install 'bad@@version' >"$tmp/invalid.log" 2>&1
+status=$?
+[ "$status" -eq 2 ] || {
+    cat "$tmp/invalid.log" >&2
+    fail "invalid install operand returned $status instead of 2"
+}
+if [ -e "$fixture/pkg" ] || [ -L "$fixture/pkg" ]
+then
+    fail "invalid install operand created the package store"
+fi
+
+printf -- '%s\n' "$TEST_ID: live install started; this test uses the current pkg-catalog and official jq release" >&2
+if ! "$pkg_command" install 'jq@jq-1.8.2'
+then
+    fail "pkg install jq@jq-1.8.2 failed"
+fi
+
+[ -d "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail "pkg install did not materialize a real package store"
+concrete="$fixture/pkg/jq@jq-1.8.2!$osarch"
+[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "jq concrete package is missing"
+[ -f "$concrete/cmd/jq" ] && [ ! -L "$concrete/cmd/jq" ] && [ -x "$concrete/cmd/jq" ] || fail "jq command entry is missing"
+[ -L "$concrete/link/jq" ] || fail "jq direct link is missing"
+
+jq_version="$($concrete/cmd/jq --version)" || fail "installed jq command failed"
+[ "$jq_version" = 'jq-1.8.2' ] || fail "jq --version returned $jq_version, expected jq-1.8.2"
+
+pkg_cache="$($fixture/m "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"
+catalog="$pkg_cache/pkg-catalog"
+[ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "real pkg-catalog cache was not materialized"
+catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
+[ -d "$catalog/jq/$osarch" ] && [ ! -L "$catalog/jq/$osarch" ] || fail "current jq target stream is missing"
+
+printf -- 'installed=%s\n' "${concrete##*/}"
+printf -- 'catalog-head=%s\n' "$catalog_head"
+printf -- 'jq=%s\n' "$jq_version"
+exit 0
