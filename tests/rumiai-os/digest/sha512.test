@@ -13,8 +13,12 @@ resolve_test_dir()
 }
 
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; suite_root=${rumiai_os_group%/*}
-. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source target discovery"
+group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+
+target_library="$suite_root/lib/rumiai-os-target.lib"
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
 
