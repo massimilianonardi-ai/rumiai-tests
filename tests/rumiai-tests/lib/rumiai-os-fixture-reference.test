@@ -58,6 +58,7 @@ fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canon
 [ -d "$fixture/bin" ] || fail 'fixture bin directory is missing'
 [ -d "$fixture/lib" ] || fail 'fixture lib directory is missing'
 [ -d "$fixture/res" ] || fail 'fixture res directory is missing'
+[ ! -e "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail 'fixture pre-creates the managed package store'
 [ ! -e "$fixture/lang" ] && [ ! -L "$fixture/lang" ] || fail 'fixture contains superseded top-level lang root'
 [ -d "$fixture/state/system/profile/main" ] || fail 'fixture main system profile is missing'
 [ -L "$fixture/state/system/current" ] || fail 'fixture system selector is missing'
