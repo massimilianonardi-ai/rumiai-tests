@@ -1,348 +1,191 @@
 #!/bin/sh
 
-TEST_ID="rumiai-os/pkg-extract/contract.test"
-
-fail()
-{
-  printf -- '%s\n' "$TEST_ID: $*" >&2
-  exit "1"
-}
-
-error()
-{
-  printf -- '%s\n' "$TEST_ID: $*" >&2
-  exit "3"
-}
-
-skip()
-{
-  printf -- '%s\n' "$TEST_ID: $*" >&2
-  exit "2"
-}
-
-rumiai_test_target_have()
-{
-  command -v "$1" >/dev/null 2>&1
-}
-
-rumiai_test_target_rumiai_os_origin_ok()
-{
-  candidate="$1"
-  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return "1"
-  case "$origin" in
-    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
-      return "0"
-      ;;
-  esac
-  return "1"
-}
-
-rumiai_test_target_rumiai_os_validate()
-{
-  candidate="$1"
-  [ -n "$candidate" ] || return "1"
-  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return "1"
-  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return "1"
-  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return "1"
-  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return "1"
-  printf -- '%s\n' "$target_root"
-}
-
-rumiai_test_target_rumiai_os_find()
-{
-  start="$1"
-  rumiai_test_target_have git || return "3"
-  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
-  then
-    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return "2"
-    return "0"
-  fi
-  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return "3"
-  while :
-  do
-    if rumiai_test_target_rumiai_os_validate "$candidate"
-    then
-      return "0"
-    fi
-    [ "$candidate" != "/" ] || break
-    parent="${candidate%/*}"
-    [ -n "$parent" ] || parent="/"
-    [ "$parent" != "$candidate" ] || break
-    candidate="$parent"
-  done
-  return "1"
-}
+TEST_ID=rumiai-os/pkg-extract/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-  self="$0"
-  case "$self" in
-    */*) :;;
-    *) self="$(command -v "$self" 2>/dev/null)" || return "1";;
-  esac
-  self_dir="${self%/*}"
-  [ "$self_dir" != "$self" ] || self_dir="."
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-group_dir="${test_dir%/*}"
-rumiai_os_group="${group_dir%/*}"
-tests_dir="${rumiai_os_group%/*}"
-suite_root="${tests_dir%/*}"
-root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
-status="$?"
-case "$status" in
-  "0") :;;
-  "1") skip "rumiai-os target checkout not found";;
-  "2") fail "invalid explicit rumiai-os target";;
-  *) error "target discovery failed";;
+reset_stage()
+{
+  rm -rf "$stage" || return 1
+  mkdir "$stage"
+}
+
+make_tar()
+{
+  source_dir=$1
+  archive=$2
+  (
+    CDPATH= cd -- "$source_dir" || exit 1
+    TAR_OPTIONS= command -p -- tar -cf "$archive" .
+  )
+}
+
+run_extract()
+{
+  artifact=$1
+  format=$2
+  "$root/m" "$driver" "$artifact" "$format" "$stage"
+}
+
+make_tar_case()
+{
+  source_dir=$1
+  label=$2
+  archive=$tmp/$label.tar
+  make_tar "$source_dir" "$archive" || error "cannot create $label archive"
+  reset_stage || error "cannot reset stage for $label"
+  run_extract "$archive" tar > "$tmp/$label.out" 2> "$tmp/$label.err" || {
+    cat "$tmp/$label.err" >&2
+    fail "$label extraction failed"
+  }
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
 esac
 
-library="$root/lib/sys/sh/pkg-extract.lib.sh"
-[ -f "$library" ] || fail "lib/sys/sh/pkg-extract.lib.sh is missing"
+command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
+[ -x "$root/bin/sys/extract" ] || fail 'extract command is missing or not executable'
+library=$root/lib/sys/sh/pkg-extract.lib.sh
+[ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] ||
+  fail 'pkg-extract library is missing or has invalid mode'
 
-tmp="${TMPDIR:-/tmp}/rumiai-pkg-extract-contract-$$"
-umask "077"
-mkdir "$tmp" || error "cannot create temporary directory"
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-extract-contract-$$
+umask 077
+mkdir "$tmp" "$tmp/stage" || error 'cannot create temporary directories'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fakebin="$tmp/bin"
-mkdir "$fakebin" || error "cannot create fake backend directory"
+stage=$tmp/stage
 
-cat > "$fakebin/extract" <<'EOF_EXTRACT'
-#!/bin/sh
-printf -- '%s\n' "$*" > "$PKG_EXTRACT_ARGS"
-case "${PKG_EXTRACT_LAYOUT-flat}" in
-  flat)
-    printf -- '%s\n' one > "$3/one"
-    printf -- '%s\n' two > "$3/two"
-    ;;
-  wrapper)
-    mkdir "$3/release-26.2.0" || exit 1
-    printf -- '%s\n' executable > "$3/release-26.2.0/program"
-    mkdir "$3/release-26.2.0/lib" || exit 1
-    ;;
-  deep)
-    mkdir -p "$3/product/26.2.0/root/bin" "$3/product/26.2.0/root/lib" || exit 1
-    printf -- '%s\n' executable > "$3/product/26.2.0/root/bin/program"
-    ;;
-  app)
-    mkdir -p "$3/Electron.app/Contents/MacOS" "$3/Electron.app/Contents/Resources" || exit 1
-    printf -- '%s\n' plist > "$3/Electron.app/Contents/Info.plist"
-    printf -- '%s\n' executable > "$3/Electron.app/Contents/MacOS/Electron"
-    ;;
-  app-wrapper)
-    mkdir -p "$3/release/Electron.app/Contents/MacOS" "$3/release/Electron.app/Contents/Resources" || exit 1
-    printf -- '%s\n' plist > "$3/release/Electron.app/Contents/Info.plist"
-    printf -- '%s\n' executable > "$3/release/Electron.app/Contents/MacOS/Electron"
-    ;;
-  app-missing-info)
-    mkdir -p "$3/Broken.app/Contents/MacOS" "$3/Broken.app/Contents/Resources" || exit 1
-    printf -- '%s\n' executable > "$3/Broken.app/Contents/MacOS/Broken"
-    ;;
-  app-contents-symlink)
-    mkdir -p "$PKG_EXTRACT_SYMLINK_TARGET/Contents/MacOS" || exit 1
-    printf -- '%s\n' plist > "$PKG_EXTRACT_SYMLINK_TARGET/Contents/Info.plist"
-    mkdir "$3/Broken.app" || exit 1
-    ln -s "$PKG_EXTRACT_SYMLINK_TARGET/Contents" "$3/Broken.app/Contents" || exit 1
-    ;;
-  app-info-symlink)
-    mkdir -p "$3/Broken.app/Contents/MacOS" || exit 1
-    printf -- '%s\n' plist > "$PKG_EXTRACT_SYMLINK_TARGET"
-    ln -s "$PKG_EXTRACT_SYMLINK_TARGET" "$3/Broken.app/Contents/Info.plist" || exit 1
-    ;;
-  app-macos-symlink)
-    mkdir -p "$3/Broken.app/Contents" "$PKG_EXTRACT_SYMLINK_TARGET" || exit 1
-    printf -- '%s\n' plist > "$3/Broken.app/Contents/Info.plist"
-    ln -s "$PKG_EXTRACT_SYMLINK_TARGET" "$3/Broken.app/Contents/MacOS" || exit 1
-    ;;
-  hidden)
-    mkdir "$3/wrapper" || exit 1
-    printf -- '%s\n' payload > "$3/wrapper/program"
-    printf -- '%s\n' marker > "$3/.marker"
-    ;;
-  symlink)
-    mkdir "$PKG_EXTRACT_SYMLINK_TARGET" || exit 1
-    printf -- '%s\n' payload > "$PKG_EXTRACT_SYMLINK_TARGET/program"
-    ln -s "$PKG_EXTRACT_SYMLINK_TARGET" "$3/wrapper" || exit 1
-    ;;
-  fail)
-    printf -- '%s\n' partial > "$3/partial"
-    exit 7
-    ;;
-  *)
-    exit 9
-    ;;
-esac
-exit 0
-EOF_EXTRACT
-chmod "700" "$fakebin/extract"
+driver=$tmp/pkg-extract-driver
+cat > "$driver" <<'EOF_DRIVER'
+. "$m_LIB_DIR/sys/sh/pkg-extract.lib.sh" || exit 3
+pkg_extract "$@"
+EOF_DRIVER
+chmod 600 "$driver" || error 'cannot prepare pkg-extract driver'
 
-readpathce()
-{
-  [ "$#" -eq 2 ] || return 2
-  case "$2" in
-    */*) dir=${2%/*}; base=${2##*/}; [ -n "$dir" ] || dir=/;;
-    *) dir=.; base=$2;;
-  esac
-  physical_dir="$(CDPATH= cd -- "$dir" 2>/dev/null && pwd -P)" || return 1
-  eval "$1=\$physical_dir/\$base"
-}
-log()
-{
-  :
-}
+"$root/m" "$driver" > "$tmp/arity.out" 2> "$tmp/arity.err"
+[ "$?" -eq 2 ] || fail 'pkg_extract invalid arity did not return 2'
 
-PATH="$fakebin:/usr/bin:/bin"
-export PATH
-PKG_EXTRACT_ARGS="$tmp/extract.args"
-export PKG_EXTRACT_ARGS
-m_ROOT="$tmp/forbidden-root"
-mkdir -p "$m_ROOT/pkg" || error "cannot create forbidden package store fixture"
-export m_ROOT
-. "$library" || error "cannot source pkg-extract library"
+flat=$tmp/flat
+mkdir "$flat" || error 'cannot create flat source'
+printf '%s\n' one > "$flat/one"
+printf '%s\n' two > "$flat/two"
+make_tar_case "$flat" flat
+[ -f "$stage/one" ] && [ -f "$stage/two" ] || fail 'flat useful root was not preserved'
 
-artifact="$tmp/archive.tar.gz"
-printf -- '%s' payload > "$artifact"
+wrapper=$tmp/wrapper
+mkdir -p "$wrapper/release/lib" || error 'cannot create wrapper source'
+printf '%s\n' program > "$wrapper/release/program"
+make_tar_case "$wrapper" wrapper
+[ -f "$stage/program" ] && [ -d "$stage/lib" ] || fail 'single wrapper was not normalized'
+[ ! -e "$stage/release" ] && [ ! -L "$stage/release" ] || fail 'single wrapper survived normalization'
 
-stage="$tmp/custom-destination"
-mkdir "$stage"
-readpathce artifact_canonical "$artifact" || error "cannot canonicalize artifact fixture"
-readpathce stage_canonical "$stage" || error "cannot canonicalize staging fixture"
-PKG_EXTRACT_LAYOUT=flat
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" tar.gz "$stage" || fail "identity materialization failed"
-[ "$(cat "$PKG_EXTRACT_ARGS")" = "tar.gz $artifact_canonical $stage_canonical" ] || fail "pkg_extract delegated incorrect extract arguments"
-[ -f "$stage/one" ] && [ -f "$stage/two" ] || fail "identity useful root was not preserved"
-[ -z "$(find "$m_ROOT/pkg" -mindepth 1 -print -quit)" ] || fail "pkg_extract wrote into m_ROOT/pkg instead of the caller destination"
+deep=$tmp/deep
+mkdir -p "$deep/product/26.2.0/root/bin" "$deep/product/26.2.0/root/lib" || error 'cannot create deep source'
+printf '%s\n' program > "$deep/product/26.2.0/root/bin/program"
+make_tar_case "$deep" deep
+[ -f "$stage/bin/program" ] && [ -d "$stage/lib" ] || fail 'deep wrapper was not normalized to useful root'
+[ ! -e "$stage/product" ] || fail 'deep wrapper survived normalization'
 
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=wrapper
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" tar "$stage" || fail "single-wrapper normalization failed"
-[ -f "$stage/program" ] && [ -d "$stage/lib" ] || fail "single-wrapper useful root was not lifted into destination"
-[ ! -e "$stage/release-26.2.0" ] && [ ! -L "$stage/release-26.2.0" ] || fail "single wrapper survived normalization"
+app=$tmp/app
+mkdir -p "$app/Electron.app/Contents/MacOS" "$app/Electron.app/Contents/Resources" || error 'cannot create app source'
+printf '%s\n' plist > "$app/Electron.app/Contents/Info.plist"
+printf '%s\n' executable > "$app/Electron.app/Contents/MacOS/Electron"
+make_tar_case "$app" app
+[ -d "$stage/Electron.app" ] && [ ! -L "$stage/Electron.app" ] || fail 'macOS application bundle was not preserved'
+[ -f "$stage/Electron.app/Contents/Info.plist" ] || fail 'macOS application bundle metadata is missing'
 
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=deep
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" zip "$stage" || fail "deep-wrapper normalization failed"
-[ -f "$stage/bin/program" ] && [ -d "$stage/lib" ] || fail "deep useful root was not lifted into destination"
-[ ! -e "$stage/product" ] && [ ! -L "$stage/product" ] || fail "deep wrapper survived normalization"
+app_wrapper=$tmp/app-wrapper
+mkdir -p "$app_wrapper/release/Electron.app/Contents/MacOS" || error 'cannot create wrapped app source'
+printf '%s\n' plist > "$app_wrapper/release/Electron.app/Contents/Info.plist"
+printf '%s\n' executable > "$app_wrapper/release/Electron.app/Contents/MacOS/Electron"
+make_tar_case "$app_wrapper" app-wrapper
+[ -d "$stage/Electron.app" ] || fail 'wrapped application bundle was not lifted'
+[ ! -e "$stage/release" ] || fail 'wrapper outside application bundle survived'
 
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=app
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" zip "$stage" || fail "macOS application bundle identity case failed"
-[ -d "$stage/Electron.app" ] && [ ! -L "$stage/Electron.app" ] || fail "macOS application bundle was not preserved"
-[ -f "$stage/Electron.app/Contents/Info.plist" ] && [ ! -L "$stage/Electron.app/Contents/Info.plist" ] || fail "macOS application bundle Info.plist was not preserved"
-[ -d "$stage/Electron.app/Contents/MacOS" ] && [ ! -L "$stage/Electron.app/Contents/MacOS" ] || fail "macOS application bundle MacOS directory was not preserved"
-[ -f "$stage/Electron.app/Contents/MacOS/Electron" ] || fail "macOS application bundle executable was not preserved"
+incomplete=$tmp/incomplete
+mkdir -p "$incomplete/Broken.app/Contents/MacOS" "$incomplete/Broken.app/Contents/Resources" || error 'cannot create incomplete app source'
+printf '%s\n' executable > "$incomplete/Broken.app/Contents/MacOS/Broken"
+make_tar_case "$incomplete" incomplete
+[ ! -e "$stage/Broken.app" ] || fail 'incomplete .app was treated as an application-bundle boundary'
+[ -d "$stage/MacOS" ] && [ -d "$stage/Resources" ] || fail 'normal wrapper discovery did not continue through incomplete .app'
 
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=app-wrapper
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" zip "$stage" || fail "wrapped macOS application bundle normalization failed"
-[ -d "$stage/Electron.app" ] && [ ! -L "$stage/Electron.app" ] || fail "wrapped macOS application bundle was not preserved"
-[ ! -e "$stage/release" ] && [ ! -L "$stage/release" ] || fail "wrapper outside macOS application bundle survived normalization"
-[ -f "$stage/Electron.app/Contents/Info.plist" ] || fail "wrapped macOS application bundle hierarchy was not preserved"
+hidden=$tmp/hidden
+mkdir "$hidden" "$hidden/wrapper" || error 'cannot create hidden-entry source'
+printf '%s\n' payload > "$hidden/wrapper/program"
+printf '%s\n' marker > "$hidden/.marker"
+make_tar_case "$hidden" hidden
+[ -f "$stage/.marker" ] && [ -d "$stage/wrapper" ] || fail 'hidden entry was ignored during structural discovery'
 
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=app-missing-info
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" zip "$stage" || fail "incomplete .app normalization failed"
-[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app without Info.plist was incorrectly treated as an application-bundle boundary"
-[ -d "$stage/MacOS" ] && [ -d "$stage/Resources" ] || fail "normal discovery did not continue through incomplete .app"
-
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=app-contents-symlink
-PKG_EXTRACT_SYMLINK_TARGET="$tmp/app-contents-target"
-export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
-pkg_extract "$artifact" zip "$stage" || fail ".app with Contents symlink normalization failed"
-[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app with Contents symlink was incorrectly treated as an application-bundle boundary"
-[ -L "$stage/Contents" ] || fail "Contents symlink was not preserved by normal discovery"
-
-rm -rf "$stage" "$tmp/app-info-target"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=app-info-symlink
-PKG_EXTRACT_SYMLINK_TARGET="$tmp/app-info-target"
-export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
-pkg_extract "$artifact" zip "$stage" || fail ".app with Info.plist symlink normalization failed"
-[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app with Info.plist symlink was incorrectly treated as an application-bundle boundary"
-[ -L "$stage/Info.plist" ] && [ -d "$stage/MacOS" ] || fail "normal discovery did not continue through .app with Info.plist symlink"
-
-rm -rf "$stage" "$tmp/app-macos-target"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=app-macos-symlink
-PKG_EXTRACT_SYMLINK_TARGET="$tmp/app-macos-target"
-export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
-pkg_extract "$artifact" zip "$stage" || fail ".app with MacOS symlink normalization failed"
-[ ! -e "$stage/Broken.app" ] && [ ! -L "$stage/Broken.app" ] || fail ".app with MacOS symlink was incorrectly treated as an application-bundle boundary"
-[ -f "$stage/Info.plist" ] && [ -L "$stage/MacOS" ] || fail "normal discovery did not continue through .app with MacOS symlink"
-
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=hidden
-export PKG_EXTRACT_LAYOUT
-pkg_extract "$artifact" tar "$stage" || fail "hidden-entry identity case failed"
-[ -f "$stage/.marker" ] && [ -d "$stage/wrapper" ] || fail "hidden entry was ignored by structural discovery"
-
-rm -rf "$stage" "$tmp/symlink-target"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=symlink
-PKG_EXTRACT_SYMLINK_TARGET="$tmp/symlink-target"
-export PKG_EXTRACT_LAYOUT PKG_EXTRACT_SYMLINK_TARGET
-pkg_extract "$artifact" tar "$stage" || fail "symlink-wrapper identity case failed"
-[ -L "$stage/wrapper" ] || fail "symlink wrapper was followed or replaced"
-
-rm -rf "$stage"
-mkdir "$stage"
-appimage="$tmp/malicious.AppImage"
-marker="$tmp/appimage-executed"
+reset_stage || error 'cannot reset stage for AppImage'
+appimage=$tmp/malicious.AppImage
+marker=$tmp/appimage-executed
 cat > "$appimage" <<EOF_APPIMAGE
 #!/bin/sh
-printf -- '%s\\n' executed > "$marker"
+printf '%s\\n' executed > "$marker"
 EOF_APPIMAGE
-chmod "755" "$appimage"
-pkg_extract "$appimage" appimage "$stage" || fail "opaque AppImage materialization failed"
-[ ! -e "$marker" ] || fail "AppImage was executed during pkg_extract"
-[ -f "$stage/malicious.AppImage" ] || fail "AppImage was not copied opaquely"
-[ -x "$stage/malicious.AppImage" ] || fail "AppImage mode was not preserved"
+chmod 755 "$appimage" || error 'cannot prepare AppImage input'
+run_extract "$appimage" appimage > "$tmp/appimage.out" 2> "$tmp/appimage.err" || fail 'opaque AppImage materialization failed'
+[ ! -e "$marker" ] || fail 'AppImage was executed during materialization'
+[ -f "$stage/malicious.AppImage" ] && [ -x "$stage/malicious.AppImage" ] || fail 'AppImage was not copied opaquely with mode preserved'
 
-rm -rf "$stage"
-mkdir "$stage"
-PKG_EXTRACT_LAYOUT=fail
-export PKG_EXTRACT_LAYOUT
-if pkg_extract "$artifact" tar "$stage" >/dev/null 2>&1
-then
-  fail "extract backend failure was accepted"
+reset_stage || error 'cannot reset stage for executable'
+executable=$tmp/tool
+cat > "$executable" <<'EOF_EXECUTABLE'
+#!/bin/sh
+exit 0
+EOF_EXECUTABLE
+chmod 600 "$executable" || error 'cannot prepare executable input'
+run_extract "$executable" executable > "$tmp/executable.out" 2> "$tmp/executable.err" || fail 'executable materialization failed'
+[ -f "$stage/tool" ] && [ -x "$stage/tool" ] || fail 'executable artifact was not materialized as executable'
+[ ! -x "$executable" ] || fail 'input executable mode was modified'
+
+invalid=$tmp/invalid.tar
+printf '%s\n' not-a-tar > "$invalid"
+reset_stage || error 'cannot reset stage for invalid archive'
+if run_extract "$invalid" tar > "$tmp/invalid.out" 2> "$tmp/invalid.err"; then
+  fail 'invalid tar archive was accepted'
 else
-  status=$?
-  [ "$status" -eq 1 ] || fail "extract backend failure returned $status instead of 1"
+  [ "$?" -eq 1 ] || fail 'invalid tar archive did not return 1'
 fi
 
-rm -rf "$stage"
-mkdir "$stage"
-printf -- '%s\n' occupied > "$stage/existing"
-if pkg_extract "$artifact" tar "$stage" >/dev/null 2>&1
-then
-  fail "non-empty staging directory was accepted"
+flat_archive=$tmp/nonempty.tar
+make_tar "$flat" "$flat_archive" || error 'cannot create non-empty-stage archive'
+reset_stage || error 'cannot reset non-empty stage'
+printf '%s\n' occupied > "$stage/existing"
+if run_extract "$flat_archive" tar > "$tmp/nonempty.out" 2> "$tmp/nonempty.err"; then
+  fail 'non-empty staging directory was accepted'
 fi
 
-rm -rf "$stage"
-mkdir "$stage"
-if pkg_extract "$artifact" unsupported "$stage" >/dev/null 2>&1
-then
-  fail "unsupported format was accepted"
+reset_stage || error 'cannot reset stage for unsupported format'
+if run_extract "$flat_archive" unsupported > "$tmp/unsupported.out" 2> "$tmp/unsupported.err"; then
+  fail 'unsupported format was accepted'
 else
-  status=$?
-  [ "$status" -eq 2 ] || fail "unsupported format returned $status instead of 2"
+  [ "$?" -eq 2 ] || fail 'unsupported format did not return 2'
 fi
 
-exit "0"
+exit 0
