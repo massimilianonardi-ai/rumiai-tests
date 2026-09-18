@@ -4,76 +4,327 @@ TEST_ID=rumiai-os/pkg/state.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
-origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
-validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
-find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
-resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
-readpathce() { [ "$#" -eq 2 ] || return 2; resolved=$(realpath -- "$2" 2>/dev/null) || return 1; [ -e "$resolved" ] || return 1; eval "$1=\$resolved"; }
-log() { :; }
-expect_status() { expected=$1; shift; "$@" >/dev/null 2>&1; actual=$?; [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"; }
-expect_integration_failure() { pkg=$1; ver=$2; range=$3; payload=$4; expect_status 1 pkg_integrate "$pkg" "$ver" "$range" "$payload"; [ -d "$payload" ] || fail "failed integration consumed payload for $pkg"; [ ! -e "$m_PKG_DIR/$pkg@$ver" ] || fail "failed integration published $pkg@$ver"; }
 
-test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
-root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
-integration_library=$root/lib/sys/sh/pkg-integration.lib.sh; state_library=$root/lib/sys/sh/pkg-state.lib.sh; uninstall_library=$root/lib/sys/sh/pkg-uninstall.lib.sh
-for lib in "$integration_library" "$state_library" "$uninstall_library"; do [ -f "$lib" ] && [ ! -x "$lib" ] || fail "package library missing or executable: $lib"; done
-case "$(sed -n '1p' "$state_library")" in '#!'*) fail 'pkg-state library has a shebang';; esac
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
 
-tmp=${TMPDIR:-/tmp}/rumiai-pkg-state-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
-m_ROOT=$tmp/root
-m_LIB_DIR=$root/lib
-m_PKG_DIR=$m_ROOT/pkg
-m_BIN_DIR=$m_ROOT/bin
-m_BIN_EXT_DIR=$m_BIN_DIR/ext
-m_STATE_DIR=$m_ROOT/state
-m_STATE_SYS_DIR=$m_STATE_DIR/system/current
-m_STATE_USER_DIR=$m_STATE_DIR/user/current
-m_OSARCH=linux-arm64
-mkdir -p "$m_PKG_DIR" "$m_BIN_DIR" "$m_STATE_DIR/system/profile/main" "$m_STATE_DIR/user/default" || error 'cannot create fixture root'
-ln -s profile/main "$m_STATE_SYS_DIR" || error 'cannot create current selector'
-export m_ROOT m_LIB_DIR m_PKG_DIR m_BIN_DIR m_BIN_EXT_DIR m_STATE_DIR m_STATE_SYS_DIR m_STATE_USER_DIR m_OSARCH
-fake_bin=$tmp/fake-bin; mkdir "$fake_bin"; { printf '%s\n' '#!/bin/sh'; sed '1d' "$root/bin/sys/state-path"; } > "$fake_bin/state-path" || error 'cannot prepare state-path fixture'; chmod 700 "$fake_bin/state-path"; PATH=$fake_bin:$PATH; export PATH
-. "$integration_library" || error 'cannot source pkg-integration library'; . "$uninstall_library" || error 'cannot source pkg-uninstall library'
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
 
-plain_range=$tmp/plain-range; plain_root=$tmp/plain-root; mkdir "$plain_range" "$plain_root"; printf '%s\n' payload > "$plain_root/payload"; pkg_integrate plain 1 "$plain_range" "$plain_root" || fail 'plain integration failed'; plain=$m_PKG_DIR/plain@1; [ ! -e "$plain/var" ] || fail 'plain package gained var'; [ ! -e "$plain/default" ] || fail 'plain package gained default'; pkg_deintegrate plain 1 || fail 'plain deintegration failed'
+cleanup()
+{
+  trap - 0 HUP INT TERM
 
-range1=$tmp/stateful-v1-range; payload1=$tmp/stateful-v1-payload
-mkdir -p "$range1/var" "$payload1/etc/tool" "$payload1/workspace" "$payload1/space dir" || error 'cannot create v1 fixture'
-printf '%s\n' 'etc/tool/config' 'space dir/-settings' > "$range1/var/conf"; printf '%s\n' workspace > "$range1/var/data"
-printf '%s\n' factory-v1 > "$payload1/etc/tool/config"; printf '%s\n' spaced-v1 > "$payload1/space dir/-settings"; printf '%s\n' workspace-v1 > "$payload1/workspace/item"
-pkg_integrate stateful 1 "$range1" "$payload1" || fail 'stateful v1 integration failed'; concrete1=$m_PKG_DIR/stateful@1
-[ "$(readlink "$concrete1/var/conf")" = '../../../state/system/current/pkg/stateful/conf' ] || fail 'var/conf does not follow system/current'
-[ "$(readlink "$concrete1/var/data")" = '../../../state/system/current/pkg/stateful/data' ] || fail 'var/data does not follow system/current'
-[ "$(readlink "$concrete1/root/etc/tool/config")" = '../../../var/conf/etc/tool/config' ] || fail 'nested root state link is wrong'
-[ "$(readlink "$concrete1/root/workspace")" = '../var/data/workspace' ] || fail 'top-level root state link is wrong'
-[ "$(readlink "$concrete1/root/space dir/-settings")" = '../../var/conf/space dir/-settings' ] || fail 'state link did not preserve path bytes'
-[ "$(cat "$concrete1/default/conf/etc/tool/config")" = factory-v1 ] || fail 'v1 config default missing'; [ "$(cat "$concrete1/default/data/workspace/item")" = workspace-v1 ] || fail 'v1 data default missing'
-sys_conf=$m_STATE_SYS_DIR/pkg/stateful/conf; sys_data=$m_STATE_SYS_DIR/pkg/stateful/data
-[ "$(cat "$sys_conf/etc/tool/config")" = factory-v1 ] || fail 'system config state not initialized'; [ "$(cat "$sys_data/workspace/item")" = workspace-v1 ] || fail 'system data state not initialized'
-[ ! -e "$m_ROOT/conf" ] && [ ! -e "$m_ROOT/data" ] && [ ! -e "$m_ROOT/var" ] || fail 'legacy global state root was materialized'
-user_root=$m_STATE_DIR/user/default
-user_entries=$(find "$user_root" ! -path "$user_root" -print) || error 'cannot inspect user state'; [ -z "$user_entries" ] || fail 'var-backed package state leaked into user scope'
+  if [ -n "${root-}" ] && [ -n "${package-}" ]
+  then
+    run_pkg default -u -- "$package" >/dev/null 2>&1 || :
 
-printf '%s\n' user-config > "$concrete1/root/etc/tool/config"; printf '%s\n' runtime-data > "$concrete1/root/workspace/runtime"
-[ "$(cat "$sys_conf/etc/tool/config")" = user-config ] || fail 'root -> var -> system conf chain failed'; [ "$(cat "$sys_data/workspace/runtime")" = runtime-data ] || fail 'root -> var -> system data chain failed'
+    for cleanup_version in 1 2
+    do
+      if [ -d "$root/pkg/$package@$cleanup_version" ] && [ ! -L "$root/pkg/$package@$cleanup_version" ]
+      then
+        if [ -n "${driver-}" ] && [ -f "$driver" ]
+        then
+          "$root/m" "$driver" deintegrate "$package" "$cleanup_version" >/dev/null 2>&1 || :
+        fi
+        rm -rf "$root/pkg/$package@$cleanup_version" 2>/dev/null || :
+      fi
+    done
 
-range2=$tmp/stateful-v2-range; payload2=$tmp/stateful-v2-payload
-mkdir -p "$range2/var" "$payload2/etc/tool" "$payload2/workspace" "$payload2/space dir"; printf '%s\n' 'etc/tool/config' 'space dir/-settings' > "$range2/var/conf"; printf '%s\n' workspace > "$range2/var/data"; printf '%s\n' factory-v2 > "$payload2/etc/tool/config"; printf '%s\n' spaced-v2 > "$payload2/space dir/-settings"; printf '%s\n' workspace-v2 > "$payload2/workspace/item"
-pkg_integrate stateful 2 "$range2" "$payload2" || fail 'stateful v2 integration failed'; concrete2=$m_PKG_DIR/stateful@2
-[ "$(cat "$sys_conf/etc/tool/config")" = user-config ] || fail 'v2 overwrote config state'; [ "$(cat "$sys_data/workspace/runtime")" = runtime-data ] || fail 'v2 lost runtime data'; [ "$(cat "$concrete2/default/conf/etc/tool/config")" = factory-v2 ] || fail 'v2 factory default missing'
+    rm -f "$root/pkg/$package" "$root/bin/ext/$package" 2>/dev/null || :
+  fi
 
-other=$m_STATE_DIR/system/profile/other; mkdir -p "$other/pkg/stateful/conf/etc/tool" "$other/pkg/stateful/data/workspace"; printf '%s\n' other-config > "$other/pkg/stateful/conf/etc/tool/config"; printf '%s\n' other-data > "$other/pkg/stateful/data/workspace/item"
-rm "$m_STATE_DIR/system/current"; ln -s profile/other "$m_STATE_DIR/system/current" || error 'cannot switch selector fixture'
-[ "$(cat "$concrete2/root/etc/tool/config")" = other-config ] || fail 'var did not follow state/system/current after profile switch'
-[ "$(state-path system pkg stateful conf)" = "$m_STATE_SYS_DIR/pkg/stateful/conf" ] || fail 'state-path fixture did not preserve the semantic system selector path'
-rm "$m_STATE_DIR/system/current"; ln -s profile/main "$m_STATE_DIR/system/current" || error 'cannot restore selector fixture'
-[ "$(cat "$concrete2/root/etc/tool/config")" = user-config ] || fail 'restored selector did not expose main state'
+  [ -z "${system_pkg_root-}" ] || rm -rf "$system_pkg_root" 2>/dev/null || :
+  [ -z "${user_pkg_root-}" ] || rm -rf "$user_pkg_root" 2>/dev/null || :
 
-pkg_deintegrate stateful 1 || fail 'v1 deintegration failed'; pkg_uninstall 'stateful@2' || fail 'v2 uninstall failed'
-[ "$(cat "$sys_conf/etc/tool/config")" = user-config ] || fail 'uninstall removed config state'; [ "$(cat "$sys_data/workspace/runtime")" = runtime-data ] || fail 'uninstall removed data state'
+  if [ "${bin_ext_created-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    rmdir "$root/bin/ext" 2>/dev/null || :
+  fi
+  if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    rmdir "$root/pkg" 2>/dev/null || :
+  fi
 
-bad_range=$tmp/bad-range; bad_root=$tmp/bad-root; mkdir -p "$bad_range/var" "$bad_root"; printf '%s\n' item > "$bad_range/var/other"; printf '%s\n' value > "$bad_root/item"; expect_integration_failure bad-area 1 "$bad_range" "$bad_root"
-rm -rf "$bad_range" "$bad_root"; mkdir -p "$bad_range/var" "$bad_root/dir"; printf '%s\n' dir 'dir/file' > "$bad_range/var/conf"; printf '%s\n' value > "$bad_root/dir/file"; expect_integration_failure overlap 1 "$bad_range" "$bad_root"
-rm -rf "$bad_range" "$bad_root"; mkdir -p "$bad_range/var" "$bad_root"; printf '%s\n' item > "$bad_range/var/conf"; printf '%s\n' value > "$bad_root/item"; expect_integration_failure sys 1 "$bad_range" "$bad_root"
-rm -rf "$bad_range" "$bad_root"; mkdir -p "$bad_range/var" "$bad_root/.m"; printf '%s\n' '.m/env' > "$bad_range/var/conf"; printf '%s\n' upstream > "$bad_root/.m/env"; expect_integration_failure reserved-conf 1 "$bad_range" "$bad_root"
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+make_stateful_definition()
+{
+  version=$1
+  range=$tmp/range-$version
+  payload=$tmp/payload-$version
+
+  mkdir -p "$range/cmd" "$range/link" "$range/var"     "$payload/bin" "$payload/etc/tool" "$payload/workspace" ||
+    return 1
+
+  cat > "$range/cmd/$package" <<EOF_COMMAND
+#!/usr/bin/env m
+. "\$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+launcher "$package" "\$@"
+EOF_COMMAND
+  chmod 600 "$range/cmd/$package" || return 1
+  printf '%s\n' bin/upstream > "$range/link/$package" || return 1
+  printf '%s\n' etc/tool/config > "$range/var/conf" || return 1
+  printf '%s\n' workspace > "$range/var/data" || return 1
+
+  cat > "$payload/bin/upstream" <<'EOF_UPSTREAM'
+#!/bin/sh
+self_dir=${0%/*}
+root=${self_dir%/*}
+
+case ${1-read} in
+  read)
+    printf 'config=%s\n' "$(cat "$root/etc/tool/config")"
+    printf 'item=%s\n' "$(cat "$root/workspace/item")"
+    if [ -f "$root/workspace/runtime" ]
+    then
+      printf 'runtime=%s\n' "$(cat "$root/workspace/runtime")"
+    else
+      printf 'runtime=absent\n'
+    fi
+    ;;
+  write)
+    printf '%s\n' user-config > "$root/etc/tool/config"
+    printf '%s\n' runtime-data > "$root/workspace/runtime"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF_UPSTREAM
+  chmod 700 "$payload/bin/upstream" || return 1
+
+  printf '%s\n' "factory-v$version" > "$payload/etc/tool/config" || return 1
+  printf '%s\n' "workspace-v$version" > "$payload/workspace/item" || return 1
+}
+
+expect_failed_integration()
+{
+  name=$1
+  range=$2
+  payload=$3
+
+  "$root/m" "$driver" integrate "$name" 1 "$range" "$payload"     > "$tmp/$name.out" 2> "$tmp/$name.err"
+  status=$?
+  [ "$status" -eq 1 ] || {
+    cat "$tmp/$name.err" >&2
+    fail "$name invalid state definition returned $status instead of 1"
+  }
+  [ -d "$payload" ] || fail "$name failed integration consumed caller-owned payload"
+  [ ! -e "$root/pkg/$name@1" ] && [ ! -L "$root/pkg/$name@1" ] ||
+    fail "$name failed integration published a concrete package"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing or not executable'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing or not executable'
+[ -f "$root/lib/sys/sh/pkg-integration.lib.sh" ] || fail 'pkg-integration library is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-state-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+package=pstest$$
+pkg_store_created=0
+bin_ext_created=0
+
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  mkdir "$root/pkg" || error 'cannot create package store for test'
+  pkg_store_created=1
+fi
+[ -d "$root/pkg" ] && [ ! -L "$root/pkg" ] || fail 'package store is not a real directory'
+
+if [ ! -e "$root/bin/ext" ] && [ ! -L "$root/bin/ext" ]
+then
+  bin_ext_created=1
+fi
+
+driver=$tmp/integration-driver
+cat > "$driver" <<'EOF_DRIVER'
+. "$m_LIB_DIR/sys/sh/pkg-integration.lib.sh" || exit 3
+action=$1
+shift
+case $action in
+  integrate) pkg_integrate "$@";;
+  deintegrate) pkg_deintegrate "$@";;
+  *) return 2;;
+esac
+EOF_DRIVER
+chmod 600 "$driver" || error 'cannot prepare integration driver'
+
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$package" conf) ||
+  error 'cannot resolve system package conf'
+system_data=$("$root/m" "$root/bin/sys/state-path" system pkg "$package" data) ||
+  error 'cannot resolve system package data'
+user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg "$package" conf) ||
+  error 'cannot resolve user package conf'
+user_data=$("$root/m" "$root/bin/sys/state-path" user pkg "$package" data) ||
+  error 'cannot resolve user package data'
+user_home=$("$root/m" "$root/bin/sys/state-path" user pkg "$package" home) ||
+  error 'cannot resolve user package home'
+
+system_pkg_root=${system_conf%/conf}
+user_pkg_root=${user_home%/home}
+
+for path in "$system_conf" "$system_data" "$user_conf" "$user_data" "$user_home"
+do
+  [ ! -e "$path" ] && [ ! -L "$path" ] ||
+    error "temporary package state already exists: $path"
+done
+
+make_stateful_definition 1 || error 'cannot prepare stateful version 1'
+"$root/m" "$driver" integrate "$package" 1 "$tmp/range-1" "$tmp/payload-1"   > "$tmp/integrate-1.out" 2> "$tmp/integrate-1.err" || {
+    cat "$tmp/integrate-1.err" >&2
+    fail 'stateful version 1 integration failed'
+  }
+
+[ "$(cat "$system_conf/etc/tool/config")" = factory-v1 ] ||
+  fail 'version 1 did not initialize system configuration state'
+[ "$(cat "$system_data/workspace/item")" = workspace-v1 ] ||
+  fail 'version 1 did not initialize system data state'
+[ ! -e "$user_conf" ] && [ ! -L "$user_conf" ] ||
+  fail 'system-scoped var configuration leaked into user state'
+[ ! -e "$user_data" ] && [ ! -L "$user_data" ] ||
+  fail 'system-scoped var data leaked into user state'
+
+run_pkg default "$package@1" > "$tmp/default-1.out" 2> "$tmp/default-1.err" || {
+  cat "$tmp/default-1.err" >&2
+  fail 'cannot select stateful version 1'
+}
+
+(
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$package" read
+) > "$tmp/read-1.out" 2> "$tmp/read-1.err" || {
+  cat "$tmp/read-1.err" >&2
+  fail 'stateful version 1 command failed'
+}
+grep -Fx 'config=factory-v1' "$tmp/read-1.out" >/dev/null 2>&1 ||
+  fail 'integrated command did not observe version 1 system configuration'
+grep -Fx 'item=workspace-v1' "$tmp/read-1.out" >/dev/null 2>&1 ||
+  fail 'integrated command did not observe version 1 system data'
+grep -Fx 'runtime=absent' "$tmp/read-1.out" >/dev/null 2>&1 ||
+  fail 'unexpected runtime data existed before write'
+
+(
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$package" write
+) > "$tmp/write.out" 2> "$tmp/write.err" || {
+  cat "$tmp/write.err" >&2
+  fail 'stateful package could not write through var routing'
+}
+
+[ "$(cat "$system_conf/etc/tool/config")" = user-config ] ||
+  fail 'write through package root did not reach system configuration state'
+[ "$(cat "$system_data/workspace/runtime")" = runtime-data ] ||
+  fail 'write through package root did not reach system data state'
+
+make_stateful_definition 2 || error 'cannot prepare stateful version 2'
+"$root/m" "$driver" integrate "$package" 2 "$tmp/range-2" "$tmp/payload-2"   > "$tmp/integrate-2.out" 2> "$tmp/integrate-2.err" || {
+    cat "$tmp/integrate-2.err" >&2
+    fail 'stateful version 2 integration failed'
+  }
+
+[ "$(cat "$system_conf/etc/tool/config")" = user-config ] ||
+  fail 'version 2 integration overwrote authoritative mutable configuration'
+[ "$(cat "$system_data/workspace/item")" = workspace-v1 ] ||
+  fail 'version 2 integration overwrote existing mutable data defaults'
+[ "$(cat "$system_data/workspace/runtime")" = runtime-data ] ||
+  fail 'version 2 integration lost runtime-created mutable data'
+
+run_pkg default "$package@2" > "$tmp/default-2.out" 2> "$tmp/default-2.err" || {
+  cat "$tmp/default-2.err" >&2
+  fail 'cannot select stateful version 2'
+}
+
+(
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$package" read
+) > "$tmp/read-2.out" 2> "$tmp/read-2.err" || {
+  cat "$tmp/read-2.err" >&2
+  fail 'stateful version 2 command failed'
+}
+grep -Fx 'config=user-config' "$tmp/read-2.out" >/dev/null 2>&1 ||
+  fail 'version 2 command did not observe preserved configuration state'
+grep -Fx 'item=workspace-v1' "$tmp/read-2.out" >/dev/null 2>&1 ||
+  fail 'version 2 command did not observe preserved data state'
+grep -Fx 'runtime=runtime-data' "$tmp/read-2.out" >/dev/null 2>&1 ||
+  fail 'version 2 command did not observe runtime-created data'
+
+[ ! -e "$user_conf" ] && [ ! -L "$user_conf" ] ||
+  fail 'stateful integration wrote configuration into user scope'
+[ ! -e "$user_data" ] && [ ! -L "$user_data" ] ||
+  fail 'stateful integration wrote data into user scope'
+[ -d "$user_home" ] && [ ! -L "$user_home" ] ||
+  fail 'launcher did not independently materialize package HOME'
+
+run_pkg default -u -- "$package" > "$tmp/clear.out" 2> "$tmp/clear.err" ||
+  fail 'cannot clear stateful package default'
+
+"$root/m" "$driver" deintegrate "$package" 1 > "$tmp/remove-1.out" 2> "$tmp/remove-1.err" ||
+  fail 'cannot deintegrate stateful version 1'
+"$root/m" "$driver" deintegrate "$package" 2 > "$tmp/remove-2.out" 2> "$tmp/remove-2.err" ||
+  fail 'cannot deintegrate stateful version 2'
+
+[ "$(cat "$system_conf/etc/tool/config")" = user-config ] ||
+  fail 'deintegration removed persistent configuration state'
+[ "$(cat "$system_data/workspace/runtime")" = runtime-data ] ||
+  fail 'deintegration removed persistent data state'
+
+bad_area=${package}a
+bad_range=$tmp/bad-area-range
+bad_payload=$tmp/bad-area-payload
+mkdir -p "$bad_range/var" "$bad_payload" || error 'cannot create invalid-area fixture'
+printf '%s\n' item > "$bad_range/var/other"
+printf '%s\n' value > "$bad_payload/item"
+expect_failed_integration "$bad_area" "$bad_range" "$bad_payload"
+
+overlap=${package}b
+overlap_range=$tmp/overlap-range
+overlap_payload=$tmp/overlap-payload
+mkdir -p "$overlap_range/var" "$overlap_payload/dir" || error 'cannot create overlap fixture'
+printf '%s\n' dir dir/file > "$overlap_range/var/conf"
+printf '%s\n' value > "$overlap_payload/dir/file"
+expect_failed_integration "$overlap" "$overlap_range" "$overlap_payload"
+
+reserved=${package}c
+reserved_range=$tmp/reserved-range
+reserved_payload=$tmp/reserved-payload
+mkdir -p "$reserved_range/var" "$reserved_payload/.m" || error 'cannot create reserved-conf fixture'
+printf '%s\n' .m/env > "$reserved_range/var/conf"
+printf '%s\n' upstream > "$reserved_payload/.m/env"
+expect_failed_integration "$reserved" "$reserved_range" "$reserved_payload"
+
 exit 0
