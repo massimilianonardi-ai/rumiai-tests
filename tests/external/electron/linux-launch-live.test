@@ -79,11 +79,16 @@ then
   skip 'Electron requires DISPLAY or xvfb-run'
 fi
 
-if run_pkg versions electron > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'Electron is already installed in the supplied target'
-fi
-[ "$?" -eq 1 ] || fail 'cannot determine pre-existing Electron installation state'
+run_pkg versions electron > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'Electron is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing Electron installation state (status $status)"
+    ;;
+esac
 
 user_home=$("$root/m" "$root/bin/sys/state-path" user pkg electron home) ||
   error 'cannot resolve Electron package HOME'

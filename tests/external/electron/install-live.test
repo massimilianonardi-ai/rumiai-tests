@@ -83,11 +83,16 @@ case $osarch in
   *) skip "Electron privileged install validation is Linux-only; target is $osarch";;
 esac
 
-if run_pkg versions electron > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'Electron is already installed in the supplied target'
-fi
-[ "$?" -eq 1 ] || fail 'cannot determine pre-existing Electron installation state'
+run_pkg versions electron > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'Electron is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing Electron installation state (status $status)"
+    ;;
+esac
 
 system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg electron conf) ||
   error 'cannot resolve Electron system state'

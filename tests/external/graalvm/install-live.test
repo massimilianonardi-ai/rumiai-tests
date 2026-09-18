@@ -70,11 +70,16 @@ case $osarch in
   *) skip "GraalVM is not declared for $osarch";;
 esac
 
-if run_pkg versions graalvm > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'GraalVM is already installed in the supplied target'
-fi
-[ "$?" -eq 1 ] || fail 'cannot determine pre-existing GraalVM installation state'
+run_pkg versions graalvm > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'GraalVM is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing GraalVM installation state (status $status)"
+    ;;
+esac
 
 system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg graalvm conf) ||
   error 'cannot resolve GraalVM system state'

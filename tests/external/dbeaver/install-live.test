@@ -68,11 +68,16 @@ case $osarch in
   *) skip "DBeaver is not declared for $osarch";;
 esac
 
-if run_pkg versions dbeaver > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'DBeaver is already installed in the supplied target'
-fi
-[ "$?" -eq 1 ] || fail 'cannot determine pre-existing DBeaver installation state'
+run_pkg versions dbeaver > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'DBeaver is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing DBeaver installation state (status $status)"
+    ;;
+esac
 
 printf '%s\n' "$TEST_ID: installing current catalog-selected DBeaver for $osarch" >&2
 run_pkg install dbeaver > "$tmp/install.out" 2> "$tmp/install.err" || {

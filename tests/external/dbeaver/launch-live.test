@@ -116,11 +116,16 @@ case $osarch in
   *) skip "DBeaver live launch is not defined for $osarch";;
 esac
 
-if run_pkg versions dbeaver > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'DBeaver is already installed in the supplied target'
-fi
-[ "$?" -eq 1 ] || fail 'cannot determine pre-existing DBeaver installation state'
+run_pkg versions dbeaver > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'DBeaver is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing DBeaver installation state (status $status)"
+    ;;
+esac
 
 user_home=$("$root/m" "$root/bin/sys/state-path" user pkg dbeaver home) ||
   error 'cannot resolve DBeaver HOME state'
