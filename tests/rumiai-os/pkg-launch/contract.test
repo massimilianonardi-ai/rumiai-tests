@@ -51,6 +51,10 @@ cleanup()
 
   [ -z "${consumer_system_state-}" ] || rm -rf "$consumer_system_state" 2>/dev/null || :
   [ -z "${consumer_user_state-}" ] || rm -rf "$consumer_user_state" 2>/dev/null || :
+  if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    rmdir "$root/pkg" 2>/dev/null || :
+  fi
   [ -z "${tmp-}" ] || rm -rf "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -80,6 +84,14 @@ esac
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-launch-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
+
+pkg_store_created=0
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  mkdir "$root/pkg" || error 'cannot create package store for synthetic package test'
+  pkg_store_created=1
+fi
+[ -d "$root/pkg" ] && [ ! -L "$root/pkg" ] || fail 'package store is not a real directory'
 
 facility=launchjava$$
 provider_a=launchprova$$
