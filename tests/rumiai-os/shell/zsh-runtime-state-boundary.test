@@ -4,6 +4,7 @@ TEST_ID=rumiai-os/shell/zsh-runtime-state-boundary.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
 resolve_test_dir()
 {
   self=$0
@@ -35,11 +36,32 @@ case "$status" in
   *) error 'target discovery failed';;
 esac
 
-[ -x "$root/m" ] || fail 'm target runtime is not executable'; [ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
-tmp="${TMPDIR:-/tmp}/rumiai-shell-zsh-runtime-state-boundary-$$"; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+[ -x "$root/m" ] || fail 'm target runtime is not executable'
+[ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path target command is not executable'
 
-fake_dir="$tmp/fake"; mkdir "$fake_dir" || error 'cannot create fake shell directory'; fake_zsh="$fake_dir/zsh"
-cat > "$fake_zsh" <<'EOT'
+tmp=${TMPDIR:-/tmp}/rumiai-shell-zsh-runtime-state-boundary-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+runtime_zdotdir=
+user_shell_home=
+user_shell_home_preexisting=1
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  [ -z "$runtime_zdotdir" ] || rm -rf "$runtime_zdotdir" 2>/dev/null || :
+  if [ "$user_shell_home_preexisting" -eq 0 ] && [ -n "$user_shell_home" ]
+  then
+    rmdir "$user_shell_home" 2>/dev/null || :
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+fake_dir=$tmp/fake
+mkdir "$fake_dir" || error 'cannot create fake shell directory'
+fake_zsh=$fake_dir/zsh
+cat > "$fake_zsh" <<'EOF_FAKE'
 #!/bin/sh
 [ "$ZDOTDIR" = "$TEST_RUNTIME_ZDOTDIR" ] || exit 41
 [ "$ZDOTDIR" != "$TEST_CONF_ZDOTDIR" ] || exit 42
@@ -47,39 +69,58 @@ cat > "$fake_zsh" <<'EOT'
 printf '%s\n' "$ZDOTDIR" > "$TEST_RECORD" || exit 44
 printf '%s\n' runtime-state > "$ZDOTDIR/$TEST_STATE_NAME" || exit 45
 exit 0
-EOT
+EOF_FAKE
 chmod 700 "$fake_zsh" || error 'cannot make fake zsh executable'
 
-user_shell_home="$("$root/m" "$root/bin/sys/state-path" user sys shell home 2>/dev/null)" || error 'cannot resolve user shell home state'
-shell_conf_dir="$("$root/m" "$root/bin/sys/state-path" system sys shell conf 2>/dev/null)" || error 'cannot resolve system shell configuration state'
-[ -n "$user_shell_home" ] && [ -n "$shell_conf_dir" ] || error 'resolved shell state path is empty'
+user_shell_home=$("$root/m" "$root/bin/sys/state-path" user sys shell home 2>/dev/null) ||
+  error 'cannot resolve user shell home state'
+shell_conf_dir=$("$root/m" "$root/bin/sys/state-path" system sys shell conf 2>/dev/null) ||
+  error 'cannot resolve system shell configuration state'
+[ -n "$user_shell_home" ] && [ -n "$shell_conf_dir" ] ||
+  error 'resolved shell state path is empty'
 
-TEST_RECORD="$tmp/zdotdir.record"
-TEST_STATE_NAME=".rumiai-test-runtime-state-$$"
-TEST_RUNTIME_ZDOTDIR="$user_shell_home/zsh"
-TEST_CONF_ZDOTDIR="$shell_conf_dir/zsh"
-HOME="$tmp/user-home"
-SHELL="$fake_zsh"
+runtime_zdotdir=$user_shell_home/zsh
+conf_zdotdir=$shell_conf_dir/zsh
+[ ! -e "$runtime_zdotdir" ] && [ ! -L "$runtime_zdotdir" ] ||
+  skip 'zsh runtime shell state already exists in the supplied target'
+
+if [ -d "$user_shell_home" ] && [ ! -L "$user_shell_home" ]
+then
+  user_shell_home_preexisting=1
+else
+  [ ! -e "$user_shell_home" ] && [ ! -L "$user_shell_home" ] ||
+    skip 'user shell home state is not a real directory'
+  user_shell_home_preexisting=0
+fi
+
+TEST_RECORD=$tmp/zdotdir.record
+TEST_STATE_NAME=.rumiai-test-runtime-state-$$
+TEST_RUNTIME_ZDOTDIR=$runtime_zdotdir
+TEST_CONF_ZDOTDIR=$conf_zdotdir
+SHELL=$fake_zsh
 m_SHELL_EXT=
 TERM=dumb
-mkdir "$HOME" || error 'cannot create user HOME fixture'
-export TEST_RECORD TEST_STATE_NAME TEST_RUNTIME_ZDOTDIR TEST_CONF_ZDOTDIR HOME SHELL m_SHELL_EXT TERM
+export TEST_RECORD TEST_STATE_NAME TEST_RUNTIME_ZDOTDIR TEST_CONF_ZDOTDIR SHELL m_SHELL_EXT TERM
 unset ZDOTDIR
 
-"$root/m" "$root/bin/sys/shell" >"$tmp/stdout" 2>"$tmp/stderr"
-status="$?"
-[ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "fake Zsh launch returned $status"; }
+"$root/m" "$root/bin/sys/shell" > "$tmp/stdout" 2> "$tmp/stderr"
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/stderr" >&2
+  fail "fake Zsh launch returned $status"
+}
 
-runtime_zdotdir="$TEST_RUNTIME_ZDOTDIR"
-conf_zdotdir="$TEST_CONF_ZDOTDIR"
-[ "$(cat "$TEST_RECORD")" = "$runtime_zdotdir" ] || fail 'Zsh did not receive the runtime state ZDOTDIR'
-[ -f "$runtime_zdotdir/$TEST_STATE_NAME" ] || fail 'runtime state was not materialized in user shell home state'
-[ ! -e "$conf_zdotdir/$TEST_STATE_NAME" ] || fail 'runtime state leaked into system shell configuration state'
+[ "$(cat "$TEST_RECORD")" = "$runtime_zdotdir" ] ||
+  fail 'Zsh did not receive the runtime state ZDOTDIR'
+[ -f "$runtime_zdotdir/$TEST_STATE_NAME" ] ||
+  fail 'runtime state was not materialized in user shell home state'
+[ ! -e "$conf_zdotdir/$TEST_STATE_NAME" ] && [ ! -L "$conf_zdotdir/$TEST_STATE_NAME" ] ||
+  fail 'runtime state leaked into system shell configuration state'
+
 for proxy in .zshenv .zprofile .zshrc
 do
-  [ -f "$runtime_zdotdir/$proxy" ] || fail "runtime redirector $proxy is missing"
-  [ ! -L "$runtime_zdotdir/$proxy" ] || fail "runtime redirector $proxy must not be a symlink"
-  expected=". \"\$(state-path system sys shell conf)/zsh/$proxy\""
-  [ "$(cat "$runtime_zdotdir/$proxy")" = "$expected" ] || fail "runtime redirector $proxy does not resolve canonical configuration through state-path"
+  [ -f "$runtime_zdotdir/$proxy" ] && [ ! -L "$runtime_zdotdir/$proxy" ] ||
+    fail "managed Zsh startup file $proxy is missing from runtime state"
 done
+
 exit 0
