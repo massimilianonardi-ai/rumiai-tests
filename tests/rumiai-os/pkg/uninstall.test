@@ -220,7 +220,7 @@ expect_status 1 pkg_uninstall 'malformed@1'
 reset_fixture || error "cannot reset fixture"
 make_concrete current 1 linux-arm64 || error "cannot create current v1"
 make_concrete current 2 linux-arm64 || error "cannot create current v2"
-pkg_default current 2 linux-arm64 || error "cannot create target default"
+pkg_default_apply current 2 linux-arm64 || error "cannot create target default"
 [ -L "$m_PKG_DIR/current!linux-arm64" ] || error "target selector was not created"
 [ -L "$m_BIN_DIR/ext-linux-arm64/current" ] || error "target public binding was not created"
 pkg_uninstall current || fail "unversioned current uninstall failed"
@@ -244,7 +244,7 @@ expect_status 1 pkg_uninstall ambiguous
 
 reset_fixture || error "cannot reset fixture"
 make_concrete fallback 1 || error "cannot create fallback"
-pkg_default fallback 1 || error "cannot create generic default"
+pkg_default_apply fallback 1 || error "cannot create generic default"
 pkg_uninstall fallback || fail "generic fallback uninstall failed"
 [ ! -e "$m_PKG_DIR/fallback@1" ] || fail "generic concrete survived"
 [ ! -e "$m_PKG_DIR/fallback" ] && [ ! -L "$m_PKG_DIR/fallback" ] || fail "generic selector survived"

@@ -198,7 +198,7 @@ do
   [ ! -e "$m_BIN_DIR/ext-$osarch/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-$osarch/dbeaver" ] || fail "pkg_integrate exposed a public command for $osarch"
 done
 
-pkg_default dbeaver 26.2.0 linux-arm64 || fail "target default selection failed"
+pkg_default_apply dbeaver 26.2.0 linux-arm64 || fail "target default selection failed"
 [ "$(readlink "$m_PKG_DIR/dbeaver!linux-arm64")" = 'dbeaver@26.2.0!linux-arm64' ] || fail "target current selector is incorrect"
 [ "$(readlink "$m_BIN_DIR/ext-linux-arm64/dbeaver")" = '../../pkg/dbeaver!linux-arm64/cmd/dbeaver' ] || fail "target public binding is incorrect"
 [ ! -e "$m_BIN_DIR/ext-osarch/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-osarch/dbeaver" ] || fail "physical binding was written into ext-osarch alias"
@@ -208,7 +208,7 @@ then
   fail "pkg_deintegrate accepted the current/default concrete version"
 fi
 
-pkg_default dbeaver '' linux-arm64 || fail "target default removal failed"
+pkg_default_apply dbeaver '' linux-arm64 || fail "target default removal failed"
 [ ! -e "$m_PKG_DIR/dbeaver!linux-arm64" ] && [ ! -L "$m_PKG_DIR/dbeaver!linux-arm64" ] || fail "target current selector survived default removal"
 [ ! -e "$m_BIN_DIR/ext-linux-arm64/dbeaver" ] && [ ! -L "$m_BIN_DIR/ext-linux-arm64/dbeaver" ] || fail "target public binding survived default removal"
 [ -d "$m_PKG_DIR/dbeaver@26.2.0!linux-arm64" ] || fail "default removal destroyed availability integration"
@@ -231,16 +231,16 @@ do
   pkg_integrate tool "$version" "$range" "$payload" || fail "generic integration failed for version $version"
 done
 
-pkg_default tool 1 || fail "generic default v1 failed"
+pkg_default_apply tool 1 || fail "generic default v1 failed"
 [ -L "$m_BIN_EXT_DIR/old" ] || fail "old public command missing"
-pkg_default tool 2 || fail "generic default v2 failed with changed command set"
+pkg_default_apply tool 2 || fail "generic default v2 failed with changed command set"
 [ ! -e "$m_BIN_EXT_DIR/old" ] && [ ! -L "$m_BIN_EXT_DIR/old" ] || fail "old public command survived default switch"
 [ -L "$m_BIN_EXT_DIR/new" ] || fail "new public command missing after default switch"
 [ "$(readlink "$m_PKG_DIR/tool")" = 'tool@2' ] || fail "generic current selector did not move"
 
-pkg_default tool '' || fail "generic default removal failed"
+pkg_default_apply tool '' || fail "generic default removal failed"
 printf -- '%s\n' foreign > "$m_BIN_EXT_DIR/new"
-if pkg_default tool 2 >/dev/null 2>&1
+if pkg_default_apply tool 2 >/dev/null 2>&1
 then
   fail "foreign public binding collision was accepted"
 fi
@@ -279,7 +279,7 @@ else
   [ "$status" -eq 2 ] || fail "invalid upstream version returned $status instead of 2"
 fi
 
-if pkg_default tool 2 foo-bar >/dev/null 2>&1
+if pkg_default_apply tool 2 foo-bar >/dev/null 2>&1
 then
   fail "non-canonical osarch was accepted"
 else

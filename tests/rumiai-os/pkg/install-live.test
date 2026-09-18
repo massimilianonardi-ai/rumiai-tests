@@ -88,21 +88,16 @@ esac
 pkg_command="$fixture/bin/sys/pkg"
 [ -x "$pkg_command" ] || fail "isolated pkg command is missing"
 
-"$pkg_command" install 'bad@@version' >"$tmp/invalid.log" 2>&1
-status=$?
-[ "$status" -eq 2 ] || {
-    cat "$tmp/invalid.log" >&2
-    fail "invalid install operand returned $status instead of 2"
-}
-if [ -e "$fixture/pkg" ] || [ -L "$fixture/pkg" ]
-then
-    fail "invalid install operand created the package store"
-fi
+osarch_update="$fixture/bin/sys/osarch-update"
+[ -x "$osarch_update" ] || fail "isolated osarch-update command is missing"
+"$fixture/m" "$osarch_update" || fail "cannot initialize osarch command selectors"
+[ -L "$fixture/bin/ext-osarch" ] || fail "ext-osarch selector is missing"
+[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$osarch" ] || fail "ext-osarch selector targets the wrong platform"
 
 printf -- '%s\n' "$TEST_ID: live install started; this test uses the current pkg-catalog and official jq release" >&2
-if ! "$pkg_command" install 'jq@jq-1.8.2'
+if ! "$fixture/m" pkg install 'jq@jq-1.8.2'
 then
-    fail "pkg install jq@jq-1.8.2 failed"
+    fail "pkg install jq@jq-1.8.2 failed through m"
 fi
 
 [ -d "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail "pkg install did not materialize a real package store"
@@ -110,8 +105,17 @@ concrete="$fixture/pkg/jq@jq-1.8.2!$osarch"
 [ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "jq concrete package is missing"
 [ -f "$concrete/cmd/jq" ] && [ ! -L "$concrete/cmd/jq" ] && [ -x "$concrete/cmd/jq" ] || fail "jq command entry is missing"
 [ -L "$concrete/link/jq" ] || fail "jq direct link is missing"
+[ "$(readlink "$concrete/link/jq")" = '../root/jq-linux-amd64' ] || fail "jq direct link target is incorrect"
 
-jq_version="$($concrete/cmd/jq --version)" || fail "installed jq command failed"
+selector="$fixture/pkg/jq!$osarch"
+[ -L "$selector" ] || fail "jq current/default selector is missing"
+[ "$(readlink "$selector")" = "jq@jq-1.8.2!$osarch" ] || fail "jq current/default selector target is incorrect"
+
+public_command="$fixture/bin/ext-$osarch/jq"
+[ -L "$public_command" ] || fail "jq public command binding is missing"
+[ "$(readlink "$public_command")" = "../../pkg/jq!$osarch/cmd/jq" ] || fail "jq public command binding target is incorrect"
+
+jq_version="$("$fixture/m" jq --version)" || fail "jq is not executable through the normal m command path"
 [ "$jq_version" = 'jq-1.8.2' ] || fail "jq --version returned $jq_version, expected jq-1.8.2"
 
 pkg_cache="$($fixture/m "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"

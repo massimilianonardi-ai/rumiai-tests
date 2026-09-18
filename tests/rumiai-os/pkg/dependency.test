@@ -380,7 +380,7 @@ printf -- '#!/usr/bin/env m\nexit 0\n' > "$range/cmd/provider-tool" || error "ca
 printf -- '%s\n' 'bin/provider-tool' > "$range/link/provider-tool" || error "cannot write current provider link"
 make_command_root "$root_input" || error "cannot create current provider root"
 pkg_integrate currentprovider 1 "$range" "$root_input" || fail "cannot integrate current provider"
-pkg_default currentprovider 1 || fail "cannot select current provider"
+pkg_default_apply currentprovider 1 || fail "cannot select current provider"
 range="$tmp/current-consumer-range"
 root_input="$tmp/current-consumer-root"
 make_consumer_range "$range" 'java =21\n' || error "cannot create current consumer range"
