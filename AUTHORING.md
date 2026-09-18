@@ -12,42 +12,53 @@ rumiai-dev/RUNNER.md        quando la modifica riguarda il runner
 
 Un test permanente protegge una proprietà corrente, non una particolare forma del codice di test.
 
-Prima di aggiungere un test o una primitive verificare:
+Prima di aggiungere o riallineare un test:
 
-1. quale requisito/invariante protegge;
-2. se la stessa proprietà è già coperta;
-3. se esiste già un helper sotto `lib/` per l'infrastruttura comune;
-4. se la verifica può osservare il comportamento invece di ispezionare dettagli incidentali dell'implementazione;
-5. se il costo futuro di manutenzione è proporzionato al rischio.
+1. identificare la proprietà corrente che il test pretende di proteggere;
+2. verificare che la proprietà sia ancora contrattuale o una regressione materialmente utile;
+3. scegliere il percorso reale minimo che dimostra quella proprietà;
+4. classificare il test come `keep`, `simplify`, `merge` o `remove`;
+5. soltanto dopo definire infrastruttura e assertion.
+
+Un'assertion storica non è valida solo perché esiste già.
+
+## Target e ambiente ricevuti
+
+Un `.test` usa il target e l'ambiente di processo che riceve dal chiamante.
+
+In sviluppo, l'esecuzione diretta o tramite `rumiai-test` osserva quindi il checkout e l'ambiente reali forniti dall'operatore.
+
+In validation formale, `rumiai-validate` fornisce invece un clone Git indipendente dell'esatto commit configurato e root utente temporanee isolate. Il test usa quell'ambiente senza costruirne un altro.
+
+Un test permanente non deve:
+
+- clonare, copiare o ricostruire un secondo `rumiai-os`;
+- creare un proprio `HOME`, `TMPDIR`, package root o ambiente runtime sostitutivo allo scopo di isolarsi;
+- sostituire componenti RumiAI-owned del percorso che dichiara di verificare;
+- chiamare API private come se fossero interfacce pubbliche.
+
+Può creare input, file, processi e risorse specifici dello scenario dentro l'ambiente ricevuto. Può inoltre simulare confini realmente esterni solo nei casi ammessi da `TESTING.md`.
 
 ## Librerie comuni
 
 Le librerie sotto `lib/` possono essere dipendenze runtime deliberate dei `.test` della stessa revisione della suite.
 
-Per il target `rumiai-os` esistono già:
+Primitive correnti includono:
 
 ```text
 lib/rumiai-os-target.lib
-lib/rumiai-os-fixture.lib
-```
-
-Per il pilotaggio TTY interattivo esiste:
-
-```text
 lib/interactive.lib
 ```
 
-I test devono preferire il riuso di queste primitive quando il contratto coincide.
+`lib/rumiai-os-fixture.lib` è una primitive storica in fase di eliminazione dall'attuale suite-realignment: non deve essere usata per nuovi test né assunta come modello di isolamento corrente.
 
-La revisione `rumiai-tests` registrata da una validation identifica anche la versione esatta delle librerie comuni usate, quindi non è necessario copiare helper inline soltanto per riproducibilità storica.
+La revisione `rumiai-tests` registrata dalla validation identifica anche la versione esatta delle librerie comuni usate, quindi non è necessario copiare helper inline soltanto per riproducibilità storica.
 
 ## Copie inline
 
 Una copia inline di una primitive comune è eccezionale. Deve essere accompagnata da un commento che spieghi **perché il congelamento locale è semanticamente necessario**.
 
-Un riferimento al commit di provenienza può essere mantenuto quando utile, ma non costituisce da solo una giustificazione alla duplicazione.
-
-Le copie inline storiche devono essere migrate quando provocano drift o manutenzione duplicata.
+Non copiare file o frammenti del sistema sotto test per ricostruirne artificialmente il comportamento.
 
 ## Granularità
 
@@ -62,8 +73,14 @@ merge
 remove
 ```
 
-## White-box
+## White-box e diagnostica
 
-Controlli strutturali sono appropriati quando la struttura è parte del contratto. In caso contrario preferire fixture/fake che osservano effetti, argomenti, status, output e file prodotti.
+Controlli strutturali sono appropriati quando la struttura è parte del contratto. In caso contrario osservare comportamento, status, output strutturato quando contrattuale, filesystem/state effect e altri effetti pubblici.
 
-Evitare come default grep di stringhe interne, nomi di funzioni private, numeri di riga o ordine testuale del sorgente.
+Evitare come default:
+
+- grep di stringhe interne;
+- nomi di funzioni private;
+- numeri di riga o ordine testuale del sorgente;
+- pathname o naming di staging implementation-private;
+- testo diagnostico esatto quando il contratto non ne fissa la formulazione.

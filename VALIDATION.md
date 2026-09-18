@@ -1,54 +1,54 @@
 # RumiAI validation launcher
 
-`rumiai-validate` è il launcher operativo delle validation run.
+`rumiai-validate` è il launcher operativo della validation formale.
 
-Il runner canonico resta `rumiai-test`; il launcher gestisce self-location, self-update, exact target revision, validation scope e pubblicazione dell'evidenza.
+Il runner canonico resta `rumiai-test`. Il launcher gestisce self-location, self-update, scope, revisione target esatta, isolamento dell'ambiente di validation, audit filesystem e pubblicazione dell'evidenza.
 
 ## Uso
 
-Se avviato senza argomenti:
+Forme supportate:
 
 ```text
 ./rumiai-validate
+./rumiai-validate <scope-name>
+./rumiai-validate --isolation=session <scope-name>
+./rumiai-validate --isolation=test <scope-name>
 ```
 
-il launcher:
+L'opzione di isolamento può essere usata anche senza scope esplicito prima della selezione interattiva.
 
-1. risolve il proprio pathname e determina la root canonica di `rumiai-tests`;
-2. esegue `cd` nella root della suite, indipendentemente dalla current working directory iniziale;
-3. tenta ad ogni lancio `git pull --ff-only` su `rumiai-tests`;
-4. se la suite cambia, riavvia il bootstrap aggiornato;
-5. soltanto dopo il self-update scopre gli scope `validation/*.conf`;
-6. mostra `0) all tests` come full-suite health gate;
-7. mostra gli altri scope in ordine deterministico numerati da `1`;
-8. chiede all'utente il numero da eseguire.
-
-Esempio:
+Modalità:
 
 ```text
-Available validation scopes:
-  0) all tests
-  1) nodejs-live
-  2) resource-model
-  3) srv
-Select validation scope:
+session
+    default; un solo ambiente disposable per l'intera invocazione
+
+test
+    un ambiente disposable nuovo per ogni singolo test scoperto
 ```
 
-`0` non è il nome di un nuovo scope. Seleziona il backing scope canonico:
+Un valore diverso produce errore del launcher.
+
+## Self-location, update e menu
+
+Ad ogni avvio il launcher:
+
+1. risolve la propria root canonica e vi esegue `cd`;
+2. rifiuta modifiche tracked locali prima dell'auto-update;
+3. esegue `git pull --ff-only` su `rumiai-tests`;
+4. se la suite cambia, riavvia il launcher aggiornato preservando la modalità di isolamento richiesta;
+5. soltanto dopo il self-update scopre gli scope `validation/*.conf`;
+6. senza scope nominato mostra `0) all tests` e gli altri scope in ordine C/bytewise.
+
+`0` seleziona il backing scope:
 
 ```text
 validation/rumiai-os-health.conf
 ```
 
-`rumiai-os-health` non viene quindi ripetuto tra le voci `1..N`.
+Il nome di uno scope esplicito può contenere soltanto lettere, cifre, `.`, `_` o `-` e non può iniziare con `.` o `-`.
 
-Le voci da `1` in poi non sono hardcoded: derivano dagli altri `validation/*.conf` presenti nella revisione aggiornata e sono ordinate con ordinamento C/bytewise.
-
-Input vuoto, non numerico o fuori intervallo produce una nuova richiesta. EOF prima di una scelta valida è un errore del launcher.
-
-Questa modalità è adatta anche all'avvio da Finder/Files: il launcher non dipende dalla directory da cui è stato aperto.
-
-### Workspace condivisi macOS/Linux
+## Workspace condivisi e Git trust
 
 Nel layout canonico:
 
@@ -56,168 +56,186 @@ Nel layout canonico:
 <rumiai-os-root>/src/rumiai-tests
 ```
 
-il workspace può risiedere su un volume condiviso tra host differenti. Git può in tal caso rifiutare il checkout per `safe.directory` quando l'ownership vista dall'host cambia.
+il launcher può operare su volumi condivisi macOS/Linux. Per la sola durata del processo configura `safe.directory` esclusivamente per le root esatte riconosciute di `rumiai-tests` e del checkout prodotto primario.
 
-`rumiai-validate` gestisce questo caso senza modificare la configurazione persistente dell'utente: per la sola durata del launcher e dei suoi processi figli installa nella configurazione Git command-scope esclusivamente le root esatte:
+Non usa wildcard, non usa `safe.directory=*` e non modifica configurazioni Git persistenti dell'utente.
 
-```text
-<rumiai-tests-root>
-<rumiai-os-root>
-```
+## Configurazione degli scope
 
-La seconda viene aggiunta soltanto quando il launcher riconosce il layout canonico e trova il metadata Git della root prodotto.
-
-Il launcher non usa `safe.directory=*`, non usa wildcard e non scrive `~/.gitconfig` o configurazioni system/repository. Il trust process-local viene ereditato da `rumiai-test` e dai test figli.
-
-Il primo `git rev-parse` non sopprime stderr: se Git rifiuta ancora il checkout per una causa diversa, il messaggio Git originale resta visibile.
-
-Per automazione o uso non interattivo resta disponibile la forma nominata:
-
-```text
-./rumiai-validate <scope-name>
-```
-
-Lo scope nominato salta il menu, ma non salta self-location, `cd`, self-update, cleanliness gate, exact target revision o pubblicazione delle evidence.
-
-La forma:
-
-```text
-./rumiai-validate rumiai-os-health
-```
-
-è equivalente alla scelta interattiva `0`: esegue una singola validation session dell'intera root `tests/`.
-
-Il nome deve contenere soltanto lettere, cifre, `.`, `_` o `-` e non può iniziare con `.` o `-`.
-
-## Discovery degli scope
-
-Gli scope disponibili sono i file regolari versionati:
-
-```text
-validation/<scope-name>.conf
-```
-
-Il menu viene ricostruito dalla revisione corrente della suite **dopo** il self-update. `rumiai-os-health` è riservato alla voce `0`; tutti gli altri scope sono ordinati e numerati da `1`.
-
-Il file `rumiai-validate.conf` può restare nel repository per compatibilità o per work unit storiche/concorrenti, ma non è più selezionato implicitamente da `./rumiai-validate` senza argomenti.
-
-Il launcher non sintetizza scope da configurazioni precedenti o da nomi di sottosistemi. Un nuovo task compare nel menu soltanto quando la relativa work unit materializza un `validation/<scope-name>.conf` coerente con l'autorità corrente.
-
-## Configurazione di uno scope
-
-Formato record:
+Formato:
 
 ```text
 key<TAB>value
 ```
 
-Chiavi:
+Chiavi correnti:
 
 ```text
 kind<TAB>task|health
-rumiai-os-commit<TAB><commit>
+rumiai-os-commit<TAB><commit-esatto>
 selection<TAB><test-or-group>
 ```
 
-`selection` è ripetibile.
+`selection` è ripetibile. Uno scope `task` richiede almeno una selection.
 
-Per uno scope `task` almeno una `selection` è obbligatoria.
-
-Per uno scope `health`, l'assenza completa di record `selection` ha un significato preciso: seleziona la root completa `tests/` mediante una singola invocazione del runner senza selection. Non vengono usati sentinel o alias per rappresentare la root.
-
-Per compatibilità, `kind` può essere assente; uno scope nominato senza `kind` viene interpretato come `task`, e quindi deve avere almeno una `selection`.
-
-Il backing scope dell'opzione `0` segue questa forma:
-
-```text
-kind<TAB>health
-rumiai-os-commit<TAB><commit-esatto>
-```
-
-senza record `selection`.
-
-## Semantica
-
-Ogni `selection` esplicita viene passata separatamente a:
-
-```text
-rumiai-test --validation -- <selection>
-```
-
-Il runner resta quindi a singola selection.
-
-Uno scope `health` senza selection viene invece eseguito una sola volta come:
+Uno scope `health` senza selection rappresenta la root completa `tests/` e in modalità `session` produce una singola invocazione:
 
 ```text
 rumiai-test --validation
 ```
 
-Per contratto del runner, l'assenza di selection seleziona l'intera root `tests/`; l'opzione `0` produce quindi **una sola sessione contenente tutti i test applicabili scoperti dalla suite**.
+Per compatibilità, uno scope nominato senza `kind` viene interpretato come `task`.
 
-Per uno scope `task`, il launcher considera lo scope `VALIDATED` soltanto quando tutti i test effettivamente richiesti hanno PASS. Un test richiesto con SKIP rende lo scope `NOT VALIDATED` senza cambiare retroattivamente lo status del test.
+## Preparazione del target
 
-Per uno scope `health`, gli exit status restano quelli aggregati del runner; gli SKIP restano visibili ma non trasformano automaticamente uno status 0 in failure.
+Il checkout prodotto individuato nel workspace è un **source/update point**, non il target eseguito dalla validation.
 
-La full-suite health session non è il gate universale dei task: resta un controllo di salute, release o milestone secondo le regole task-scoped correnti.
+Il launcher:
 
-## Target revision e parallelismo
+1. aggiorna quel checkout con `git pull --ff-only`;
+2. richiede che sia clean;
+3. verifica che `rumiai-os-commit` sia disponibile;
+4. per ogni ambiente necessario crea un **clone Git indipendente** in una root temporanea;
+5. effettua checkout detached dell'esatto commit configurato;
+6. ripristina nel clone l'origin canonica osservata sul checkout primario.
 
-Il launcher aggiorna il checkout principale `rumiai-os` con `git pull --ff-only` e richiede che sia clean.
+I test di validation non vengono quindi mai eseguiti direttamente sul checkout dell'operatore e non usano un worktree Git collegato a esso.
 
-Se l'HEAD corrente coincide con `rumiai-os-commit`, usa il checkout principale.
-
-Se il commit configurato è diverso ma disponibile nel repository, il launcher crea un Git worktree detached temporaneo dell'esatta revisione e imposta il normale override di test:
+Il clone disposable viene esposto ai test tramite:
 
 ```text
 RUMIAI_TEST_RUMIAI_OS_ROOT
 ```
 
-Il checkout principale non viene resettato né spostato. Questo permette a scope differenti di puntare a revisioni prodotto differenti senza serializzare lo sviluppo sul checkout dell'operatore.
+## Ambiente utente isolato
 
-Il worktree temporaneo viene rimosso al termine; una mancata rimozione è errore del launcher.
+Per i soli processi runner/test dell'ambiente disposable il launcher imposta root temporanee per:
 
-## Evidenza e pubblicazione
+```text
+HOME
+TMPDIR
+TMP
+TEMP
+XDG_CONFIG_HOME
+XDG_CACHE_HOME
+XDG_DATA_HOME
+XDG_STATE_HOME
+XDG_RUNTIME_DIR
+RUMIAI_TEST_RUMIAI_OS_ROOT
+```
 
-Ogni validation run elementare produce la normale sessione sotto `sessions/` e viene pubblicata sul remote come:
+Queste variabili sono confinate al processo figlio; non sostituiscono l'ambiente del processo `rumiai-validate` stesso.
+
+L'isolamento non è una security sandbox: OS, architettura, tool di sistema, rete e altre risorse host non reindirizzate restano quelle reali.
+
+## Isolamento `session`
+
+È la modalità predefinita.
+
+Un solo clone target e un solo insieme di root utente temporanee vengono creati prima della prima selection e riutilizzati per tutte le selection dello scope. Questo consente anche di osservare effetti cumulativi o contaminazioni tra test.
+
+Ogni selection resta una normale invocazione elementare di `rumiai-test --validation`.
+
+## Isolamento `test`
+
+In modalità:
+
+```text
+--isolation=test
+```
+
+il launcher non reimplementa la discovery. Espande ogni selection con:
+
+```text
+rumiai-test --list [selection]
+```
+
+e per ciascun test-id risultante:
+
+1. crea un clone target indipendente e nuove root utente;
+2. esegue quel singolo test attraverso `rumiai-test --validation -- <test-id>`;
+3. acquisisce l'audit finale;
+4. distrugge l'ambiente;
+5. passa al test successivo.
+
+La modalità serve a verificare meccanicamente che un test non dipenda dallo stato filesystem lasciato da un test precedente.
+
+## Audit filesystem automatico
+
+Ogni ambiente di validation viene osservato automaticamente con snapshot **metadata-only** prima dell'esecuzione e immediatamente prima della distruzione.
+
+Esiti:
+
+```text
+CLEAN
+CHANGED
+ERROR
+```
+
+`CHANGED` è evidenza osservativa e non trasforma automaticamente un test in `FAIL`.
+
+`ERROR` indica che l'audit richiesto dalla validation formale non è stato completato e produce errore infrastrutturale della validation.
+
+In modalità `session` esiste un audit dell'intera vita dell'ambiente. In modalità `test` esiste un audit distinto per ogni test.
+
+## Risultati task/health
+
+Per uno scope `task`, tutti i test richiesti devono essere `PASS`. Un `SKIP` richiesto lascia lo scope `NOT VALIDATED`.
+
+Per uno scope `health`, gli exit status restano quelli aggregati delle sessioni; gli `SKIP` rimangono visibili ma non trasformano automaticamente uno status 0 in failure.
+
+La full suite resta un health gate, non un prerequisito universale per ogni work unit.
+
+## Evidenza
+
+Ogni esecuzione elementare di `rumiai-test --validation` continua a produrre una sessione sotto:
+
+```text
+sessions/<run-id>/
+```
+
+La sessione viene pubblicata su un branch:
 
 ```text
 validation/<run-id>
 ```
 
-La pubblicazione conserva il parent esatto `rumiai-tests-commit` registrato dalla sessione e non avanza `main`.
+con parent uguale all'esatto `rumiai-tests-commit` registrato.
 
-Uno scope task con più selection produce più sessioni elementari. L'insieme delle sessioni, la configurazione versionata dello scope e l'esatto commit della suite costituiscono l'evidenza del task scope.
+Poiché una validation può contenere più sessioni elementari e uno o più ambienti disposable, `rumiai-validate` produce inoltre un record esterno sotto:
 
-`rumiai-os-health`, invece, non contiene selection esplicite e produce una sola sessione della root `tests/`.
+```text
+validations/<validation-id>/
+```
 
-Una full-suite session può ancora essere analizzata per subset: PASS dei test pertinenti restano evidence delle proprietà esercitate anche se la sessione complessiva contiene fallimenti estranei.
+Il record contiene almeno:
 
-## Cleanliness
+```text
+validation          metadati globali e aggregate status
+selections          selection richieste
+sessions            run-id delle sessioni elementari
+environment/        audit session-wide, in isolation=session
+environments/       audit per test, in isolation=test
+discovered-tests    presente quando --list è usato per isolation=test
+```
+
+Il record viene pubblicato anch'esso sotto `validation/<validation-id>`, basato sull'esatto commit della suite, senza avanzare `main`.
+
+Una pubblicazione fallita lascia l'evidenza completata locale recuperabile; il lancio successivo tenta prima di pubblicare evidence pendenti.
+
+## Cleanliness e cleanup
 
 Prima della validation effettiva:
 
-- il bootstrap rifiuta l'auto-update se `rumiai-tests` ha modifiche tracked locali;
-- `rumiai-tests` deve essere clean dopo l'eventuale pubblicazione di sessioni completate pendenti;
-- il checkout principale `rumiai-os` deve essere clean;
-- il commit target configurato deve esistere localmente dopo il pull.
+- `rumiai-tests` non deve avere modifiche tracked prima dell'auto-update;
+- dopo la pubblicazione di evidence pendenti, il working tree della suite deve essere clean;
+- il checkout primario `rumiai-os` deve essere clean dopo il pull;
+- il commit target configurato deve essere disponibile.
 
-Le working tree non vengono modificate con merge, rebase, reset o force push.
+Il launcher non resetta o sposta il checkout primario per eseguire i test.
 
-## Scope correnti
+Gli ambienti disposable vengono distrutti al termine della loro vita. Un fallimento di cleanup produce errore del launcher.
 
-Alla revisione corrente gli scope materializzati comprendono:
+## Scope materializzati
 
-```text
-validation/nodejs-live.conf
-validation/resource-model.conf
-validation/rumiai-os-health.conf
-validation/srv.conf
-```
-
-`nodejs-live`, `resource-model` e `srv` sono task scope. `rumiai-os-health` è il health gate della full suite ed è presentato nel menu come `0) all tests`.
-
-Lo scope `nodejs-live` corrente è quello materializzato dalla remediation Node.js attiva e contiene le selection richieste da quella decisione; non è il precedente gate live isolato.
-
-Nuovi scope task compariranno automaticamente tra le voci `1..N` quando verranno materializzati con revisioni e selection corrette.
-
-Gli scope task non sostituiscono i controlli di salute complessivi: impediscono soltanto che un fallimento estraneo serializzi o invalidi artificialmente work unit indipendenti.
+Gli scope disponibili sono sempre quelli presenti nella revisione corrente sotto `validation/*.conf`. Il launcher non sintetizza scope da memoria, nomi di sottosistemi o configurazioni storiche.

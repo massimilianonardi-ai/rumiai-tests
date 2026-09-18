@@ -27,9 +27,10 @@ tests/
     external/
 .runs/
 sessions/
+validations/
 ```
 
-`.runs/` contiene development run locali ed è ignorata da Git. `sessions/` contiene validation session completate e versionabili.
+`.runs/` contiene development run locali ed è ignorata da Git. `sessions/` contiene le sessioni elementari prodotte da `rumiai-test --validation`. `validations/` è il contenitore transitorio dei record esterni prodotti da `rumiai-validate` prima della pubblicazione.
 
 Ogni directory normale sotto `tests/` è un gruppo. I gruppi possono essere nidificati e la selezione di un gruppo esegue ricorsivamente tutti i test che contiene. `tests/` è il gruppo radice e rappresenta l'intera suite.
 
@@ -82,14 +83,15 @@ Ogni `.test` contiene tutta la conoscenza specifica necessaria alla propria veri
 Il test si occupa autonomamente di:
 
 - individuare e canonicalizzare la propria posizione quando necessario;
-- individuare il target;
-- localizzare fixture e file di supporto tramite nomi e relazioni logiche hardcoded;
-- preparare ciò che serve alla prova;
-- creare e gestire eventuali risorse temporanee;
+- individuare il target ricevuto;
+- localizzare input e file di supporto tramite nomi e relazioni logiche stabili;
+- preparare soltanto le risorse specifiche dello scenario;
 - verificare il comportamento atteso;
 - produrre diagnostica;
-- effettuare il cleanup;
+- effettuare il cleanup semanticamente richiesto dallo scenario;
 - restituire l'exit status del test.
+
+Un test non crea un secondo clone/copia di `rumiai-os`, non sostituisce `HOME`/`TMPDIR` o altre root utente per isolarsi e non ricostruisce componenti RumiAI-owned del percorso che dichiara di verificare. L'isolamento formale dell'ambiente appartiene a `rumiai-validate`.
 
 Sono ammessi riferimenti logici relativi, come `.fixtures/input`, `.support/helper` o `bin/log`; non sono ammessi pathname host-specifici hardcoded come home directory personali o path locali dello sviluppatore.
 
@@ -171,6 +173,16 @@ exit status 0..3
 ```
 
 Il contesto globale della sessione viene registrato dal runner separatamente dal log prodotto dal test.
+
+L'esecuzione di sviluppo usa l'ambiente reale fornito dal chiamante. Il runner non introduce isolamento target-specifico.
+
+## Validation formale
+
+`rumiai-validate` crea l'ambiente disposable usato per la validation formale: clone Git indipendente dell'esatto commit `rumiai-os`, root temporanee per HOME/TMP/XDG, audit metadata before/after e pubblicazione dell'evidence.
+
+La modalità predefinita `--isolation=session` usa un ambiente per l'intera invocazione. `--isolation=test` usa `rumiai-test --list` per ottenere la discovery canonica e crea un ambiente nuovo per ogni test.
+
+I dettagli operativi sono in `VALIDATION.md`.
 
 ## CLI iniziale
 
