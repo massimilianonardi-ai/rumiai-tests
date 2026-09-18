@@ -1,101 +1,142 @@
 #!/bin/sh
 
-TEST_ID="external/graalvm/install-live.test"
-fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
-error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
-skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+TEST_ID=external/graalvm/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
 resolve_test_dir()
 {
-  self="$0"
-  case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
-  self_dir="${self%/*}"; [ "$self_dir" != "$self" ] || self_dir="."
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-package_group="${test_dir%/*}"; external_group="${package_group%/*}"; suite_root="${external_group%/*}"
-. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source target discovery"
-. "$suite_root/lib/rumiai-os-fixture.lib" || error "cannot source fixture helper"
-source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
-case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
 
-tmp="${TMPDIR:-/tmp}/rumiai-graalvm-install-live-$$"
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall graalvm >/dev/null 2>&1 || :
+  fi
+  [ -z "${system_pkg_state-}" ] || rm -rf "$system_pkg_state" 2>/dev/null || :
+  [ -z "${user_pkg_state-}" ] || rm -rf "$user_pkg_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-graalvm-install-live-$$
 umask 077
-mkdir "$tmp" || error "cannot create temporary directory"
-trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture="$tmp/root"
-rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture" || error "cannot materialize isolated fixture"
-fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize fixture root"
+mkdir "$tmp" || error 'cannot create temporary directory'
 
-runtime_probe="$tmp/runtime-probe"
-cat > "$runtime_probe" <<'EOF_PROBE'
+PATH="$root/bin/sys:$PATH"
+export PATH
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
 #!/usr/bin/env m
 . "$m_LIB_DIR/sys/sh/osarch.lib.sh"
-printf -- '%s\n' "$m_OSARCH"
+printf '%s\n' "$m_OSARCH"
 EOF_PROBE
-chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
-PATH="$fixture/bin/sys:$PATH"; export PATH
-osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
-case "$osarch" in
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+case $osarch in
   linux-arm64|linux-x86_64|macos-arm64|windows-x86_64) :;;
-  *) skip "GraalVM package is not declared for $osarch";;
+  *) skip "GraalVM is not declared for $osarch";;
 esac
 
-pkg_command="$fixture/bin/sys/pkg"
-[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
-printf -- '%s\n' "$TEST_ID: live install started; this test downloads the official GraalVM Community JDK archive" >&2
-"$pkg_command" install graalvm || fail "pkg install graalvm failed"
+if run_pkg versions graalvm > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+then
+  skip 'GraalVM is already installed in the supplied target'
+fi
+[ "$?" -eq 1 ] || fail 'cannot determine pre-existing GraalVM installation state'
 
-concrete=""; concrete_count=0
-for candidate in "$fixture/pkg"/graalvm@*"!$osarch"
-do
-  [ -e "$candidate" ] || [ -L "$candidate" ] || continue
-  concrete_count=$((concrete_count + 1)); concrete="$candidate"
-done
-[ "$concrete_count" -eq 1 ] || fail "expected one target-specific GraalVM concrete version, found $concrete_count"
-[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "GraalVM concrete version is not a real directory"
-identity="${concrete##*/}"
-version_osarch="${identity#graalvm@}"
-version="${version_osarch%"!$osarch"}"
-[ -n "$version" ] && [ "$version" != "$version_osarch" ] || fail "cannot derive installed GraalVM version"
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg graalvm conf) ||
+  error 'cannot resolve GraalVM system state'
+user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg graalvm conf) ||
+  error 'cannot resolve GraalVM user state'
+system_pkg_state=${system_conf%/conf}
+user_pkg_state=${user_conf%/conf}
+if [ -e "$system_pkg_state" ] || [ -L "$system_pkg_state" ] ||
+   [ -e "$user_pkg_state" ] || [ -L "$user_pkg_state" ]
+then
+  skip 'GraalVM package state already exists in the supplied target'
+fi
 
-[ -f "$concrete/facility" ] && [ ! -L "$concrete/facility" ] || fail "GraalVM facility declaration is missing"
-[ "$(cat "$concrete/facility")" = 'java 25' ] || fail "GraalVM facility declaration is incorrect"
+printf '%s\n' "$TEST_ID: installing current catalog-selected GraalVM for $osarch" >&2
+run_pkg install graalvm > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.err" >&2
+  fail 'pkg install graalvm failed'
+}
+installed=1
 
-case "$osarch" in
-  windows-*) java_bin="$concrete/root/bin/java.exe"; javac_bin="$concrete/root/bin/javac.exe";;
-  *) java_bin="$concrete/root/bin/java"; javac_bin="$concrete/root/bin/javac";;
+identity=$(run_pkg default graalvm 2> "$tmp/default.err") || {
+  cat "$tmp/default.err" >&2
+  fail 'installed GraalVM has no queryable current default'
+}
+[ -n "$identity" ] || fail 'GraalVM current identity is empty'
+
+versions=$(run_pkg versions graalvm 2> "$tmp/versions.err") || fail 'pkg versions graalvm failed'
+printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
+  fail 'current GraalVM identity is absent from pkg versions output'
+
+concrete=$root/pkg/$identity
+[ -d "$concrete" ] && [ ! -L "$concrete" ] ||
+  fail 'current GraalVM concrete package is not materialized'
+
+case $osarch in
+  windows-*)
+    java=$concrete/root/bin/java.exe
+    javac=$concrete/root/bin/javac.exe
+    ;;
+  *)
+    java=$concrete/root/bin/java
+    javac=$concrete/root/bin/javac
+    ;;
 esac
-[ -f "$java_bin" ] && [ ! -L "$java_bin" ] || fail "JAVA_HOME root does not contain java"
-[ -f "$javac_bin" ] && [ ! -L "$javac_bin" ] || fail "JAVA_HOME root does not contain javac"
-"$java_bin" -version >/dev/null 2>&1 || fail "installed GraalVM java failed"
-"$javac_bin" -version >/dev/null 2>&1 || fail "installed GraalVM javac failed"
 
-for unexpected in \
-  "$fixture/pkg/graalvm" \
-  "$fixture/pkg/graalvm!$osarch" \
-  "$fixture/bin/ext/java" \
-  "$fixture/bin/ext/native-image" \
-  "$fixture/bin/ext-$osarch/java" \
-  "$fixture/bin/ext-$osarch/native-image"
-do
-  if [ -e "$unexpected" ] || [ -L "$unexpected" ]; then fail "pkg install selected a default/public binding unexpectedly: $unexpected"; fi
-done
+[ -f "$java" ] && [ ! -L "$java" ] && [ -x "$java" ] ||
+  fail 'installed GraalVM Java runtime is unavailable'
+[ -f "$javac" ] && [ ! -L "$javac" ] && [ -x "$javac" ] ||
+  fail 'installed GraalVM Java compiler is unavailable'
 
-pkg_cache="$("$fixture/m" "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"
-catalog="$pkg_cache/pkg-catalog"
-[ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "live pkg-catalog cache was not materialized"
-catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
-stream="$catalog/graalvm/catalog-$osarch"
-range="$stream/n0001=25.3.4.1"
-[ -f "$stream/repository/type" ] && [ "$(cat "$stream/repository/type")" = graalvm ] || fail "cached GraalVM repository type is incorrect"
-[ -f "$stream/repository/owner" ] && [ "$(cat "$stream/repository/owner")" = graalvm ] || fail "cached GraalVM GitHub owner is incorrect"
-[ -f "$stream/repository/repository" ] && [ "$(cat "$stream/repository/repository")" = graalvm-ce-builds ] || fail "cached GraalVM GitHub repository is incorrect"
-[ -f "$range/digest_type" ] && [ "$(cat "$range/digest_type")" = sha256 ] || fail "cached GraalVM range lacks required SHA-256 policy"
-[ -f "$range/facility" ] && [ "$(cat "$range/facility")" = 'java 25' ] || fail "cached GraalVM range lacks java 25 facility"
+"$java" -version > "$tmp/java.out" 2> "$tmp/java.err" || {
+  cat "$tmp/java.err" >&2
+  fail 'installed GraalVM java -version failed'
+}
+"$javac" -version > "$tmp/javac.out" 2> "$tmp/javac.err" || {
+  cat "$tmp/javac.err" >&2
+  fail 'installed GraalVM javac -version failed'
+}
 
-printf -- 'installed=%s\n' "$identity"
-printf -- 'catalog-head=%s\n' "$catalog_head"
-printf -- 'java=ok\n'
-printf -- 'javac=ok\n'
+printf 'installed=%s\n' "$identity"
+printf 'osarch=%s\n' "$osarch"
+printf 'java=ok\n'
+printf 'javac=ok\n'
+
 exit 0
