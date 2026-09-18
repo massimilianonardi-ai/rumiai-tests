@@ -1,0 +1,82 @@
+name: Provider runtime live validation
+
+on:
+  push:
+    branches:
+      - validation/provider-runtime-live-20260918
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - external/temurin/install-live.test
+          - external/graalvm/install-live.test
+          - external/graalvm/temurin-coexistence-live.test
+          - external/maven/install-live.test
+          - external/keycloak/install-live.test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: f45ece69192fe3d08ef77361a4c2be6c131d19c6
+          path: target
+      - name: Normalize product origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 8005d1952b8d37fa35f12ce91a992b1ada0aec1e
+          path: target/src/rumiai-tests
+      - name: Assert catalog revision
+        shell: bash
+        run: |
+          set -eu
+          actual=$(git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main | awk '{print $1}')
+          test "$actual" = 43f1f5843cd90566322b829b9489afce332af8fc
+      - name: Run permanent live test
+        shell: bash
+        run: |
+          cd target/src/rumiai-tests
+          "./tests/${{ matrix.test }}"
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            test: external/temurin/install-live.test
+          - runner: macos-15-intel
+            test: external/temurin/install-live.test
+          - runner: macos-15
+            test: external/graalvm/install-live.test
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: f45ece69192fe3d08ef77361a4c2be6c131d19c6
+          path: target
+      - name: Normalize product origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 8005d1952b8d37fa35f12ce91a992b1ada0aec1e
+          path: target/src/rumiai-tests
+      - name: Assert catalog revision
+        shell: bash
+        run: |
+          set -eu
+          actual=$(git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main | awk '{print $1}')
+          test "$actual" = 43f1f5843cd90566322b829b9489afce332af8fc
+      - name: Run permanent live test
+        shell: bash
+        run: |
+          cd target/src/rumiai-tests
+          "./tests/${{ matrix.test }}"
