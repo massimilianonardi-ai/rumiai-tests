@@ -47,12 +47,12 @@ tested=0
 for shell_name in sh dash ash bash zsh
 do
   shell_path="$(command -v "$shell_name" 2>/dev/null)" || continue
-  tested=$((tested + 1)); home="$tmp/home-$shell_name"; marker="$tmp/$shell_name.ext"
-  mkdir "$home" || error "cannot create HOME for $shell_name"; rm -f "$marker"
+  tested=$((tested + 1)); marker="$tmp/$shell_name.ext"
+  rm -f "$marker"
   (
     unset ENV ZDOTDIR
-    HOME="$home"; SHELL="$shell_path"; m_SHELL_EXT="$ext"; TEST_EXT_MARKER="$marker"; TERM=dumb
-    export HOME SHELL m_SHELL_EXT TEST_EXT_MARKER TERM
+    SHELL="$shell_path"; m_SHELL_EXT="$ext"; TEST_EXT_MARKER="$marker"; TERM=dumb
+    export SHELL m_SHELL_EXT TEST_EXT_MARKER TERM
     "$root/m" "$root/bin/sys/shell" -c 'exit 0'
   ) >"$tmp/$shell_name.out" 2>"$tmp/$shell_name.err"
   status="$?"
