@@ -30,7 +30,7 @@ suite_root=${test_dir%/*}
 suite_root=${suite_root%/*}
 suite_root=${suite_root%/*}
 
-for required in rumiai-validate lib/sh/rumiai-validate.lib.sh lib/rumiai-os-target.lib
+for required in rumiai-validate lib/sh/rumiai-validate.lib.sh lib/sh/filesystem-snapshot.lib.sh lib/rumiai-os-target.lib
 do
     [ -f "$suite_root/$required" ] || error "cannot locate $required"
 done
@@ -76,6 +76,7 @@ suite_branch=$(git -C "$tmp/suite-seed" symbolic-ref --short HEAD) || error 'can
 mkdir -p "$tmp/suite-seed/lib/sh" "$tmp/suite-seed/sessions" "$tmp/suite-seed/validation" || error 'cannot create suite directories'
 cp "$suite_root/rumiai-validate" "$tmp/suite-seed/rumiai-validate" || error 'cannot copy launcher'
 cp "$suite_root/lib/sh/rumiai-validate.lib.sh" "$tmp/suite-seed/lib/sh/rumiai-validate.lib.sh" || error 'cannot copy launcher library'
+cp "$suite_root/lib/sh/filesystem-snapshot.lib.sh" "$tmp/suite-seed/lib/sh/filesystem-snapshot.lib.sh" || error 'cannot copy filesystem snapshot library'
 cp "$suite_root/lib/rumiai-os-target.lib" "$tmp/suite-seed/lib/rumiai-os-target.lib" || error 'cannot copy target discovery library'
 chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher executable'
 : > "$tmp/suite-seed/sessions/.gitkeep" || error 'cannot create sessions marker'
