@@ -40,8 +40,7 @@ EOF_ARTIFACT
 command -p -- chmod 700 "$artifact" || error "cannot make artifact executable"
 
 PATH="$root/bin/sys:$PATH"
-HOME="$tmp/home"
-export PATH HOME
+export PATH
 
 printf -- '\n' | "$command_file" appimage "$artifact" > "$tmp/report" 2> "$tmp/diagnostic"
 status=$?
