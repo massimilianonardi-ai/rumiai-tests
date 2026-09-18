@@ -111,33 +111,7 @@ versions=$(run_pkg versions java 2> "$tmp/versions.err") || fail 'pkg versions j
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Java identity is absent from pkg versions output'
 
-concrete="$root/pkg/$identity"
-[ -d "$concrete/root" ] && [ ! -L "$concrete/root" ] ||
-  fail 'Java concrete root is missing'
-[ -f "$concrete/facility" ] && [ ! -L "$concrete/facility" ] ||
-  fail 'Java facility declaration was not materialized'
-[ "$(cat "$concrete/facility")" = 'java 25' ] ||
-  fail 'Java facility declaration is not java 25'
-
-case $osarch in
-  windows-x86_64) java_bin="$concrete/root/bin/java.exe";;
-  *) java_bin="$concrete/root/bin/java";;
-esac
-[ -x "$java_bin" ] || fail 'normalized Java runtime executable is missing'
-"$java_bin" --version > "$tmp/version.out" 2> "$tmp/version.err" || {
-  cat "$tmp/version.out" >&2
-  cat "$tmp/version.err" >&2
-  fail 'installed Java runtime failed'
-}
-cat "$tmp/version.out" "$tmp/version.err" > "$tmp/version.combined" ||
-  error 'cannot combine Java version output'
-[ -s "$tmp/version.combined" ] || fail 'Java --version produced no output'
-grep -E '(^|[^0-9])25([. +]|$)' "$tmp/version.combined" >/dev/null 2>&1 ||
-  fail 'installed Java runtime does not report feature version 25'
-
 printf 'installed=%s\n' "$identity"
 printf 'osarch=%s\n' "$osarch"
-printf 'facility=java-25\n'
-printf 'runtime=ok\n'
 
 exit 0

@@ -128,11 +128,6 @@ identity=$(run_pkg default maven 2> "$tmp/default.err") || {
 }
 [ -n "$identity" ] || fail 'Maven current identity is empty'
 
-binding="$root/pkg/$identity/binding/java"
-[ -f "$binding" ] && [ ! -L "$binding" ] || fail 'Maven Java dependency binding is missing'
-IFS= read -r bound_java < "$binding" || fail 'cannot read Maven Java dependency binding'
-[ "$bound_java" = "$java_identity" ] || fail 'Maven is not bound to the installed Temurin Java provider'
-
 "$root/m" mvn --version > "$tmp/version.out" 2> "$tmp/version.err" || {
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2

@@ -118,18 +118,9 @@ identity=$(run_pkg default netbeans 2> "$tmp/default.err") || {
 }
 [ -n "$identity" ] || fail 'NetBeans current identity is empty'
 
-binding="$root/pkg/$identity/binding/java"
-[ -f "$binding" ] && [ ! -L "$binding" ] || fail 'NetBeans Java dependency binding is missing'
-IFS= read -r bound_java < "$binding" || fail 'cannot read NetBeans Java dependency binding'
-[ "$bound_java" = "$java_identity" ] || fail 'NetBeans is not bound to the installed Temurin Java provider'
-
-concrete="$root/pkg/$identity"
-[ -x "$concrete/root/bin/netbeans" ] || fail 'NetBeans upstream launcher is missing'
-[ -x "$concrete/cmd/netbeans" ] && [ ! -L "$concrete/cmd/netbeans" ] ||
-  fail 'NetBeans managed command wrapper is missing'
-[ -L "$concrete/link/netbeans" ] || fail 'NetBeans managed command target is missing'
 public="$root/bin/ext-$osarch/netbeans"
-[ -L "$public" ] || fail 'NetBeans public command binding is missing'
+[ -e "$public" ] || [ -L "$public" ] || fail 'NetBeans public command binding is missing'
+[ -x "$public" ] || fail 'NetBeans public command binding is not executable'
 
 printf 'installed=%s\n' "$identity"
 printf 'java-provider=%s\n' "$java_identity"

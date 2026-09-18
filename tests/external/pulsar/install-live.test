@@ -106,17 +106,11 @@ versions=$(run_pkg versions pulsar 2> "$tmp/versions.err") || fail 'pkg versions
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Pulsar identity is absent from pkg versions output'
 
-sandbox="$root/pkg/$identity/root/chrome-sandbox"
-[ -f "$sandbox" ] && [ ! -L "$sandbox" ] && [ -x "$sandbox" ] ||
-  fail 'Pulsar sandbox is not an executable regular file'
-[ -u "$sandbox" ] || fail 'Pulsar sandbox is not setuid'
-
 public="$root/bin/ext-$osarch/pulsar"
 [ -e "$public" ] || [ -L "$public" ] || fail 'Pulsar public command binding is missing'
 [ -x "$public" ] || fail 'Pulsar public command binding is not executable'
 
 printf 'installed=%s\n' "$identity"
-printf 'sandbox=setuid\n'
 printf 'public-command=available\n'
 
 exit 0

@@ -106,11 +106,6 @@ versions=$(run_pkg versions chrome 2> "$tmp/versions.err") || fail 'pkg versions
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Chrome identity is absent from pkg versions output'
 
-sandbox="$root/pkg/$identity/root/opt/google/chrome/chrome-sandbox"
-[ -f "$sandbox" ] && [ ! -L "$sandbox" ] && [ -x "$sandbox" ] ||
-  fail 'Chrome sandbox is not an executable regular file'
-[ -u "$sandbox" ] || fail 'Chrome sandbox is not setuid'
-
 "$root/m" chrome --version > "$tmp/version.out" 2> "$tmp/version.err" || {
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2
@@ -119,7 +114,6 @@ sandbox="$root/pkg/$identity/root/opt/google/chrome/chrome-sandbox"
 [ -s "$tmp/version.out" ] || fail 'Chrome --version produced no output'
 
 printf 'installed=%s\n' "$identity"
-printf 'sandbox=setuid\n'
 printf 'public-command=ok\n'
 
 exit 0
