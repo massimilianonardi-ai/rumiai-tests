@@ -39,8 +39,44 @@ esac
 tmp="${TMPDIR:-/tmp}/rumiai-shell-zsh-alias-preservation-$$"; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 zsh_path="$(command -v zsh 2>/dev/null)" || skip 'Zsh is unavailable on this host'
-home="$tmp/home"; mkdir "$home" || error 'cannot create Zsh HOME'
-cat > "$home/.zshrc" <<'EOT'
+[ -n "${HOME-}" ] || skip 'HOME is unavailable in the supplied environment'
+[ -d "$HOME" ] && [ ! -L "$HOME" ] && [ -w "$HOME" ] ||
+  skip 'HOME is not a writable real directory in the supplied environment'
+
+zshenv=$HOME/.zshenv
+zshrc=$HOME/.zshrc
+for startup_file in "$zshenv" "$zshrc"
+do
+  [ ! -e "$startup_file" ] && [ ! -L "$startup_file" ] ||
+    skip "HOME already contains ${startup_file##*/}; refusing to replace user startup configuration"
+done
+
+user_shell_home=$("$root/m" "$root/bin/sys/state-path" user sys shell home 2>/dev/null) ||
+  error 'cannot resolve user shell home state'
+runtime_zdotdir=$user_shell_home/zsh
+[ ! -e "$runtime_zdotdir" ] && [ ! -L "$runtime_zdotdir" ] ||
+  skip 'zsh runtime shell state already exists in the supplied target'
+
+user_shell_home_preexisting=0
+if [ -d "$user_shell_home" ] && [ ! -L "$user_shell_home" ]
+then
+  user_shell_home_preexisting=1
+fi
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  rm -f "$zshrc" 2>/dev/null || :
+  rm -rf "$runtime_zdotdir" 2>/dev/null || :
+  if [ "$user_shell_home_preexisting" -eq 0 ]
+  then
+    rmdir "$user_shell_home" 2>/dev/null || :
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+cat > "$zshrc" <<'EOT'
 setopt aliases
 alias log='false'
 alias printf='false'
@@ -53,8 +89,8 @@ export TEST_SHELL_EXT_LOADED
 EOT
 (
   unset ZDOTDIR
-  HOME="$home"; SHELL="$zsh_path"; m_SHELL_EXT="$ext"; TERM=dumb
-  export HOME SHELL m_SHELL_EXT TERM
+  SHELL="$zsh_path"; m_SHELL_EXT="$ext"; TERM=dumb
+  export SHELL m_SHELL_EXT TERM
   "$root/m" "$root/bin/sys/shell" -i -c '
     [[ -o aliases ]] || exit 41
     alias log >/dev/null 2>&1 || exit 42
