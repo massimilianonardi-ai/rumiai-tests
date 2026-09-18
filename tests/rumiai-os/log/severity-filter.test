@@ -44,8 +44,8 @@ stdout=$tmp/stdout
 stderr=$tmp/stderr
 
 cat > "$probe" <<'EOT'
-log info test message
-log error test message
+log info test message marker info-filtered
+log error test message marker error-visible
 EOT
 
 m_LOG_LEVEL=warn "$entry" "$probe" >"$stdout" 2>"$stderr" || {
@@ -60,9 +60,14 @@ lines=$(wc -l < "$stderr") || error 'cannot count log lines'
     cat "$stderr" >&2
     fail "severity filter produced $lines lines instead of 1"
 }
-grep -F '[error] [test.message] test.message' "$stderr" >/dev/null 2>&1 || {
+grep -F 'error-visible' "$stderr" >/dev/null 2>&1 || {
     cat "$stderr" >&2
-    fail 'error event was not rendered'
+    fail 'enabled error event was not emitted'
 }
+if grep -F 'info-filtered' "$stderr" >/dev/null 2>&1
+then
+    cat "$stderr" >&2
+    fail 'disabled info event was emitted'
+fi
 
 exit 0

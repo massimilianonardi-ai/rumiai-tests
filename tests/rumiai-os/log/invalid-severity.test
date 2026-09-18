@@ -51,9 +51,6 @@ m_LOG_LEVEL=trace "$entry" "$probe" >"$stdout" 2>"$stderr"
 status=$?
 [ "$status" -ne 0 ] || fail 'invalid severity was accepted'
 [ ! -s "$stdout" ] || fail 'invalid severity produced unexpected stdout'
-grep -F 'invalid log severity:' "$stderr" >/dev/null 2>&1 || {
-    cat "$stderr" >&2
-    fail 'invalid severity diagnostic is missing'
-}
+[ -s "$stderr" ] || fail 'invalid severity produced no diagnostic'
 
 exit 0

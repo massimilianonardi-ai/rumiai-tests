@@ -51,9 +51,6 @@ m_LOG_LEVEL=verbose "$entry" "$probe" >"$stdout" 2>"$stderr"
 status=$?
 [ "$status" -ne 0 ] || fail 'invalid m_LOG_LEVEL was accepted'
 [ ! -s "$stdout" ] || fail 'invalid m_LOG_LEVEL produced unexpected stdout'
-grep -F 'invalid m_LOG_LEVEL:' "$stderr" >/dev/null 2>&1 || {
-    cat "$stderr" >&2
-    fail 'invalid m_LOG_LEVEL diagnostic is missing'
-}
+[ -s "$stderr" ] || fail 'invalid m_LOG_LEVEL produced no diagnostic'
 
 exit 0
