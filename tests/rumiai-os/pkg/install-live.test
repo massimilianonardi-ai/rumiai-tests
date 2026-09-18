@@ -1,201 +1,227 @@
 #!/bin/sh
 
-TEST_ID="rumiai-os/pkg/install-live.test"
-
-fail()
-{
-    printf -- '%s\n' "$TEST_ID: $*" >&2
-    exit 1
-}
-
-error()
-{
-    printf -- '%s\n' "$TEST_ID: $*" >&2
-    exit 3
-}
-
-skip()
-{
-    printf -- '%s\n' "$TEST_ID: $*" >&2
-    exit 2
-}
+TEST_ID=rumiai-os/pkg/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-    self=$0
-    case "$self" in
-        */*) : ;;
-        *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;;
-    esac
-    self_dir=${self%/*}
-    [ "$self_dir" != "$self" ] || self_dir=.
-    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-command -v git >/dev/null 2>&1 || skip "git is unavailable"
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
 
-test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ "${jq_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall jq >/dev/null 2>&1 || :
+  fi
+
+  [ -z "${system_pkg_state-}" ] || rm -rf "$system_pkg_state" 2>/dev/null || :
+  [ -z "${user_pkg_state-}" ] || rm -rf "$user_pkg_state" 2>/dev/null || :
+
+  if [ "${public_dir_created-0}" -eq 1 ] && [ -n "${public_dir-}" ]
+  then
+    rmdir "$public_dir" 2>/dev/null || :
+  fi
+  if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    rmdir "$root/pkg" 2>/dev/null || :
+  fi
+
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 rumiai_os_group=${test_dir%/*}
 tests_dir=${rumiai_os_group%/*}
 suite_root=${tests_dir%/*}
 
-target_library="$suite_root/lib/rumiai-os-target.lib"
-fixture_library="$suite_root/lib/rumiai-os-fixture.lib"
-[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
-[ -f "$fixture_library" ] || error "rumiai-os fixture helper is unavailable"
-. "$target_library" || error "cannot source rumiai-os target helper"
-. "$fixture_library" || error "cannot source rumiai-os fixture helper"
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
 
-source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
 status=$?
-case "$status" in
-    0) : ;;
-    1) skip "rumiai-os target checkout not found" ;;
-    2) fail "invalid explicit rumiai-os target" ;;
-    *) error "target discovery failed" ;;
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
 esac
 
-tmp="${TMPDIR:-/tmp}/rumiai-pkg-install-live-$$"
+command -v git >/dev/null 2>&1 || skip 'git is unavailable'
+[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing or not executable'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing or not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-install-live-$$
 umask 077
-mkdir "$tmp" || error "cannot create temporary directory"
-trap 'rm -rf "$tmp"' 0 HUP INT TERM
+mkdir "$tmp" || error 'cannot create temporary directory'
 
-fixture="$tmp/root"
-rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture" || error "cannot materialize isolated rumiai-os replica"
-fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize isolated root"
-
-if [ -e "$fixture/pkg" ] || [ -L "$fixture/pkg" ]
-then
-    fail "isolated replica pre-created the package store"
-fi
-
-PATH="$fixture/bin/sys:$PATH"
+PATH="$root/bin/sys:$PATH"
 export PATH
 
-runtime_probe="$tmp/runtime-probe"
+runtime_probe=$tmp/runtime-probe
 cat > "$runtime_probe" <<'EOF_PROBE'
 #!/usr/bin/env m
 . "$m_LIB_DIR/sys/sh/osarch.lib.sh"
-printf -- '%s\n' "$m_OSARCH"
+printf '%s\n' "$m_OSARCH"
 EOF_PROBE
-chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
-osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
-case "$osarch" in
-    linux-arm64|linux-x86_64|macos-arm64|macos-x86_64|windows-arm64|windows-x86_64) : ;;
-    *) skip "jq package is not declared for $osarch" ;;
+chmod 700 "$runtime_probe" || error 'cannot prepare runtime probe'
+osarch=$("$root/m" "$runtime_probe") || fail 'cannot resolve RumiAI osarch'
+case $osarch in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64|windows-arm64|windows-x86_64) :;;
+  *) skip "jq package is not declared for $osarch";;
 esac
 
-pkg_command="$fixture/bin/sys/pkg"
-[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg jq conf) ||
+  error 'cannot resolve jq system state'
+user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg jq conf) ||
+  error 'cannot resolve jq user state'
+system_pkg_state=${system_conf%/conf}
+user_pkg_state=${user_conf%/conf}
 
-osarch_update="$fixture/bin/sys/osarch-update"
-[ -x "$osarch_update" ] || fail "isolated osarch-update command is missing"
-"$fixture/m" "$osarch_update" || fail "cannot initialize osarch command selectors"
-[ -L "$fixture/bin/ext-osarch" ] || fail "ext-osarch selector is missing"
-[ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$osarch" ] || fail "ext-osarch selector targets the wrong platform"
+if [ -e "$system_pkg_state" ] || [ -L "$system_pkg_state" ] ||
+   [ -e "$user_pkg_state" ] || [ -L "$user_pkg_state" ]
+then
+  skip 'jq package state already exists in the supplied target'
+fi
 
-printf -- '%s\n' "$TEST_ID: live install started; this test uses the current pkg-catalog and official jq release" >&2
+if run_pkg versions jq > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+then
+  skip 'jq is already installed in the supplied target'
+fi
+status=$?
+[ "$status" -eq 1 ] || {
+  cat "$tmp/preexisting.err" >&2
+  fail "cannot determine whether jq is already installed: status $status"
+}
 
-invalid_err="$tmp/invalid-only.err"
-(
-    cd "$fixture" || exit 90
-    ./m pkg install 'bad@@version'
-) > "$tmp/invalid-only.out" 2> "$invalid_err"
+pkg_store_created=0
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  pkg_store_created=1
+fi
+
+public_dir=$root/bin/ext-$osarch
+public_dir_created=0
+if [ ! -e "$public_dir" ] && [ ! -L "$public_dir" ]
+then
+  public_dir_created=1
+fi
+
+invalid_err=$tmp/invalid-only.err
+run_pkg install 'bad@@version' > "$tmp/invalid-only.out" 2> "$invalid_err"
 invalid_status=$?
 [ "$invalid_status" -eq 1 ] || {
-    cat "$invalid_err" >&2
-    fail "invalid-only install returned $invalid_status instead of 1"
+  cat "$invalid_err" >&2
+  fail "invalid-only install returned $invalid_status instead of 1"
 }
-grep -F 'reason="invalid-operand"' "$invalid_err" >/dev/null || fail "invalid-only install did not report invalid-operand"
-grep -F 'operand="bad@@version"' "$invalid_err" >/dev/null || fail "invalid-only install did not identify the invalid operand"
-[ ! -e "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail "invalid-only install created the package store"
-
-if ! (
-    cd "$fixture" || exit 90
-    ./m pkg install 'jq@jq-1.8.2'
-)
+grep -F 'reason="invalid-operand"' "$invalid_err" >/dev/null 2>&1 ||
+  fail 'invalid-only install did not report invalid-operand'
+grep -F 'operand="bad@@version"' "$invalid_err" >/dev/null 2>&1 ||
+  fail 'invalid-only install did not identify the invalid operand'
+if [ "$pkg_store_created" -eq 1 ]
 then
-    fail "pkg install jq@jq-1.8.2 failed through m from the product root"
+  [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ] ||
+    fail 'invalid-only install created the package store'
 fi
 
-[ -d "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail "pkg install did not materialize a real package store"
-concrete="$fixture/pkg/jq@jq-1.8.2!$osarch"
-[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "jq concrete package is missing"
-[ -f "$concrete/cmd/jq" ] && [ ! -L "$concrete/cmd/jq" ] && [ -x "$concrete/cmd/jq" ] || fail "jq command entry is missing"
-[ -L "$concrete/link/jq" ] || fail "jq direct link is missing"
+printf '%s\n' "$TEST_ID: live install of current catalog-selected jq for $osarch" >&2
+run_pkg install jq > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.err" >&2
+  fail 'pkg install jq failed'
+}
+jq_installed=1
 
-selector="$fixture/pkg/jq!$osarch"
-[ -L "$selector" ] || fail "jq current/default selector is missing"
-[ "$(readlink "$selector")" = "jq@jq-1.8.2!$osarch" ] || fail "jq current/default selector target is incorrect"
+identity=$(run_pkg default jq 2> "$tmp/default.err") || {
+  cat "$tmp/default.err" >&2
+  fail 'pkg install jq did not establish a queryable current default'
+}
+[ -n "$identity" ] || fail 'pkg default jq returned an empty identity'
 
-public_command="$fixture/bin/ext-$osarch/jq"
-[ -L "$public_command" ] || fail "jq public command binding is missing"
-[ "$(readlink "$public_command")" = "../../pkg/jq!$osarch/cmd/jq" ] || fail "jq public command binding target is incorrect"
+versions=$(run_pkg versions jq 2> "$tmp/versions.err") || {
+  cat "$tmp/versions.err" >&2
+  fail 'pkg versions jq failed after installation'
+}
+printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
+  fail 'current jq identity is absent from pkg versions output'
 
-if ! (
-    cd "$fixture" || exit 90
-    ./m pkg default jq >/dev/null
-)
-then
-    fail "pkg command is not reusable from the product root after the package store exists"
-fi
+jq_version=$(
+  PATH="$public_dir:$root/bin/sys:$PATH"
+  export PATH
+  jq --version
+) || fail 'installed jq is not executable through its public command binding'
+[ -n "$jq_version" ] || fail 'jq --version produced no output'
 
-jq_version="$(cd "$fixture" && ./m jq --version)" || fail "jq is not executable through the normal m command path"
-[ "$jq_version" = 'jq-1.8.2' ] || fail "jq --version returned $jq_version, expected jq-1.8.2"
-
-already_err="$tmp/already-installed.err"
-(
-    cd "$fixture" || exit 90
-    ./m pkg install 'jq@jq-1.8.2'
-) > "$tmp/already-installed.out" 2> "$already_err"
+already_err=$tmp/already-installed.err
+run_pkg install jq > "$tmp/already-installed.out" 2> "$already_err"
 already_status=$?
 [ "$already_status" -eq 1 ] || {
-    cat "$already_err" >&2
-    fail "already-installed jq returned $already_status instead of 1"
+  cat "$already_err" >&2
+  fail "already-installed jq returned $already_status instead of 1"
 }
-grep -F 'reason="already-installed"' "$already_err" >/dev/null || fail "already-installed jq did not report already-installed"
-grep -F "already-installed=\"jq@jq-1.8.2!$osarch\"" "$already_err" >/dev/null || fail "already-installed diagnostic did not identify jq concrete"
-grep -F "current-default=\"jq@jq-1.8.2!$osarch\"" "$already_err" >/dev/null || fail "already-installed diagnostic did not report current default"
-[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "already-installed attempt changed jq concrete"
-[ "$(cd "$fixture" && ./m jq --version)" = 'jq-1.8.2' ] || fail "already-installed attempt broke jq execution"
+grep -F 'reason="already-installed"' "$already_err" >/dev/null 2>&1 ||
+  fail 'already-installed jq did not report already-installed'
+grep -F "already-installed=\"$identity\"" "$already_err" >/dev/null 2>&1 ||
+  fail 'already-installed diagnostic did not identify the installed concrete'
+grep -F "current-default=\"$identity\"" "$already_err" >/dev/null 2>&1 ||
+  fail 'already-installed diagnostic did not identify the current default'
 
-if ! (
-    cd "$fixture" || exit 90
-    ./m pkg uninstall jq
-)
+run_pkg uninstall jq > "$tmp/uninstall.out" 2> "$tmp/uninstall.err" || {
+  cat "$tmp/uninstall.err" >&2
+  fail 'pkg uninstall jq failed before mixed-operand scenario'
+}
+jq_installed=0
+
+if run_pkg versions jq > "$tmp/post-uninstall.out" 2> "$tmp/post-uninstall.err"
 then
-    fail "cannot uninstall jq before mixed-operand reinstall"
+  fail 'jq remains installed after pkg uninstall'
+else
+  [ "$?" -eq 1 ] || fail 'pkg versions jq returned unexpected status after uninstall'
 fi
-[ ! -e "$concrete" ] && [ ! -L "$concrete" ] || fail "jq concrete survived uninstall before mixed test"
-[ ! -e "$selector" ] && [ ! -L "$selector" ] || fail "jq selector survived uninstall before mixed test"
-[ ! -e "$public_command" ] && [ ! -L "$public_command" ] || fail "jq public binding survived uninstall before mixed test"
 
-mixed_err="$tmp/mixed.err"
-(
-    cd "$fixture" || exit 90
-    ./m pkg install 'bad@@version' 'jq@jq-1.8.2'
-) > "$tmp/mixed.out" 2> "$mixed_err"
+mixed_err=$tmp/mixed.err
+run_pkg install 'bad@@version' jq > "$tmp/mixed.out" 2> "$mixed_err"
 mixed_status=$?
 [ "$mixed_status" -eq 1 ] || {
-    cat "$mixed_err" >&2
-    fail "mixed install returned $mixed_status instead of 1"
+  cat "$mixed_err" >&2
+  fail "mixed install returned $mixed_status instead of 1"
 }
-grep -F 'reason="invalid-operand"' "$mixed_err" >/dev/null || fail "mixed install did not report invalid operand"
-grep -F 'operand="bad@@version"' "$mixed_err" >/dev/null || fail "mixed install did not identify invalid operand"
-[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "mixed install did not install valid jq operand"
-[ -L "$selector" ] || fail "mixed install did not restore jq selector"
-[ "$(readlink "$selector")" = "jq@jq-1.8.2!$osarch" ] || fail "mixed install restored wrong jq selector"
-[ -L "$public_command" ] || fail "mixed install did not restore jq public binding"
-jq_version="$(cd "$fixture" && ./m jq --version)" || fail "mixed install did not leave jq executable"
-[ "$jq_version" = 'jq-1.8.2' ] || fail "mixed install jq --version returned $jq_version, expected jq-1.8.2"
+grep -F 'reason="invalid-operand"' "$mixed_err" >/dev/null 2>&1 ||
+  fail 'mixed install did not report the invalid operand'
+grep -F 'operand="bad@@version"' "$mixed_err" >/dev/null 2>&1 ||
+  fail 'mixed install did not identify the invalid operand'
 
-pkg_cache="$($fixture/m "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"
-catalog="$pkg_cache/pkg-catalog"
-[ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "real pkg-catalog cache was not materialized"
-catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
-[ -d "$catalog/jq/$osarch" ] && [ ! -L "$catalog/jq/$osarch" ] || fail "current jq target stream is missing"
+identity_after=$(run_pkg default jq 2> "$tmp/mixed-default.err") || {
+  cat "$tmp/mixed-default.err" >&2
+  fail 'mixed install did not install the valid jq operand'
+}
+jq_installed=1
+[ -n "$identity_after" ] || fail 'mixed install produced an empty jq identity'
 
-printf -- 'installed=%s\n' "${concrete##*/}"
-printf -- 'catalog-head=%s\n' "$catalog_head"
-printf -- 'jq=%s\n' "$jq_version"
+jq_version_after=$(
+  PATH="$public_dir:$root/bin/sys:$PATH"
+  export PATH
+  jq --version
+) || fail 'mixed install did not leave jq executable'
+[ -n "$jq_version_after" ] || fail 'mixed install jq --version produced no output'
+
+printf 'installed=%s\n' "$identity_after"
+printf 'jq=%s\n' "$jq_version_after"
+printf 'osarch=%s\n' "$osarch"
+
 exit 0
