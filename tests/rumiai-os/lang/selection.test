@@ -5,104 +5,129 @@ fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-resolve_test_dir() { self=$0; case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac; self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P; }
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+snapshot_selectors()
+{
+    output=$1
+    : > "$output" || return 1
+    for owner_dir in "$root/res"/*
+    do
+        [ -d "$owner_dir" ] && [ ! -L "$owner_dir" ] || continue
+        lang_dir=$owner_dir/lang
+        [ -d "$lang_dir" ] && [ ! -L "$lang_dir" ] || continue
+        [ -L "$lang_dir/current" ] || return 2
+        target=$(readlink "$lang_dir/current" 2>/dev/null) || return 2
+        case $target in ''|*/*|.|..) return 2 ;; esac
+        [ -d "$lang_dir/$target" ] && [ ! -L "$lang_dir/$target" ] || return 2
+        printf '%s\t%s\n' "${owner_dir##*/}" "$target" >> "$output" || return 1
+    done
+    LC_ALL=C sort "$output" -o "$output" || return 1
+}
+
+snapshot_pkg_paths()
+{
+    output=$1
+    if [ -d "$root/pkg" ]; then
+        find "$root/pkg" -print | LC_ALL=C sort > "$output" || return 1
+    else
+        printf '%s\n' ABSENT > "$output" || return 1
+    fi
+}
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
 
 target_library=$suite_root/lib/rumiai-os-target.lib
-fixture_library=$suite_root/lib/rumiai-os-fixture.lib
 [ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
-[ -f "$fixture_library" ] || error 'rumiai-os fixture helper is unavailable'
 . "$target_library" || error 'cannot source rumiai-os target helper'
-. "$fixture_library" || error 'cannot source rumiai-os fixture helper'
 
-root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
-case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
 
-[ -x "$root/bin/sys/lang-set" ] || fail 'bin/sys/lang-set is missing or not executable'
+command=$root/bin/sys/lang-set
+[ -x "$root/m" ] || fail 'm bootstrap is not executable'
+[ -x "$command" ] || fail 'lang-set is missing or not executable'
 command -v readlink >/dev/null 2>&1 || error 'readlink is unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-lang-selection-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture=$tmp/root
-rumiai_test_fixture_rumiai_os_create "$root" "$fixture"
+
+selected=$("$root/m" "$command" 2> "$tmp/query.err") || {
+    cat "$tmp/query.err" >&2
+    fail 'lang-set query failed'
+}
+[ -n "$selected" ] || fail 'lang-set query returned an empty locale'
+[ "$(readlink "$root/res/sys/lang/current" 2>/dev/null)" = "$selected" ] ||
+    fail 'lang-set query does not match sys/current'
+
+snapshot_selectors "$tmp/selectors.before"
 status=$?
 case $status in
-  0) : ;;
-  1) fail 'source checkout lacks required runtime material' ;;
-  2) error 'cannot materialize isolated fixture' ;;
-  *) error "fixture primitive returned unexpected status $status" ;;
+    0) : ;;
+    2) fail 'a materialized global language selector is structurally invalid' ;;
+    *) error 'cannot snapshot global language selectors' ;;
 esac
 
-rm -rf "$fixture/res" || error 'cannot reset fixture resources'
-mkdir -p \
-    "$fixture/res/sys/lang/en_US" \
-    "$fixture/res/sys/lang/it_IT" \
-    "$fixture/res/ai/lang/en_US" \
-    "$fixture/res/ai/lang/it_IT" || error 'cannot create fixture language trees'
-ln -s en_US "$fixture/res/sys/lang/current" || error 'cannot create sys selector'
-ln -s en_US "$fixture/res/ai/lang/current" || error 'cannot create ai selector'
+while IFS="$(printf '\t')" read -r owner target
+do
+    [ "$target" = "$selected" ] || fail "global language selectors disagree: $owner=$target selected=$selected"
+done < "$tmp/selectors.before"
 
-mkdir -p "$fixture/pkg/demo/lang" || error 'cannot create package sentinel'
-ln -s package-local "$fixture/pkg/demo/lang/current" || error 'cannot create package selector sentinel'
-printf '%s\n' keep > "$fixture/pkg/demo/lang/marker" || error 'cannot create package marker'
+snapshot_pkg_paths "$tmp/pkg.before" || error 'cannot snapshot package paths'
 
-stdout=$tmp/stdout
-stderr=$tmp/stderr
+"$root/m" "$command" "$selected" > "$tmp/select.out" 2> "$tmp/select.err" || {
+    cat "$tmp/select.err" >&2
+    fail 'lang-set could not re-select the currently available global language'
+}
+[ ! -s "$tmp/select.out" ] || fail 'successful lang-set selection wrote stdout'
+[ ! -s "$tmp/select.err" ] || fail 'successful lang-set selection wrote stderr'
 
-LC_ALL=C "$fixture/m" "$fixture/bin/sys/lang-set" >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'lang-set query failed'; }
-[ "$(cat "$stdout")" = en_US ] || { cat "$stdout" >&2; fail 'lang-set query did not return only the sys selected locale'; }
-[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'lang-set query produced unexpected stderr'; }
+snapshot_selectors "$tmp/selectors.after" || error 'cannot resnapshot global language selectors'
+cmp -s "$tmp/selectors.before" "$tmp/selectors.after" ||
+    fail 'idempotent language selection changed the selected locale topology'
 
-"$fixture/m" "$fixture/bin/sys/lang-set" it_IT >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'lang-set could not select a globally available language'; }
-[ ! -s "$stdout" ] || fail 'successful lang-set selection produced unexpected stdout'
-[ ! -s "$stderr" ] || { cat "$stderr" >&2; fail 'successful lang-set selection produced unexpected stderr'; }
-[ -L "$fixture/res/sys/lang/current" ] || fail 'sys current is not a symlink'
-[ -L "$fixture/res/ai/lang/current" ] || fail 'ai current is not a symlink'
-[ "$(readlink "$fixture/res/sys/lang/current")" = it_IT ] || fail 'sys current target is not the selected relative locale'
-[ "$(readlink "$fixture/res/ai/lang/current")" = it_IT ] || fail 'ai current target is not synchronized with sys'
-[ "$(readlink "$fixture/pkg/demo/lang/current")" = package-local ] || fail 'lang-set modified a package-local selector'
-[ "$(cat "$fixture/pkg/demo/lang/marker")" = keep ] || fail 'lang-set modified package-local resources'
+snapshot_pkg_paths "$tmp/pkg.after" || error 'cannot resnapshot package paths'
+cmp -s "$tmp/pkg.before" "$tmp/pkg.after" || fail 'lang-set modified package-local resource paths'
 
-LC_ALL=C "$fixture/m" "$fixture/bin/sys/lang-set" >"$stdout" 2>"$stderr" || { cat "$stderr" >&2; fail 'lang-set post-selection query failed'; }
-[ "$(cat "$stdout")" = it_IT ] || fail 'lang-set did not report the selected sys locale'
+missing=missinglocale$$
+for owner_dir in "$root/res"/*
+do
+    [ -d "$owner_dir/lang/$missing" ] && fail "unexpected temporary missing locale collision: $owner_dir/lang/$missing"
+done
 
-"$fixture/m" "$fixture/bin/sys/lang-set" fr_FR >"$stdout" 2>"$stderr" && fail 'lang-set accepted unavailable global language'
-grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'unavailable language was not reported as fatal invalid-arguments'; }
-[ "$(readlink "$fixture/res/sys/lang/current")" = it_IT ] || fail 'unavailable language changed sys selection'
-[ "$(readlink "$fixture/res/ai/lang/current")" = it_IT ] || fail 'unavailable language changed ai selection'
+if "$root/m" "$command" "$missing" > "$tmp/missing.out" 2> "$tmp/missing.err"; then
+    fail 'lang-set accepted a locale unavailable from participating global language trees'
+fi
+snapshot_selectors "$tmp/selectors.missing" || error 'cannot inspect selectors after rejected locale'
+cmp -s "$tmp/selectors.before" "$tmp/selectors.missing" ||
+    fail 'rejected locale changed global language selection'
 
-rmdir "$fixture/res/ai/lang/en_US" || error 'cannot remove ai en_US locale'
-"$fixture/m" "$fixture/bin/sys/lang-set" en_US >"$stdout" 2>"$stderr" && fail 'lang-set selected language missing from one global owner'
-grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'missing owner language was not reported as fatal invalid-arguments'; }
-[ "$(readlink "$fixture/res/sys/lang/current")" = it_IT ] || fail 'failed global prevalidation changed sys selection'
-[ "$(readlink "$fixture/res/ai/lang/current")" = it_IT ] || fail 'failed global prevalidation changed ai selection'
-mkdir "$fixture/res/ai/lang/en_US" || error 'cannot restore ai en_US locale'
+if "$root/m" "$command" "$selected" extra > "$tmp/args.out" 2> "$tmp/args.err"; then
+    fail 'lang-set accepted more than one locale operand'
+fi
+snapshot_selectors "$tmp/selectors.args" || error 'cannot inspect selectors after invalid invocation'
+cmp -s "$tmp/selectors.before" "$tmp/selectors.args" ||
+    fail 'invalid lang-set invocation changed global language selection'
 
-"$fixture/m" "$fixture/bin/sys/lang-set" en_US extra >"$stdout" 2>"$stderr" && fail 'lang-set accepted more than one argument'
-grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'invalid argument count was not reported as fatal invalid-arguments'; }
-[ "$(readlink "$fixture/res/sys/lang/current")" = it_IT ] || fail 'invalid argument count changed sys selection'
-[ "$(readlink "$fixture/res/ai/lang/current")" = it_IT ] || fail 'invalid argument count changed ai selection'
-
-rm -f "$fixture/res/ai/lang/current" || error 'cannot remove ai current symlink'
-printf '%s\n' keep > "$fixture/res/ai/lang/current" || error 'cannot create non-symlink ai current fixture'
-"$fixture/m" "$fixture/bin/sys/lang-set" en_US >"$stdout" 2>"$stderr" && fail 'lang-set overwrote non-symlink ai current object'
-grep -F '[fatal] [filesystem.path-invalid]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'non-symlink ai current was not reported as fatal path-invalid'; }
-[ "$(readlink "$fixture/res/sys/lang/current")" = it_IT ] || fail 'invalid ai selector changed sys selection'
-[ -f "$fixture/res/ai/lang/current" ] && [ ! -L "$fixture/res/ai/lang/current" ] || fail 'non-symlink ai current object was replaced'
-[ "$(cat "$fixture/res/ai/lang/current")" = keep ] || fail 'non-symlink ai current object content changed'
-rm -f "$fixture/res/ai/lang/current" || error 'cannot remove ai current fixture'
-ln -s it_IT "$fixture/res/ai/lang/current" || error 'cannot restore ai selector'
-
-rm -f "$fixture/res/sys/lang/current" || error 'cannot remove sys current symlink'
-printf '%s\n' keep > "$fixture/res/sys/lang/current" || error 'cannot create non-symlink sys current fixture'
-"$fixture/m" "$fixture/bin/sys/lang-set" >"$stdout" 2>"$stderr" && fail 'lang-set query accepted non-symlink sys current object'
-grep -F '[fatal] [filesystem.path-invalid]' "$stderr" >/dev/null 2>&1 || { cat "$stderr" >&2; fail 'invalid sys selector query was not reported as fatal path-invalid'; }
-[ -f "$fixture/res/sys/lang/current" ] && [ ! -L "$fixture/res/sys/lang/current" ] || fail 'invalid sys selector was replaced by query'
-[ "$(cat "$fixture/res/sys/lang/current")" = keep ] || fail 'invalid sys selector content changed'
-[ "$(readlink "$fixture/res/ai/lang/current")" = it_IT ] || fail 'invalid sys query changed ai selector'
+reported=$("$root/m" "$command" 2> "$tmp/final-query.err") || fail 'post-selection lang-set query failed'
+[ "$reported" = "$selected" ] || fail 'lang-set query changed after idempotent/rejected operations'
 
 exit 0

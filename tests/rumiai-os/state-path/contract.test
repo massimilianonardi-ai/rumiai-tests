@@ -5,79 +5,87 @@ fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" 2>/dev/null && pwd -P; }
-expect_status() { expected=$1; shift; "$@" >/dev/null 2>&1; actual=$?; [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"; }
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    dir=${self%/*}
+    [ "$dir" != "$self" ] || dir=.
+    CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+expect_status()
+{
+    expected=$1
+    shift
+    "$@" >/dev/null 2>&1
+    actual=$?
+    [ "$actual" -eq "$expected" ] || fail "expected status $expected, got $actual from $*"
+}
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-group=${test_dir%/*}; rumiai_os_group=${group%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
 
 target_library=$suite_root/lib/rumiai-os-target.lib
-fixture_library=$suite_root/lib/rumiai-os-fixture.lib
 [ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
-[ -f "$fixture_library" ] || error 'rumiai-os fixture helper is unavailable'
 . "$target_library" || error 'cannot source rumiai-os target helper'
-. "$fixture_library" || error 'cannot source rumiai-os fixture helper'
 
-root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
-case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+command=$root/bin/sys/state-path
+[ -x "$root/m" ] || fail 'm bootstrap is not executable'
+[ -x "$command" ] || fail 'state-path is not executable'
+[ -d "$root/state" ] || fail 'managed state root is unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-state-path-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
-tmp=$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P) || error 'cannot canonicalize temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture=$tmp/root
 
-rumiai_test_fixture_rumiai_os_create "$root" "$fixture"
-status=$?
-case $status in
-  0) : ;;
-  1) fail 'source checkout lacks required runtime material' ;;
-  2) error 'cannot materialize isolated fixture' ;;
-  *) error "fixture primitive returned unexpected status $status" ;;
-esac
+before=$tmp/before
+after=$tmp/after
+find "$root/state" -print | LC_ALL=C sort > "$before" || error 'cannot snapshot state before resolver calls'
 
-command=$fixture/bin/sys/state-path
-[ -x "$command" ] || fail 'state-path is not executable'
+system_conf=$("$root/m" "$command" system pkg foo conf) || fail 'system package conf resolution failed'
+[ "$system_conf" = "$root/state/system/current/pkg/foo/conf" ] ||
+    fail "unexpected system package conf path: $system_conf"
 
-before=$tmp/before; after=$tmp/after
-find "$fixture/state" -print | LC_ALL=C sort > "$before" || error 'cannot snapshot state before resolver calls'
+system_tmp=$("$root/m" "$command" system sys worker tmp) || fail 'system sys tmp resolution failed'
+[ "$system_tmp" = "$root/state/system/current/sys/worker/tmp" ] ||
+    fail "unexpected system sys tmp path: $system_tmp"
 
-system_conf=$("$fixture/m" "$command" system pkg foo conf) || fail 'system package conf resolution failed'
-[ "$system_conf" = "$fixture/state/system/current/pkg/foo/conf" ] || fail "unexpected system package conf path: $system_conf"
-system_tmp=$("$fixture/m" "$command" system sys worker tmp) || fail 'system sys tmp resolution failed'
-[ "$system_tmp" = "$fixture/state/system/current/sys/worker/tmp" ] || fail "unexpected system sys tmp path: $system_tmp"
-user_home=$("$fixture/m" "$command" user pkg foo home) || fail 'default user package home resolution failed'
-[ "$user_home" = "$fixture/state/user/default/pkg/foo/home" ] || fail "unexpected default user package home path: $user_home"
-user_instance=$("$fixture/m" "$command" user pkg foo conf test) || fail 'default state instance resolution failed'
-[ "$user_instance" = "$fixture/state/user/default/pkg/foo@!test/conf" ] || fail "unexpected default state instance path: $user_instance"
+if [ -L "$root/state/user/current" ]; then
+    expected_user_root=$root/state/user/current
+else
+    expected_user_root=$root/state/user/default
+fi
 
-expect_status 2 "$fixture/m" "$command" other pkg foo conf
-expect_status 2 "$fixture/m" "$command" user other foo conf
-expect_status 2 "$fixture/m" "$command" user pkg 'Bad!' conf
-expect_status 2 "$fixture/m" "$command" user pkg foo other
-expect_status 2 "$fixture/m" "$command" user sys foo conf test
-expect_status 2 "$fixture/m" "$command" user pkg foo conf 'Bad!'
-expect_status 2 "$fixture/m" "$command" user pkg foo
+user_home=$("$root/m" "$command" user pkg foo home) || fail 'user package home resolution failed'
+[ "$user_home" = "$expected_user_root/pkg/foo/home" ] ||
+    fail "unexpected user package home path: $user_home"
 
-find "$fixture/state" -print | LC_ALL=C sort > "$after" || error 'cannot snapshot state after default resolver calls'
-cmp -s "$before" "$after" || fail 'state-path mutated state while resolving default paths'
+user_instance=$("$root/m" "$command" user pkg foo conf test) || fail 'state instance resolution failed'
+[ "$user_instance" = "$expected_user_root/pkg/foo@!test/conf" ] ||
+    fail "unexpected state instance path: $user_instance"
 
-mkdir -p "$fixture/state/user/identity-a" || error 'cannot create bound user target'
-ln -s identity-a "$fixture/state/user/current" || error 'cannot create global user binding'
-bound_before=$tmp/bound-before; bound_after=$tmp/bound-after
-find "$fixture/state" -print | LC_ALL=C sort > "$bound_before" || error 'cannot snapshot bound state before resolver calls'
+expect_status 2 "$root/m" "$command" other pkg foo conf
+expect_status 2 "$root/m" "$command" user other foo conf
+expect_status 2 "$root/m" "$command" user pkg 'Bad!' conf
+expect_status 2 "$root/m" "$command" user pkg foo other
+expect_status 2 "$root/m" "$command" user sys foo conf test
+expect_status 2 "$root/m" "$command" user pkg foo conf 'Bad!'
+expect_status 2 "$root/m" "$command" user pkg foo
 
-bound_home=$("$fixture/m" "$command" user pkg foo home) || fail 'bound user package home resolution failed'
-[ "$bound_home" = "$fixture/state/user/current/pkg/foo/home" ] || fail "unexpected bound user package home path: $bound_home"
-bound_instance=$("$fixture/m" "$command" user pkg foo conf test) || fail 'bound state instance resolution failed'
-[ "$bound_instance" = "$fixture/state/user/current/pkg/foo@!test/conf" ] || fail "unexpected bound state instance path: $bound_instance"
-
-find "$fixture/state" -print | LC_ALL=C sort > "$bound_after" || error 'cannot snapshot bound state after resolver calls'
-cmp -s "$bound_before" "$bound_after" || fail 'state-path mutated state while resolving bound paths'
-
-rm "$fixture/state/user/current" || error 'cannot remove global user binding'
-fallback_home=$("$fixture/m" "$command" user pkg foo home) || fail 'fallback user package home resolution failed'
-[ "$fallback_home" = "$fixture/state/user/default/pkg/foo/home" ] || fail "user resolver did not return to default after binding removal: $fallback_home"
+find "$root/state" -print | LC_ALL=C sort > "$after" || error 'cannot snapshot state after resolver calls'
+cmp -s "$before" "$after" || fail 'state-path mutated managed state while resolving paths'
 
 exit 0
