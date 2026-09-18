@@ -87,6 +87,23 @@ printf 'kind\ttask\nrumiai-os-commit\t%s\n' "$old_target" > "$tmp/suite-seed/val
 
 cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
 #!/bin/sh
+if [ "${1-}" = --list ]; then
+    case $#:${2-}:${3-} in
+        1::)
+            printf '%s\n' root/a.test root/b.test
+            ;;
+        3:--:one)
+            printf '%s\n' one/a.test
+            ;;
+        3:--:two)
+            printf '%s\n' two/b.test
+            ;;
+        *)
+            exit 3
+            ;;
+    esac
+    exit 0
+fi
 case $#:$1:${2-} in
     1:--validation:)
         selection="tests/"
@@ -101,6 +118,7 @@ esac
 suite_root="$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P)" || exit 3
 observed_target="$(git -C "$RUMIAI_TEST_RUMIAI_OS_ROOT" rev-parse HEAD 2>/dev/null)" || exit 3
 [ "$observed_target" = "$FAKE_EXPECTED_TARGET" ] || exit 1
+printf '%s\n' "$RUMIAI_TEST_RUMIAI_OS_ROOT" >> "$FAKE_SCOPE_STATE/targets" || exit 3
 counter_file="$FAKE_SCOPE_STATE/counter"
 counter="0"
 [ ! -f "$counter_file" ] || counter="$(cat "$counter_file")" || exit 3
@@ -153,7 +171,28 @@ fi
 grep -F 'Scope result: VALIDATED' "$tmp/pass-transcript" >/dev/null 2>&1 || fail 'PASS/PASS task scope was not reported VALIDATED'
 [ "$(git -C "$tmp/work/rumiai-os" rev-parse HEAD)" = "$new_target" ] || fail 'primary target checkout was not advanced independently of scoped revision'
 worktree_count=$(git -C "$tmp/work/rumiai-os" worktree list --porcelain | grep -c '^worktree ') || error 'cannot inspect target worktrees'
-[ "$worktree_count" -eq 1 ] || fail 'temporary validation target worktree was not cleaned up'
+[ "$worktree_count" -eq 1 ] || fail 'validation unexpectedly attached another Git worktree'
+session_target_one=$(sed -n '1p' "$tmp/fake-state/targets") || error 'cannot read first session target'
+session_target_two=$(sed -n '2p' "$tmp/fake-state/targets") || error 'cannot read second session target'
+[ -n "$session_target_one" ] && [ "$session_target_one" = "$session_target_two" ] ||
+    fail 'session isolation did not reuse one environment across selections'
+[ "$session_target_one" != "$tmp/work/rumiai-os" ] || fail 'session isolation executed the primary checkout directly'
+[ ! -e "$session_target_one" ] || fail 'session validation environment survived completion'
+
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" --isolation=test demo > "$tmp/per-test-transcript" 2>&1
+per_test_status=$?
+if [ "$per_test_status" -ne 0 ]; then
+    cat "$tmp/per-test-transcript" >&2
+    fail "per-test isolation scope returned $per_test_status"
+fi
+grep -F 'Isolation:    test' "$tmp/per-test-transcript" >/dev/null 2>&1 || fail 'per-test isolation was not reported'
+per_test_target_one=$(sed -n '3p' "$tmp/fake-state/targets") || error 'cannot read first per-test target'
+per_test_target_two=$(sed -n '4p' "$tmp/fake-state/targets") || error 'cannot read second per-test target'
+[ -n "$per_test_target_one" ] && [ -n "$per_test_target_two" ] || fail 'per-test target observations are missing'
+[ "$per_test_target_one" != "$per_test_target_two" ] || fail 'per-test isolation reused one target clone'
+[ "$per_test_target_one" != "$tmp/work/rumiai-os" ] && [ "$per_test_target_two" != "$tmp/work/rumiai-os" ] ||
+    fail 'per-test isolation executed the primary checkout directly'
+[ ! -e "$per_test_target_one" ] && [ ! -e "$per_test_target_two" ] || fail 'per-test validation environment survived completion'
 
 # Advance only the suite fixture so the launcher must self-update and preserve the scope argument.
 printf 'skip-two\n' > "$tmp/suite-seed/fake-mode" || error 'cannot change fake mode'
