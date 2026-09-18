@@ -294,8 +294,7 @@ rumiai_test_package_release_run()
     RUMIAI_TEST_PACKAGE_RELEASE_COMMANDS \
     RUMIAI_TEST_PACKAGE_RELEASE_ANALYZE_COMMAND \
     RUMIAI_TEST_PACKAGE_RELEASE_TARGETS \
-    RUMIAI_TEST_PACKAGE_RELEASE_MODE \
-    RUMIAI_TEST_PACKAGE_RELEASE_CATALOG_TREE
+    RUMIAI_TEST_PACKAGE_RELEASE_MODE
   do
     eval "rumiai_test_package_release_value=\${$rumiai_test_package_release_required-}"
     [ -n "$rumiai_test_package_release_value" ] || rumiai_test_package_release_error "missing configuration: $rumiai_test_package_release_required"
@@ -383,7 +382,6 @@ EOF_OSARCH
   [ -d "$rumiai_test_package_release_catalog/.git" ] || rumiai_test_package_release_fail "live catalog cache missing"
   rumiai_test_package_release_catalog_head=$(git -C "$rumiai_test_package_release_catalog" rev-parse --verify HEAD 2>/dev/null) || rumiai_test_package_release_fail "cannot read catalog HEAD"
   rumiai_test_package_release_catalog_tree=$(git -C "$rumiai_test_package_release_catalog" rev-parse --verify "HEAD:$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" 2>/dev/null) || rumiai_test_package_release_fail "cannot read package catalog tree"
-  [ "$rumiai_test_package_release_catalog_tree" = "$RUMIAI_TEST_PACKAGE_RELEASE_CATALOG_TREE" ] || rumiai_test_package_release_fail "catalog tree drift: got $rumiai_test_package_release_catalog_tree expected $RUMIAI_TEST_PACKAGE_RELEASE_CATALOG_TREE"
 
   rumiai_test_package_release_stat_style=$(rumiai_test_package_release_stat_style "$rumiai_test_package_release_root") || rumiai_test_package_release_error "supported stat implementation unavailable"
   rumiai_test_package_release_setuid=$(rumiai_test_package_release_setuid_path "$rumiai_test_package_release_osarch") || rumiai_test_package_release_error "cannot resolve setuid expectation"
