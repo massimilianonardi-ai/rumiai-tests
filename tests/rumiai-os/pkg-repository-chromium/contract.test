@@ -6,45 +6,6 @@ fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-rumiai_test_target_have() { command -v "$1" >/dev/null 2>&1; }
-rumiai_test_target_rumiai_os_origin_ok()
-{
-  candidate=$1
-  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
-  case "$origin" in
-    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;;
-  esac
-  return 1
-}
-rumiai_test_target_rumiai_os_validate()
-{
-  candidate=$1
-  [ -n "$candidate" ] || return 1
-  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return 1
-  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
-  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
-  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return 1
-  printf -- '%s\n' "$target_root"
-}
-rumiai_test_target_rumiai_os_find()
-{
-  start=$1
-  rumiai_test_target_have git || return 3
-  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
-  then
-    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
-    return 0
-  fi
-  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
-  while :
-  do
-    if rumiai_test_target_rumiai_os_validate "$candidate"; then return 0; fi
-    [ "$candidate" != / ] || break
-    parent=${candidate%/*}; [ -n "$parent" ] || parent=/; [ "$parent" != "$candidate" ] || break
-    candidate=$parent
-  done
-  return 1
-}
 resolve_test_dir()
 {
   self=$0
@@ -55,6 +16,10 @@ resolve_test_dir()
 
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
 group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+target_library="$suite_root/lib/rumiai-os-target.lib"
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
 
