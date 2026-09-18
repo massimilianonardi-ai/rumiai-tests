@@ -111,9 +111,14 @@ case $uid in ''|*[!0-9]*) error "invalid effective uid: $uid";; esac
 mirror_tty=0
 if [ "$uid" -ne 0 ]
 then
-  [ -t 0 ] || skip 'interactive terminal input is required for setuid authorization'
-  [ -r /dev/tty ] && [ -w /dev/tty ] || skip '/dev/tty is required for setuid authorization'
-  if [ ! -t 1 ] || [ ! -t 2 ]; then mirror_tty=1; fi
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
+  then
+    :
+  else
+    [ -t 0 ] || skip 'interactive terminal input is required for setuid authorization'
+    [ -r /dev/tty ] && [ -w /dev/tty ] || skip '/dev/tty is required for setuid authorization'
+    if [ ! -t 1 ] || [ ! -t 2 ]; then mirror_tty=1; fi
+  fi
 fi
 
 pkg_output=$tmp/pkg.output

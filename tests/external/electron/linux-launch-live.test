@@ -107,8 +107,13 @@ fi
 uid=$(command -p -- id -u 2>/dev/null) || error 'cannot determine effective uid'
 if [ "$uid" -ne 0 ]
 then
-  [ -t 0 ] || skip 'interactive terminal input is required for Electron setuid authorization'
-  [ -r /dev/tty ] && [ -w /dev/tty ] || skip '/dev/tty is required for Electron setuid authorization'
+  if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
+  then
+    :
+  else
+    [ -t 0 ] || skip 'interactive terminal input is required for Electron setuid authorization'
+    [ -r /dev/tty ] && [ -w /dev/tty ] || skip '/dev/tty is required for Electron setuid authorization'
+  fi
 fi
 
 run_pkg install electron > "$tmp/install.out" 2> "$tmp/install.err" || {
