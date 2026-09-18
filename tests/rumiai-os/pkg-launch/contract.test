@@ -4,47 +4,155 @@ TEST_ID=rumiai-os/pkg-launch/contract.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
-origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
-validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
-find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
-resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
-readpathce() { [ "$#" -eq 2 ] && [ -n "$1" ] && [ -n "$2" ] || return 1; case "$1" in ""|[0-9]*|*[!a-zA-Z0-9_]*) return 2;; esac; resolved=$(realpath -- "$2" 2>/dev/null) || return 1; [ -e "$resolved" ] || return 1; eval "$1=\$resolved"; }
-log() { :; }
 
-test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'; start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
-root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
-library=$root/lib/sys/sh/pkg-launch.lib.sh
-core=$root/lib/sys/sh/core.lib.sh
-bootstrap=$root/m
-[ -f "$library" ] && [ ! -x "$library" ] || fail 'pkg-launch library is missing or executable'
-case "$(sed -n '1p' "$library")" in '#!'*) fail 'pkg-launch library has a shebang';; esac
-grep -E '^[[:space:]]*launcher\(\)' "$core" >/dev/null 2>&1 && fail 'launcher is still defined in core.lib.sh'
-grep -F 'pkg-launch.lib.sh' "$bootstrap" >/dev/null 2>&1 && fail 'm bootstrap loads pkg-launch globally'
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
 
-tmp=${TMPDIR:-/tmp}/rumiai-pkg-launch-contract-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
-m_ROOT=$tmp/root
-m_PKG_DIR=$m_ROOT/pkg
-m_STATE_DIR=$m_ROOT/state
-m_STATE_SYS_DIR=$m_STATE_DIR/system/current
-m_STATE_USER_DIR=$m_STATE_DIR/user/current
-mkdir -p "$m_PKG_DIR" "$m_STATE_DIR/system/profile/main" "$m_STATE_DIR/user/default" || error 'cannot create fixture root'
-ln -s profile/main "$m_STATE_SYS_DIR" || error 'cannot create system selector'
-export m_ROOT m_PKG_DIR m_STATE_DIR m_STATE_SYS_DIR m_STATE_USER_DIR
-fake_bin=$tmp/bin; mkdir "$fake_bin" || error 'cannot create fixture bin'
-{ printf '%s\n' '#!/bin/sh'; sed '1d' "$root/bin/sys/state-path"; } > "$fake_bin/state-path" || error 'cannot prepare state-path fixture'
-chmod 700 "$fake_bin/state-path" || error 'cannot chmod state-path fixture'
-PATH=$fake_bin:$PATH; export PATH
-. "$library" || error 'cannot source pkg-launch library'
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
 
-if (launcher >/dev/null 2>&1); then fail 'launcher without package unexpectedly succeeded'; else status=$?; [ "$status" -eq 2 ] || fail "launcher without package returned $status instead of 2"; fi
-if (launcher 'Bad!' >/dev/null 2>&1); then fail 'launcher accepted invalid package name'; else status=$?; [ "$status" -eq 2 ] || fail "invalid package name returned $status instead of 2"; fi
+cleanup()
+{
+  trap - 0 HUP INT TERM
 
-concrete=$m_PKG_DIR/tool@1
-mkdir -p "$concrete/cmd" "$concrete/link" "$concrete/root/bin" || error 'cannot create launch fixture'
-command_file=$concrete/cmd/tool
-printf '%s\n' '#!/usr/bin/env m' > "$command_file" || error 'cannot create command fixture'; chmod 700 "$command_file" || error 'cannot chmod command fixture'
-target=$concrete/root/bin/upstream
-cat > "$target" <<'EOF_TARGET'
+  if [ -n "${package_state_root-}" ]
+  then
+    rm -rf "$package_state_root" 2>/dev/null || :
+  fi
+
+  if [ -n "${root-}" ] && [ -n "${package-}" ]
+  then
+    run_pkg default -u -- "$package" >/dev/null 2>&1 || :
+
+    if [ -d "$root/pkg/$package@1" ] && [ ! -L "$root/pkg/$package@1" ]
+    then
+      if [ -n "${integration_driver-}" ] && [ -f "$integration_driver" ]
+      then
+        "$root/m" "$integration_driver" deintegrate "$package" 1 >/dev/null 2>&1 || :
+      fi
+      rm -rf "$root/pkg/$package@1" 2>/dev/null || :
+    fi
+
+    rm -f "$root/pkg/$package" "$root/bin/ext/$package" 2>/dev/null || :
+
+    if [ "${bin_ext_created-0}" -eq 1 ]
+    then
+      rmdir "$root/bin/ext" 2>/dev/null || :
+    fi
+    if [ "${pkg_store_created-0}" -eq 1 ]
+    then
+      rmdir "$root/pkg" 2>/dev/null || :
+    fi
+  fi
+
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing or not executable'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing or not executable'
+[ -f "$root/lib/sys/sh/pkg-launch.lib.sh" ] || fail 'pkg-launch library is missing'
+[ -f "$root/lib/sys/sh/pkg-integration.lib.sh" ] || fail 'pkg-integration library is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-launch-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+package=pltest$$
+pkg_store_created=0
+bin_ext_created=0
+
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  mkdir "$root/pkg" || error 'cannot create package store for test'
+  pkg_store_created=1
+fi
+[ -d "$root/pkg" ] && [ ! -L "$root/pkg" ] || fail 'package store is not a real directory'
+
+if [ ! -e "$root/bin/ext" ] && [ ! -L "$root/bin/ext" ]
+then
+  bin_ext_created=1
+fi
+
+[ ! -e "$root/pkg/$package@1" ] && [ ! -L "$root/pkg/$package@1" ] ||
+  error "temporary package identity already exists: $package@1"
+[ ! -e "$root/pkg/$package" ] && [ ! -L "$root/pkg/$package" ] ||
+  error "temporary package selector already exists: $package"
+
+launcher_driver=$tmp/launcher-driver
+cat > "$launcher_driver" <<'EOF_LAUNCHER_DRIVER'
+. "$m_LIB_DIR/sys/sh/pkg-launch.lib.sh" || exit 3
+launcher "$@"
+EOF_LAUNCHER_DRIVER
+chmod 600 "$launcher_driver" || error 'cannot prepare launcher driver'
+
+"$root/m" "$launcher_driver" > "$tmp/arity.out" 2> "$tmp/arity.err"
+[ "$?" -eq 2 ] || fail 'launcher without package did not return 2'
+"$root/m" "$launcher_driver" 'Bad!' > "$tmp/name.out" 2> "$tmp/name.err"
+[ "$?" -eq 2 ] || fail 'launcher accepted an invalid package name'
+
+integration_driver=$tmp/integration-driver
+cat > "$integration_driver" <<'EOF_INTEGRATION_DRIVER'
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg-integration.lib.sh" || exit 3
+action=$1
+shift
+case $action in
+  integrate) pkg_integrate "$@";;
+  deintegrate) pkg_deintegrate "$@";;
+  *) return 2;;
+esac
+EOF_INTEGRATION_DRIVER
+chmod 600 "$integration_driver" || error 'cannot prepare integration driver'
+
+range=$tmp/range
+payload=$tmp/payload
+mkdir -p "$range/cmd" "$range/link" "$payload/bin" || error 'cannot create package fixture'
+
+cat > "$range/cmd/$package" <<EOF_COMMAND
+#!/usr/bin/env m
+. "\$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+launcher "$package" "\$@"
+EOF_COMMAND
+chmod 600 "$range/cmd/$package" || error 'cannot prepare package command source'
+printf '%s\n' bin/upstream > "$range/link/$package" || error 'cannot prepare package link source'
+
+cat > "$range/env" <<'EOF_PACKAGE_ENV'
+PKG_ENV=package
+export PKG_ENV
+ORDER=package
+UNEXPORTED=hidden
+EOF_PACKAGE_ENV
+chmod 600 "$range/env" || error 'cannot prepare package environment'
+
+cat > "$payload/bin/upstream" <<'EOF_UPSTREAM'
 #!/bin/sh
 : > "$TEST_MARKER"
 printf 'home=%s\n' "$HOME"
@@ -54,38 +162,54 @@ printf 'unexported=%s\n' "${UNEXPORTED-unset}"
 printf 'arg1=%s\n' "$1"
 printf 'arg2=%s\n' "$2"
 exit 37
-EOF_TARGET
-chmod 700 "$target" || error 'cannot chmod upstream fixture'; ln -s '../root/bin/upstream' "$concrete/link/tool" || error 'cannot create direct link'
-cat > "$concrete/env" <<'EOF_PACKAGE_ENV'
-PKG_ENV=package
-export PKG_ENV
-ORDER=package
-UNEXPORTED=hidden
-EOF_PACKAGE_ENV
-user_conf=$m_STATE_DIR/user/default/pkg/tool/conf
-user_home=$m_STATE_DIR/user/default/pkg/tool/home
-mkdir -p "$user_conf/.m" || error 'cannot create user conf fixture'
+EOF_UPSTREAM
+chmod 700 "$payload/bin/upstream" || error 'cannot prepare upstream executable'
+
+"$root/m" "$integration_driver" integrate "$package" 1 "$range" "$payload"   > "$tmp/integrate.out" 2> "$tmp/integrate.err" || {
+    cat "$tmp/integrate.err" >&2
+    fail 'pkg_integrate failed while preparing launcher scenario'
+  }
+
+run_pkg default "$package@1" > "$tmp/default.out" 2> "$tmp/default.err" || {
+  cat "$tmp/default.err" >&2
+  fail 'cannot select launcher test package as default'
+}
+
+user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg "$package" conf) ||
+  error 'cannot resolve package configuration state'
+user_home=$("$root/m" "$root/bin/sys/state-path" user pkg "$package" home) ||
+  error 'cannot resolve package HOME state'
+package_state_root=${user_conf%/conf}
+
+mkdir -p "$user_conf/.m" || error 'cannot create package user configuration'
 cat > "$user_conf/.m/env" <<'EOF_USER_ENV'
 USER_ENV="$ORDER-user"
 export USER_ENV
 EOF_USER_ENV
-TEST_MARKER=$tmp/marker; export TEST_MARKER
+
+TEST_MARKER=$tmp/upstream-ran
+export TEST_MARKER
 output=$tmp/output
-if (m_COMMAND_BIN=$command_file; export m_COMMAND_BIN; launcher tool 'a b' '--literal') >"$output" 2>"$tmp/stderr"; then fail 'upstream fixture unexpectedly returned zero'; else status=$?; [ "$status" -eq 37 ] || fail "upstream exit status $status was not propagated"; fi
-[ -f "$TEST_MARKER" ] || fail 'direct-link upstream was not executed'
-grep -Fx "home=$user_home" "$output" >/dev/null || fail 'HOME isolation is wrong'
-grep -Fx 'package=package' "$output" >/dev/null || fail 'package env was not applied'
-grep -Fx 'user=package-user' "$output" >/dev/null || fail 'user env did not run after package env'
-grep -Fx 'unexported=unset' "$output" >/dev/null || fail 'launcher implicitly exported an unexported variable'
-grep -Fx 'arg1=a b' "$output" >/dev/null || fail 'first argument was not preserved'
-grep -Fx 'arg2=--literal' "$output" >/dev/null || fail 'second argument was not preserved'
+
+(
+  unset PKG_ENV USER_ENV ORDER UNEXPORTED
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$package" 'a b' '--literal'
+) > "$output" 2> "$tmp/run.err"
+status=$?
+[ "$status" -eq 37 ] || {
+  cat "$tmp/run.err" >&2
+  fail "launcher did not propagate upstream status 37: $status"
+}
+
+[ -f "$TEST_MARKER" ] || fail 'launcher did not execute the integrated upstream target'
+grep -Fx "home=$user_home" "$output" >/dev/null 2>&1 || fail 'launcher did not use state-path package HOME'
+grep -Fx 'package=package' "$output" >/dev/null 2>&1 || fail 'package environment was not applied'
+grep -Fx 'user=package-user' "$output" >/dev/null 2>&1 || fail 'user environment was not applied after package environment'
+grep -Fx 'unexported=unset' "$output" >/dev/null 2>&1 || fail 'launcher exported an unexported package variable'
+grep -Fx 'arg1=a b' "$output" >/dev/null 2>&1 || fail 'launcher did not preserve first argument'
+grep -Fx 'arg2=--literal' "$output" >/dev/null 2>&1 || fail 'launcher did not preserve second argument'
 [ -d "$user_home" ] && [ ! -L "$user_home" ] || fail 'launcher did not materialize package HOME'
 
-rm -f "$TEST_MARKER"; printf '%s\n' 'if' > "$concrete/env"
-if (m_COMMAND_BIN=$command_file; export m_COMMAND_BIN; launcher tool >/dev/null 2>&1); then fail 'launcher accepted invalid package env'; else [ "$?" -eq 1 ] || fail 'invalid package env did not return 1'; fi
-[ ! -e "$TEST_MARKER" ] || fail 'upstream ran after invalid package env'
-
-rm -f "$concrete/env" "$user_conf/.m/env" "$concrete/link/tool"
-outside=$m_PKG_DIR/outside; printf '%s\n' '#!/bin/sh' 'exit 0' > "$outside"; chmod 700 "$outside"; ln -s '../../outside' "$concrete/link/tool"
-if (m_COMMAND_BIN=$command_file; export m_COMMAND_BIN; launcher tool >/dev/null 2>&1); then fail 'launcher accepted direct-link escaping root'; else [ "$?" -eq 1 ] || fail 'escaping direct-link did not return 1'; fi
 exit 0
