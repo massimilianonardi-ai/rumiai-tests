@@ -107,6 +107,32 @@ identity=$(run_pkg default temurin 2> "$tmp/default.err") || {
 }
 [ -n "$identity" ] || fail 'Temurin current identity is empty'
 
+projection="$root/pkg/$identity/facility-cmd/java"
+[ -d "$projection" ] && [ ! -L "$projection" ] ||
+  fail 'Temurin java command projection is missing'
+for command in jar jarsigner java javac javadoc javap jcmd jconsole jdb jdeprscan jdeps jfr jhsdb jimage jinfo jlink jmap jmod jnativescan jpackage jps jrunscript jshell jstack jstat jstatd jwebserver keytool rmiregistry serialver
+do
+  [ -x "$projection/$command" ] ||
+    fail "Temurin java projection is missing executable command: $command"
+done
+
+env_projection="$root/pkg/$identity/facility-env/java"
+[ -f "$env_projection" ] && [ ! -L "$env_projection" ] ||
+  fail 'Temurin java environment projection is missing'
+tab=$(printf '\t')
+case $osarch in
+  macos-*) expected_env="JAVA_HOME${tab}root-path Home" ;;
+  *) expected_env="JAVA_HOME${tab}root" ;;
+esac
+[ "$(cat "$env_projection")" = "$expected_env" ] ||
+  fail 'Temurin JAVA_HOME projection descriptor is unexpected'
+
+"$projection/java" -version > "$tmp/java-version.out" 2> "$tmp/java-version.err" || {
+  cat "$tmp/java-version.err" >&2
+  fail 'Temurin projected java command is not executable'
+}
+
+
 versions=$(run_pkg versions temurin 2> "$tmp/versions.err") || fail 'pkg versions temurin failed'
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Temurin identity is absent from pkg versions output'
