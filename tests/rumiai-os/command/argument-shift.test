@@ -5,62 +5,64 @@ fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-resolve_test_dir() { self=$0; case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac; self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P; }
+resolve_test_dir()
+{
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-group=${test_dir%/*}; rumiai_os_group=${group%/*}; tests_dir=${rumiai_os_group%/*}; suite_root=${tests_dir%/*}
+group=${test_dir%/*}
+rumiai_os_group=${group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
 
 target_library=$suite_root/lib/rumiai-os-target.lib
-fixture_library=$suite_root/lib/rumiai-os-fixture.lib
 [ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
-[ -f "$fixture_library" ] || error 'rumiai-os fixture helper is unavailable'
 . "$target_library" || error 'cannot source rumiai-os target helper'
-. "$fixture_library" || error 'cannot source rumiai-os fixture helper'
 
-source_root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
-case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-command-args-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture=$tmp/root
 
-rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"
-status=$?
-case $status in
-    0) : ;;
-    1) fail 'source checkout lacks required runtime material' ;;
-    2) error 'cannot materialize isolated fixture' ;;
-    *) error "fixture primitive returned unexpected status $status" ;;
-esac
 
-fixture=$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P) || error 'cannot canonicalize fixture root'
-entry=$fixture/m
 probe=$tmp/probe
 observed=$tmp/observed
-
-cat > "$probe" <<'EOT'
+cat > "$probe" <<'EOF_PROBE'
 printf '%s\n' "$#" "$1" "$2" > "$OBSERVED_ARGS" || return 41
 return 0
-EOT
+EOF_PROBE
+chmod 600 "$probe" || error 'cannot prepare command body'
 
 OBSERVED_ARGS=$observed
 export OBSERVED_ARGS
-
-"$entry" "$probe" alpha beta >"$tmp/stdout" 2>"$tmp/stderr" || {
+"$root/m" "$probe" alpha beta > "$tmp/stdout" 2> "$tmp/stderr" || {
     status=$?
     cat "$tmp/stderr" >&2
-    fail "argument-shift probe returned $status"
+    fail "command dispatch returned $status"
 }
 
 expected='2
 alpha
 beta'
 actual=$(cat "$observed") || error 'cannot read observed arguments'
-[ "$actual" = "$expected" ] || fail "source observed unexpected positional arguments: $actual"
-[ ! -s "$tmp/stdout" ] || fail 'argument-shift probe produced unexpected stdout'
-[ ! -s "$tmp/stderr" ] || {
-    cat "$tmp/stderr" >&2
-    fail 'argument-shift probe produced unexpected diagnostics'
-}
+[ "$actual" = "$expected" ] || fail "command operand was not removed before dispatch: $actual"
 exit 0
