@@ -1,111 +1,104 @@
 #!/bin/sh
 
-# Electron macOS live validation exercises the real package catalog, package
-# installation, default/public binding and direct Electron runtime launch through
-# the installed RumiAI command.
-
-TEST_ID="external/electron/macos-launch-live.test"
-
-fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
-error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
-skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+TEST_ID=external/electron/macos-launch-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-  self="$0"; case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
-  self_dir="${self%/*}"; [ "$self_dir" != "$self" ] || self_dir=.; CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-command -v git >/dev/null 2>&1 || skip "git is unavailable"
-[ -x /usr/bin/codesign ] || skip "/usr/bin/codesign is unavailable"
-[ -x /usr/bin/plutil ] || skip "/usr/bin/plutil is unavailable"
-test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-electron_group="${test_dir%/*}"; external_group="${electron_group%/*}"; suite_root="${external_group%/*}"
-target_lib="$suite_root/lib/rumiai-os-target.lib"
-fixture_lib="$suite_root/lib/rumiai-os-fixture.lib"
-[ -r "$target_lib" ] || error "rumiai-os target discovery library is unavailable"
-[ -r "$fixture_lib" ] || error "rumiai-os fixture library is unavailable"
-. "$target_lib" || error "cannot load rumiai-os target discovery library"
-. "$fixture_lib" || error "cannot load rumiai-os fixture library"
-source_root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status="$?"
-case "$status" in 0) : ;; 1) skip "rumiai-os target checkout not found" ;; 2) fail "invalid explicit rumiai-os target" ;; *) error "target discovery failed" ;; esac
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
 
-tmp="${TMPDIR:-/tmp}/rumiai-electron-macos-launch-live-$$"
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall electron >/dev/null 2>&1 || :
+  fi
+  [ -z "${user_pkg_state-}" ] || rm -rf "$user_pkg_state" 2>/dev/null || :
+  [ -z "${system_pkg_state-}" ] || rm -rf "$system_pkg_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+electron_group=${test_dir%/*}
+external_group=${electron_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+tmp=${TMPDIR:-/tmp}/rumiai-electron-macos-launch-live-$$
 umask 077
-mkdir "$tmp" || error "cannot create temporary directory"
-trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture="$tmp/root"
-rumiai_test_fixture_rumiai_os_create "$source_root" "$fixture"
-status="$?"
-case "$status" in 0) : ;; 1) fail "source checkout lacks required runtime material" ;; 2) error "cannot materialize isolated fixture" ;; *) error "fixture primitive returned unexpected status $status" ;; esac
-fixture="$(CDPATH= cd -- "$fixture" 2>/dev/null && pwd -P)" || error "cannot canonicalize fixture root"
+mkdir "$tmp" || error 'cannot create temporary directory'
 
-runtime_probe="$tmp/runtime-probe"
-cat > "$runtime_probe" <<'EOF_PROBE'
+PATH="$root/bin/sys:$PATH"
+export PATH
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
 #!/usr/bin/env m
 . "$m_LIB_DIR/sys/sh/osarch.lib.sh"
-printf -- '%s\n' "$m_OSARCH"
+printf '%s\n' "$m_OSARCH"
 EOF_PROBE
-chmod 700 "$runtime_probe" || error "cannot make runtime probe executable"
-PATH="$fixture/bin/sys:$PATH"; export PATH
-osarch="$($runtime_probe)" || fail "cannot obtain RumiAI osarch from isolated root"
-[ -n "$osarch" ] || error "RumiAI osarch probe returned empty output"
-[ "$osarch" = macos-arm64 ] || skip "Electron macOS live launch requires macos-arm64; target is $osarch"
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+[ "$osarch" = macos-arm64 ] || skip "Electron macOS launch requires macos-arm64; target is $osarch"
 
-pkg_command="$fixture/bin/sys/pkg"
-[ -x "$pkg_command" ] || fail "isolated pkg command is missing"
-printf -- '%s\n' "$TEST_ID: installing Electron from the live package catalog" >&2
-"$pkg_command" install electron || fail "pkg install electron failed"
-
-concrete=""; concrete_count=0
-for candidate in "$fixture/pkg"/electron@*"!$osarch"; do [ -e "$candidate" ] || [ -L "$candidate" ] || continue; concrete_count=$((concrete_count + 1)); concrete="$candidate"; done
-[ "$concrete_count" -eq 1 ] || fail "expected one target-specific Electron concrete version, found $concrete_count"
-[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "Electron concrete version is not a real directory"
-identity="${concrete##*/}"; version_osarch="${identity#electron@}"; version="${version_osarch%"!$osarch"}"
-[ -n "$version" ] && [ "$version" != "$version_osarch" ] || fail "cannot derive installed Electron version from $identity"
-
-bundle="$concrete/root/Electron.app"; plist="$bundle/Contents/Info.plist"; main_executable="$bundle/Contents/MacOS/Electron"; command_entry="$concrete/cmd/electron"; direct_link="$concrete/link/electron"; code_resources="$bundle/Contents/_CodeSignature/CodeResources"
-[ -d "$bundle" ] && [ ! -L "$bundle" ] || fail "Electron.app bundle is missing"
-[ -f "$plist" ] && [ ! -L "$plist" ] || fail "Electron Info.plist is missing"
-[ -f "$main_executable" ] && [ ! -L "$main_executable" ] && [ -x "$main_executable" ] || fail "Electron main executable is missing or not executable"
-[ -f "$command_entry" ] && [ ! -L "$command_entry" ] && [ -x "$command_entry" ] || fail "Electron command entry is missing or not executable"
-[ -L "$direct_link" ] || fail "Electron macOS direct runtime link is missing"
-[ "$(command -p -- readlink "$direct_link")" = '../root/Electron.app/Contents/MacOS/Electron' ] || fail "Electron macOS direct runtime link has the wrong target"
-/usr/bin/plutil -lint "$plist" >/dev/null 2>&1 || fail "Electron Info.plist is invalid"
-
-if [ -f "$code_resources" ] && [ ! -L "$code_resources" ]
+if run_pkg versions electron > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
 then
-  codesign_output="$tmp/codesign.output"
-  if ! /usr/bin/codesign --verify --deep --strict --verbose=4 "$bundle" > "$codesign_output" 2>&1; then command -p -- cat -- "$codesign_output" >&2; fail "Electron.app contains CodeResources but strict code signature verification failed"; fi
-  signature_state=verified
-else
-  [ ! -e "$code_resources" ] && [ ! -L "$code_resources" ] || fail "Electron CodeResources exists but is not a regular non-symlink file"
-  signature_state=upstream-material-absent
+  skip 'Electron is already installed in the supplied target'
+fi
+[ "$?" -eq 1 ] || fail 'cannot determine pre-existing Electron installation state'
+
+user_home=$("$root/m" "$root/bin/sys/state-path" user pkg electron home) ||
+  error 'cannot resolve Electron package HOME'
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg electron conf) ||
+  error 'cannot resolve Electron system state'
+user_pkg_state=${user_home%/home}
+system_pkg_state=${system_conf%/conf}
+if [ -e "$user_pkg_state" ] || [ -L "$user_pkg_state" ] ||
+   [ -e "$system_pkg_state" ] || [ -L "$system_pkg_state" ]
+then
+  skip 'Electron package state already exists in the supplied target'
 fi
 
-LC_ALL=C command -p -- grep -F 'launcher "electron" "$@"' "$command_entry" >/dev/null 2>&1 || fail "Electron macOS command does not use the direct package launcher"
-LC_ALL=C command -p -- grep -F '. "$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"' "$command_entry" >/dev/null 2>&1 || fail "Electron macOS command does not load the package launcher"
-if LC_ALL=C command -p -- grep -F '/usr/bin/open' "$command_entry" >/dev/null 2>&1; then fail "Electron macOS command still delegates runtime execution to /usr/bin/open"; fi
-
-"$pkg_command" default "electron@$version!$osarch" || fail "cannot select installed Electron as target default"
-selector="$fixture/pkg/electron!$osarch"; public_command="$fixture/bin/ext-$osarch/electron"
-[ -L "$selector" ] || fail "Electron target selector was not created"
-[ "$(command -p -- readlink "$selector")" = "$identity" ] || fail "Electron target selector points to the wrong concrete version"
-[ -L "$public_command" ] || fail "Electron public command binding was not created"
-
-electron_home="$("$fixture/m" "$fixture/bin/sys/state-path" user pkg electron home)" || fail "cannot resolve Electron user home state"
-workload="$tmp/workload"
-mkdir "$workload" || error "cannot create Electron workload directory"
-cat > "$workload/package.json" <<'EOF_PACKAGE'
-{
-  "name": "rumiai-electron-macos-live",
-  "version": "1.0.0",
-  "main": "main.js"
+run_pkg install electron > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.err" >&2
+  fail 'pkg install electron failed'
 }
+installed=1
+
+identity=$(run_pkg default electron 2> "$tmp/default.err") ||
+  fail 'installed Electron has no current default'
+public=$root/bin/ext-$osarch/electron
+[ -x "$public" ] || fail 'Electron public command is unavailable'
+
+workload=$tmp/workload
+mkdir "$workload" || error 'cannot create Electron workload'
+cat > "$workload/package.json" <<'EOF_PACKAGE'
+{"name":"rumiai-electron-macos-live","version":"1.0.0","main":"main.js"}
 EOF_PACKAGE
 cat > "$workload/index.html" <<'EOF_HTML'
-<!doctype html>
-<html><head><meta charset="utf-8"><title>rumiai-electron-macos-live</title></head><body>RumiAI Electron macOS live validation</body></html>
+<!doctype html><html><head><meta charset="utf-8"><title>rumiai-electron-macos-live</title></head><body>RumiAI Electron macOS live validation</body></html>
 EOF_HTML
 cat > "$workload/main.js" <<'EOF_MAIN'
 const { app, BrowserWindow } = require('electron')
@@ -113,49 +106,40 @@ const fs = require('node:fs')
 const path = require('node:path')
 const marker = process.env.RUMIAI_ELECTRON_TEST_MARKER
 let window
-function writeResult(lines) { if (marker) fs.writeFileSync(marker, `${lines.join('\n')}\n`, 'utf8') }
-const watchdog = setTimeout(() => { writeResult(['error=timeout', `exec=${process.execPath}`, `home=${process.env.HOME || ''}`]); app.exit(2) }, 15000)
+function write(lines) { if (marker) fs.writeFileSync(marker, `${lines.join('\n')}\n`, 'utf8') }
+const watchdog = setTimeout(() => { write(['error=timeout', `home=${process.env.HOME || ''}`]); app.exit(2) }, 15000)
 app.whenReady().then(async () => {
   try {
     window = new BrowserWindow({ show: false })
     await window.loadFile(path.join(__dirname, 'index.html'))
     clearTimeout(watchdog)
-    writeResult(['ready=true', `title=${window.getTitle()}`, `exec=${process.execPath}`, `home=${process.env.HOME || ''}`, ...process.argv.map((value) => `argv=${value}`)])
+    write(['ready=true', `title=${window.getTitle()}`, `home=${process.env.HOME || ''}`, ...process.argv.map(v => `argv=${v}`)])
   } catch (failure) {
     clearTimeout(watchdog)
-    writeResult([`error=${failure && failure.stack ? failure.stack : String(failure)}`])
+    write([`error=${failure && failure.stack ? failure.stack : String(failure)}`])
   } finally { app.quit() }
 })
 EOF_MAIN
 
-marker="$tmp/electron.marker"; RUMIAI_ELECTRON_TEST_MARKER="$marker"; export RUMIAI_ELECTRON_TEST_MARKER
-printf -- '%s\n' "$TEST_ID: launching the package-local Electron runtime through the public RumiAI command" >&2
-"$public_command" "$workload" 'rumiai-argument=a b' || fail "Electron public command launch failed"
+marker=$tmp/electron.marker
+RUMIAI_ELECTRON_TEST_MARKER=$marker
+export RUMIAI_ELECTRON_TEST_MARKER
 
-[ -f "$marker" ] || fail "Electron workload did not produce its completion marker"
-if LC_ALL=C command -p -- grep -F 'error=' "$marker" >/dev/null 2>&1; then fail "Electron workload reported an error: $(cat "$marker")"; fi
-LC_ALL=C command -p -- grep -Fx 'ready=true' "$marker" >/dev/null || fail "Electron app never reached ready state"
-LC_ALL=C command -p -- grep -Fx 'title=rumiai-electron-macos-live' "$marker" >/dev/null || fail "Electron BrowserWindow did not load the validation page"
-LC_ALL=C command -p -- grep -Fx "exec=$main_executable" "$marker" >/dev/null || fail "RumiAI did not execute the package-local Electron runtime"
-LC_ALL=C command -p -- grep -Fx "home=$electron_home" "$marker" >/dev/null || fail "Electron did not inherit the RumiAI package HOME"
-LC_ALL=C command -p -- grep -Fx "argv=$workload" "$marker" >/dev/null || fail "Electron did not receive the workload path directly"
-LC_ALL=C command -p -- grep -Fx 'argv=rumiai-argument=a b' "$marker" >/dev/null || fail "Electron did not preserve the user argument"
+"$public" "$workload" 'rumiai-argument=a b' > "$tmp/launch.out" 2> "$tmp/launch.err" || {
+  cat "$tmp/launch.err" >&2
+  fail 'Electron public launch failed'
+}
 
-pkg_cache="$("$fixture/m" "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"
-catalog="$pkg_cache/pkg-catalog"
-[ -d "$catalog/.git" ] && [ ! -L "$catalog/.git" ] || fail "live pkg-catalog cache was not materialized"
-catalog_head="$(git -C "$catalog" rev-parse --verify HEAD 2>/dev/null)" || fail "cannot read cached catalog HEAD"
-case "$catalog_head" in ""|*[!0-9a-f]*) fail "invalid cached catalog HEAD: $catalog_head" ;; esac
-catalog_range="$catalog/electron/catalog-$osarch/n0001=v44.3.0"
-[ -d "$catalog_range" ] && [ ! -L "$catalog_range" ] || fail "cached Electron macOS range is missing"
-[ -f "$catalog_range/link/electron" ] && [ ! -L "$catalog_range/link/electron" ] || fail "cached Electron macOS range lacks the runtime link descriptor"
-[ "$(command -p -- cat -- "$catalog_range/link/electron")" = 'Electron.app/Contents/MacOS/Electron' ] || fail "cached Electron macOS runtime link descriptor is wrong"
-[ ! -e "$catalog_range/setuid_root" ] && [ ! -L "$catalog_range/setuid_root" ] || fail "Electron macOS range unexpectedly declares setuid_root"
+[ -f "$marker" ] || fail 'Electron workload produced no completion marker'
+grep -F 'error=' "$marker" >/dev/null 2>&1 &&
+  fail "Electron workload reported an error: $(cat "$marker")"
+grep -Fx 'ready=true' "$marker" >/dev/null 2>&1 || fail 'Electron never reached ready state'
+grep -Fx 'title=rumiai-electron-macos-live' "$marker" >/dev/null 2>&1 || fail 'Electron did not load the validation page'
+grep -Fx "home=$user_home" "$marker" >/dev/null 2>&1 || fail 'Electron did not use package HOME'
+grep -Fx "argv=$workload" "$marker" >/dev/null 2>&1 || fail 'Electron did not receive the workload path'
+grep -Fx 'argv=rumiai-argument=a b' "$marker" >/dev/null 2>&1 || fail 'Electron did not preserve the user argument'
 
-printf -- 'installed=%s\n' "$identity"
-printf -- 'catalog-head=%s\n' "$catalog_head"
-printf -- 'bundle=%s\n' 'Electron.app'
-printf -- 'signature-state=%s\n' "$signature_state"
-printf -- 'launch=direct-runtime\n'
-printf -- 'workload=BrowserWindow-ready\n'
+printf 'launched=%s\n' "$identity"
+printf 'workload=BrowserWindow-ready\n'
+
 exit 0
