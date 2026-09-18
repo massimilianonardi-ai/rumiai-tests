@@ -36,7 +36,14 @@ snapshot_parent()
 {
   parent=$1
   output=$2
-  command -p -- find "$parent" -mindepth 1 -maxdepth 1 -print | LC_ALL=C command -p -- sort > "$output"
+
+  {
+    for candidate in "$parent"/* "$parent"/.[!.]* "$parent"/..?*
+    do
+      [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+      printf '%s\n' "$candidate"
+    done
+  } | LC_ALL=C command -p -- sort > "$output"
 }
 
 assert_parent_delta()
