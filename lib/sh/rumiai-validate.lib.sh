@@ -415,18 +415,20 @@ prepare_validation_environment() {
 validation_environment_run() {
     env_root=$1
     shift
-    HOME="$env_root/home" \
-    TMPDIR="$env_root/tmp" \
-    TMP="$env_root/tmp" \
-    TEMP="$env_root/tmp" \
-    XDG_CONFIG_HOME="$env_root/home/.config" \
-    XDG_CACHE_HOME="$env_root/home/.cache" \
-    XDG_DATA_HOME="$env_root/home/.local/share" \
-    XDG_STATE_HOME="$env_root/home/.local/state" \
-    XDG_RUNTIME_DIR="$env_root/runtime" \
-    RUMIAI_TEST_RUMIAI_OS_ROOT="$env_root/target" \
-    export HOME TMPDIR TMP TEMP XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR RUMIAI_TEST_RUMIAI_OS_ROOT
-    "$@"
+    (
+        HOME="$env_root/home"
+        TMPDIR="$env_root/tmp"
+        TMP="$env_root/tmp"
+        TEMP="$env_root/tmp"
+        XDG_CONFIG_HOME="$env_root/home/.config"
+        XDG_CACHE_HOME="$env_root/home/.cache"
+        XDG_DATA_HOME="$env_root/home/.local/share"
+        XDG_STATE_HOME="$env_root/home/.local/state"
+        XDG_RUNTIME_DIR="$env_root/runtime"
+        RUMIAI_TEST_RUMIAI_OS_ROOT="$env_root/target"
+        export HOME TMPDIR TMP TEMP XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR RUMIAI_TEST_RUMIAI_OS_ROOT
+        exec "$@"
+    )
 }
 
 validation_record_put() {
