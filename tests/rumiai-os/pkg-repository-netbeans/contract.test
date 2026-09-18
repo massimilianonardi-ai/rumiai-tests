@@ -18,7 +18,7 @@ group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; suite_root=${rumiai_o
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
 
-library="$root/lib/sys/sh/pkg-repository-netbeans.lib.sh"
+library="$root/lib/sys/sh/pkg/pkg-repository-netbeans.lib.sh"
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "NetBeans repository adapter is missing or has invalid mode"
 command -p -- sh -n "$library" >/dev/null 2>&1 || fail "NetBeans repository adapter is not POSIX-shell syntax valid"
 

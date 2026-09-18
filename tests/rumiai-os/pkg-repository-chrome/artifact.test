@@ -20,7 +20,7 @@ group_dir=${test_dir%/*}; tests_dir=${group_dir%/*}; suite_root=${tests_dir%/*}
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) : ;; 1) skip "rumiai-os target checkout not found" ;; 2) fail "invalid explicit rumiai-os target" ;; *) error "target discovery failed" ;; esac
 
-library="$root/lib/sys/sh/pkg-repository-chrome.lib.sh"
+library="$root/lib/sys/sh/pkg/pkg-repository-chrome.lib.sh"
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "Chrome repository adapter is missing or has invalid mode"
 command -p -- sh -n "$library" >/dev/null 2>&1 || fail "Chrome repository adapter is not POSIX-shell syntax valid"
 
