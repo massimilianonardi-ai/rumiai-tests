@@ -51,16 +51,13 @@ for shell_name in sh dash ash bash zsh
 do
   shell_path="$(command -v "$shell_name" 2>/dev/null)" || continue
   tested=$((tested + 1))
-  home="$tmp/home-$shell_name"
-  mkdir "$home" || error "cannot create HOME for $shell_name"
   (
     unset ENV ZDOTDIR
-    HOME="$home"
     SHELL="$shell_path"
     m_SHELL_EXT="$ext"
     EXPECTED_SHELL_NAME="$shell_name"
     TERM=dumb
-    export HOME SHELL m_SHELL_EXT EXPECTED_SHELL_NAME TERM
+    export SHELL m_SHELL_EXT EXPECTED_SHELL_NAME TERM
     "$root/m" "$root/bin/sys/shell" -i -c '
       [ "${TEST_SHELL_EXT_LOADED-}" = "loaded" ] || exit 41
       [ "${m_SHELL_NAME-}" = "$EXPECTED_SHELL_NAME" ] || exit 42
