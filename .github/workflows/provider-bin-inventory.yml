@@ -1,0 +1,36 @@
+name: Provider bin inventory
+
+on:
+  push:
+    branches:
+      - validation/provider-bin-inventory-20260918
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: e934fcfb09e32d7d4eef10a913161fb0d51939be
+          path: target
+      - name: Normalize origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - name: Catalog revision
+        shell: bash
+        run: git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main
+      - name: Inventory Temurin and GraalVM
+        shell: bash
+        run: |
+          set -eu
+          cd target
+          for p in temurin graalvm
+          do
+            echo "=== install $p ==="
+            ./m ./bin/sys/pkg install "$p"
+            concrete=$(./m ./bin/sys/pkg default "$p")
+            echo "CONCRETE=$concrete"
+            echo "=== $p root/bin ==="
+            find "./pkg/$concrete/root/bin" -mindepth 1 -maxdepth 1 \( -type f -o -type l \) -printf '%f\n' | LC_ALL=C sort
+          done
