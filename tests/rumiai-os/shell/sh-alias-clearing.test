@@ -50,10 +50,10 @@ tested=0
 for shell_name in sh dash ash
 do
   shell_path="$(command -v "$shell_name" 2>/dev/null)" || continue
-  tested=$((tested + 1)); home="$tmp/home-$shell_name"; mkdir "$home" || error "cannot create HOME for $shell_name"
+  tested=$((tested + 1))
   (
-    HOME="$home"; SHELL="$shell_path"; ENV="$user_env"; m_SHELL_EXT=; TERM=dumb
-    export HOME SHELL ENV m_SHELL_EXT TERM
+    SHELL="$shell_path"; ENV="$user_env"; m_SHELL_EXT=; TERM=dumb
+    export SHELL ENV m_SHELL_EXT TERM
     "$root/m" "$root/bin/sys/shell" -i -c '
       alias log >/dev/null 2>&1 && exit 41
       alias fatal >/dev/null 2>&1 && exit 42
