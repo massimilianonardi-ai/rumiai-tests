@@ -95,9 +95,12 @@ osarch_update="$fixture/bin/sys/osarch-update"
 [ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$osarch" ] || fail "ext-osarch selector targets the wrong platform"
 
 printf -- '%s\n' "$TEST_ID: live install started; this test uses the current pkg-catalog and official jq release" >&2
-if ! "$fixture/m" pkg install 'jq@jq-1.8.2'
+if ! (
+    cd "$fixture" || exit 90
+    ./m pkg install 'jq@jq-1.8.2'
+)
 then
-    fail "pkg install jq@jq-1.8.2 failed through m"
+    fail "pkg install jq@jq-1.8.2 failed through m from the product root"
 fi
 
 [ -d "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail "pkg install did not materialize a real package store"
@@ -114,7 +117,15 @@ public_command="$fixture/bin/ext-$osarch/jq"
 [ -L "$public_command" ] || fail "jq public command binding is missing"
 [ "$(readlink "$public_command")" = "../../pkg/jq!$osarch/cmd/jq" ] || fail "jq public command binding target is incorrect"
 
-jq_version="$("$fixture/m" jq --version)" || fail "jq is not executable through the normal m command path"
+if ! (
+    cd "$fixture" || exit 90
+    ./m pkg default jq >/dev/null
+)
+then
+    fail "pkg command is not reusable from the product root after the package store exists"
+fi
+
+jq_version="$(cd "$fixture" && ./m jq --version)" || fail "jq is not executable through the normal m command path"
 [ "$jq_version" = 'jq-1.8.2' ] || fail "jq --version returned $jq_version, expected jq-1.8.2"
 
 pkg_cache="$($fixture/m "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"
