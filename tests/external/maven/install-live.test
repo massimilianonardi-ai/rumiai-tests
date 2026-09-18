@@ -164,8 +164,11 @@ cat "$tmp/version.out" "$tmp/version.err" > "$tmp/version.combined" ||
   error 'cannot combine Maven version output'
 grep -F 'Apache Maven' "$tmp/version.combined" >/dev/null 2>&1 ||
   fail 'Maven public command did not identify Apache Maven'
-grep -F "Java home: $root/pkg/$temurin_identity/root" "$tmp/version.combined" >/dev/null 2>&1 ||
-  fail 'Maven did not receive JAVA_HOME from the selected Temurin facility projection'
+if ! grep -F "Java home: $root/pkg/$temurin_identity/root" "$tmp/version.combined" >/dev/null 2>&1
+then
+  cat "$tmp/version.combined" >&2
+  fail 'Maven did not report the selected Temurin runtime path'
+fi
 
 printf 'installed=%s\n' "$identity"
 printf 'java-provider=%s\n' "$temurin_identity"
