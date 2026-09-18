@@ -100,15 +100,16 @@ then
   skip 'jq package state already exists in the supplied target'
 fi
 
-if run_pkg versions jq > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'jq is already installed in the supplied target'
-fi
+run_pkg versions jq > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
 status=$?
-[ "$status" -eq 1 ] || {
-  cat "$tmp/preexisting.err" >&2
-  fail "cannot determine whether jq is already installed: status $status"
-}
+case $status in
+  0) skip 'jq is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine whether jq is already installed: status $status"
+    ;;
+esac
 
 pkg_store_created=0
 if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
