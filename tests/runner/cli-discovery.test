@@ -57,6 +57,22 @@ printf '%s\n' ignored > "$suite/tests/group/note.txt"
 chmod +x "$suite/tests/group/a.test" "$suite/tests/group/b.test" "$suite/tests/group/.hidden/ignored.test" "$outside/escape.test" || error 'cannot prepare fixture tests'
 ln -s "$outside" "$suite/tests/escape-link" || error 'cannot prepare intermediate symlink fixture'
 
+"$suite/rumiai-test" --list group > "$tmp_base/list-output" 2>&1
+list_status=$?
+[ "$list_status" -eq 0 ] || fail "--list group returned $list_status instead of 0"
+expected_list=$(printf 'group/a.test\ngroup/b.test')
+actual_list=$(cat "$tmp_base/list-output")
+[ "$actual_list" = "$expected_list" ] || fail '--list discovery or lexical order differs from execution contract'
+[ ! -e "$suite/.runs" ] || fail '--list created development run evidence'
+[ ! -e "$suite/sessions/.rumiai-test-list" ] || fail '--list created validation evidence'
+
+"$suite/rumiai-test" --list group/a.test > "$tmp_base/list-single-output" 2>&1
+[ "$?" -eq 0 ] || fail '--list single test did not succeed'
+[ "$(cat "$tmp_base/list-single-output")" = 'group/a.test' ] || fail '--list single test returned the wrong id'
+
+"$suite/rumiai-test" --list --validation group > "$tmp_base/list-validation-output" 2>&1
+[ "$?" -eq 3 ] || fail '--list with --validation was not rejected'
+
 "$suite/rumiai-test" group > "$tmp_base/output" 2>&1
 status=$?
 [ "$status" -eq 0 ] || fail "group run returned $status instead of 0"

@@ -76,6 +76,7 @@ suite_root=${self_path%/*}
 [ -n "$suite_root" ] || suite_root=/
 tests_root=$(canonical_dir "$suite_root/tests") || fatal 'cannot locate tests/ beside runner'
 
+list_mode=0
 validation=0
 snapshot_mode=
 snapshot_scope=
@@ -88,6 +89,11 @@ parse_options=1
 while [ "$#" -gt 0 ]; do
     if [ "$parse_options" -eq 1 ]; then
         case $1 in
+            --list)
+                list_mode=1
+                shift
+                continue
+                ;;
             --validation)
                 validation=1
                 shift
@@ -146,6 +152,11 @@ if [ "$snapshot_option_seen" -eq 1 ]; then
     [ "$snapshot_root_count" -gt 0 ] || fatal 'at least one --snapshot-root is required when snapshot is requested'
 fi
 
+if [ "$list_mode" -eq 1 ]; then
+    [ "$validation" -eq 0 ] || fatal '--list cannot be combined with --validation'
+    [ "$snapshot_option_seen" -eq 0 ] || fatal '--list cannot be combined with snapshot options'
+fi
+
 if [ "$selection_set" -eq 1 ]; then
     [ -n "$selection" ] || fatal 'empty selection is not valid'
     [ "$selection" != '.' ] || fatal "selection '.' is not valid; omit selection for tests/"
@@ -200,6 +211,51 @@ fi
 if [ "$selection_kind" = group ]; then
     first_test=$(find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print 2>/dev/null | LC_ALL=C sort | sed -n '1p')
     [ -n "$first_test" ] || fatal 'selected group contains no tests'
+fi
+
+discover_tests_to_file() {
+    discover_output=$1
+    discover_work=$2
+
+    if [ "$selection_kind" = test ]; then
+        printf '%s\n' "$selection" > "$discover_output" || return 1
+        return 0
+    fi
+
+    discover_find_paths=$discover_work/find-paths
+    discover_find_error=$discover_work/find-error
+    discover_ids=$discover_work/test-ids
+
+    find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print > "$discover_find_paths" 2> "$discover_find_error"
+    discover_status=$?
+    [ "$discover_status" -eq 0 ] || return 1
+    [ ! -s "$discover_find_error" ] || return 1
+
+    : > "$discover_ids" || return 1
+    while IFS= read -r discover_path; do
+        discover_id=${discover_path#"$tests_root"/}
+        printf '%s\n' "$discover_id" >> "$discover_ids" || return 1
+    done < "$discover_find_paths"
+
+    LC_ALL=C sort "$discover_ids" > "$discover_output" || return 1
+    return 0
+}
+
+if [ "$list_mode" -eq 1 ]; then
+    list_work=${TMPDIR:-/tmp}/rumiai-test-list-$
+    [ ! -e "$list_work" ] || fatal 'temporary discovery path already exists'
+    mkdir "$list_work" || fatal 'cannot create temporary discovery directory'
+    list_file=$list_work/tests
+    if ! discover_tests_to_file "$list_file" "$list_work"; then
+        rm -rf "$list_work" 2>/dev/null || :
+        fatal 'test discovery failed'
+    fi
+    cat "$list_file" || {
+        rm -rf "$list_work" 2>/dev/null || :
+        fatal 'cannot emit discovered tests'
+    }
+    rm -rf "$list_work" || fatal 'cannot remove temporary discovery directory'
+    exit "$RUNNER_STATUS_SUCCESS"
 fi
 
 # Snapshot roots are explicit observations. Canonicalize them before creating run evidence.
@@ -369,24 +425,11 @@ if [ "$snapshot_option_seen" -eq 1 ]; then
     done
 fi
 
-# Build the deterministic execution list only after the run directory exists.
+# Build the deterministic execution list with the same discovery implementation used by --list.
 tests_file=$run_dir/.work/tests
-if [ "$selection_kind" = test ]; then
-    printf '%s\n' "$selection" > "$tests_file" || exit "$RUNNER_STATUS_ERROR"
-else
-    find_paths=$run_dir/.work/find-paths
-    find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print > "$find_paths" 2> "$run_dir/.work/find-error"
-    find_status=$?
-    [ "$find_status" -eq 0 ] || {
-        say_error 'test discovery failed'
-        exit "$RUNNER_STATUS_ERROR"
-    }
-    : > "$run_dir/.work/test-ids"
-    while IFS= read -r test_path; do
-        test_id=${test_path#"$tests_root"/}
-        printf '%s\n' "$test_id" >> "$run_dir/.work/test-ids" || exit "$RUNNER_STATUS_ERROR"
-    done < "$find_paths"
-    LC_ALL=C sort "$run_dir/.work/test-ids" > "$tests_file" || exit "$RUNNER_STATUS_ERROR"
+if ! discover_tests_to_file "$tests_file" "$run_dir/.work"; then
+    say_error 'test discovery failed'
+    exit "$RUNNER_STATUS_ERROR"
 fi
 
 fs_mode() {

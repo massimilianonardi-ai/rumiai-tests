@@ -183,6 +183,7 @@ rumiai-test [options] [--] [selection]
 Opzioni iniziali:
 
 ```text
+--list
 --validation
 --snapshot=metadata|hash
 --snapshot-scope=selection|test|both
@@ -214,6 +215,8 @@ rumiai-test --validation
 rumiai-test --validation rumiai-os/bootstrap
 rumiai-test --validation --snapshot=hash --snapshot-scope=test --snapshot-root /path/to/rumiai-os --snapshot-root /home -- rumiai-os/bootstrap
 ```
+
+`--list` applica la stessa discovery deterministica dell'esecuzione, stampa un test-id per riga e termina senza eseguire test o creare `.runs/`/`sessions/`. Non è combinabile con `--validation` o con le opzioni snapshot.
 
 `rumiai-test .` non è ammesso. `--snapshot-root .` è invece valido e indica esplicitamente la current working directory come root da osservare.
 
