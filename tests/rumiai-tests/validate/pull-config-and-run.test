@@ -25,6 +25,7 @@ suite_root=${suite_root%/*}
 suite_root=${suite_root%/*}
 [ -f "$suite_root/rumiai-validate" ] || error 'cannot locate rumiai-validate'
 [ -f "$suite_root/lib/sh/rumiai-validate.lib.sh" ] || error 'cannot locate validation launcher implementation'
+[ -f "$suite_root/lib/sh/filesystem-snapshot.lib.sh" ] || error 'cannot locate filesystem snapshot library'
 [ -f "$suite_root/lib/rumiai-os-target.lib" ] || error 'cannot locate rumiai-os target discovery library'
 
 tmp=${TMPDIR:-/tmp}/rumiai-validate-flow-$$
@@ -75,6 +76,8 @@ chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher execut
 mkdir -p "$tmp/suite-seed/lib/sh" "$tmp/suite-seed/sessions" "$tmp/suite-seed/validation" ||
     error 'cannot create suite support directories'
 cp "$suite_root/lib/rumiai-os-target.lib" "$tmp/suite-seed/lib/rumiai-os-target.lib" || error 'cannot copy target discovery library'
+cp "$suite_root/lib/sh/filesystem-snapshot.lib.sh" "$tmp/suite-seed/lib/sh/filesystem-snapshot.lib.sh" ||
+    error 'cannot copy filesystem snapshot library'
 
 # The initial implementation is intentionally not valid shell. If the bootstrap
 # loads it before updating rumiai-tests, the test must fail.
@@ -217,6 +220,6 @@ grep -F 'Selection:    tests/ (full suite)' "$tmp/full-transcript" >/dev/null ||
 grep -F 'Health result: SUCCESS' "$tmp/full-transcript" >/dev/null || fail 'full-suite health run was not reported successful'
 
 publication_count="$(git -C "$tmp/suite-remote.git" for-each-ref --format='%(refname)' refs/heads/validation/ | wc -l | tr -d ' ')"
-[ "$publication_count" -eq 2 ] || fail "expected two published sessions after one task run and one full-suite run, found $publication_count"
+[ "$publication_count" -eq 4 ] || fail "expected two child sessions plus two outer validation records, found $publication_count"
 
 exit 0
