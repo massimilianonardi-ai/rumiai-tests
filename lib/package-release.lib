@@ -406,6 +406,10 @@ EOF_OSARCH
   [ "$rumiai_test_package_release_concrete_count" -eq 1 ] || rumiai_test_package_release_fail "expected one concrete package, found $rumiai_test_package_release_concrete_count"
   [ -d "$rumiai_test_package_release_concrete" ] && [ ! -L "$rumiai_test_package_release_concrete" ] || rumiai_test_package_release_fail "concrete package is not a real directory"
   rumiai_test_package_release_identity=${rumiai_test_package_release_concrete##*/}
+  "$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/pkg" default "$rumiai_test_package_release_identity" > "$rumiai_test_package_release_tmp/default.out" 2> "$rumiai_test_package_release_tmp/default.err" || {
+    command -p -- cat "$rumiai_test_package_release_tmp/default.err" >&2
+    rumiai_test_package_release_fail "cannot select installed package for public runtime validation"
+  }
   rumiai_test_package_release_root="$rumiai_test_package_release_concrete/root"
   [ -d "$rumiai_test_package_release_root" ] && [ ! -L "$rumiai_test_package_release_root" ] || rumiai_test_package_release_fail "concrete package root is invalid"
 
