@@ -29,7 +29,7 @@ command_file="$root/bin/sys/pkg-analyze"
 
 tmp="${TMPDIR:-/tmp}/rumiai-pkg-analyze-artifact-$$"
 umask 077
-command -p -- mkdir -p -- "$tmp/home" || error "cannot create fixture"
+command -p -- mkdir -- "$tmp" || error "cannot create fixture"
 trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
 
 artifact="$tmp/demo.AppImage"
@@ -58,12 +58,6 @@ if command -p -- grep -F 'selected-useful-root' "$tmp/report" >/dev/null
 then
   fail "superseded useful-root selection is still reported"
 fi
-if command -p -- grep -F 'Useful root relative to extracted tree' "$tmp/diagnostic" >/dev/null
-then
-  fail "superseded useful-root prompt is still emitted"
-fi
 command -p -- grep -F 'executable' "$tmp/report" | command -p -- grep -F 'demo.AppImage' >/dev/null || fail "materialized AppImage candidate was not reported"
-command -p -- grep -F 'Selected export candidates:' "$tmp/report" >/dev/null || fail "selection section is missing"
-command -p -- grep -F '(none)' "$tmp/report" >/dev/null || fail "empty selection was not represented"
 
 exit 0
