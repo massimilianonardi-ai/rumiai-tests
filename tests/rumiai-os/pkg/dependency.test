@@ -19,88 +19,6 @@ run_pkg()
   "$root/m" "$root/bin/sys/pkg" "$@"
 }
 
-cleanup()
-{
-  trap - 0 HUP INT TERM
-
-  if [ -n "${cleanup_packages-}" ] && [ -n "${root-}" ]
-  then
-    for cleanup_package in $cleanup_packages
-    do
-      run_pkg uninstall "$cleanup_package@1" >/dev/null 2>&1 || :
-      rm -rf "$root/pkg/$cleanup_package@1" 2>/dev/null || :
-      rm -f "$root/pkg/$cleanup_package" 2>/dev/null || :
-    done
-  fi
-
-  if [ -n "${providers_root-}" ]
-  then
-    rm -rf       "$providers_root/$facility_main"       "$providers_root/$facility_amb"       "$providers_root/$facility_missing"       2>/dev/null || :
-  fi
-
-  if [ "${providers_root_created-0}" -eq 1 ] && [ -n "${providers_root-}" ]
-  then
-    rmdir "$providers_root" 2>/dev/null || :
-  fi
-  if [ "${data_root_created-0}" -eq 1 ] && [ -n "${provider_data_root-}" ]
-  then
-    rmdir "$provider_data_root" 2>/dev/null || :
-  fi
-  if [ "${data_parent_created-0}" -eq 1 ] && [ -n "${provider_data_parent-}" ]
-  then
-    rmdir "$provider_data_parent" 2>/dev/null || :
-  fi
-  if [ "${state_sys_created-0}" -eq 1 ] && [ -n "${provider_state_sys-}" ]
-  then
-    rmdir "$provider_state_sys" 2>/dev/null || :
-  fi
-
-  if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
-  then
-    rmdir "$root/pkg" 2>/dev/null || :
-  fi
-
-  [ -z "${tmp-}" ] || rm -rf "$tmp"
-}
-trap cleanup 0 HUP INT TERM
-
-make_payload()
-{
-  payload=$1
-  label=$2
-  mkdir "$payload" || return 1
-  printf '%s\n' "$label" > "$payload/payload"
-}
-
-integrate_provider()
-{
-  pkg_name=$1
-  facility=$2
-  compatibility=$3
-  range=$tmp/range-$pkg_name
-  payload=$tmp/payload-$pkg_name
-
-  mkdir "$range" || return 1
-  printf '%s %s\n' "$facility" "$compatibility" > "$range/facility" || return 1
-  make_payload "$payload" "$pkg_name" || return 1
-
-  "$root/m" "$driver" integrate "$pkg_name" 1 "$range" "$payload"
-}
-
-integrate_consumer()
-{
-  pkg_name=$1
-  dependency=$2
-  range=$tmp/range-$pkg_name
-  payload=$tmp/payload-$pkg_name
-
-  mkdir "$range" || return 1
-  printf '%s\n' "$dependency" > "$range/dependency" || return 1
-  make_payload "$payload" "$pkg_name" || return 1
-
-  "$root/m" "$driver" integrate "$pkg_name" 1 "$range" "$payload"
-}
-
 expect_status()
 {
   expected=$1
@@ -114,14 +32,38 @@ expect_status()
   }
 }
 
-test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-rumiai_os_group=${test_dir%/*}
-tests_dir=${rumiai_os_group%/*}
-suite_root=${tests_dir%/*}
+cleanup()
+{
+  trap - 0 HUP INT TERM
 
-target_library=$suite_root/lib/rumiai-os-target.lib
-[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
-. "$target_library" || error 'cannot source rumiai-os target helper'
+  [ -z "${facility-}" ] || run_pkg provider default -u -- "$facility" >/dev/null 2>&1 || :
+  if [ -n "${consumer-}" ] && [ -n "${facility-}" ]
+  then
+    run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2>&1 || :
+  fi
+
+  for p in "${provider_a-}" "${provider_b-}" "${provider_bad-}"
+  do
+    [ -n "$p" ] || continue
+    run_pkg default -u -- "$p" >/dev/null 2>&1 || :
+  done
+
+  for concrete in     "${consumer-}@1"     "${provider_a-}@1" "${provider_a-}@2"     "${provider_b-}@1" "${provider_bad-}@1"
+  do
+    case "$concrete" in @*) continue ;; esac
+    run_pkg uninstall "$concrete" >/dev/null 2>&1 || :
+  done
+
+  [ -z "${consumer_state-}" ] || rm -rf "$consumer_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+pkg_group=${test_dir%/*}
+tests_dir=${pkg_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
 
 root=$(rumiai_test_target_rumiai_os_find "$suite_root")
 status=$?
@@ -132,37 +74,27 @@ case $status in
   *) error 'target discovery failed';;
 esac
 
-[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
-[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing or not executable'
-[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing or not executable'
-[ -f "$root/lib/sys/sh/pkg-integration.lib.sh" ] || fail 'pkg-integration library is missing'
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+[ -f "$root/lib/sys/sh/pkg-integration.lib.sh" ] || fail 'pkg integration library is missing'
+[ -f "$root/lib/sys/sh/pkg-dependency.lib.sh" ] || fail 'pkg dependency library is missing'
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-dependency-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 
-facility_main=depmain$$
-facility_amb=depamb$$
-facility_missing=depmiss$$
-
-low=deplow$$
-high=dephigh$$
-too_high=deptop$$
+facility=depjava$$
+provider_a=depprova$$
+provider_b=depprovb$$
+provider_bad=depbad$$
 consumer=depconsumer$$
-amb_a=depamba$$
-amb_b=depambb$$
-amb_consumer=depambconsumer$$
-missing_consumer=depmissing$$
 
-cleanup_packages="$missing_consumer $amb_consumer $amb_b $amb_a $consumer $too_high $high $low"
-
-pkg_store_created=0
-if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
-then
-  mkdir "$root/pkg" || error 'cannot create package store for test'
-  pkg_store_created=1
-fi
-[ -d "$root/pkg" ] && [ ! -L "$root/pkg" ] || fail 'package store is not a real directory'
+consumer_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$consumer" conf) ||
+  error 'cannot resolve consumer system conf'
+consumer_state=${consumer_conf%/conf}
+[ ! -e "$consumer_state" ] && [ ! -L "$consumer_state" ] ||
+  skip 'temporary consumer state already exists'
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
@@ -170,118 +102,159 @@ cat > "$driver" <<'EOF_DRIVER'
 action=$1
 shift
 case $action in
-  integrate) pkg_integrate "$@";;
-  deintegrate) pkg_deintegrate "$@";;
-  *) return 2;;
+  integrate) pkg_integrate "$@" ;;
+  deintegrate) pkg_deintegrate "$@" ;;
+  *) exit 2 ;;
 esac
 EOF_DRIVER
-chmod 600 "$driver" || error 'cannot prepare integration driver'
+chmod 700 "$driver" || error 'cannot prepare integration driver'
 
-provider_data_root=$("$root/m" "$root/bin/sys/state-path" system sys pkg data) ||
-  error 'cannot resolve package provider state'
-providers_root=$provider_data_root/providers
-provider_data_parent=${provider_data_root%/data}
-provider_state_sys=${provider_data_parent%/pkg}
+resolver=$tmp/dependency-resolver
+cat > "$resolver" <<'EOF_RESOLVER'
+. "$m_LIB_DIR/sys/sh/pkg-facility.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg-dependency.lib.sh" || exit 3
+pkg_dependency_resolve "$@"
+EOF_RESOLVER
+chmod 700 "$resolver" || error 'cannot prepare dependency resolver'
 
-providers_root_created=0
-data_root_created=0
-data_parent_created=0
-state_sys_created=0
-[ -e "$providers_root" ] || [ -L "$providers_root" ] || providers_root_created=1
-[ -e "$provider_data_root" ] || [ -L "$provider_data_root" ] || data_root_created=1
-[ -e "$provider_data_parent" ] || [ -L "$provider_data_parent" ] || data_parent_created=1
-[ -e "$provider_state_sys" ] || [ -L "$provider_state_sys" ] || state_sys_created=1
-
-for facility in "$facility_main" "$facility_amb" "$facility_missing"
-do
-  [ ! -e "$providers_root/$facility" ] && [ ! -L "$providers_root/$facility" ] ||
-    error "temporary dependency facility already exists: $facility"
-done
-
-integrate_provider "$low" "$facility_main" 17 > "$tmp/low.out" 2> "$tmp/low.err" || {
-  cat "$tmp/low.err" >&2
-  fail 'cannot integrate lower compatible provider'
-}
-integrate_provider "$high" "$facility_main" 21 > "$tmp/high.out" 2> "$tmp/high.err" || {
-  cat "$tmp/high.err" >&2
-  fail 'cannot integrate highest compatible provider'
-}
-integrate_provider "$too_high" "$facility_main" 22 > "$tmp/top.out" 2> "$tmp/top.err" || {
-  cat "$tmp/top.err" >&2
-  fail 'cannot integrate out-of-range provider'
+make_payload()
+{
+  dir=$1
+  label=$2
+  mkdir -p "$dir" || return 1
+  printf '%s\n' "$label" > "$dir/marker" || return 1
 }
 
-integrate_consumer "$consumer" "$facility_main >=17 <22"   > "$tmp/consumer.out" 2> "$tmp/consumer.err" || {
-    cat "$tmp/consumer.err" >&2
-    fail 'compatible dependency consumer did not integrate'
-  }
-
-versions=$(run_pkg versions "$consumer" 2> "$tmp/consumer-versions.err") ||
-  fail 'integrated dependency consumer is not visible to pkg versions'
-[ "$versions" = "$consumer@1" ] ||
-  fail "dependency consumer versions output is unexpected: $versions"
-
-expect_status 1 selected-provider-protected run_pkg uninstall "$high@1"
-
-run_pkg uninstall "$low@1" > "$tmp/remove-low.out" 2> "$tmp/remove-low.err" || {
-  cat "$tmp/remove-low.err" >&2
-  fail 'lower unselected compatible provider remained referenced'
-}
-run_pkg uninstall "$too_high@1" > "$tmp/remove-top.out" 2> "$tmp/remove-top.err" || {
-  cat "$tmp/remove-top.err" >&2
-  fail 'out-of-range provider remained referenced'
+integrate_provider()
+{
+  pkg=$1
+  version=$2
+  compatibility=$3
+  range=$tmp/range-$pkg-$version
+  payload=$tmp/payload-$pkg-$version
+  mkdir "$range" || return 1
+  printf '%s %s\n' "$facility" "$compatibility" > "$range/facility" || return 1
+  make_payload "$payload" "$pkg-$version" || return 1
+  "$root/m" "$driver" integrate "$pkg" "$version" "$range" "$payload"
 }
 
-run_pkg uninstall "$consumer@1" > "$tmp/remove-consumer.out" 2> "$tmp/remove-consumer.err" || {
-  cat "$tmp/remove-consumer.err" >&2
-  fail 'cannot remove dependency consumer'
+integrate_consumer()
+{
+  range=$tmp/range-$consumer
+  payload=$tmp/payload-$consumer
+  rm -rf "$range" "$payload"
+  mkdir "$range" || return 1
+  printf '%s\n' "$facility >=17" > "$range/dependency" || return 1
+  make_payload "$payload" "$consumer" || return 1
+  "$root/m" "$driver" integrate "$consumer" 1 "$range" "$payload"
 }
 
-run_pkg uninstall "$high@1" > "$tmp/remove-high.out" 2> "$tmp/remove-high.err" || {
-  cat "$tmp/remove-high.err" >&2
-  fail 'selected provider remained blocked after consumer removal'
+resolve_consumer()
+{
+  "$root/m" "$resolver" "$root/pkg/$consumer@1/dependency" "$consumer" ""
 }
 
-integrate_provider "$amb_a" "$facility_amb" 21 > "$tmp/amb-a.out" 2> "$tmp/amb-a.err" ||
-  fail 'cannot integrate first ambiguous provider'
-integrate_provider "$amb_b" "$facility_amb" 21 > "$tmp/amb-b.out" 2> "$tmp/amb-b.err" ||
-  fail 'cannot integrate second ambiguous provider'
-
-amb_range=$tmp/range-$amb_consumer
-amb_payload=$tmp/payload-$amb_consumer
-mkdir "$amb_range" || error 'cannot create ambiguous consumer definition'
-printf '%s\n' "$facility_amb =21" > "$amb_range/dependency"
-make_payload "$amb_payload" "$amb_consumer" || error 'cannot create ambiguous consumer payload'
-
-"$root/m" "$driver" integrate "$amb_consumer" 1 "$amb_range" "$amb_payload"   > "$tmp/amb-consumer.out" 2> "$tmp/amb-consumer.err"
-status=$?
-[ "$status" -eq 1 ] || {
-  cat "$tmp/amb-consumer.err" >&2
-  fail "ambiguous dependency integration returned $status instead of 1"
+integrate_provider "$provider_a" 1 17 > "$tmp/prova1.out" 2> "$tmp/prova1.err" || {
+  cat "$tmp/prova1.err" >&2
+  fail 'cannot integrate provider A v1'
 }
-[ -d "$amb_payload" ] || fail 'ambiguous dependency failure consumed caller-owned payload'
-[ ! -e "$root/pkg/$amb_consumer@1" ] && [ ! -L "$root/pkg/$amb_consumer@1" ] ||
-  fail 'ambiguous dependency published a consumer package'
+run_pkg default "$provider_a@1" >/dev/null 2> "$tmp/prova1-default.err" ||
+  fail 'cannot select provider A v1 as package default'
 
-run_pkg uninstall "$amb_a@1" >/dev/null 2> "$tmp/remove-amb-a.err" ||
-  fail 'first ambiguous provider remained referenced after rejected consumer'
-run_pkg uninstall "$amb_b@1" >/dev/null 2> "$tmp/remove-amb-b.err" ||
-  fail 'second ambiguous provider remained referenced after rejected consumer'
+# A compatible installed provider alone is deliberately insufficient.
+expect_status 1 no-selector integrate_consumer
+[ ! -e "$root/pkg/$consumer@1" ] && [ ! -L "$root/pkg/$consumer@1" ] ||
+  fail 'consumer was integrated without a binding or facility default'
 
-missing_range=$tmp/range-$missing_consumer
-missing_payload=$tmp/payload-$missing_consumer
-mkdir "$missing_range" || error 'cannot create unsatisfied consumer definition'
-printf '%s\n' "$facility_missing >=1" > "$missing_range/dependency"
-make_payload "$missing_payload" "$missing_consumer" || error 'cannot create unsatisfied consumer payload'
-
-"$root/m" "$driver" integrate "$missing_consumer" 1 "$missing_range" "$missing_payload"   > "$tmp/missing.out" 2> "$tmp/missing.err"
-status=$?
-[ "$status" -eq 1 ] || {
-  cat "$tmp/missing.err" >&2
-  fail "unsatisfied dependency integration returned $status instead of 1"
+# A generic facility default resolves through the provider package default.
+run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/facility-default.err" ||
+  fail 'cannot set generic facility default'
+integrate_consumer > "$tmp/consumer.out" 2> "$tmp/consumer.err" || {
+  cat "$tmp/consumer.err" >&2
+  fail 'consumer did not integrate through facility default'
 }
-[ -d "$missing_payload" ] || fail 'unsatisfied dependency failure consumed caller-owned payload'
-[ ! -e "$root/pkg/$missing_consumer@1" ] && [ ! -L "$root/pkg/$missing_consumer@1" ] ||
-  fail 'unsatisfied dependency published a consumer package'
+[ -f "$root/pkg/$consumer@1/dependency" ] || fail 'consumer dependency declaration was not materialized'
+[ ! -e "$root/pkg/$consumer@1/binding" ] && [ ! -L "$root/pkg/$consumer@1/binding" ] ||
+  fail 'integration materialized a concrete provider binding in the package store'
 
+tab=$(printf '\t')
+resolved=$(resolve_consumer 2> "$tmp/resolve-a1.err") || {
+  cat "$tmp/resolve-a1.err" >&2
+  fail 'runtime dependency resolution failed through generic facility default'
+}
+[ "$resolved" = "$facility$tab$provider_a@1" ] ||
+  fail "generic facility default resolved unexpectedly: $resolved"
+
+# Generic selector follows a later provider package-default change.
+integrate_provider "$provider_a" 2 21 > "$tmp/prova2.out" 2> "$tmp/prova2.err" ||
+  fail 'cannot integrate provider A v2'
+run_pkg default "$provider_a@2" >/dev/null 2> "$tmp/prova2-default.err" ||
+  fail 'cannot move provider A package default to v2'
+resolved=$(resolve_consumer 2> "$tmp/resolve-a2.err") ||
+  fail 'generic selector failed after provider package default changed'
+[ "$resolved" = "$facility$tab$provider_a@2" ] ||
+  fail 'generic selector did not follow provider package default'
+
+# Explicit consumer binding overrides facility default.
+integrate_provider "$provider_b" 1 25 > "$tmp/provb.out" 2> "$tmp/provb.err" ||
+  fail 'cannot integrate provider B'
+run_pkg default "$provider_b@1" >/dev/null 2> "$tmp/provb-default.err" ||
+  fail 'cannot select provider B package default'
+run_pkg provider bind "$consumer" "$facility" "$provider_b" >/dev/null 2> "$tmp/bind-b.err" ||
+  fail 'cannot bind consumer to provider B'
+resolved=$(resolve_consumer 2> "$tmp/resolve-b.err") ||
+  fail 'consumer binding did not resolve'
+[ "$resolved" = "$facility$tab$provider_b@1" ] ||
+  fail 'consumer binding did not override facility default'
+
+# Explicit version is pinned even when the provider package default is different.
+run_pkg provider bind "$consumer" "$facility" "$provider_a@1" >/dev/null 2> "$tmp/bind-pinned.err" ||
+  fail 'cannot pin consumer to provider A v1'
+resolved=$(resolve_consumer 2> "$tmp/resolve-pinned.err") ||
+  fail 'pinned consumer binding did not resolve'
+[ "$resolved" = "$facility$tab$provider_a@1" ] ||
+  fail 'explicit version selector did not remain pinned'
+
+# An incompatible selected provider fails; resolver must not hunt for another compatible provider.
+integrate_provider "$provider_bad" 1 11 > "$tmp/provbad.out" 2> "$tmp/provbad.err" ||
+  fail 'cannot integrate incompatible provider'
+run_pkg default "$provider_bad@1" >/dev/null 2> "$tmp/provbad-default.err" ||
+  fail 'cannot select incompatible provider package default'
+run_pkg provider bind "$consumer" "$facility" "$provider_bad" >/dev/null 2> "$tmp/bind-bad.err" ||
+  fail 'cannot configure incompatible binding'
+expect_status 1 incompatible-selected resolve_consumer
+
+# Removing the binding restores inheritance from the facility default.
+run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2> "$tmp/bind-unset.err" ||
+  fail 'cannot remove consumer binding'
+resolved=$(resolve_consumer 2> "$tmp/resolve-inherited.err") ||
+  fail 'consumer did not resume facility-default inheritance'
+[ "$resolved" = "$facility$tab$provider_a@2" ] ||
+  fail 'binding removal did not restore facility-default provider'
+
+# Removing the facility default leaves no implicit fallback despite installed providers.
+run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/default-unset.err" ||
+  fail 'cannot remove facility default'
+expect_status 1 no-default-after-install resolve_consumer
+
+# Provider-selection configuration protects an explicitly referenced concrete.
+run_pkg provider default "$facility" "$provider_b@1" >/dev/null 2> "$tmp/default-exact.err" ||
+  fail 'cannot set exact facility default'
+run_pkg default -u -- "$provider_b" >/dev/null 2> "$tmp/provb-default-unset.err" ||
+  fail 'cannot clear provider B package default'
+expect_status 1 selected-provider-protected run_pkg uninstall "$provider_b@1"
+
+run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/default-final-unset.err" ||
+  fail 'cannot remove exact facility default'
+
+# Exact consumer binding protects a non-default concrete.
+run_pkg provider bind "$consumer" "$facility" "$provider_a@1" >/dev/null 2> "$tmp/bind-a1.err" ||
+  fail 'cannot bind consumer to provider A v1'
+expect_status 1 bound-provider-protected run_pkg uninstall "$provider_a@1"
+run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2> "$tmp/bind-final-unset.err" ||
+  fail 'cannot remove final consumer binding'
+
+printf 'provider-selection=ok\n'
+printf 'late-binding=ok\n'
+printf 'no-install-time-binding=ok\n'
 exit 0
