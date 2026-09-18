@@ -14,59 +14,6 @@ error()
   exit 3
 }
 
-rumiai_test_target_have()
-{
-  command -v "$1" >/dev/null 2>&1
-}
-
-rumiai_test_target_rumiai_os_origin_ok()
-{
-  candidate=$1
-  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
-  case "$origin" in
-    https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0 ;;
-  esac
-  return 1
-}
-
-rumiai_test_target_rumiai_os_validate()
-{
-  candidate=$1
-  [ -n "$candidate" ] || return 1
-  [ -f "$candidate/m" ] || return 1
-  [ -f "$candidate/rumiai-os" ] || return 1
-  [ -f "$candidate/rumiai-os-sh" ] || return 1
-  rumiai_test_target_rumiai_os_origin_ok "$candidate" || return 1
-  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
-  printf -- '%s\n' "$target_root"
-}
-
-rumiai_test_target_rumiai_os_find()
-{
-  start=$1
-  rumiai_test_target_have git || return 3
-  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
-  then
-    rumiai_test_target_rumiai_os_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
-    return 0
-  fi
-
-  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
-  while :
-  do
-    if rumiai_test_target_rumiai_os_validate "$candidate"
-    then
-      return 0
-    fi
-    [ "$candidate" != / ] || break
-    parent=${candidate%/*}
-    [ -n "$parent" ] || parent=/
-    [ "$parent" != "$candidate" ] || break
-    candidate=$parent
-  done
-  return 1
-}
-
 resolve_test_dir()
 {
   self=$0
@@ -85,22 +32,49 @@ expect_status()
   [ "$actual" -eq "$expected" ] || fail "unexpected status $actual, expected $expected: $*"
 }
 
-assert_no_staging()
+snapshot_parent()
 {
   parent=$1
-  for candidate in "$parent"/.mk-materialize-*
-  do
-    [ ! -e "$candidate" ] && [ ! -L "$candidate" ] || fail "staging residue remains: $candidate"
-  done
+  output=$2
+  command -p -- find "$parent" -mindepth 1 -maxdepth 1 -print | LC_ALL=C command -p -- sort > "$output"
+}
+
+assert_parent_delta()
+{
+  parent=$1
+  before=$2
+  expected=$3
+  after=$4
+
+  snapshot_parent "$parent" "$after" || error "cannot snapshot parent after materialization: $parent"
+  filtered="$after.filtered"
+
+  if [ -n "$expected" ]
+  then
+    command -p -- awk -v expected="$expected" '
+$0 == expected { count++; next }
+{ print }
+END { if (count != 1) exit 2 }
+' "$after" > "$filtered" || fail "materialization left an unexpected parent-directory delta: $parent"
+  else
+    command -p -- cp "$after" "$filtered" || error "cannot prepare parent comparison"
+  fi
+
+  command -p -- cmp -s "$before" "$filtered" ||
+    fail "materialization left unexpected parent-directory residue: $parent"
 }
 
 command -v git >/dev/null 2>&1 || fail "git runtime dependency is unavailable"
 
 test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
-group_dir=${test_dir%/*}
-rumiai_os_group=${group_dir%/*}
+rumiai_os_group=${test_dir%/*}
 tests_dir=${rumiai_os_group%/*}
 suite_root=${tests_dir%/*}
+
+target_library="$suite_root/lib/rumiai-os-target.lib"
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
 status=$?
 case "$status" in
@@ -145,22 +119,28 @@ printf -- '%s\n' source-mk > "$source_external/mk/payload" || error "cannot writ
 printf -- '%s\n' copy > "$definition_external/type" || error "cannot write materialization type"
 
 external_root="$out/external-root"
+external_before="$tmp/external.before"
+external_after="$tmp/external.after"
+snapshot_parent "$out" "$external_before" || error "cannot snapshot output parent"
 expect_status 0 "$command_path" materialize "$source_external" "$definition_external" "$external_root"
 [ "$(cat "$external_root/file")" = alpha ] || fail "external definition copy lost normal file"
 [ "$(cat "$external_root/.hidden")" = hidden ] || fail "external definition copy lost hidden file"
 [ "$(cat "$external_root/dir/nested")" = nested ] || fail "external definition copy lost nested file"
 [ "$(cat "$external_root/mk/payload")" = source-mk ] || fail "external definition incorrectly excluded source mk directory"
-assert_no_staging "$out"
+assert_parent_delta "$out" "$external_before" "$external_root" "$external_after"
 
 source_embedded="$tmp/source-embedded"
 mkdir -p "$source_embedded/mk" || error "cannot create embedded-definition fixture"
 printf -- '%s\n' embedded > "$source_embedded/file" || error "cannot write embedded source file"
 printf -- '%s\n' copy > "$source_embedded/mk/type" || error "cannot write embedded type"
 embedded_root="$out/embedded-root"
+embedded_before="$tmp/embedded.before"
+embedded_after="$tmp/embedded.after"
+snapshot_parent "$out" "$embedded_before" || error "cannot snapshot output parent"
 expect_status 0 "$command_path" materialize "$source_embedded" "$source_embedded/mk" "$embedded_root"
 [ "$(cat "$embedded_root/file")" = embedded ] || fail "embedded definition copy lost source file"
 [ ! -e "$embedded_root/mk" ] && [ ! -L "$embedded_root/mk" ] || fail "embedded definition was copied into useful root"
-assert_no_staging "$out"
+assert_parent_delta "$out" "$embedded_before" "$embedded_root" "$embedded_after"
 
 source_extra="$tmp/source-extra"
 definition_extra="$tmp/definition-extra"
@@ -169,9 +149,12 @@ printf -- '%s\n' payload > "$source_extra/file"
 printf -- '%s\n' copy > "$definition_extra/type"
 printf -- '%s\n' unexpected > "$definition_extra/extra"
 extra_root="$out/extra-root"
+extra_before="$tmp/extra.before"
+extra_after="$tmp/extra.after"
+snapshot_parent "$out" "$extra_before" || error "cannot snapshot output parent"
 expect_status 1 "$command_path" materialize "$source_extra" "$definition_extra" "$extra_root"
 [ ! -e "$extra_root" ] && [ ! -L "$extra_root" ] || fail "invalid definition published a useful root"
-assert_no_staging "$out"
+assert_parent_delta "$out" "$extra_before" "" "$extra_after"
 
 source_unsupported="$tmp/source-unsupported"
 definition_unsupported="$tmp/definition-unsupported"
@@ -179,9 +162,12 @@ mkdir "$source_unsupported" "$definition_unsupported" || error "cannot create un
 printf -- '%s\n' payload > "$source_unsupported/file"
 printf -- '%s\n' future > "$definition_unsupported/type"
 unsupported_root="$out/unsupported-root"
+unsupported_before="$tmp/unsupported.before"
+unsupported_after="$tmp/unsupported.after"
+snapshot_parent "$out" "$unsupported_before" || error "cannot snapshot output parent"
 expect_status 1 "$command_path" materialize "$source_unsupported" "$definition_unsupported" "$unsupported_root"
 [ ! -e "$unsupported_root" ] && [ ! -L "$unsupported_root" ] || fail "unsupported type published a useful root"
-assert_no_staging "$out"
+assert_parent_delta "$out" "$unsupported_before" "" "$unsupported_after"
 
 source_symlink="$tmp/source-symlink"
 definition_symlink="$tmp/definition-symlink"
@@ -190,32 +176,50 @@ printf -- '%s\n' payload > "$source_symlink/file"
 ln -s file "$source_symlink/link" || error "cannot create source symlink"
 printf -- '%s\n' copy > "$definition_symlink/type"
 symlink_root="$out/symlink-root"
+symlink_before="$tmp/symlink.before"
+symlink_after="$tmp/symlink.after"
+snapshot_parent "$out" "$symlink_before" || error "cannot snapshot output parent"
 expect_status 1 "$command_path" materialize "$source_symlink" "$definition_symlink" "$symlink_root"
 [ ! -e "$symlink_root" ] && [ ! -L "$symlink_root" ] || fail "symlink source published a useful root"
-assert_no_staging "$out"
+assert_parent_delta "$out" "$symlink_before" "" "$symlink_after"
 
 source_operand_link="$tmp/source-operand-link"
 ln -s "$source_external" "$source_operand_link" || error "cannot create source operand symlink"
 operand_link_root="$out/operand-link-root"
+operand_link_before="$tmp/operand-link.before"
+operand_link_after="$tmp/operand-link.after"
+snapshot_parent "$out" "$operand_link_before" || error "cannot snapshot output parent"
 expect_status 1 "$command_path" materialize "$source_operand_link" "$definition_external" "$operand_link_root"
 [ ! -e "$operand_link_root" ] && [ ! -L "$operand_link_root" ] || fail "symlink source operand published a useful root"
+assert_parent_delta "$out" "$operand_link_before" "" "$operand_link_after"
 
 existing_root="$out/existing-root"
 mkdir "$existing_root" || error "cannot create destination collision fixture"
+existing_before="$tmp/existing.before"
+existing_after="$tmp/existing.after"
+snapshot_parent "$out" "$existing_before" || error "cannot snapshot output parent"
 expect_status 1 "$command_path" materialize "$source_external" "$definition_external" "$existing_root"
 [ -d "$existing_root" ] || fail "existing destination was modified destructively"
+assert_parent_delta "$out" "$existing_before" "" "$existing_after"
 
 inside_source="$source_external/generated-root"
+inside_before="$tmp/inside.before"
+inside_after="$tmp/inside.after"
+snapshot_parent "$source_external" "$inside_before" || error "cannot snapshot source parent"
 expect_status 1 "$command_path" materialize "$source_external" "$definition_external" "$inside_source"
 [ ! -e "$inside_source" ] && [ ! -L "$inside_source" ] || fail "destination inside source was created"
+assert_parent_delta "$source_external" "$inside_before" "" "$inside_after"
 
 source_nested_definition="$tmp/source-nested-definition"
 mkdir -p "$source_nested_definition/config/mk" || error "cannot create nested-definition fixture"
 printf -- '%s\n' payload > "$source_nested_definition/file"
 printf -- '%s\n' copy > "$source_nested_definition/config/mk/type"
 nested_definition_root="$out/nested-definition-root"
+nested_before="$tmp/nested.before"
+nested_after="$tmp/nested.after"
+snapshot_parent "$out" "$nested_before" || error "cannot snapshot output parent"
 expect_status 1 "$command_path" materialize "$source_nested_definition" "$source_nested_definition/config/mk" "$nested_definition_root"
 [ ! -e "$nested_definition_root" ] && [ ! -L "$nested_definition_root" ] || fail "unsupported nested definition published a useful root"
-assert_no_staging "$out"
+assert_parent_delta "$out" "$nested_before" "" "$nested_after"
 
 exit 0
