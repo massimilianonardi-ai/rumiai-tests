@@ -228,7 +228,7 @@ discover_tests_to_file() {
 }
 
 if [ "$list_mode" -eq 1 ]; then
-    list_work=${TMPDIR:-/tmp}/rumiai-test-list-$
+    list_work=${TMPDIR:-/tmp}/rumiai-test-list-$$
     [ ! -e "$list_work" ] || fatal 'temporary discovery path already exists'
     mkdir "$list_work" || fatal 'cannot create temporary discovery directory'
     list_file=$list_work/tests

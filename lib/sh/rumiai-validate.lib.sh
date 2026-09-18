@@ -249,7 +249,7 @@ prepare_validation_record_tree() {
     recorded_commit=$2
     record_name=${record_dir##*/}
     relative_record=validations/$record_name
-    index_file=${TMPDIR:-/tmp}/rumiai-validate-record-index-$-$record_name
+    index_file=${TMPDIR:-/tmp}/rumiai-validate-record-index-$$-$record_name
 
     rm -f "$index_file" 2>/dev/null || return 1
     if git -C "$suite_root" ls-tree -r --name-only "$recorded_commit" -- "$relative_record" 2>/dev/null | grep . >/dev/null 2>&1; then
