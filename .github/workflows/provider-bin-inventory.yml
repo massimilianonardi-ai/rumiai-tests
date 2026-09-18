@@ -6,7 +6,7 @@ on:
       - validation/provider-bin-inventory-20260918
 
 jobs:
-  inventory:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,17 +20,70 @@ jobs:
       - name: Catalog revision
         shell: bash
         run: git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main
-      - name: Inventory Temurin and GraalVM
+      - name: Install projected providers
         shell: bash
         run: |
           set -eu
           cd target
           for p in temurin graalvm
           do
-            echo "=== install $p ==="
             ./m ./bin/sys/pkg install "$p"
             concrete=$(./m ./bin/sys/pkg default "$p")
-            echo "CONCRETE=$concrete"
-            echo "=== $p root/bin ==="
-            find "./pkg/$concrete/root/bin" -mindepth 1 -maxdepth 1 \( -type f -o -type l \) -printf '%f\n' | LC_ALL=C sort
+            test -x "./pkg/$concrete/facility-cmd/java/java"
+            test -f "./pkg/$concrete/facility-env/java"
           done
+
+  mac-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: e934fcfb09e32d7d4eef10a913161fb0d51939be
+          path: target
+      - name: Normalize origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - name: Catalog revision
+        shell: bash
+        run: git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main
+      - name: Install and inventory projected providers
+        shell: bash
+        run: |
+          set -eu
+          cd target
+          ./m ./bin/sys/pkg install temurin
+          t=$(./m ./bin/sys/pkg default temurin)
+          echo "TEMURIN=$t"
+          find "./pkg/$t/root" -maxdepth 4 -type f -perm -111 | sed "s#^./pkg/$t/root/##" | LC_ALL=C sort | head -100
+          test -x "./pkg/$t/facility-cmd/java/java"
+          ./m ./bin/sys/pkg install graalvm
+          g=$(./m ./bin/sys/pkg default graalvm)
+          echo "GRAALVM=$g"
+          find "./pkg/$g/root" -maxdepth 4 -type f -perm -111 | sed "s#^./pkg/$g/root/##" | LC_ALL=C sort | head -100
+          test -x "./pkg/$g/facility-cmd/java/java"
+
+  mac-intel:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: e934fcfb09e32d7d4eef10a913161fb0d51939be
+          path: target
+      - name: Normalize origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - name: Catalog revision
+        shell: bash
+        run: git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main
+      - name: Install and inventory Temurin
+        shell: bash
+        run: |
+          set -eu
+          cd target
+          ./m ./bin/sys/pkg install temurin
+          t=$(./m ./bin/sys/pkg default temurin)
+          echo "TEMURIN=$t"
+          find "./pkg/$t/root" -maxdepth 4 -type f -perm -111 | sed "s#^./pkg/$t/root/##" | LC_ALL=C sort | head -100
+          test -x "./pkg/$t/facility-cmd/java/java"
