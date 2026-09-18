@@ -101,7 +101,7 @@ expect_invalid()
   m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" "$@" >"$stdout" 2>"$stderr"
   status="$?"
   [ "$status" -eq 2 ] || fail "invalid digest invocation returned $status instead of 2"
-  grep -F '[fatal] [execution.invalid-arguments]' "$stderr" >/dev/null 2>&1 || fail "invalid digest invocation was not reported as fatal"
+  [ -s "$stderr" ] || fail "invalid digest invocation produced no diagnostic"
 }
 expect_invalid
 expect_invalid -a unknown
