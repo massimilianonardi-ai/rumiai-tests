@@ -5,95 +5,44 @@ fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
-rumiai_test_target_origin_ok()
-{
-  candidate="$1"
-  origin="$(git -C "$candidate" config --get remote.origin.url 2>/dev/null)" || return 1
-  case "$origin" in
-    https://github.com/massimilianonardi-ai/rumiai-os.git|\
-    git@github.com:massimilianonardi-ai/rumiai-os.git|\
-    ssh://git@github.com/massimilianonardi-ai/rumiai-os.git)
-      return 0
-      ;;
-  esac
-  return 1
-}
-
-rumiai_test_target_validate()
-{
-  candidate="$1"
-  [ -n "$candidate" ] || return 1
-  [ -f "$candidate/m" ] && [ -f "$candidate/rumiai-os" ] && [ -f "$candidate/rumiai-os-sh" ] || return 1
-  rumiai_test_target_origin_ok "$candidate" || return 1
-  target_root="$(CDPATH= cd -- "$candidate" 2>/dev/null && pwd -P)" || return 1
-  [ -f "$target_root/m" ] && [ -f "$target_root/rumiai-os" ] && [ -f "$target_root/rumiai-os-sh" ] || return 1
-  printf '%s\n' "$target_root"
-}
-
-rumiai_test_target_find()
-{
-  start="$1"
-  command -v git >/dev/null 2>&1 || return 3
-  if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]
-  then
-    rumiai_test_target_validate "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2
-    return 0
-  fi
-  candidate="$(CDPATH= cd -- "$start" 2>/dev/null && pwd -P)" || return 3
-  while :
-  do
-    if rumiai_test_target_validate "$candidate"; then return 0; fi
-    [ "$candidate" != / ] || break
-    parent="${candidate%/*}"
-    [ -n "$parent" ] || parent=/
-    [ "$parent" != "$candidate" ] || break
-    candidate="$parent"
-  done
-  return 1
-}
-
 resolve_test_dir()
 {
-  self="$0"
-  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
-  self_dir="${self%/*}"
+  self=$0
+  case "$self" in
+    */*) :;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1;;
+  esac
+  self_dir=${self%/*}
   [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-make_fixture()
-{
-  source_root="$1"
-  fixture_root="$2"
-  mkdir -p "$fixture_root/pkg" "$fixture_root/src" || return 1
-  for fixture_file in m rumiai-os rumiai-os-sh product-name product-version
-  do
-    cp "$source_root/$fixture_file" "$fixture_root/$fixture_file" || return 1
-  done
-  for fixture_dir in bin lib res state
-  do
-    cp -R "$source_root/$fixture_dir" "$fixture_root/$fixture_dir" || return 1
-  done
-  chmod u+x "$fixture_root/m" "$fixture_root/rumiai-os" "$fixture_root/rumiai-os-sh" || return 1
-}
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+shell_group=${test_dir%/*}
+rumiai_os_group=${shell_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
 
-test_dir="$(resolve_test_dir)" || error 'cannot resolve test directory'
-group="${test_dir%/*}"
-rumiai_os_group="${group%/*}"
-tests_dir="${rumiai_os_group%/*}"
-suite_root="${tests_dir%/*}"
-source_root="$(rumiai_test_target_find "$suite_root")"
-status="$?"
-case "$status" in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
-[ -x "$source_root/m" ] || fail 'm target runtime is not executable'
-[ -x "$source_root/bin/sys/shell" ] || fail 'shell target command is not executable'
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm target runtime is not executable'
+[ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
 
 tmp="${TMPDIR:-/tmp}/rumiai-shell-bash-alias-preservation-$$"
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-fixture_root="$tmp/rumiai-os"
-make_fixture "$source_root" "$fixture_root" || error 'cannot materialize isolated rumiai-os fixture'
 
 bash_path="$(command -v bash 2>/dev/null)" || skip 'Bash is unavailable on this host'
 home="$tmp/home"
@@ -115,7 +64,7 @@ EOT
   m_SHELL_EXT="$ext"
   TERM=dumb
   export HOME SHELL m_SHELL_EXT TERM
-  "$fixture_root/m" "$fixture_root/bin/sys/shell" -i -c '
+  "$root/m" "$root/bin/sys/shell" -i -c '
     shopt -q expand_aliases || exit 41
     alias log >/dev/null 2>&1 || exit 42
     alias printf >/dev/null 2>&1 || exit 43
