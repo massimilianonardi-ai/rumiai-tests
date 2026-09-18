@@ -23,6 +23,10 @@ cleanup()
 {
   trap - 0 HUP INT TERM
 
+  if [ "${java_default_set-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg provider default -u -- java >/dev/null 2>&1 || :
+  fi
   if [ "${keycloak_installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     run_pkg uninstall keycloak >/dev/null 2>&1 || :
@@ -99,6 +103,14 @@ then
   skip 'Keycloak package state already exists in the supplied target'
 fi
 
+run_pkg provider default java > "$tmp/java-default-preexisting.out" 2> "$tmp/java-default-preexisting.err"
+status=$?
+case $status in
+  0) skip 'java facility default is already configured in the supplied target';;
+  1) :;;
+  *) fail "cannot determine pre-existing java facility default (status $status)";;
+esac
+
 run_pkg versions temurin > "$tmp/temurin-preexisting.out" 2> "$tmp/temurin-preexisting.err"
 status=$?
 case $status in
@@ -123,6 +135,12 @@ temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
 }
 [ -n "$temurin_identity" ] || fail 'Temurin provider identity is empty'
 
+run_pkg provider default java temurin > "$tmp/java-default-set.out" 2> "$tmp/java-default-set.err" || {
+  cat "$tmp/java-default-set.err" >&2
+  fail 'cannot configure Temurin as java facility default'
+}
+java_default_set=1
+
 printf '%s\n' "$TEST_ID: installing current catalog-selected Keycloak" >&2
 run_pkg install keycloak > "$tmp/install.out" 2> "$tmp/install.err" || {
   cat "$tmp/install.out" >&2
@@ -136,6 +154,11 @@ identity=$(run_pkg default keycloak 2> "$tmp/default.err") || {
   fail 'installed Keycloak has no queryable current default'
 }
 [ -n "$identity" ] || fail 'Keycloak current identity is empty'
+
+[ ! -e "$root/pkg/$identity/binding" ] && [ ! -L "$root/pkg/$identity/binding" ] ||
+  fail 'Keycloak install materialized an install-time provider binding'
+[ ! -e "$root/pkg/$identity/env" ] && [ ! -L "$root/pkg/$identity/env" ] ||
+  fail 'Keycloak still contains provider-specific package environment'
 
 versions=$(run_pkg versions keycloak 2> "$tmp/versions.err") || fail 'pkg versions keycloak failed'
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||

@@ -22,6 +22,10 @@ run_pkg()
 cleanup()
 {
   trap - 0 HUP INT TERM
+  if [ "${java_default_set-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg provider default -u -- java >/dev/null 2>&1 || :
+  fi
   if [ "${maven_installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     run_pkg uninstall maven >/dev/null 2>&1 || :
@@ -89,6 +93,14 @@ then
   skip 'Maven package state already exists in the supplied target'
 fi
 
+run_pkg provider default java > "$tmp/java-default-preexisting.out" 2> "$tmp/java-default-preexisting.err"
+status=$?
+case $status in
+  0) skip 'java facility default is already configured in the supplied target';;
+  1) :;;
+  *) fail "cannot determine pre-existing java facility default (status $status)";;
+esac
+
 run_pkg versions temurin > "$tmp/temurin-preexisting.out" 2> "$tmp/temurin-preexisting.err"
 status=$?
 case $status in
@@ -114,6 +126,12 @@ temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
 }
 [ -n "$temurin_identity" ] || fail 'Temurin provider identity is empty'
 
+run_pkg provider default java temurin > "$tmp/java-default-set.out" 2> "$tmp/java-default-set.err" || {
+  cat "$tmp/java-default-set.err" >&2
+  fail 'cannot configure Temurin as java facility default'
+}
+java_default_set=1
+
 printf '%s\n' "$TEST_ID: installing current catalog-selected Maven" >&2
 run_pkg install maven > "$tmp/install.out" 2> "$tmp/install.err" || {
   cat "$tmp/install.out" >&2
@@ -128,6 +146,11 @@ identity=$(run_pkg default maven 2> "$tmp/default.err") || {
 }
 [ -n "$identity" ] || fail 'Maven current identity is empty'
 
+[ ! -e "$root/pkg/$identity/binding" ] && [ ! -L "$root/pkg/$identity/binding" ] ||
+  fail 'Maven install materialized an install-time provider binding'
+[ ! -e "$root/pkg/$identity/env" ] && [ ! -L "$root/pkg/$identity/env" ] ||
+  fail 'Maven still contains provider-specific package environment'
+
 "$root/m" mvn --version > "$tmp/version.out" 2> "$tmp/version.err" || {
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2
@@ -137,6 +160,8 @@ cat "$tmp/version.out" "$tmp/version.err" > "$tmp/version.combined" ||
   error 'cannot combine Maven version output'
 grep -F 'Apache Maven' "$tmp/version.combined" >/dev/null 2>&1 ||
   fail 'Maven public command did not identify Apache Maven'
+grep -F "Java home: $root/pkg/$temurin_identity/root" "$tmp/version.combined" >/dev/null 2>&1 ||
+  fail 'Maven did not receive JAVA_HOME from the selected Temurin facility projection'
 
 printf 'installed=%s\n' "$identity"
 printf 'java-provider=%s\n' "$temurin_identity"
