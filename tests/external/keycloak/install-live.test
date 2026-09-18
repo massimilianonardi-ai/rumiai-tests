@@ -27,9 +27,9 @@ cleanup()
   then
     run_pkg uninstall keycloak >/dev/null 2>&1 || :
   fi
-  if [ "${java_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  if [ "${temurin_installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
-    run_pkg uninstall java >/dev/null 2>&1 || :
+    run_pkg uninstall temurin >/dev/null 2>&1 || :
   fi
 
   [ -z "${keycloak_system_state-}" ] || rm -rf "$keycloak_system_state" 2>/dev/null || :
@@ -99,29 +99,29 @@ then
   skip 'Keycloak package state already exists in the supplied target'
 fi
 
-run_pkg versions java > "$tmp/java-preexisting.out" 2> "$tmp/java-preexisting.err"
+run_pkg versions temurin > "$tmp/temurin-preexisting.out" 2> "$tmp/temurin-preexisting.err"
 status=$?
 case $status in
   0) :;;
   1)
-    printf '%s\n' "$TEST_ID: installing Java provider" >&2
-    run_pkg install java > "$tmp/java-install.out" 2> "$tmp/java-install.err" || {
-      cat "$tmp/java-install.err" >&2
-      fail 'pkg install java failed'
+    printf '%s\n' "$TEST_ID: installing Temurin provider" >&2
+    run_pkg install temurin > "$tmp/temurin-install.out" 2> "$tmp/temurin-install.err" || {
+      cat "$tmp/temurin-install.err" >&2
+      fail 'pkg install temurin failed'
     }
-    java_installed=1
+    temurin_installed=1
     ;;
   *)
-    cat "$tmp/java-preexisting.err" >&2
-    fail "cannot determine pre-existing Java installation state (status $status)"
+    cat "$tmp/temurin-preexisting.err" >&2
+    fail "cannot determine pre-existing Temurin installation state (status $status)"
     ;;
 esac
 
-java_identity=$(run_pkg default java 2> "$tmp/java-default.err") || {
-  cat "$tmp/java-default.err" >&2
-  fail 'Java provider has no queryable current default'
+temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
+  cat "$tmp/temurin-default.err" >&2
+  fail 'Temurin provider has no queryable current package default'
 }
-[ -n "$java_identity" ] || fail 'Java provider identity is empty'
+[ -n "$temurin_identity" ] || fail 'Temurin provider identity is empty'
 
 printf '%s\n' "$TEST_ID: installing current catalog-selected Keycloak" >&2
 run_pkg install keycloak > "$tmp/install.out" 2> "$tmp/install.err" || {
@@ -160,7 +160,7 @@ done
 [ -s "$tmp/version.out" ] || fail 'Keycloak --version produced no output'
 
 printf 'installed=%s\n' "$identity"
-printf 'java-provider=%s\n' "$java_identity"
+printf 'java-provider=%s\n' "$temurin_identity"
 printf 'conf-state=ok\n'
 printf 'data-state=ok\n'
 printf 'public-command=ok\n'
