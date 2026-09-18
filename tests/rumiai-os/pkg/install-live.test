@@ -95,6 +95,21 @@ osarch_update="$fixture/bin/sys/osarch-update"
 [ "$(readlink "$fixture/bin/ext-osarch")" = "ext-$osarch" ] || fail "ext-osarch selector targets the wrong platform"
 
 printf -- '%s\n' "$TEST_ID: live install started; this test uses the current pkg-catalog and official jq release" >&2
+
+invalid_err="$tmp/invalid-only.err"
+(
+    cd "$fixture" || exit 90
+    ./m pkg install 'bad@@version'
+) > "$tmp/invalid-only.out" 2> "$invalid_err"
+invalid_status=$?
+[ "$invalid_status" -eq 1 ] || {
+    cat "$invalid_err" >&2
+    fail "invalid-only install returned $invalid_status instead of 1"
+}
+grep -F 'reason="invalid-operand"' "$invalid_err" >/dev/null || fail "invalid-only install did not report invalid-operand"
+grep -F 'operand="bad@@version"' "$invalid_err" >/dev/null || fail "invalid-only install did not identify the invalid operand"
+[ ! -e "$fixture/pkg" ] && [ ! -L "$fixture/pkg" ] || fail "invalid-only install created the package store"
+
 if ! (
     cd "$fixture" || exit 90
     ./m pkg install 'jq@jq-1.8.2'
@@ -127,6 +142,52 @@ fi
 
 jq_version="$(cd "$fixture" && ./m jq --version)" || fail "jq is not executable through the normal m command path"
 [ "$jq_version" = 'jq-1.8.2' ] || fail "jq --version returned $jq_version, expected jq-1.8.2"
+
+already_err="$tmp/already-installed.err"
+(
+    cd "$fixture" || exit 90
+    ./m pkg install 'jq@jq-1.8.2'
+) > "$tmp/already-installed.out" 2> "$already_err"
+already_status=$?
+[ "$already_status" -eq 1 ] || {
+    cat "$already_err" >&2
+    fail "already-installed jq returned $already_status instead of 1"
+}
+grep -F 'reason="already-installed"' "$already_err" >/dev/null || fail "already-installed jq did not report already-installed"
+grep -F "already-installed=\"jq@jq-1.8.2!$osarch\"" "$already_err" >/dev/null || fail "already-installed diagnostic did not identify jq concrete"
+grep -F "current-default=\"jq@jq-1.8.2!$osarch\"" "$already_err" >/dev/null || fail "already-installed diagnostic did not report current default"
+[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "already-installed attempt changed jq concrete"
+[ "$(cd "$fixture" && ./m jq --version)" = 'jq-1.8.2' ] || fail "already-installed attempt broke jq execution"
+
+if ! (
+    cd "$fixture" || exit 90
+    ./m pkg uninstall jq
+)
+then
+    fail "cannot uninstall jq before mixed-operand reinstall"
+fi
+[ ! -e "$concrete" ] && [ ! -L "$concrete" ] || fail "jq concrete survived uninstall before mixed test"
+[ ! -e "$selector" ] && [ ! -L "$selector" ] || fail "jq selector survived uninstall before mixed test"
+[ ! -e "$public_command" ] && [ ! -L "$public_command" ] || fail "jq public binding survived uninstall before mixed test"
+
+mixed_err="$tmp/mixed.err"
+(
+    cd "$fixture" || exit 90
+    ./m pkg install 'bad@@version' 'jq@jq-1.8.2'
+) > "$tmp/mixed.out" 2> "$mixed_err"
+mixed_status=$?
+[ "$mixed_status" -eq 1 ] || {
+    cat "$mixed_err" >&2
+    fail "mixed install returned $mixed_status instead of 1"
+}
+grep -F 'reason="invalid-operand"' "$mixed_err" >/dev/null || fail "mixed install did not report invalid operand"
+grep -F 'operand="bad@@version"' "$mixed_err" >/dev/null || fail "mixed install did not identify invalid operand"
+[ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "mixed install did not install valid jq operand"
+[ -L "$selector" ] || fail "mixed install did not restore jq selector"
+[ "$(readlink "$selector")" = "jq@jq-1.8.2!$osarch" ] || fail "mixed install restored wrong jq selector"
+[ -L "$public_command" ] || fail "mixed install did not restore jq public binding"
+jq_version="$(cd "$fixture" && ./m jq --version)" || fail "mixed install did not leave jq executable"
+[ "$jq_version" = 'jq-1.8.2' ] || fail "mixed install jq --version returned $jq_version, expected jq-1.8.2"
 
 pkg_cache="$($fixture/m "$fixture/bin/sys/state-path" system sys pkg cache)" || fail "cannot resolve system pkg cache state"
 catalog="$pkg_cache/pkg-catalog"
