@@ -122,7 +122,7 @@ do
 
   printf "%s\t%s\t%s\t%s\t%s\n" "$relative" "$type" "$mode" "$target" "$digest_value" >> "$out" || exit 96
 done
-' sh "$rumiai_test_package_release_inventory_root" "$rumiai_test_package_release_inventory_unsorted" "$rumiai_test_package_release_inventory_stat_style" "$rumiai_test_package_release_fixture/m" "$rumiai_test_package_release_fixture/bin/sys/digest" {} + || return 1
+' sh "$rumiai_test_package_release_inventory_root" "$rumiai_test_package_release_inventory_unsorted" "$rumiai_test_package_release_inventory_stat_style" "$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/digest" {} + || return 1
 
   LC_ALL=C command -p -- sort "$rumiai_test_package_release_inventory_unsorted" > "$rumiai_test_package_release_inventory_output" || return 1
   command -p -- rm -f -- "$rumiai_test_package_release_inventory_unsorted" || return 1
@@ -239,6 +239,14 @@ rumiai_test_package_release_cleanup()
     wait "$rumiai_test_package_release_gui_pid" 2>/dev/null || :
   fi
   rumiai_test_package_release_gui_pid=
+
+  if [ "${rumiai_test_package_release_cleanup_enabled-0}" -eq 1 ] && [ -n "${rumiai_test_package_release_target-}" ]
+  then
+    "$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/pkg" uninstall "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" >/dev/null 2>&1 || :
+    [ -z "${rumiai_test_package_release_system_pkg_state-}" ] || command -p -- rm -rf -- "$rumiai_test_package_release_system_pkg_state" 2>/dev/null || :
+    [ -z "${rumiai_test_package_release_user_pkg_state-}" ] || command -p -- rm -rf -- "$rumiai_test_package_release_user_pkg_state" 2>/dev/null || :
+  fi
+
   if [ -n "${rumiai_test_package_release_tmp-}" ]
   then
     command -p -- rm -rf -- "$rumiai_test_package_release_tmp" 2>/dev/null || :
@@ -267,6 +275,23 @@ rumiai_test_package_release_gui_launch()
   rumiai_test_package_release_gui_status=$?
   rumiai_test_package_release_gui_pid=
   return "$rumiai_test_package_release_gui_status"
+}
+
+rumiai_test_package_release_public_command()
+{
+  [ "$#" -eq 1 ] || return 2
+  rumiai_test_package_release_public_name=$1
+
+  for rumiai_test_package_release_public_path in \
+    "$rumiai_test_package_release_target/bin/ext-$rumiai_test_package_release_osarch/$rumiai_test_package_release_public_name" \
+    "$rumiai_test_package_release_target/bin/ext/$rumiai_test_package_release_public_name"
+  do
+    [ -e "$rumiai_test_package_release_public_path" ] || [ -L "$rumiai_test_package_release_public_path" ] || continue
+    [ -x "$rumiai_test_package_release_public_path" ] || return 1
+    printf -- '%s\n' "$rumiai_test_package_release_public_path"
+    return 0
+  done
+  return 1
 }
 
 rumiai_test_package_release_inventory_equal()
@@ -301,7 +326,6 @@ rumiai_test_package_release_run()
   done
 
   . "$rumiai_test_package_release_suite_root/lib/rumiai-os-target.lib" || rumiai_test_package_release_error "cannot load target helper"
-  . "$rumiai_test_package_release_suite_root/lib/rumiai-os-fixture.lib" || rumiai_test_package_release_error "cannot load fixture helper"
 
   command -v git >/dev/null 2>&1 || rumiai_test_package_release_skip "git is unavailable"
   command -v cmp >/dev/null 2>&1 || rumiai_test_package_release_error "cmp is unavailable"
@@ -324,10 +348,8 @@ rumiai_test_package_release_run()
   trap 'rumiai_test_package_release_cleanup' 0
   trap 'rumiai_test_package_release_cleanup; exit 3' HUP INT TERM
 
-  rumiai_test_package_release_fixture="$rumiai_test_package_release_tmp/root"
-  rumiai_test_fixture_rumiai_os_create "$rumiai_test_package_release_source_root" "$rumiai_test_package_release_fixture" || rumiai_test_package_release_error "cannot materialize isolated fixture"
-  rumiai_test_package_release_fixture=$(CDPATH= cd -- "$rumiai_test_package_release_fixture" 2>/dev/null && pwd -P) || rumiai_test_package_release_error "cannot canonicalize fixture root"
-  PATH="$rumiai_test_package_release_fixture/bin/sys:$PATH"
+  rumiai_test_package_release_target=$(CDPATH= cd -- "$rumiai_test_package_release_source_root" 2>/dev/null && pwd -P) || rumiai_test_package_release_error "cannot canonicalize supplied target root"
+  PATH="$rumiai_test_package_release_target/bin/sys:$PATH"
   export PATH
 
   rumiai_test_package_release_runtime_probe="$rumiai_test_package_release_tmp/osarch"
@@ -350,12 +372,32 @@ EOF_OSARCH
     esac
   fi
 
+  rumiai_test_package_release_system_conf=$("$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/state-path" system pkg "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" conf) || rumiai_test_package_release_error "cannot resolve package system state"
+  rumiai_test_package_release_user_conf=$("$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/state-path" user pkg "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" conf) || rumiai_test_package_release_error "cannot resolve package user state"
+  rumiai_test_package_release_system_pkg_state=${rumiai_test_package_release_system_conf%/conf}
+  rumiai_test_package_release_user_pkg_state=${rumiai_test_package_release_user_conf%/conf}
+
+  if [ -e "$rumiai_test_package_release_system_pkg_state" ] || [ -L "$rumiai_test_package_release_system_pkg_state" ] || \
+     [ -e "$rumiai_test_package_release_user_pkg_state" ] || [ -L "$rumiai_test_package_release_user_pkg_state" ]
+  then
+    rumiai_test_package_release_skip "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE state already exists in the supplied target"
+  fi
+
+  if "$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/pkg" versions "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" > "$rumiai_test_package_release_tmp/preexisting.out" 2> "$rumiai_test_package_release_tmp/preexisting.err"
+  then
+    rumiai_test_package_release_skip "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE is already installed in the supplied target"
+  else
+    rumiai_test_package_release_status=$?
+    [ "$rumiai_test_package_release_status" -eq 1 ] || rumiai_test_package_release_error "cannot determine pre-existing package state"
+  fi
+
+  rumiai_test_package_release_cleanup_enabled=1
   printf -- '%s\n' "$TEST_ID: live install of $RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE for $rumiai_test_package_release_osarch" >&2
-  "$rumiai_test_package_release_fixture/bin/sys/pkg" install "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" || rumiai_test_package_release_fail "pkg install $RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE failed"
+  "$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/pkg" install "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" || rumiai_test_package_release_fail "pkg install $RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE failed"
 
   rumiai_test_package_release_concrete=
   rumiai_test_package_release_concrete_count=0
-  for rumiai_test_package_release_candidate in "$rumiai_test_package_release_fixture/pkg/$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE@"*"!$rumiai_test_package_release_osarch"
+  for rumiai_test_package_release_candidate in "$rumiai_test_package_release_target/pkg/$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE@"*"!$rumiai_test_package_release_osarch"
   do
     [ -e "$rumiai_test_package_release_candidate" ] || [ -L "$rumiai_test_package_release_candidate" ] || continue
     rumiai_test_package_release_concrete_count=$((rumiai_test_package_release_concrete_count + 1))
@@ -377,7 +419,7 @@ EOF_OSARCH
       rumiai_test_package_release_fail "missing direct link $rumiai_test_package_release_command"
   done
 
-  rumiai_test_package_release_cache=$("$rumiai_test_package_release_fixture/m" "$rumiai_test_package_release_fixture/bin/sys/state-path" system sys pkg cache) || rumiai_test_package_release_fail "cannot resolve pkg cache state"
+  rumiai_test_package_release_cache=$("$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/state-path" system sys pkg cache) || rumiai_test_package_release_fail "cannot resolve pkg cache state"
   rumiai_test_package_release_catalog="$rumiai_test_package_release_cache/pkg-catalog"
   [ -d "$rumiai_test_package_release_catalog/.git" ] || rumiai_test_package_release_fail "live catalog cache missing"
   rumiai_test_package_release_catalog_head=$(git -C "$rumiai_test_package_release_catalog" rev-parse --verify HEAD 2>/dev/null) || rumiai_test_package_release_fail "cannot read catalog HEAD"
@@ -397,10 +439,8 @@ EOF_OSARCH
   rumiai_test_package_release_after="$rumiai_test_package_release_tmp/root.after"
   rumiai_test_package_release_inventory "$rumiai_test_package_release_root" "$rumiai_test_package_release_before" "$rumiai_test_package_release_stat_style" || rumiai_test_package_release_error "cannot inventory package root before runtime"
 
-  rumiai_test_package_release_analysis_home="$rumiai_test_package_release_tmp/analyzer-home"
-  command -p -- mkdir -- "$rumiai_test_package_release_analysis_home" || rumiai_test_package_release_error "cannot create analyzer HOME"
   rumiai_test_package_release_discovery="$rumiai_test_package_release_tmp/pkg-analyze.discovery"
-  printf -- '\n' | HOME="$rumiai_test_package_release_analysis_home" "$rumiai_test_package_release_fixture/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" > "$rumiai_test_package_release_discovery" 2>&1 || rumiai_test_package_release_fail "pkg-analyze candidate discovery failed"
+  printf -- '\n' | "$rumiai_test_package_release_target/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" > "$rumiai_test_package_release_discovery" 2>&1 || rumiai_test_package_release_fail "pkg-analyze candidate discovery failed"
   rumiai_test_package_release_candidate_id=$(rumiai_test_package_release_candidate_id "$rumiai_test_package_release_discovery" "$rumiai_test_package_release_analyze_relative") || {
     command -p -- cat "$rumiai_test_package_release_discovery" >&2
     rumiai_test_package_release_fail "expected pkg-analyze candidate not found: $rumiai_test_package_release_analyze_relative"
@@ -410,7 +450,7 @@ EOF_OSARCH
   case "$RUMIAI_TEST_PACKAGE_RELEASE_MODE" in
     cli)
       printf -- '%s\ny\n\n' "$rumiai_test_package_release_candidate_id" | \
-        HOME="$rumiai_test_package_release_analysis_home" "$rumiai_test_package_release_fixture/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" > "$rumiai_test_package_release_analysis" 2>&1
+        "$rumiai_test_package_release_target/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" > "$rumiai_test_package_release_analysis" 2>&1
       rumiai_test_package_release_analysis_status=$?
       ;;
     gui)
@@ -419,7 +459,7 @@ EOF_OSARCH
       printf -- '%s\n' "$TEST_ID: enter that number, approve the dynamic probe, verify the GUI opens, close it, then press Enter only when its children are finished." >/dev/tty
       rumiai_test_package_release_analysis_status_file="$rumiai_test_package_release_tmp/pkg-analyze.status"
       (
-        HOME="$rumiai_test_package_release_analysis_home" "$rumiai_test_package_release_fixture/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" </dev/tty
+        "$rumiai_test_package_release_target/bin/sys/pkg-analyze" "$rumiai_test_package_release_root" </dev/tty
         printf -- '%s\n' "$?" > "$rumiai_test_package_release_analysis_status_file"
       ) 2>&1 | command -p -- tee "$rumiai_test_package_release_analysis"
       [ -f "$rumiai_test_package_release_analysis_status_file" ] || rumiai_test_package_release_error "pkg-analyze GUI status missing"
@@ -468,14 +508,13 @@ EOF_OSARCH
   rumiai_test_package_release_inventory "$rumiai_test_package_release_root" "$rumiai_test_package_release_after_analyze" "$rumiai_test_package_release_stat_style" || rumiai_test_package_release_error "cannot inventory package root after pkg-analyze"
   rumiai_test_package_release_inventory_equal "$rumiai_test_package_release_before" "$rumiai_test_package_release_after_analyze" 'during pkg-analyze' || rumiai_test_package_release_fail "package root is not immutable during pkg-analyze"
 
-  rumiai_test_package_release_launch_home="$rumiai_test_package_release_tmp/launcher-home"
-  command -p -- mkdir -- "$rumiai_test_package_release_launch_home" || rumiai_test_package_release_error "cannot create launcher HOME"
   case "$RUMIAI_TEST_PACKAGE_RELEASE_MODE" in
     cli)
       for rumiai_test_package_release_command in $RUMIAI_TEST_PACKAGE_RELEASE_COMMANDS
       do
         rumiai_test_package_release_command_log="$rumiai_test_package_release_tmp/command-$rumiai_test_package_release_command.log"
-        HOME="$rumiai_test_package_release_launch_home" "$rumiai_test_package_release_concrete/cmd/$rumiai_test_package_release_command" --version > "$rumiai_test_package_release_command_log" 2>&1 || {
+        rumiai_test_package_release_public=$(rumiai_test_package_release_public_command "$rumiai_test_package_release_command") || rumiai_test_package_release_fail "public command binding is unavailable: $rumiai_test_package_release_command"
+        "$rumiai_test_package_release_public" --version > "$rumiai_test_package_release_command_log" 2>&1 || {
           command -p -- cat "$rumiai_test_package_release_command_log" >&2
           rumiai_test_package_release_fail "$rumiai_test_package_release_command --version failed"
         }
@@ -484,7 +523,8 @@ EOF_OSARCH
       ;;
     gui)
       rumiai_test_package_release_gui_log="$rumiai_test_package_release_tmp/gui-launch.log"
-      HOME="$rumiai_test_package_release_launch_home" rumiai_test_package_release_gui_launch "$rumiai_test_package_release_concrete/cmd/$RUMIAI_TEST_PACKAGE_RELEASE_ANALYZE_COMMAND" "$rumiai_test_package_release_gui_log" "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE"
+      rumiai_test_package_release_public=$(rumiai_test_package_release_public_command "$RUMIAI_TEST_PACKAGE_RELEASE_ANALYZE_COMMAND") || rumiai_test_package_release_fail "public GUI command binding is unavailable: $RUMIAI_TEST_PACKAGE_RELEASE_ANALYZE_COMMAND"
+      rumiai_test_package_release_gui_launch "$rumiai_test_package_release_public" "$rumiai_test_package_release_gui_log" "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE"
       rumiai_test_package_release_status=$?
       case "$rumiai_test_package_release_status" in
         0) :;;
@@ -497,7 +537,7 @@ EOF_OSARCH
       ;;
   esac
 
-  rumiai_test_package_release_package_home=$(HOME="$rumiai_test_package_release_launch_home" "$rumiai_test_package_release_fixture/m" "$rumiai_test_package_release_fixture/bin/sys/state-path" user pkg "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" home) || rumiai_test_package_release_fail "cannot resolve package HOME state"
+  rumiai_test_package_release_package_home=$("$rumiai_test_package_release_target/m" "$rumiai_test_package_release_target/bin/sys/state-path" user pkg "$RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE" home) || rumiai_test_package_release_fail "cannot resolve package HOME state"
   [ -d "$rumiai_test_package_release_package_home" ] && [ ! -L "$rumiai_test_package_release_package_home" ] || rumiai_test_package_release_fail "RumiAI package HOME state was not materialized"
 
   rumiai_test_package_release_inventory "$rumiai_test_package_release_root" "$rumiai_test_package_release_after" "$rumiai_test_package_release_stat_style" || rumiai_test_package_release_error "cannot inventory package root after runtime"
