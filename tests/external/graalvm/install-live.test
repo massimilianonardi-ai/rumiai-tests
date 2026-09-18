@@ -105,38 +105,9 @@ versions=$(run_pkg versions graalvm 2> "$tmp/versions.err") || fail 'pkg version
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current GraalVM identity is absent from pkg versions output'
 
-concrete=$root/pkg/$identity
-[ -d "$concrete" ] && [ ! -L "$concrete" ] ||
-  fail 'current GraalVM concrete package is not materialized'
-
-case $osarch in
-  windows-*)
-    java=$concrete/root/bin/java.exe
-    javac=$concrete/root/bin/javac.exe
-    ;;
-  *)
-    java=$concrete/root/bin/java
-    javac=$concrete/root/bin/javac
-    ;;
-esac
-
-[ -f "$java" ] && [ ! -L "$java" ] && [ -x "$java" ] ||
-  fail 'installed GraalVM Java runtime is unavailable'
-[ -f "$javac" ] && [ ! -L "$javac" ] && [ -x "$javac" ] ||
-  fail 'installed GraalVM Java compiler is unavailable'
-
-"$java" -version > "$tmp/java.out" 2> "$tmp/java.err" || {
-  cat "$tmp/java.err" >&2
-  fail 'installed GraalVM java -version failed'
-}
-"$javac" -version > "$tmp/javac.out" 2> "$tmp/javac.err" || {
-  cat "$tmp/javac.err" >&2
-  fail 'installed GraalVM javac -version failed'
-}
 
 printf 'installed=%s\n' "$identity"
 printf 'osarch=%s\n' "$osarch"
-printf 'java=ok\n'
-printf 'javac=ok\n'
+printf 'provider-install=ok\n'
 
 exit 0

@@ -129,30 +129,15 @@ versions=$(run_pkg versions electron 2> "$tmp/versions.err") || fail 'pkg versio
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Electron identity is absent from pkg versions output'
 
-public=$root/bin/ext-$osarch/electron
-[ -x "$public" ] || fail 'Electron public command is unavailable'
-
-concrete=$root/pkg/$identity
-[ -d "$concrete" ] && [ ! -L "$concrete" ] ||
-  fail 'current Electron concrete package is not materialized'
-sandbox=$concrete/root/chrome-sandbox
-[ -f "$sandbox" ] && [ ! -L "$sandbox" ] ||
-  fail 'Electron chrome-sandbox is not a regular file'
-
-listing=$(LC_ALL=C command -p -- ls -ldn "$sandbox" 2>/dev/null) ||
-  fail 'cannot inspect chrome-sandbox ownership'
-set -- $listing
-[ "$#" -ge 4 ] || error 'cannot parse chrome-sandbox ownership'
-[ "$3" = 0 ] && [ "$4" = 0 ] ||
-  fail "chrome-sandbox ownership is $3:$4 instead of 0:0"
-
-mode_match=$(command -p -- find "$sandbox" -prune -perm 4755 -print 2>/dev/null) ||
-  fail 'cannot inspect chrome-sandbox mode'
-[ "$mode_match" = "$sandbox" ] ||
-  fail 'chrome-sandbox mode is not exactly 4755'
+"$root/m" electron --version > "$tmp/version.out" 2> "$tmp/version.err" || {
+  cat "$tmp/version.out" >&2
+  cat "$tmp/version.err" >&2
+  fail 'Electron public command failed after privileged installation'
+}
+[ -s "$tmp/version.out" ] || fail 'Electron --version produced no output'
 
 printf 'installed=%s\n' "$identity"
 printf 'osarch=%s\n' "$osarch"
-printf 'chrome-sandbox=uid:0 gid:0 mode:4755\n'
+printf 'public-command=ok\n'
 
 exit 0

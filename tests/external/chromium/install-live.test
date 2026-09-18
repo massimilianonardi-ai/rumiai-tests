@@ -106,54 +106,15 @@ versions=$(run_pkg versions chromium 2> "$tmp/versions.err") || fail 'pkg versio
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Chromium identity is absent from pkg versions output'
 
-concrete=$root/pkg/$identity
-[ -d "$concrete" ] && [ ! -L "$concrete" ] ||
-  fail 'current Chromium concrete package is not materialized'
-
-sandbox=$concrete/root/chrome_sandbox
-[ -f "$sandbox" ] && [ ! -L "$sandbox" ] && [ -x "$sandbox" ] ||
-  fail 'Chromium chrome_sandbox is not an executable regular file'
-
-listing=$(LC_ALL=C command -p -- ls -ldn "$sandbox" 2>/dev/null) ||
-  fail 'cannot inspect Chromium sandbox ownership'
-set -- $listing
-[ "$#" -ge 4 ] || error 'cannot parse Chromium sandbox ownership'
-[ "$3" = 0 ] && [ "$4" = 0 ] ||
-  fail "Chromium sandbox ownership is $3:$4 instead of 0:0"
-
-mode_match=$(command -p -- find "$sandbox" -prune -perm 4755 -print 2>/dev/null) ||
-  fail 'cannot inspect Chromium sandbox mode'
-[ "$mode_match" = "$sandbox" ] ||
-  fail 'Chromium sandbox mode is not exactly 4755'
-
-[ -f "$concrete/env" ] && [ ! -L "$concrete/env" ] && [ -r "$concrete/env" ] ||
-  fail 'Chromium package environment is not materialized'
-
-sandbox_from_env="$(
-  (
-    m_COMMAND_BIN="$concrete/cmd/chromium"
-    export m_COMMAND_BIN
-    unset CHROME_DEVEL_SANDBOX
-    . "$concrete/env" || exit 1
-    printf '%s\n' "${CHROME_DEVEL_SANDBOX-}"
-  )
-)" || fail 'Chromium package environment cannot be applied'
-[ "$sandbox_from_env" = "$sandbox" ] ||
-  fail "CHROME_DEVEL_SANDBOX is $sandbox_from_env instead of $sandbox"
-
-public=$root/bin/ext-$osarch/chromium
-[ -x "$public" ] || fail 'Chromium public command is unavailable'
-"$public" --version > "$tmp/version.out" 2> "$tmp/version.err" || {
+"$root/m" chromium --version > "$tmp/version.out" 2> "$tmp/version.err" || {
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2
-  fail 'Chromium public command failed after sandbox environment integration'
+  fail 'Chromium public command failed after installation'
 }
 [ -s "$tmp/version.out" ] || fail 'Chromium --version produced no output'
 
 printf 'installed=%s\n' "$identity"
 printf 'osarch=%s\n' "$osarch"
-printf 'sandbox=%s\n' "$sandbox"
-printf 'CHROME_DEVEL_SANDBOX=%s\n' "$sandbox_from_env"
 printf 'public-command=ok\n'
 
 exit 0

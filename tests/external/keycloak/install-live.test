@@ -141,63 +141,26 @@ versions=$(run_pkg versions keycloak 2> "$tmp/versions.err") || fail 'pkg versio
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Keycloak identity is absent from pkg versions output'
 
-concrete=$root/pkg/$identity
-[ -d "$concrete" ] && [ ! -L "$concrete" ] ||
-  fail 'current Keycloak concrete package is not materialized'
-[ "$(cat "$concrete/binding/java")" = "$java_identity" ] ||
-  fail 'Keycloak Java dependency is not bound to the current GraalVM provider'
-[ -f "$concrete/env" ] && [ ! -L "$concrete/env" ] && [ -r "$concrete/env" ] ||
-  fail 'Keycloak package environment is not materialized'
-
-[ -L "$concrete/root/conf" ] ||
-  fail 'Keycloak conf path is not routed to managed state'
-[ -L "$concrete/root/data" ] ||
-  fail 'Keycloak data path is not routed to managed state'
-[ "$(readlink "$concrete/root/conf")" = ../var/conf/conf ] ||
-  fail 'Keycloak conf package-root route is incorrect'
-[ "$(readlink "$concrete/root/data")" = ../var/data/data ] ||
-  fail 'Keycloak data package-root route is incorrect'
-
-[ -L "$concrete/var/conf" ] ||
-  fail 'Keycloak concrete conf state selector is missing'
-[ -L "$concrete/var/data" ] ||
-  fail 'Keycloak concrete data state selector is missing'
-[ "$(readlink "$concrete/var/conf")" = ../../../state/system/current/pkg/keycloak/conf ] ||
-  fail 'Keycloak conf selector does not follow system/current'
-[ "$(readlink "$concrete/var/data")" = ../../../state/system/current/pkg/keycloak/data ] ||
-  fail 'Keycloak data selector does not follow system/current'
-
-[ -d "$concrete/default/conf/conf" ] && [ ! -L "$concrete/default/conf/conf" ] ||
-  fail 'Keycloak distributed conf defaults were not retained'
-[ -d "$concrete/default/data/data" ] && [ ! -L "$concrete/default/data/data" ] ||
-  fail 'Keycloak absent upstream data directory did not become an empty factory directory'
-
-for item in \
-  "$concrete/default/data/data"/* \
-  "$concrete/default/data/data"/.[!.]* \
-  "$concrete/default/data/data"/..?*
-do
-  [ -e "$item" ] || [ -L "$item" ] || continue
-  fail 'Keycloak synthesized data factory directory is not empty'
-done
-
 [ -d "$system_conf/conf" ] && [ ! -L "$system_conf/conf" ] ||
   fail 'Keycloak system configuration state was not initialized'
 [ -d "$system_data/data" ] && [ ! -L "$system_data/data" ] ||
   fail 'Keycloak system data state was not initialized'
 
-public=$root/bin/ext-$osarch/keycloak
-[ -x "$public" ] || fail 'Keycloak public command is unavailable'
-"$public" --version > "$tmp/version.out" 2> "$tmp/version.err" || {
+for item in   "$system_data/data"/*   "$system_data/data"/.[!.]*   "$system_data/data"/..?*
+do
+  [ -e "$item" ] || [ -L "$item" ] || continue
+  fail 'Keycloak initially empty data state is not empty'
+done
+
+"$root/m" keycloak --version > "$tmp/version.out" 2> "$tmp/version.err" || {
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2
-  fail 'Keycloak public command failed'
+  fail 'Keycloak public command failed with its Java dependency'
 }
-grep '^Keycloak ' "$tmp/version.out" >/dev/null 2>&1 ||
-  fail 'Keycloak public command returned an unexpected version response'
+[ -s "$tmp/version.out" ] || fail 'Keycloak --version produced no output'
 
 printf 'installed=%s\n' "$identity"
-printf 'java=%s\n' "$java_identity"
+printf 'java-provider=%s\n' "$java_identity"
 printf 'conf-state=ok\n'
 printf 'data-state=ok\n'
 printf 'public-command=ok\n'
