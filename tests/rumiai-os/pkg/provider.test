@@ -1,0 +1,130 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg/provider.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+expect_status()
+{
+  expected=$1
+  label=$2
+  shift 2
+  "$@" > "$tmp/$label.out" 2> "$tmp/$label.err"
+  actual=$?
+  [ "$actual" -eq "$expected" ] || {
+    cat "$tmp/$label.err" >&2
+    fail "$label returned $actual instead of $expected"
+  }
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  [ -z "${facility-}" ] || run_pkg provider default -u -- "$facility" >/dev/null 2>&1 || :
+  if [ -n "${consumer-}" ] && [ -n "${facility-}" ]
+  then
+    run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2>&1 || :
+  fi
+  [ -z "${consumer_state-}" ] || rm -rf "$consumer_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+pkg_group=${test_dir%/*}
+tests_dir=${pkg_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-provider-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+consumer=providerconsumer$$
+facility=providerfacility$$
+consumer_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$consumer" conf) ||
+  error 'cannot resolve consumer system conf'
+consumer_state=${consumer_conf%/conf}
+binding="$consumer_conf/binding/$facility"
+
+[ ! -e "$consumer_state" ] && [ ! -L "$consumer_state" ] ||
+  skip 'temporary consumer system state already exists'
+
+expect_status 1 default-absent run_pkg provider default "$facility"
+expect_status 1 binding-absent run_pkg provider bind "$consumer" "$facility"
+
+run_pkg provider default "$facility" temurin > "$tmp/default-set.out" 2> "$tmp/default-set.err" || {
+  cat "$tmp/default-set.err" >&2
+  fail 'cannot set facility default'
+}
+default_value=$(run_pkg provider default "$facility" 2> "$tmp/default-query.err") ||
+  fail 'cannot query facility default'
+[ "$default_value" = temurin ] || fail "facility default is '$default_value' instead of temurin"
+
+run_pkg provider bind "$consumer" "$facility" 'temurin@25.0.4.1+1' > "$tmp/bind-set.out" 2> "$tmp/bind-set.err" || {
+  cat "$tmp/bind-set.err" >&2
+  fail 'cannot set consumer binding'
+}
+[ -f "$binding" ] && [ ! -L "$binding" ] || fail 'binding is not a regular file at conf/binding/<facility>'
+[ "$(cat "$binding")" = 'temurin@25.0.4.1+1' ] || fail 'binding file does not contain the configured selector'
+
+binding_value=$(run_pkg provider bind "$consumer" "$facility" 2> "$tmp/bind-query.err") ||
+  fail 'cannot query consumer binding'
+[ "$binding_value" = 'temurin@25.0.4.1+1' ] || fail 'consumer binding query returned the wrong selector'
+
+run_pkg provider bind "$consumer" "$facility" 'temurin!linux-x86_64' >/dev/null 2> "$tmp/bind-osarch.err" ||
+  fail 'provider binding rejected package!osarch selector'
+run_pkg provider bind "$consumer" "$facility" 'temurin@25.0.4.1+1!linux-x86_64' >/dev/null 2> "$tmp/bind-exact.err" ||
+  fail 'provider binding rejected package@version!osarch selector'
+
+expect_status 2 invalid-selector run_pkg provider bind "$consumer" "$facility" 'Bad@'
+expect_status 2 invalid-facility run_pkg provider default 'Bad' temurin
+
+run_pkg provider bind -u -- "$consumer" "$facility" > "$tmp/bind-unset.out" 2> "$tmp/bind-unset.err" || {
+  cat "$tmp/bind-unset.err" >&2
+  fail 'cannot unset consumer binding'
+}
+[ ! -e "$binding" ] && [ ! -L "$binding" ] || fail 'unset consumer binding remains materialized'
+expect_status 1 binding-after-unset run_pkg provider bind "$consumer" "$facility"
+
+default_after=$(run_pkg provider default "$facility" 2> "$tmp/default-after.err") ||
+  fail 'facility default disappeared when consumer binding was removed'
+[ "$default_after" = temurin ] || fail 'facility default changed when consumer binding was removed'
+
+run_pkg provider default -u -- "$facility" > "$tmp/default-unset.out" 2> "$tmp/default-unset.err" || {
+  cat "$tmp/default-unset.err" >&2
+  fail 'cannot unset facility default'
+}
+expect_status 1 default-after-unset run_pkg provider default "$facility"
+
+printf 'binding-path=%s\n' "$binding"
+printf 'provider-config=ok\n'
+exit 0
