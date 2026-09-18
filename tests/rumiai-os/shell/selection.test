@@ -15,8 +15,7 @@ resolve_test_dir()
 }
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-group=${test_dir%/*}
-rumiai_os_group=${group%/*}
+rumiai_os_group=${test_dir%/*}
 tests_dir=${rumiai_os_group%/*}
 suite_root=${tests_dir%/*}
 
