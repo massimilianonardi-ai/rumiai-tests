@@ -100,7 +100,7 @@ consumer=launchconsumer$$
 integration_driver=$tmp/integration-driver
 cat > "$integration_driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg-integration.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
 action=$1
 shift
 case $action in
@@ -157,7 +157,7 @@ mkdir -p "$range/cmd" "$range/link" "$payload/bin" || error 'cannot create consu
 
 cat > "$range/cmd/$consumer" <<EOF_COMMAND
 #!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
 launcher "$consumer" "\$@"
 EOF_COMMAND
 chmod 600 "$range/cmd/$consumer" || error 'cannot prepare consumer command'

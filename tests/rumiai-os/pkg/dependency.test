@@ -111,7 +111,7 @@ consumer_state=${consumer_conf%/conf}
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg-integration.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
 action=$1
 shift
 case $action in
@@ -125,8 +125,8 @@ chmod 700 "$driver" || error 'cannot prepare integration driver'
 resolver=$tmp/dependency-resolver
 cat > "$resolver" <<'EOF_RESOLVER'
 #!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg-facility.lib.sh" || exit 3
-. "$m_LIB_DIR/sys/sh/pkg-dependency.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg/pkg-facility.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg/pkg-dependency.lib.sh" || exit 3
 pkg_dependency_resolve "$@"
 EOF_RESOLVER
 chmod 700 "$resolver" || error 'cannot prepare dependency resolver'

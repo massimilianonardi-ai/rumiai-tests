@@ -75,6 +75,10 @@ printf '%s\n' "$m_OSARCH"
 EOF_PROBE
 chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+"$root/m" "$root/bin/sys/osarch" update > "$tmp/osarch-update.out" 2> "$tmp/osarch-update.err" || {
+  cat "$tmp/osarch-update.err" >&2
+  fail 'cannot align runtime osarch selectors with the current host'
+}
 [ "$osarch" = linux-x86_64 ] || skip "Keycloak validation is linux-x86_64-only; target is $osarch"
 
 run_pkg versions keycloak > "$tmp/keycloak-preexisting.out" 2> "$tmp/keycloak-preexisting.err"
