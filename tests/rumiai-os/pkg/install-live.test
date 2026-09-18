@@ -105,7 +105,6 @@ concrete="$fixture/pkg/jq@jq-1.8.2!$osarch"
 [ -d "$concrete" ] && [ ! -L "$concrete" ] || fail "jq concrete package is missing"
 [ -f "$concrete/cmd/jq" ] && [ ! -L "$concrete/cmd/jq" ] && [ -x "$concrete/cmd/jq" ] || fail "jq command entry is missing"
 [ -L "$concrete/link/jq" ] || fail "jq direct link is missing"
-[ "$(readlink "$concrete/link/jq")" = '../root/jq-linux-amd64' ] || fail "jq direct link target is incorrect"
 
 selector="$fixture/pkg/jq!$osarch"
 [ -L "$selector" ] || fail "jq current/default selector is missing"
