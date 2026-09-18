@@ -1,0 +1,35 @@
+name: Maven provider diagnostic
+
+on:
+  push:
+    branches:
+      - validation/maven-provider-debug-20260918
+
+jobs:
+  maven:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 384677c6acc9424fd4ce4eca7aa9aed104bded5d
+          path: target
+      - name: Normalize product origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: c30c19cf6f5e6175b3de3ac96c162c6a869c94b9
+          path: target/src/rumiai-tests
+      - name: Assert catalog revision
+        shell: bash
+        run: |
+          set -eu
+          actual=$(git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main | awk '{print $1}')
+          test "$actual" = bd06488d3c67160e820c04d13067f852c8861c32
+      - name: Run Maven permanent test
+        shell: bash
+        run: |
+          cd target/src/rumiai-tests
+          ./tests/external/maven/install-live.test
