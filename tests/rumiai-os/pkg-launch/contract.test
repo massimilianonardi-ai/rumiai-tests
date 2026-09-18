@@ -60,8 +60,7 @@ cleanup()
 trap cleanup 0 HUP INT TERM
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
-launch_group=${test_dir%/*}
-rumiai_os_group=${launch_group%/*}
+rumiai_os_group=${test_dir%/*}
 tests_dir=${rumiai_os_group%/*}
 suite_root=${tests_dir%/*}
 . "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
