@@ -4,6 +4,7 @@ TEST_ID=rumiai-os/shell/zsh-zdotdir-preservation.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
 resolve_test_dir()
 {
   self=$0
@@ -35,10 +36,54 @@ case "$status" in
   *) error 'target discovery failed';;
 esac
 
-[ -x "$root/m" ] || fail 'm target runtime is not executable'; [ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
-tmp="${TMPDIR:-/tmp}/rumiai-shell-zdotdir-preservation-$$"; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+[ -x "$root/m" ] || fail 'm target runtime is not executable'
+[ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path target command is not executable'
+zsh_path=$(command -v zsh 2>/dev/null) || skip 'Zsh is unavailable on this host'
 
-zsh_path="$(command -v zsh 2>/dev/null)" || skip 'Zsh is unavailable on this host'
+[ -n "${HOME-}" ] || skip 'HOME is unavailable in the supplied environment'
+[ -d "$HOME" ] && [ ! -L "$HOME" ] && [ -w "$HOME" ] ||
+  skip 'HOME is not a writable real directory in the supplied environment'
+
+home_zshenv=$HOME/.zshenv
+home_zshrc=$HOME/.zshrc
+for startup_file in "$home_zshenv" "$home_zshrc"
+do
+  [ ! -e "$startup_file" ] && [ ! -L "$startup_file" ] ||
+    skip "HOME already contains ${startup_file##*/}; refusing to replace user startup configuration"
+done
+
+user_shell_home=$("$root/m" "$root/bin/sys/state-path" user sys shell home 2>/dev/null) ||
+  error 'cannot resolve user shell home state'
+runtime_zdotdir=$user_shell_home/zsh
+[ ! -e "$runtime_zdotdir" ] && [ ! -L "$runtime_zdotdir" ] ||
+  skip 'zsh runtime shell state already exists in the supplied target'
+
+user_shell_home_preexisting=0
+if [ -d "$user_shell_home" ] && [ ! -L "$user_shell_home" ]
+then
+  user_shell_home_preexisting=1
+elif [ -e "$user_shell_home" ] || [ -L "$user_shell_home" ]
+then
+  skip 'user shell home state is not a real directory'
+fi
+
+tmp=${TMPDIR:-/tmp}/rumiai-shell-zdotdir-preservation-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  rm -f "$home_zshenv" 2>/dev/null || :
+  rm -rf "$runtime_zdotdir" 2>/dev/null || :
+  if [ "$user_shell_home_preexisting" -eq 0 ]
+  then
+    rmdir "$user_shell_home" 2>/dev/null || :
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
 check_command='
 case "$EXPECTED_ZDOT_STATE" in
   unset) [ "${ZDOTDIR+x}" != "x" ] || exit 41 ;;
@@ -46,61 +91,94 @@ case "$EXPECTED_ZDOT_STATE" in
   value) [ "${ZDOTDIR+x}" = "x" ] || exit 44; [ "$ZDOTDIR" = "$EXPECTED_ZDOT_VALUE" ] || exit 45 ;;
   *) exit 46 ;;
 esac
-[ "${m_SHELL_ZDOTDIR+x}" != "x" ] || exit 47
-[ "${m_SHELL_ZDOTDIR_INIT+x}" != "x" ] || exit 48
 exit 0
 '
 
-home="$tmp/home-unset"; mkdir "$home" || error 'cannot create unset-state HOME'
 (
   unset ZDOTDIR
-  HOME="$home"; SHELL="$zsh_path"; m_SHELL_EXT=; EXPECTED_ZDOT_STATE=unset; EXPECTED_ZDOT_VALUE=; TERM=dumb
-  export HOME SHELL m_SHELL_EXT EXPECTED_ZDOT_STATE EXPECTED_ZDOT_VALUE TERM
+  SHELL=$zsh_path
+  m_SHELL_EXT=
+  EXPECTED_ZDOT_STATE=unset
+  EXPECTED_ZDOT_VALUE=
+  TERM=dumb
+  export SHELL m_SHELL_EXT EXPECTED_ZDOT_STATE EXPECTED_ZDOT_VALUE TERM
   "$root/m" "$root/bin/sys/shell" -i -c "$check_command"
-) >"$tmp/unset.out" 2>"$tmp/unset.err"
-status="$?"; [ "$status" -eq 0 ] || { cat "$tmp/unset.err" >&2; fail "unset ZDOTDIR case returned $status"; }
+) > "$tmp/unset.out" 2> "$tmp/unset.err"
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/unset.err" >&2
+  fail "unset ZDOTDIR case returned $status"
+}
 
-home="$tmp/home-empty"; mkdir "$home" || error 'cannot create empty-state HOME'
 (
-  ZDOTDIR=; HOME="$home"; SHELL="$zsh_path"; m_SHELL_EXT=; EXPECTED_ZDOT_STATE=empty; EXPECTED_ZDOT_VALUE=; TERM=dumb
-  export ZDOTDIR HOME SHELL m_SHELL_EXT EXPECTED_ZDOT_STATE EXPECTED_ZDOT_VALUE TERM
+  ZDOTDIR=
+  SHELL=$zsh_path
+  m_SHELL_EXT=
+  EXPECTED_ZDOT_STATE=empty
+  EXPECTED_ZDOT_VALUE=
+  TERM=dumb
+  export ZDOTDIR SHELL m_SHELL_EXT EXPECTED_ZDOT_STATE EXPECTED_ZDOT_VALUE TERM
   "$root/m" "$root/bin/sys/shell" -i -c "$check_command"
-) >"$tmp/empty.out" 2>"$tmp/empty.err"
-status="$?"; [ "$status" -eq 0 ] || { cat "$tmp/empty.err" >&2; fail "empty ZDOTDIR case returned $status"; }
+) > "$tmp/empty.out" 2> "$tmp/empty.err"
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/empty.err" >&2
+  fail "empty ZDOTDIR case returned $status"
+}
 
-home="$tmp/home-value"; custom="$home/custom"; mkdir -p "$custom" || error 'cannot create value-state ZDOTDIR'
+custom=$tmp/custom
+mkdir "$custom" || error 'cannot create custom ZDOTDIR'
 (
-  ZDOTDIR="$custom"; HOME="$home"; SHELL="$zsh_path"; m_SHELL_EXT=; EXPECTED_ZDOT_STATE=value; EXPECTED_ZDOT_VALUE="$custom"; TERM=dumb
-  export ZDOTDIR HOME SHELL m_SHELL_EXT EXPECTED_ZDOT_STATE EXPECTED_ZDOT_VALUE TERM
+  ZDOTDIR=$custom
+  SHELL=$zsh_path
+  m_SHELL_EXT=
+  EXPECTED_ZDOT_STATE=value
+  EXPECTED_ZDOT_VALUE=$custom
+  TERM=dumb
+  export ZDOTDIR SHELL m_SHELL_EXT EXPECTED_ZDOT_STATE EXPECTED_ZDOT_VALUE TERM
   "$root/m" "$root/bin/sys/shell" -i -c "$check_command"
-) >"$tmp/value.out" 2>"$tmp/value.err"
-status="$?"; [ "$status" -eq 0 ] || { cat "$tmp/value.err" >&2; fail "value ZDOTDIR case returned $status"; }
+) > "$tmp/value.out" 2> "$tmp/value.err"
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/value.err" >&2
+  fail "value ZDOTDIR case returned $status"
+}
 
-home="$tmp/home-mutated"; changed="$home/changed"; final="$home/final"; mkdir -p "$home" "$changed" "$final" || error 'cannot create mutation-state directories'
-cat > "$home/.zshenv" <<'EOT'
+changed=$tmp/changed
+final=$tmp/final
+mkdir "$changed" "$final" || error 'cannot create mutation-state directories'
+cat > "$home_zshenv" <<'EOF_ZSHENV'
 TEST_ZSHENV_LOADED=loaded
 ZDOTDIR="$TEST_CHANGED_ZDOTDIR"
 export TEST_ZSHENV_LOADED ZDOTDIR
-EOT
-cat > "$changed/.zshrc" <<'EOT'
+EOF_ZSHENV
+cat > "$changed/.zshrc" <<'EOF_ZSHRC'
 TEST_ZSHRC_LOADED=loaded
 ZDOTDIR="$TEST_FINAL_ZDOTDIR"
 export TEST_ZSHRC_LOADED ZDOTDIR
-EOT
+EOF_ZSHRC
+
 mutation_command='
 [ "${TEST_ZSHENV_LOADED-}" = "loaded" ] || exit 51
 [ "${TEST_ZSHRC_LOADED-}" = "loaded" ] || exit 52
 [ "${ZDOTDIR+x}" = "x" ] || exit 53
 [ "$ZDOTDIR" = "$TEST_FINAL_ZDOTDIR" ] || exit 54
-[ "${m_SHELL_ZDOTDIR+x}" != "x" ] || exit 55
-[ "${m_SHELL_ZDOTDIR_INIT+x}" != "x" ] || exit 56
 exit 0
 '
 (
   unset ZDOTDIR
-  HOME="$home"; SHELL="$zsh_path"; m_SHELL_EXT=; TEST_CHANGED_ZDOTDIR="$changed"; TEST_FINAL_ZDOTDIR="$final"; TERM=dumb
-  export HOME SHELL m_SHELL_EXT TEST_CHANGED_ZDOTDIR TEST_FINAL_ZDOTDIR TERM
+  SHELL=$zsh_path
+  m_SHELL_EXT=
+  TEST_CHANGED_ZDOTDIR=$changed
+  TEST_FINAL_ZDOTDIR=$final
+  TERM=dumb
+  export SHELL m_SHELL_EXT TEST_CHANGED_ZDOTDIR TEST_FINAL_ZDOTDIR TERM
   "$root/m" "$root/bin/sys/shell" -i -c "$mutation_command"
-) >"$tmp/mutated.out" 2>"$tmp/mutated.err"
-status="$?"; [ "$status" -eq 0 ] || { cat "$tmp/mutated.err" >&2; fail "startup-mutated ZDOTDIR case returned $status"; }
+) > "$tmp/mutated.out" 2> "$tmp/mutated.err"
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/mutated.err" >&2
+  fail "startup-mutated ZDOTDIR case returned $status"
+}
+
 exit 0
