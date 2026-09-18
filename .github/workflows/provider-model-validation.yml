@@ -6,13 +6,13 @@ on:
       - validation/provider-model-20260918
 
 jobs:
-  validate:
+  debug-dependency:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: e934fcfb09e32d7d4eef10a913161fb0d51939be
+          ref: f45ece69192fe3d08ef77361a4c2be6c131d19c6
           path: target
       - name: Normalize product origin
         shell: bash
@@ -20,15 +20,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-tests
-          ref: d73bd9b2e45f522dd6895ebe78e4d4f64b2a94c2
+          ref: 074aec26a590f2989e71f2060c319f191442c1f6
           path: target/src/rumiai-tests
-      - name: Run provider model tests
+      - name: Trace dependency test
         shell: bash
         run: |
-          set -eu
           cd target/src/rumiai-tests
-          for test in             tests/rumiai-os/pkg/provider.test             tests/rumiai-os/pkg/dependency.test             tests/rumiai-os/pkg-launch/contract.test
-          do
-            echo "=== $test ==="
-            "./$test"
-          done
+          /bin/sh -x tests/rumiai-os/pkg/dependency.test
