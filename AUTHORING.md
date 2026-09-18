@@ -50,7 +50,7 @@ lib/rumiai-os-target.lib
 lib/interactive.lib
 ```
 
-`lib/rumiai-os-fixture.lib` è una primitive storica in fase di eliminazione dall'attuale suite-realignment: non deve essere usata per nuovi test né assunta come modello di isolamento corrente.
+I test non creano copie o repliche alternative di `rumiai-os`: usano il target ricevuto dal chiamante. L'isolamento formale del target e delle root utente appartiene a `rumiai-validate`.
 
 La revisione `rumiai-tests` registrata dalla validation identifica anche la versione esatta delle librerie comuni usate, quindi non è necessario copiare helper inline soltanto per riproducibilità storica.
 
