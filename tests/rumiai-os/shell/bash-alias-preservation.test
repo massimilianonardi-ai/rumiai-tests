@@ -45,25 +45,32 @@ mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 bash_path="$(command -v bash 2>/dev/null)" || skip 'Bash is unavailable on this host'
-home="$tmp/home"
-mkdir "$home" || error 'cannot create Bash HOME'
-cat > "$home/.bashrc" <<'EOT'
+[ -n "${HOME-}" ] || skip 'HOME is unavailable in the supplied environment'
+[ -d "$HOME" ] && [ ! -L "$HOME" ] && [ -w "$HOME" ] ||
+  skip 'HOME is not a writable real directory in the supplied environment'
+
+bashrc=$HOME/.bashrc
+[ ! -e "$bashrc" ] && [ ! -L "$bashrc" ] ||
+  skip 'HOME already contains .bashrc; refusing to replace user startup configuration'
+
+cat > "$bashrc" <<'EOT'
 shopt -s expand_aliases
 alias log='false'
 alias printf='false'
 alias sentinel='false'
 EOT
+trap 'rm -f "$bashrc" 2>/dev/null || :; rm -rf "$tmp"' 0 HUP INT TERM
+
 ext="$tmp/ext"
 cat > "$ext" <<'EOT'
 TEST_SHELL_EXT_LOADED=loaded
 export TEST_SHELL_EXT_LOADED
 EOT
 (
-  HOME="$home"
   SHELL="$bash_path"
   m_SHELL_EXT="$ext"
   TERM=dumb
-  export HOME SHELL m_SHELL_EXT TERM
+  export SHELL m_SHELL_EXT TERM
   "$root/m" "$root/bin/sys/shell" -i -c '
     shopt -q expand_aliases || exit 41
     alias log >/dev/null 2>&1 || exit 42
