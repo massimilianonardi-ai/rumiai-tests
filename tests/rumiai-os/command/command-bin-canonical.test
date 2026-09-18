@@ -65,4 +65,31 @@ export OBSERVED_COMMAND_BIN
 }
 actual=$(cat "$observed") || error 'cannot read m_COMMAND_BIN observation'
 [ "$actual" = "$expected" ] || fail "m_COMMAND_BIN is not the canonical command pathname: expected=$expected observed=$actual"
+
+path_dir=$tmp/path
+cwd=$tmp/cwd
+shadowed=$path_dir/shadowed
+shadow_observed=$tmp/shadow-observed
+mkdir "$path_dir" "$cwd" "$cwd/shadowed" || error 'cannot prepare slashless command shadow fixture'
+cat > "$shadowed" <<'EOF_SHADOW'
+printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_COMMAND_BIN" || return 42
+return 0
+EOF_SHADOW
+chmod 700 "$shadowed" || error 'cannot prepare PATH command'
+shadow_expected=$(command -p realpath -- "$shadowed" 2>/dev/null) || error 'cannot canonicalize PATH command'
+
+OBSERVED_COMMAND_BIN=$shadow_observed
+export OBSERVED_COMMAND_BIN
+(
+    cd "$cwd" || exit 90
+    PATH="$path_dir:$PATH"
+    export PATH
+    "$root/m" shadowed
+) > "$tmp/shadow.stdout" 2> "$tmp/shadow.stderr" || {
+    status=$?
+    cat "$tmp/shadow.stderr" >&2
+    fail "slashless PATH command dispatch returned $status"
+}
+shadow_actual=$(cat "$shadow_observed") || error 'cannot read slashless command observation'
+[ "$shadow_actual" = "$shadow_expected" ] || fail "CWD object shadowed slashless PATH command: expected=$shadow_expected observed=$shadow_actual"
 exit 0
