@@ -1,0 +1,43 @@
+name: Provider facility validation
+
+on:
+  push:
+    branches:
+      - validation/provider-facility-20260918
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout product
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 25ab0e5a5b8267af715f320bd9ee17405a2b41f6
+          path: target
+
+      - name: Checkout permanent tests
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 9c0d7e7c51c179e3cac72475bcbed8017f7ebe65
+          path: target/src/rumiai-tests
+
+      - name: Record catalog HEAD
+        shell: bash
+        run: git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main
+
+      - name: Validate provider identity and coexistence
+        shell: bash
+        run: |
+          set -eu
+          cd target/src/rumiai-tests
+          for test in \
+            tests/external/temurin/install-live.test \
+            tests/external/graalvm/temurin-coexistence-live.test \
+            tests/external/maven/install-live.test \
+            tests/external/keycloak/install-live.test
+          do
+            echo "=== $test ==="
+            ./rumiai-test -- "$test"
+          done
