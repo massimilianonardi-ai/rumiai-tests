@@ -1,0 +1,205 @@
+#!/bin/sh
+
+TEST_ID=external/keycloak/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ "${keycloak_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall keycloak >/dev/null 2>&1 || :
+  fi
+  if [ "${graalvm_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall graalvm >/dev/null 2>&1 || :
+  fi
+
+  [ -z "${keycloak_system_state-}" ] || rm -rf "$keycloak_system_state" 2>/dev/null || :
+  [ -z "${keycloak_user_state-}" ] || rm -rf "$keycloak_user_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-keycloak-install-live-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+[ "$osarch" = linux-x86_64 ] || skip "Keycloak validation is linux-x86_64-only; target is $osarch"
+
+run_pkg versions keycloak > "$tmp/keycloak-preexisting.out" 2> "$tmp/keycloak-preexisting.err"
+status=$?
+case $status in
+  0) skip 'Keycloak is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/keycloak-preexisting.err" >&2
+    fail "cannot determine pre-existing Keycloak installation state (status $status)"
+    ;;
+esac
+
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg keycloak conf) ||
+  error 'cannot resolve Keycloak system configuration state'
+system_data=$("$root/m" "$root/bin/sys/state-path" system pkg keycloak data) ||
+  error 'cannot resolve Keycloak system data state'
+user_home=$("$root/m" "$root/bin/sys/state-path" user pkg keycloak home) ||
+  error 'cannot resolve Keycloak user state'
+keycloak_system_state=${system_conf%/conf}
+keycloak_user_state=${user_home%/home}
+
+if [ -e "$keycloak_system_state" ] || [ -L "$keycloak_system_state" ] ||
+   [ -e "$keycloak_user_state" ] || [ -L "$keycloak_user_state" ]
+then
+  skip 'Keycloak package state already exists in the supplied target'
+fi
+
+run_pkg versions graalvm > "$tmp/graalvm-preexisting.out" 2> "$tmp/graalvm-preexisting.err"
+status=$?
+case $status in
+  0) :;;
+  1)
+    printf '%s\n' "$TEST_ID: installing Java provider" >&2
+    run_pkg install graalvm > "$tmp/graalvm-install.out" 2> "$tmp/graalvm-install.err" || {
+      cat "$tmp/graalvm-install.err" >&2
+      fail 'pkg install graalvm failed'
+    }
+    graalvm_installed=1
+    ;;
+  *)
+    cat "$tmp/graalvm-preexisting.err" >&2
+    fail "cannot determine pre-existing GraalVM installation state (status $status)"
+    ;;
+esac
+
+java_identity=$(run_pkg default graalvm 2> "$tmp/graalvm-default.err") || {
+  cat "$tmp/graalvm-default.err" >&2
+  fail 'Java provider has no queryable current default'
+}
+[ -n "$java_identity" ] || fail 'Java provider identity is empty'
+
+printf '%s\n' "$TEST_ID: installing current catalog-selected Keycloak" >&2
+run_pkg install keycloak > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.out" >&2
+  cat "$tmp/install.err" >&2
+  fail 'pkg install keycloak failed'
+}
+keycloak_installed=1
+
+identity=$(run_pkg default keycloak 2> "$tmp/default.err") || {
+  cat "$tmp/default.err" >&2
+  fail 'installed Keycloak has no queryable current default'
+}
+[ -n "$identity" ] || fail 'Keycloak current identity is empty'
+
+versions=$(run_pkg versions keycloak 2> "$tmp/versions.err") || fail 'pkg versions keycloak failed'
+printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
+  fail 'current Keycloak identity is absent from pkg versions output'
+
+concrete=$root/pkg/$identity
+[ -d "$concrete" ] && [ ! -L "$concrete" ] ||
+  fail 'current Keycloak concrete package is not materialized'
+[ "$(cat "$concrete/binding/java")" = "$java_identity" ] ||
+  fail 'Keycloak Java dependency is not bound to the current GraalVM provider'
+[ -f "$concrete/env" ] && [ ! -L "$concrete/env" ] && [ -r "$concrete/env" ] ||
+  fail 'Keycloak package environment is not materialized'
+
+[ -L "$concrete/root/conf" ] ||
+  fail 'Keycloak conf path is not routed to managed state'
+[ -L "$concrete/root/data" ] ||
+  fail 'Keycloak data path is not routed to managed state'
+[ "$(readlink "$concrete/root/conf")" = ../var/conf/conf ] ||
+  fail 'Keycloak conf package-root route is incorrect'
+[ "$(readlink "$concrete/root/data")" = ../var/data/data ] ||
+  fail 'Keycloak data package-root route is incorrect'
+
+[ -L "$concrete/var/conf" ] ||
+  fail 'Keycloak concrete conf state selector is missing'
+[ -L "$concrete/var/data" ] ||
+  fail 'Keycloak concrete data state selector is missing'
+[ "$(readlink "$concrete/var/conf")" = ../../../state/system/current/pkg/keycloak/conf ] ||
+  fail 'Keycloak conf selector does not follow system/current'
+[ "$(readlink "$concrete/var/data")" = ../../../state/system/current/pkg/keycloak/data ] ||
+  fail 'Keycloak data selector does not follow system/current'
+
+[ -d "$concrete/default/conf/conf" ] && [ ! -L "$concrete/default/conf/conf" ] ||
+  fail 'Keycloak distributed conf defaults were not retained'
+[ -d "$concrete/default/data/data" ] && [ ! -L "$concrete/default/data/data" ] ||
+  fail 'Keycloak absent upstream data directory did not become an empty factory directory'
+
+for item in \
+  "$concrete/default/data/data"/* \
+  "$concrete/default/data/data"/.[!.]* \
+  "$concrete/default/data/data"/..?*
+do
+  [ -e "$item" ] || [ -L "$item" ] || continue
+  fail 'Keycloak synthesized data factory directory is not empty'
+done
+
+[ -d "$system_conf/conf" ] && [ ! -L "$system_conf/conf" ] ||
+  fail 'Keycloak system configuration state was not initialized'
+[ -d "$system_data/data" ] && [ ! -L "$system_data/data" ] ||
+  fail 'Keycloak system data state was not initialized'
+
+public=$root/bin/ext-$osarch/keycloak
+[ -x "$public" ] || fail 'Keycloak public command is unavailable'
+"$public" --version > "$tmp/version.out" 2> "$tmp/version.err" || {
+  cat "$tmp/version.out" >&2
+  cat "$tmp/version.err" >&2
+  fail 'Keycloak public command failed'
+}
+grep '^Keycloak ' "$tmp/version.out" >/dev/null 2>&1 ||
+  fail 'Keycloak public command returned an unexpected version response'
+
+printf 'installed=%s\n' "$identity"
+printf 'java=%s\n' "$java_identity"
+printf 'conf-state=ok\n'
+printf 'data-state=ok\n'
+printf 'public-command=ok\n'
+
+exit 0
