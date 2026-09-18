@@ -303,6 +303,68 @@ run_pkg default -u -- "$package" > "$tmp/clear.out" 2> "$tmp/clear.err" ||
 [ "$(cat "$system_data/workspace/runtime")" = runtime-data ] ||
   fail 'deintegration removed persistent data state'
 
+empty_dir=${package}d
+empty_dir_range=$tmp/empty-dir-range
+empty_dir_payload=$tmp/empty-dir-payload
+mkdir -p "$empty_dir_range/var" "$empty_dir_payload" ||
+  error 'cannot create empty-directory state fixture'
+printf '%s\n' data > "$empty_dir_range/var/data" ||
+  error 'cannot define empty-directory state mapping'
+
+empty_dir_data=$("$root/m" "$root/bin/sys/state-path" system pkg "$empty_dir" data) ||
+  error 'cannot resolve empty-directory package data state'
+empty_dir_state_root=${empty_dir_data%/data}
+[ ! -e "$empty_dir_state_root" ] && [ ! -L "$empty_dir_state_root" ] ||
+  error 'empty-directory package state already exists'
+
+"$root/m" "$driver" integrate "$empty_dir" 1 "$empty_dir_range" "$empty_dir_payload" \
+  > "$tmp/empty-dir.out" 2> "$tmp/empty-dir.err" || {
+    cat "$tmp/empty-dir.err" >&2
+    fail 'declared absent state directory integration failed'
+  }
+
+empty_dir_concrete=$root/pkg/$empty_dir@1
+[ -L "$empty_dir_concrete/root/data" ] ||
+  fail 'declared absent state directory was not routed from package root'
+[ "$(readlink "$empty_dir_concrete/root/data")" = ../var/data/data ] ||
+  fail 'declared absent state directory has an unexpected package-root route'
+[ -d "$empty_dir_concrete/default/data/data" ] &&
+[ ! -L "$empty_dir_concrete/default/data/data" ] ||
+  fail 'declared absent state directory did not materialize an empty factory directory'
+[ -d "$empty_dir_data/data" ] && [ ! -L "$empty_dir_data/data" ] ||
+  fail 'declared absent state directory did not initialize managed mutable state'
+
+for empty_dir_item in \
+  "$empty_dir_concrete/default/data/data"/* \
+  "$empty_dir_concrete/default/data/data"/.[!.]* \
+  "$empty_dir_concrete/default/data/data"/..?*
+do
+  [ -e "$empty_dir_item" ] || [ -L "$empty_dir_item" ] || continue
+  fail 'declared absent state factory directory is not empty'
+done
+
+printf '%s\n' runtime > "$empty_dir_concrete/root/data/runtime" ||
+  fail 'cannot write through synthesized package state route'
+[ "$(cat "$empty_dir_data/data/runtime")" = runtime ] ||
+  fail 'write through synthesized package state route did not reach managed state'
+
+"$root/m" "$driver" deintegrate "$empty_dir" 1 \
+  > "$tmp/empty-dir-remove.out" 2> "$tmp/empty-dir-remove.err" || {
+    cat "$tmp/empty-dir-remove.err" >&2
+    fail 'cannot deintegrate synthesized-state package'
+  }
+[ "$(cat "$empty_dir_data/data/runtime")" = runtime ] ||
+  fail 'deintegration removed synthesized mutable state'
+rm -rf "$empty_dir_state_root" || error 'cannot remove empty-directory package state fixture'
+
+missing_parent=${package}e
+missing_parent_range=$tmp/missing-parent-range
+missing_parent_payload=$tmp/missing-parent-payload
+mkdir -p "$missing_parent_range/var" "$missing_parent_payload" ||
+  error 'cannot create missing-parent state fixture'
+printf '%s\n' missing/data > "$missing_parent_range/var/data"
+expect_failed_integration "$missing_parent" "$missing_parent_range" "$missing_parent_payload"
+
 bad_area=${package}a
 bad_range=$tmp/bad-area-range
 bad_payload=$tmp/bad-area-payload
