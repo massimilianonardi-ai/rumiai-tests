@@ -100,14 +100,10 @@ case "$diagnostic" in
   *) fail "vendor-removed Chrome version did not produce clear runtime diagnostics";;
 esac
 
-if diagnostic="$(pkg_repository_compare_versions "$tmp/repository" 99.0.1.1-1 152.0.0.0-1 2>&1)"
-then
-  fail "comparison accepted a vendor-removed Chrome version"
-fi
-case "$diagnostic" in
-  *'repository chrome reason upstream-version-unavailable version 152.0.0.0-1'*) :;;
-  *) fail "comparison did not identify the removed Chrome operand";;
-esac
+[ "$(pkg_repository_compare_versions "$tmp/repository" 99.0.1.1-1 152.0.0.0-1)" = -1 ] ||
+  fail "comparison incorrectly requires a historical range anchor to remain upstream-available"
+[ "$(pkg_repository_compare_versions "$tmp/repository" 154.0.0.0-1 153.0.8010.36-2)" = 1 ] ||
+  fail "comparison of syntactically valid non-indexed versions is not locally ordered"
 
 if pkg_repository_resolve_version "$tmp/repository" 153.00.8010.36-1 >/dev/null 2>&1; then fail "non-canonical Chrome version was accepted"; fi
 
