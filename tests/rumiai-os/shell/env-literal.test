@@ -41,21 +41,31 @@ esac
 tmp="${TMPDIR:-/tmp}/rumiai-shell-env-literal-$$"; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 sh_path="$(command -v sh 2>/dev/null)" || skip 'sh is unavailable on this host'
-home="$tmp/home"; work="$tmp/work"; mkdir "$home" "$work" || error 'cannot create test directories'
+[ -n "${HOME-}" ] || skip 'HOME is unavailable in the supplied environment'
+[ -d "$HOME" ] && [ ! -L "$HOME" ] && [ -w "$HOME" ] ||
+  skip 'HOME is not a writable real directory in the supplied environment'
+
+work="$tmp/work"
+mkdir "$work" || error 'cannot create test work directory'
 marker="$tmp/user-env.loaded"
-cat > "$home/user-env" <<'EOT'
+user_env_name=.rumiai-test-env-literal-$
+user_env_path=$HOME/$user_env_name
+[ ! -e "$user_env_path" ] && [ ! -L "$user_env_path" ] ||
+  error 'literal ENV probe pathname already exists'
+cat > "$user_env_path" <<'EOT'
 printf '%s\n' loaded > "$TEST_ENV_MARKER"
 EOT
+trap 'rm -f "$user_env_path" 2>/dev/null || :; rm -rf "$tmp"' 0 HUP INT TERM
+
 (
   cd "$work" || exit 90
   unset ZDOTDIR
-  HOME="$home"
   SHELL="$sh_path"
-  ENV='$HOME/user-env'
+  ENV="\$HOME/$user_env_name"
   TEST_ENV_MARKER="$marker"
   m_SHELL_EXT=
   TERM=dumb
-  export HOME SHELL ENV TEST_ENV_MARKER m_SHELL_EXT TERM
+  export SHELL ENV TEST_ENV_MARKER m_SHELL_EXT TERM
   "$root/m" "$root/bin/sys/shell" -i -c '
     [ ! -e "$TEST_ENV_MARKER" ] || exit 41
     [ "${m_SHELL_ENV+x}" != "x" ] || exit 42
