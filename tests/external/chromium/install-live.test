@@ -64,11 +64,16 @@ chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
 [ "$osarch" = linux-x86_64 ] || skip "Chromium sandbox environment validation is linux-x86_64-only; target is $osarch"
 
-if run_pkg versions chromium > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
-then
-  skip 'Chromium is already installed in the supplied target'
-fi
-[ "$?" -eq 1 ] || fail 'cannot determine pre-existing Chromium installation state'
+run_pkg versions chromium > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'Chromium is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing Chromium installation state (status $status)"
+    ;;
+esac
 
 uid=$(command -p -- id -u 2>/dev/null) || error 'cannot determine effective uid'
 case $uid in ''|*[!0-9]*) error "invalid effective uid: $uid";; esac
