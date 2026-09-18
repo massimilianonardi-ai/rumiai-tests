@@ -24,7 +24,9 @@ test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 tests_dir=${test_dir%/*}
 suite_root=${tests_dir%/*}
 runner=$suite_root/rumiai-test
+snapshot_lib=$suite_root/lib/sh/filesystem-snapshot.lib.sh
 [ -x "$runner" ] || error 'runner is not executable'
+[ -r "$snapshot_lib" ] || error 'filesystem snapshot library is unavailable'
 
 tmp_base=${TMPDIR:-/tmp}/rumiai-test-execution-persistence-$$
 umask 077
@@ -32,8 +34,9 @@ mkdir "$tmp_base" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
 
 suite=$tmp_base/suite
-mkdir -p "$suite/tests/statuses" "$suite/sessions" || error 'cannot create fixture suite'
+mkdir -p "$suite/tests/statuses" "$suite/sessions" "$suite/lib/sh" || error 'cannot create fixture suite'
 cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
+cp "$snapshot_lib" "$suite/lib/sh/filesystem-snapshot.lib.sh" || error 'cannot copy filesystem snapshot library'
 chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
 
 cat > "$suite/tests/statuses/error.test" <<'EOT'

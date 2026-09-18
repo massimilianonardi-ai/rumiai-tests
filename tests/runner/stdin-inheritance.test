@@ -28,7 +28,9 @@ test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 tests_dir=${test_dir%/*}
 suite_root=${tests_dir%/*}
 runner=$suite_root/rumiai-test
+snapshot_lib=$suite_root/lib/sh/filesystem-snapshot.lib.sh
 [ -x "$runner" ] || error 'runner is not executable'
+[ -r "$snapshot_lib" ] || error 'filesystem snapshot library is unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-test-stdin-inheritance-$$
 umask 077
@@ -36,8 +38,9 @@ mkdir "$tmp" || error 'cannot create temporary directory'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 fixture=$tmp/suite
-mkdir -p "$fixture/tests" "$fixture/sessions" || error 'cannot create fixture suite'
+mkdir -p "$fixture/tests" "$fixture/sessions" "$fixture/lib/sh" || error 'cannot create fixture suite'
 cp "$runner" "$fixture/rumiai-test" || error 'cannot copy runner'
+cp "$snapshot_lib" "$fixture/lib/sh/filesystem-snapshot.lib.sh" || error 'cannot copy filesystem snapshot library'
 chmod +x "$fixture/rumiai-test" || error 'cannot make runner executable'
 
 cat > "$fixture/tests/stdin.test" <<'EOF_TEST'

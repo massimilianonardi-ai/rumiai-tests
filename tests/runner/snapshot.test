@@ -38,7 +38,9 @@ test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 tests_dir=${test_dir%/*}
 suite_root=${tests_dir%/*}
 runner=$suite_root/rumiai-test
+snapshot_lib=$suite_root/lib/sh/filesystem-snapshot.lib.sh
 [ -x "$runner" ] || error 'runner is not executable'
+[ -r "$snapshot_lib" ] || error 'filesystem snapshot library is unavailable'
 
 tmp_base=${TMPDIR:-/tmp}/rumiai-test-snapshot-$$
 umask 077
@@ -48,8 +50,9 @@ trap 'rm -rf "$tmp_base"' 0 HUP INT TERM
 suite=$tmp_base/suite
 root1=$tmp_base/root-one
 root2=$tmp_base/root-two
-mkdir -p "$suite/tests/group" "$suite/sessions" "$root1" "$root2" || error 'cannot create fixture layout'
+mkdir -p "$suite/tests/group" "$suite/sessions" "$suite/lib/sh" "$root1" "$root2" || error 'cannot create fixture layout'
 cp "$runner" "$suite/rumiai-test" || error 'cannot copy runner'
+cp "$snapshot_lib" "$suite/lib/sh/filesystem-snapshot.lib.sh" || error 'cannot copy filesystem snapshot library'
 chmod +x "$suite/rumiai-test" || error 'cannot make runner executable'
 printf '%s\n' before > "$root1/file"
 printf '%s\n' stable > "$root2/file"

@@ -54,27 +54,13 @@ canonical_dir() {
     (CDPATH= cd "$path" 2>/dev/null && pwd -P)
 }
 
-path_is_at_or_below() {
-    root=$1
-    path=$2
-
-    if [ "$root" = / ]; then
-        case $path in
-            /*) return 0 ;;
-            *) return 1 ;;
-        esac
-    fi
-
-    case $path in
-        "$root"|"$root"/*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 self_path=$(resolve_self) || fatal 'cannot resolve runner pathname'
 suite_root=${self_path%/*}
 [ -n "$suite_root" ] || suite_root=/
 tests_root=$(canonical_dir "$suite_root/tests") || fatal 'cannot locate tests/ beside runner'
+filesystem_snapshot_lib=$suite_root/lib/sh/filesystem-snapshot.lib.sh
+[ -r "$filesystem_snapshot_lib" ] || fatal 'cannot locate filesystem snapshot library beside runner'
+. "$filesystem_snapshot_lib"
 
 list_mode=0
 validation=0
@@ -273,27 +259,12 @@ done
 
 uname_s=$(uname -s 2>/dev/null || printf '%s' unknown)
 
-stat_style=
 if [ "$snapshot_option_seen" -eq 1 ]; then
-    if stat -c '%a' "$tests_root" >/dev/null 2>&1; then
-        stat_style=gnu
-    elif stat -f '%Lp' "$tests_root" >/dev/null 2>&1; then
-        stat_style=bsd
-    else
+    if ! rumiai_test_fs_snapshot_prepare "$snapshot_mode" "$tests_root"; then
+        if [ "$snapshot_mode" = hash ]; then
+            fatal 'snapshot metadata or SHA-256 support is unavailable'
+        fi
         fatal 'snapshot metadata is not supported by the available stat utility'
-    fi
-fi
-
-hash_tool=
-if [ "$snapshot_mode" = hash ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-        hash_tool=sha256sum
-    elif command -v shasum >/dev/null 2>&1; then
-        hash_tool=shasum
-    elif command -v openssl >/dev/null 2>&1; then
-        hash_tool=openssl
-    else
-        fatal 'no SHA-256 implementation is available for hash snapshots'
     fi
 fi
 
@@ -432,112 +403,11 @@ if ! discover_tests_to_file "$tests_file" "$run_dir/.work"; then
     exit "$RUNNER_STATUS_ERROR"
 fi
 
-fs_mode() {
-    if [ "$stat_style" = gnu ]; then
-        stat -c '%a' "$1" 2>/dev/null
-    else
-        stat -f '%Lp' "$1" 2>/dev/null
-    fi
-}
-
-fs_size() {
-    if [ "$stat_style" = gnu ]; then
-        stat -c '%s' "$1" 2>/dev/null
-    else
-        stat -f '%z' "$1" 2>/dev/null
-    fi
-}
-
-fs_mtime() {
-    if [ "$stat_style" = gnu ]; then
-        stat -c '%.Y' "$1" 2>/dev/null
-    else
-        stat -f '%.9Fm' "$1" 2>/dev/null
-    fi
-}
-
-sha256_file() {
-    case $hash_tool in
-        sha256sum)
-            sha256sum "$1" 2>/dev/null | awk '{print $1}'
-            ;;
-        shasum)
-            shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'
-            ;;
-        openssl)
-            openssl dgst -sha256 -r "$1" 2>/dev/null | awk '{print $1}'
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
 snapshot_take() {
     root=$1
     output=$2
     work_base=$3
-    list_file=$work_base.list
-    unsorted_file=$work_base.unsorted
-    err_file=$work_base.err
-
-    : > "$err_file" || return 1
-    if path_is_at_or_below "$root" "$run_dir_canon"; then
-        find "$root" \( -path "$run_dir_canon" -prune \) -o -print > "$list_file" 2> "$err_file"
-    else
-        find "$root" -print > "$list_file" 2> "$err_file"
-    fi
-    status=$?
-    [ "$status" -eq 0 ] || return 1
-    [ ! -s "$err_file" ] || return 1
-    : > "$unsorted_file" || return 1
-
-    while IFS= read -r path; do
-        if [ "$path" = "$root" ]; then
-            rel=.
-        elif [ "$root" = / ]; then
-            rel=${path#/}
-        else
-            rel=${path#"$root"/}
-        fi
-
-        mode=$(fs_mode "$path") || return 1
-        type=other
-        size=
-        mtime=
-        target=
-        digest=
-
-        if [ -L "$path" ] 2>/dev/null; then
-            type=symlink
-            target=$(readlink "$path" 2>/dev/null) || return 1
-        elif [ -f "$path" ]; then
-            type=file
-            size=$(fs_size "$path") || return 1
-            mtime=$(fs_mtime "$path") || return 1
-            if [ "$snapshot_mode" = hash ]; then
-                digest=$(sha256_file "$path") || return 1
-                [ -n "$digest" ] || return 1
-            fi
-        elif [ -d "$path" ]; then
-            type=directory
-        elif [ -p "$path" ]; then
-            type=fifo
-        elif [ -b "$path" ]; then
-            type=block
-        elif [ -c "$path" ]; then
-            type=character
-        elif [ -S "$path" ] 2>/dev/null; then
-            type=socket
-        fi
-
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$rel" "$type" "$mode" "$size" "$mtime" "$target" "$digest" >> "$unsorted_file" || return 1
-    done < "$list_file"
-
-    LC_ALL=C sort "$unsorted_file" > "$output" || return 1
-    rm -f "$list_file" "$unsorted_file" "$err_file"
-    return 0
+    rumiai_test_fs_snapshot_take "$root" "$output" "$work_base" "$run_dir_canon"
 }
 
 snapshot_compare() {
@@ -546,19 +416,21 @@ snapshot_compare() {
     diff_file=$3
     label=$4
 
-    if cmp -s "$before" "$after"; then
-        : > "$diff_file" || return 1
-        printf 'CLEAN  %s\n' "$label"
-        return 0
-    fi
-
-    diff -u "$before" "$after" > "$diff_file"
-    diff_status=$?
-    if [ "$diff_status" -eq 1 ]; then
-        printf 'CHANGED %s\n' "$label"
-        return 0
-    fi
-    return 1
+    rumiai_test_fs_snapshot_compare "$before" "$after" "$diff_file"
+    compare_status=$?
+    case $compare_status in
+        0)
+            printf 'CLEAN  %s\n' "$label"
+            return 0
+            ;;
+        1)
+            printf 'CHANGED %s\n' "$label"
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 snapshot_selection_before() {
