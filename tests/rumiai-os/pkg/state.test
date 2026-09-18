@@ -42,6 +42,19 @@ cleanup()
     rm -f "$root/pkg/$package" "$root/bin/ext/$package" 2>/dev/null || :
   fi
 
+  if [ -n "${empty_dir-}" ] && [ -n "${root-}" ]
+  then
+    run_pkg default -u -- "$empty_dir" >/dev/null 2>&1 || :
+    if [ -n "${driver-}" ] && [ -f "$driver" ] &&
+       [ -d "$root/pkg/$empty_dir@1" ] && [ ! -L "$root/pkg/$empty_dir@1" ]
+    then
+      "$root/m" "$driver" deintegrate "$empty_dir" 1 >/dev/null 2>&1 || :
+    fi
+    rm -rf "$root/pkg/$empty_dir@1" 2>/dev/null || :
+    rm -f "$root/pkg/$empty_dir" "$root/bin/ext/$empty_dir" 2>/dev/null || :
+  fi
+
+  [ -z "${empty_dir_state_root-}" ] || rm -rf "$empty_dir_state_root" 2>/dev/null || :
   [ -z "${system_pkg_root-}" ] || rm -rf "$system_pkg_root" 2>/dev/null || :
   [ -z "${user_pkg_root-}" ] || rm -rf "$user_pkg_root" 2>/dev/null || :
 
@@ -306,10 +319,46 @@ run_pkg default -u -- "$package" > "$tmp/clear.out" 2> "$tmp/clear.err" ||
 empty_dir=${package}d
 empty_dir_range=$tmp/empty-dir-range
 empty_dir_payload=$tmp/empty-dir-payload
-mkdir -p "$empty_dir_range/var" "$empty_dir_payload" ||
+mkdir -p   "$empty_dir_range/cmd"   "$empty_dir_range/link"   "$empty_dir_range/var"   "$empty_dir_payload/bin" ||
   error 'cannot create empty-directory state fixture'
+
 printf '%s\n' data > "$empty_dir_range/var/data" ||
   error 'cannot define empty-directory state mapping'
+
+cat > "$empty_dir_range/cmd/$empty_dir" <<EOF_COMMAND
+#!/usr/bin/env m
+. "\$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+launcher "$empty_dir" "\$@"
+EOF_COMMAND
+chmod 600 "$empty_dir_range/cmd/$empty_dir" ||
+  error 'cannot prepare empty-directory package command'
+printf '%s\n' bin/upstream > "$empty_dir_range/link/$empty_dir" ||
+  error 'cannot prepare empty-directory package link'
+
+cat > "$empty_dir_payload/bin/upstream" <<'EOF_EMPTY_UPSTREAM'
+#!/bin/sh
+self_dir=${0%/*}
+package_root=${self_dir%/*}
+
+case ${1-read} in
+  read)
+    if [ -f "$package_root/data/runtime" ]
+    then
+      cat "$package_root/data/runtime"
+    else
+      printf '%s\n' absent
+    fi
+    ;;
+  write)
+    printf '%s\n' runtime > "$package_root/data/runtime"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF_EMPTY_UPSTREAM
+chmod 700 "$empty_dir_payload/bin/upstream" ||
+  error 'cannot prepare empty-directory upstream command'
 
 empty_dir_data=$("$root/m" "$root/bin/sys/state-path" system pkg "$empty_dir" data) ||
   error 'cannot resolve empty-directory package data state'
@@ -317,45 +366,73 @@ empty_dir_state_root=${empty_dir_data%/data}
 [ ! -e "$empty_dir_state_root" ] && [ ! -L "$empty_dir_state_root" ] ||
   error 'empty-directory package state already exists'
 
-"$root/m" "$driver" integrate "$empty_dir" 1 "$empty_dir_range" "$empty_dir_payload" \
-  > "$tmp/empty-dir.out" 2> "$tmp/empty-dir.err" || {
+"$root/m" "$driver" integrate "$empty_dir" 1 "$empty_dir_range" "$empty_dir_payload"   > "$tmp/empty-dir.out" 2> "$tmp/empty-dir.err" || {
     cat "$tmp/empty-dir.err" >&2
     fail 'declared absent state directory integration failed'
   }
 
-empty_dir_concrete=$root/pkg/$empty_dir@1
-[ -L "$empty_dir_concrete/root/data" ] ||
-  fail 'declared absent state directory was not routed from package root'
-[ "$(readlink "$empty_dir_concrete/root/data")" = ../var/data/data ] ||
-  fail 'declared absent state directory has an unexpected package-root route'
-[ -d "$empty_dir_concrete/default/data/data" ] &&
-[ ! -L "$empty_dir_concrete/default/data/data" ] ||
-  fail 'declared absent state directory did not materialize an empty factory directory'
 [ -d "$empty_dir_data/data" ] && [ ! -L "$empty_dir_data/data" ] ||
   fail 'declared absent state directory did not initialize managed mutable state'
 
-for empty_dir_item in \
-  "$empty_dir_concrete/default/data/data"/* \
-  "$empty_dir_concrete/default/data/data"/.[!.]* \
-  "$empty_dir_concrete/default/data/data"/..?*
+for empty_dir_item in   "$empty_dir_data/data"/*   "$empty_dir_data/data"/.[!.]*   "$empty_dir_data/data"/..?*
 do
   [ -e "$empty_dir_item" ] || [ -L "$empty_dir_item" ] || continue
-  fail 'declared absent state factory directory is not empty'
+  fail 'declared absent mutable state directory is not initially empty'
 done
 
-printf '%s\n' runtime > "$empty_dir_concrete/root/data/runtime" ||
+run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-dir-default.err" || {
+    cat "$tmp/empty-dir-default.err" >&2
+    fail 'cannot select synthesized-state package'
+  }
+
+(
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$empty_dir" read
+) > "$tmp/empty-dir-read-before.out" 2> "$tmp/empty-dir-read-before.err" || {
+  cat "$tmp/empty-dir-read-before.err" >&2
+  fail 'cannot read synthesized empty package state'
+}
+[ "$(cat "$tmp/empty-dir-read-before.out")" = absent ] ||
+  fail 'synthesized package state was not initially empty'
+
+(
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$empty_dir" write
+) > "$tmp/empty-dir-write.out" 2> "$tmp/empty-dir-write.err" || {
+  cat "$tmp/empty-dir-write.err" >&2
   fail 'cannot write through synthesized package state route'
+}
+
 [ "$(cat "$empty_dir_data/data/runtime")" = runtime ] ||
   fail 'write through synthesized package state route did not reach managed state'
 
-"$root/m" "$driver" deintegrate "$empty_dir" 1 \
-  > "$tmp/empty-dir-remove.out" 2> "$tmp/empty-dir-remove.err" || {
+(
+  PATH="$root/bin/ext:$root/bin/sys:$PATH"
+  export PATH
+  "$empty_dir" read
+) > "$tmp/empty-dir-read-after.out" 2> "$tmp/empty-dir-read-after.err" || {
+  cat "$tmp/empty-dir-read-after.err" >&2
+  fail 'cannot read synthesized package state after write'
+}
+[ "$(cat "$tmp/empty-dir-read-after.out")" = runtime ] ||
+  fail 'integrated command did not observe synthesized mutable state'
+
+run_pkg default -u -- "$empty_dir"   > "$tmp/empty-dir-clear.out" 2> "$tmp/empty-dir-clear.err" ||
+  fail 'cannot clear synthesized-state package default'
+
+"$root/m" "$driver" deintegrate "$empty_dir" 1   > "$tmp/empty-dir-remove.out" 2> "$tmp/empty-dir-remove.err" || {
     cat "$tmp/empty-dir-remove.err" >&2
     fail 'cannot deintegrate synthesized-state package'
   }
+
 [ "$(cat "$empty_dir_data/data/runtime")" = runtime ] ||
   fail 'deintegration removed synthesized mutable state'
-rm -rf "$empty_dir_state_root" || error 'cannot remove empty-directory package state fixture'
+
+rm -rf "$empty_dir_state_root" ||
+  error 'cannot remove empty-directory package state fixture'
+empty_dir_state_root=
 
 missing_parent=${package}e
 missing_parent_range=$tmp/missing-parent-range
