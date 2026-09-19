@@ -112,12 +112,12 @@ conf_dir=$("$root/m" "$state_path" user sys gitman conf) || error 'cannot resolv
 mkdir -p "$conf_dir" || error 'cannot create gitman configuration area'
 conf_file=$conf_dir/repositories
 
-pager_probe=$tmp/fail-pager
+pager_probe=$tmp/pager-probe
 pager_marker=$tmp/pager-invoked
 cat > "$pager_probe" <<'EOF_PAGER'
 #!/bin/sh
 : > "$RUMIAI_GITMAN_PAGER_MARKER"
-exit 99
+command -p cat
 EOF_PAGER
 chmod +x "$pager_probe" || error 'cannot make pager probe executable'
 
@@ -257,8 +257,10 @@ def run_explicit_action_and_error_scenario():
             bytes(s.buffer[resume_mark:]),
         )
 
-        # Select Log with a deliberately failing GIT_PAGER/PAGER in the
-        # environment. --no-pager must prevent that helper from being invoked.
+        # Select Log with an explicit GIT_PAGER/PAGER probe. gitman must
+        # preserve normal Git pager selection, so the helper must be invoked.
+        if Path(pager_marker).exists():
+            Path(pager_marker).unlink()
         s.send(DOWN)
         s.pump_for(0.15)
         log_mark = len(s.buffer)
@@ -266,9 +268,9 @@ def run_explicit_action_and_error_scenario():
         s.wait_for(f"Repository: {repo_main}", start=log_mark)
         s.wait_for("initial", start=log_mark)
         s.wait_for("Press any key to continue...", start=log_mark)
-        assert not Path(pager_marker).exists(), (
-            "Git internal pager was invoked",
-            Path(pager_marker).read_bytes() if Path(pager_marker).exists() else b"",
+        assert Path(pager_marker).exists(), (
+            "Git pager was not invoked",
+            bytes(s.buffer[log_mark:]),
         )
 
         resume_log_mark = len(s.buffer)
