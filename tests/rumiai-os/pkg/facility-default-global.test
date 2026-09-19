@@ -89,9 +89,22 @@ esac
 [ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
 [ -f "$root/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || fail 'pkg integration library is missing'
 
-tmp=${TMPDIR:-/tmp}/rumiai-pkg-facility-global-$$
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-facility-global-$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
+
+unset RUMIAI_TEST_FACILITY_GLOBAL_MARKER
+env_probe=$tmp/env-probe
+cat > "$env_probe" <<'EOF_ENV_PROBE'
+#!/usr/bin/env m
+if [ "${RUMIAI_TEST_FACILITY_GLOBAL_MARKER+x}" = x ]
+then
+  printf '%s\n' "$RUMIAI_TEST_FACILITY_GLOBAL_MARKER"
+  exit 1
+fi
+exit 0
+EOF_ENV_PROBE
+chmod 700 "$env_probe" || error 'cannot prepare ambient environment probe'
 
 provider=globalprovider$$
 consumer=globalconsumer$$
@@ -147,8 +160,10 @@ make_provider()
   version=$1
   range=$tmp/range-$version
   payload=$tmp/payload-$version
-  mkdir -p "$range/facility-cmd/$facility" "$payload/bin" || return 1
+  mkdir -p "$range/facility-cmd/$facility" "$range/facility-env" "$payload/bin" || return 1
   printf '%s 1\n' "$facility" > "$range/facility" || return 1
+  tab=$(printf '\t')
+  printf 'RUMIAI_TEST_FACILITY_GLOBAL_MARKER%s%s\n' "$tab" "literal provider-$version" > "$range/facility-env/$facility" || return 1
 
   commands=$main_command
   if [ "$version" -eq 1 ]
@@ -188,6 +203,12 @@ run_pkg default "$provider@1" > "$tmp/default-1.out" 2> "$tmp/default-1.err" || 
 run_pkg provider default "$facility" "$provider" > "$tmp/facility-unversioned.out" 2> "$tmp/facility-unversioned.err" || {
   cat "$tmp/facility-unversioned.err" >&2
   fail 'cannot configure unversioned facility default'
+}
+
+"$root/m" "$env_probe" > "$tmp/ambient-env.out" 2> "$tmp/ambient-env.err" || {
+  cat "$tmp/ambient-env.out" >&2
+  cat "$tmp/ambient-env.err" >&2
+  fail 'facility default injected facility environment into ambient m runtime'
 }
 
 expected_unversioned="../../pkg/$provider/facility-cmd/$facility/$main_command"
@@ -314,4 +335,5 @@ printf 'pinned-selector=ok\n'
 printf 'collision-rollback=ok\n'
 printf 'binding-independent=ok\n'
 printf 'class-presence-reconcile=ok\n'
+printf 'ambient-facility-env=absent\n'
 exit 0
