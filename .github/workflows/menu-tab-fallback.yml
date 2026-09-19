@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: rumiai-tests
 
       - name: Checkout rumiai-os target
         uses: actions/checkout@v4
@@ -30,14 +31,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
-          git config user.name "RumiAI Validation"
-          git config user.email "validation@rumiai.local"
+          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-tests config user.name "RumiAI Validation"
+          git -C rumiai-tests config user.email "validation@rumiai.local"
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
-          git status --short
+          git -C rumiai-tests status --short
           git -C rumiai-os status --short
-          awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "4e6de5ec0ace036262bb6016424e235c7bd9bdc0" { found = 1 } END { exit !found }' validation/menu.conf
+          awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "4e6de5ec0ace036262bb6016424e235c7bd9bdc0" { found = 1 } END { exit !found }' rumiai-tests/validation/menu.conf
 
       - name: Validate menu scope
         shell: bash
-        run: ./rumiai-validate menu
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate menu
