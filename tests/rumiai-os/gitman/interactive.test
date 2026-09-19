@@ -402,7 +402,10 @@ def run_save_and_escape_roundtrip_scenario():
         s.wait_for("Status", start=open_mark)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for(f"Repository: {os.path.realpath(repo_escape)}", start=action_mark)
+        escaped_real = os.path.realpath(repo_escape)
+        escaped_first, escaped_second = escaped_real.split("\n", 1)
+        s.wait_for(f"Repository: {escaped_first}", start=action_mark)
+        s.wait_for(escaped_second, start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
         s.send(b"x")
@@ -432,7 +435,24 @@ def run_add_remove_clear_scenario():
         return_mark = len(s.buffer)
         s.send(b"\t")
         s.wait_for("Git repositories", start=return_mark)
-        s.wait_for(repo_link, start=return_mark)
+
+        # Prove that the add operation installed the linked worktree without
+        # relying on its possibly truncated repository-menu label.
+        s.send(DOWN)
+        s.pump_for(0.15)
+        open_added_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Status", start=open_added_mark)
+        added_action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for(f"Repository: {repo_link}", start=added_action_mark)
+        s.wait_for("Press any key to continue...", start=added_action_mark)
+        added_resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=added_resume_mark)
+        added_back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=added_back_mark)
 
         remove_mark = len(s.buffer)
         s.send(b"r")
@@ -444,11 +464,23 @@ def run_add_remove_clear_scenario():
         post_remove_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Git repositories", start=post_remove_mark)
+
+        # With only repo_main left, Down cannot select another repository.
+        s.send(DOWN)
         s.pump_for(0.15)
-        assert repo_link.encode() not in bytes(s.buffer[post_remove_mark:]), (
-            "removed linked worktree remained in repository menu",
-            bytes(s.buffer[post_remove_mark:]),
-        )
+        open_remaining_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Status", start=open_remaining_mark)
+        remaining_action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for(f"Repository: {repo_main}", start=remaining_action_mark)
+        s.wait_for("Press any key to continue...", start=remaining_action_mark)
+        remaining_resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=remaining_resume_mark)
+        remaining_back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=remaining_back_mark)
 
         clear_mark = len(s.buffer)
         s.send(b"c")
