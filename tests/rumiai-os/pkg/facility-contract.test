@@ -57,12 +57,16 @@ esac
   fail 'pkg facility cmd handler is missing'
 [ -f "$root/lib/sys/sh/pkg/facility/pkg-facility-env.lib.sh" ] ||
   fail 'pkg facility env handler is missing'
+[ -f "$root/lib/sys/sh/pkg/facility/pkg-facility-service.lib.sh" ] ||
+  fail 'pkg facility service handler is missing'
 [ -f "$root/res/sys/manual/pkg-facility.lib.sh" ] ||
   fail 'pkg facility library manual is missing'
 [ -f "$root/res/sys/manual/pkg-facility-cmd.lib.sh" ] ||
   fail 'pkg facility cmd manual is missing'
 [ -f "$root/res/sys/manual/pkg-facility-env.lib.sh" ] ||
   fail 'pkg facility env manual is missing'
+[ -f "$root/res/sys/manual/pkg-facility-service.lib.sh" ] ||
+  fail 'pkg facility service manual is missing'
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-facility-contract-$$
 umask 077
@@ -93,17 +97,24 @@ catalog=$tmp/catalog
 contract=$catalog/facility/$facility/25
 provider=$catalog/pkg/provider/linux-x86_64/range
 payload=$tmp/payload
+SERVICE_EXEC_MARKER=$tmp/service-executed
+export SERVICE_EXEC_MARKER
 
 make_valid()
 {
   rm -rf "$catalog" "$provider" "$payload"
-  mkdir -p "$contract/cmd" "$contract/env" \
+  rm -f "$SERVICE_EXEC_MARKER"
+  mkdir -p "$contract/cmd" "$contract/env" "$contract/service" \
     "$provider/facility-cmd/$facility" "$provider/facility-env" \
+    "$provider/facility-service/$facility" "$provider/cmd" "$provider/link" \
     "$payload/bin" || return 1
 
   : > "$contract/cmd/java" || return 1
   : > "$contract/cmd/javac" || return 1
   : > "$contract/env/JAVA_HOME" || return 1
+  printf '%s\n' package-command > "$contract/service/start" || return 1
+  printf '%s\n' foreground > "$contract/service/process" || return 1
+  printf '%s\n' sigterm > "$contract/service/stop" || return 1
 
   printf '%s 25\n' "$facility" > "$provider/facility" || return 1
   printf '%s\n' bin/java > "$provider/facility-cmd/$facility/java" || return 1
@@ -111,12 +122,26 @@ make_valid()
   tab=$(printf '\t')
   printf 'JAVA_HOME%sroot\n' "$tab" > "$provider/facility-env/$facility" || return 1
 
+  printf '%s\n' service-start > "$provider/facility-service/$facility/start" || return 1
+  cat > "$provider/cmd/service-start" <<'EOF_SERVICE_COMMAND'
+#!/usr/bin/env m
+exit 0
+EOF_SERVICE_COMMAND
+  printf '%s\n' bin/service-target > "$provider/link/service-start" || return 1
+
   cat > "$payload/bin/java" <<'EOF_JAVA'
 #!/bin/sh
 exit 0
 EOF_JAVA
   cp "$payload/bin/java" "$payload/bin/javac" || return 1
-  chmod 700 "$payload/bin/java" "$payload/bin/javac" || return 1
+
+  cat > "$payload/bin/service-target" <<'EOF_SERVICE_TARGET'
+#!/bin/sh
+: > "$SERVICE_EXEC_MARKER"
+exit 0
+EOF_SERVICE_TARGET
+
+  chmod 700 "$payload/bin/java" "$payload/bin/javac" "$payload/bin/service-target" || return 1
 }
 
 make_valid || error 'cannot prepare valid facility/provider fixture'
@@ -129,6 +154,8 @@ make_valid || error 'cannot prepare valid facility/provider fixture'
   cat "$tmp/provider-valid.err" >&2
   fail 'conforming provider realization was rejected'
 }
+[ ! -e "$SERVICE_EXEC_MARKER" ] ||
+  fail 'service conformance executed the provider start target'
 
 # Conformance is inert: it must not create provider-selection configuration.
 expect_status 1 default-before "$root/m" "$root/bin/sys/pkg" provider default "$facility"
@@ -169,6 +196,35 @@ make_valid || error 'cannot reset valid fixture'
 : > "$contract/env/PATH" || error 'cannot prepare invalid PATH contract marker'
 expect_status 1 path-contract "$root/m" "$driver" contract "$contract"
 
+# Service contract values are a closed trusted schema.
+make_valid || error 'cannot reset valid fixture'
+printf '%s\n' daemon > "$contract/service/process" ||
+  error 'cannot prepare invalid service process contract'
+expect_status 1 invalid-service-process "$root/m" "$driver" contract "$contract"
+
+# A service provider must realize the required package-command start mapping.
+make_valid || error 'cannot reset valid fixture'
+rm "$provider/facility-service/$facility/start" ||
+  error 'cannot remove service start realization'
+expect_status 1 missing-service-start "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
+# Generic SIGTERM stop does not admit a provider-specific stop realization.
+make_valid || error 'cannot reset valid fixture'
+printf '%s\n' service-stop > "$provider/facility-service/$facility/stop" ||
+  error 'cannot prepare provider-specific stop realization'
+expect_status 1 extra-service-stop "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
+# The service start mapping must name an ordinary command of the same provider.
+make_valid || error 'cannot reset valid fixture'
+printf '%s\n' missing-start-command > "$provider/facility-service/$facility/start" ||
+  error 'cannot prepare missing service command mapping'
+expect_status 1 missing-service-command "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
+# A service realization cannot exist when the exact facility contract has no service part.
+make_valid || error 'cannot reset valid fixture'
+rm -rf "$contract/service" || error 'cannot remove service contract part'
+expect_status 1 service-without-contract "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
 # Provider realization surfaces are closed as well.
 make_valid || error 'cannot reset valid fixture'
 mkdir -p "$provider/facility-lifecycle/$facility" ||
@@ -194,5 +250,6 @@ expect_status 1 realization-without-declaration "$root/m" "$driver" provider "$c
 
 printf 'contract-validation=ok\n'
 printf 'provider-conformance=ok\n'
+printf 'service-conformance=ok\n'
 printf 'conformance-inert=ok\n'
 exit 0
