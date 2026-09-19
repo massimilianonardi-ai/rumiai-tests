@@ -41,7 +41,6 @@ esac
 pager=$root/bin/sys/pager
 [ -x "$pager" ] || fail 'pager command is unavailable'
 
-[ "$(uname -s 2>/dev/null)" = Linux ] || skip 'interactive backend preservation test currently targets Linux less policy'
 command -v python3 >/dev/null 2>&1 || skip 'python3 is unavailable'
 command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
 TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
@@ -159,7 +158,7 @@ PY_PAGER
 status=$?
 [ "$status" -eq 0 ] || fail 'interactive pager backend scenarios failed'
 
-[ -f "$marker" ] || fail 'Linux pager did not invoke less backend'
+[ -f "$marker" ] || fail 'pager did not prefer available less backend'
 [ "$(sed -n '1p' "$args_file")" -eq 1 ] || fail 'file-mode less backend did not receive one file operand'
 grep -F "$tmp/file payload" "$args_file" >/dev/null 2>&1 ||
     fail 'pager did not pass resolved file operand to less backend'
