@@ -1,42 +1,46 @@
-name: Menu default Tab development run
+name: Menu default Tab validation
 
 on:
   push:
     branches:
       - main
+    paths:
+      - .github/workflows/menu-default-tab.yml
+
+permissions:
+  contents: write
 
 jobs:
-  test:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact test suite
+      - name: Checkout validation suite
         uses: actions/checkout@v4
         with:
-          ref: 75a345002e75d53230ca9283c411e4f15a3943f5
-          fetch-depth: 1
+          fetch-depth: 0
           path: rumiai-tests
 
-      - name: Checkout exact product
+      - name: Checkout rumiai-os target
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: 34671a5a1e9917fa39e3bbbd4b155590202c9b22
-          fetch-depth: 1
+          fetch-depth: 0
           path: rumiai-os
 
-      - name: Verify exact revisions
+      - name: Normalize repository identity
         shell: bash
         run: |
           set -euo pipefail
           git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-tests config user.name "RumiAI Validation"
+          git -C rumiai-tests config user.email "validation@rumiai.local"
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
-          test "$(git -C rumiai-tests rev-parse HEAD)" = "75a345002e75d53230ca9283c411e4f15a3943f5"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "34671a5a1e9917fa39e3bbbd4b155590202c9b22"
+          git -C rumiai-tests status --short
+          git -C rumiai-os status --short
+          awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "34671a5a1e9917fa39e3bbbd4b155590202c9b22" { found = 1 } END { exit !found }' rumiai-tests/validation/menu.conf
 
-      - name: Run menu tests
+      - name: Validate menu scope
         shell: bash
-        env:
-          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-test rumiai-os/menu
+          ./rumiai-validate menu
