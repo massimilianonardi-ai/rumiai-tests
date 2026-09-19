@@ -33,13 +33,20 @@ jobs:
           test "$(git -C rumiai-tests rev-parse HEAD)" = "50cf2e4b3da1d204381e9a9093369965c8ab0e1f"
           test "$(git -C rumiai-os rev-parse HEAD)" = "97abcece0dbb9a4ae15fadf452c198e3c57a6037"
 
-      - name: Run pager tests
+      - name: Diagnose pager tests directly
         shell: bash
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-test rumiai-os/pager
+          set +e
+          ./tests/rumiai-os/pager/contract.test
+          contract_status=$?
+          ./tests/rumiai-os/pager/interactive.test
+          interactive_status=$?
+          echo "contract_status=$contract_status interactive_status=$interactive_status"
+          test "$contract_status" -eq 0
+          test "$interactive_status" -eq 0
 
       - name: Run gitman tests
         shell: bash
