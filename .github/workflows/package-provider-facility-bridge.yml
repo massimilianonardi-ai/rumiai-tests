@@ -33,6 +33,11 @@ jobs:
           fetch-depth: 1
           path: rumiai-os
 
+      - name: Normalize target origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
       - name: Verify exact revisions
         shell: bash
         run: |
