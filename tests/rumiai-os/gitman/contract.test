@@ -47,6 +47,14 @@ grep -F 'state-path user sys gitman conf' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman does not resolve its user configuration through state-path'
 grep -F 'gitman_conf_file="$gitman_conf_dir/repositories"' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman repositories configuration pathname is missing'
+grep -F 'gitman_config_decode()' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman configuration decoder is missing'
+grep -F 'gitman_config_encode()' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman configuration encoder is missing'
+grep -F -- '-K a -K r -K c -K s' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman repository menu save action is missing'
+grep -F 'Overwrite repositories configuration?' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman overwrite confirmation is missing'
 grep -F 'git -C "$gitman_action_repository" status --short --branch' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman status action is missing'
 grep -F 'git -C "$gitman_action_repository" log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
@@ -69,5 +77,7 @@ manual_text=$("$root/m" "$manual_command" --no-pager gitman) ||
     fail 'manual gitman lookup failed'
 printf '%s\n' "$manual_text" | grep -F 'interactive manager for local Git working trees' >/dev/null 2>&1 ||
     fail 'manual gitman returned unexpected content'
+printf '%s\n' "$manual_text" | grep -F 'save the current repository set to configuration' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document configuration save'
 
 exit 0
