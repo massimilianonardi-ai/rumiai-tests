@@ -139,9 +139,57 @@ fi
 EOF_LESS
 chmod +x "$fake_less" || error 'cannot make fake less executable'
 
+visual_editor=$tmp/bin/visual-editor
+editor_editor=$tmp/bin/editor-editor
+visual_marker=$tmp/visual-editor.marker
+editor_marker=$tmp/editor-editor.marker
+vi_marker=$tmp/vi-editor.marker
+
+cat > "$visual_editor" <<'EOF_VISUAL'
+#!/bin/sh
+printf '%s\n' 'VISUAL_EDITOR_RUNNING'
+: > "$RUMIAI_GITMAN_VISUAL_MARKER"
+status=${RUMIAI_GITMAN_EDITOR_EXIT:-0}
+[ "$status" -eq 0 ] || exit "$status"
+if [ "${RUMIAI_GITMAN_EDITOR_WRITE-}" = yes ]
+then
+    printf '%s' "${RUMIAI_GITMAN_EDITOR_CONTENT-}" > "$1"
+fi
+exit 0
+EOF_VISUAL
+chmod +x "$visual_editor" || error 'cannot make VISUAL editor fixture executable'
+
+cat > "$editor_editor" <<'EOF_EDITOR'
+#!/bin/sh
+printf '%s\n' 'EDITOR_EDITOR_RUNNING'
+: > "$RUMIAI_GITMAN_EDITOR_MARKER"
+status=${RUMIAI_GITMAN_EDITOR_EXIT:-0}
+[ "$status" -eq 0 ] || exit "$status"
+if [ "${RUMIAI_GITMAN_EDITOR_WRITE-}" = yes ]
+then
+    printf '%s' "${RUMIAI_GITMAN_EDITOR_CONTENT-}" > "$1"
+fi
+exit 0
+EOF_EDITOR
+chmod +x "$editor_editor" || error 'cannot make EDITOR editor fixture executable'
+
+cat > "$tmp/bin/vi" <<'EOF_VI'
+#!/bin/sh
+printf '%s\n' 'VI_EDITOR_RUNNING'
+: > "$RUMIAI_GITMAN_VI_MARKER"
+status=${RUMIAI_GITMAN_EDITOR_EXIT:-0}
+[ "$status" -eq 0 ] || exit "$status"
+if [ "${RUMIAI_GITMAN_EDITOR_WRITE-}" = yes ]
+then
+    printf '%s' "${RUMIAI_GITMAN_EDITOR_CONTENT-}" > "$1"
+fi
+exit 0
+EOF_VI
+chmod +x "$tmp/bin/vi" || error 'cannot make vi editor fixture executable'
+
 export TERM=xterm-256color
 
-python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" "$pager_probe" "$pager_marker" "$tmp/bin" "$less_marker" "$less_env" <<'PY_GITMAN'
+python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" "$pager_probe" "$pager_marker" "$tmp/bin" "$less_marker" "$less_env" "$visual_editor" "$editor_editor" "$visual_marker" "$editor_marker" "$vi_marker" <<'PY_GITMAN'
 import os
 import pty
 import select
@@ -150,7 +198,7 @@ import sys
 import time
 from pathlib import Path
 
-m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file, pager_probe, pager_marker, fake_bin, less_marker, less_env = sys.argv[1:14]
+m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file, pager_probe, pager_marker, fake_bin, less_marker, less_env, visual_editor, editor_editor, visual_marker, editor_marker, vi_marker = sys.argv[1:19]
 
 env = os.environ.copy()
 env["TERM"] = "xterm-256color"
@@ -174,15 +222,20 @@ except subprocess.CalledProcessError:
     RMCUP = b""
 
 class Session:
-    def __init__(self, args, cwd):
+    def __init__(self, args, cwd, extra_env=None, unset_env=()):
         self.buffer = bytearray()
         self.pid, self.master = pty.fork()
         self.exited = False
         self.status = None
         if self.pid == 0:
+            child_env = env.copy()
+            if extra_env:
+                child_env.update(extra_env)
+            for name in unset_env:
+                child_env.pop(name, None)
             os.chdir(cwd)
             argv = [m_command, gitman_command, *args]
-            os.execve(m_command, argv, env)
+            os.execve(m_command, argv, child_env)
 
     def pump(self, timeout=0.05):
         if self.exited:
