@@ -115,16 +115,17 @@ fi
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-. "$m_LIB_DIR/sys/sh/pkg-integration.lib.sh" || exit 3
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
 action=$1
 shift
 case $action in
   integrate) pkg_integrate "$@";;
   deintegrate) pkg_deintegrate "$@";;
-  *) return 2;;
+  *) exit 2;;
 esac
 EOF_DRIVER
-chmod 600 "$driver" || error 'cannot prepare integration driver'
+chmod 700 "$driver" || error 'cannot prepare integration driver'
 
 range1=$tmp/range-1
 payload1=$tmp/payload-1
@@ -152,6 +153,27 @@ else
 fi
 [ -d "$duplicate" ] && [ -f "$duplicate/payload-marker" ] ||
   fail 'failed duplicate integration consumed caller-owned payload'
+
+
+range_path_env=$tmp/range-path-env
+payload_path_env=$tmp/payload-path-env
+mkdir -p "$range_path_env/facility-env" || error 'cannot create PATH facility environment definition'
+printf '%s\n' 'pathfacility 1' > "$range_path_env/facility" ||
+  error 'cannot write PATH facility declaration'
+tab=$(printf '\t')
+printf 'PATH%sliteral forbidden\n' "$tab" > "$range_path_env/facility-env/pathfacility" ||
+  error 'cannot write PATH facility environment record'
+make_payload "$payload_path_env" path-env || error 'cannot create PATH facility environment payload'
+if integrate 3 "$range_path_env" "$payload_path_env" > "$tmp/path-env.out" 2> "$tmp/path-env.err"
+then
+  fail 'pkg_integrate accepted PATH in facility-env metadata'
+else
+  [ "$?" -eq 1 ] || fail 'PATH facility-env rejection did not return 1'
+fi
+[ -d "$payload_path_env" ] && [ -f "$payload_path_env/payload-marker" ] ||
+  fail 'rejected PATH facility-env consumed caller-owned payload'
+[ ! -e "$root/pkg/$package@3" ] && [ ! -L "$root/pkg/$package@3" ] ||
+  fail 'rejected PATH facility-env created a concrete package'
 
 range_unsupported=$tmp/range-unsupported
 payload_unsupported=$tmp/payload-unsupported
