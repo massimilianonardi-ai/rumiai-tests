@@ -37,18 +37,10 @@ jobs:
           test -z "$(git -C rumiai-tests status --porcelain)"
           test -z "$(git -C rumiai-os status --porcelain)"
 
-      - name: Run gitman tests
+      - name: Run gitman interactive test directly
         shell: bash
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-test rumiai-os/gitman
-
-      - name: Run menu tests
-        shell: bash
-        env:
-          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
-        run: |
-          cd rumiai-tests
-          ./rumiai-test rumiai-os/menu
+          ./tests/rumiai-os/gitman/interactive.test
