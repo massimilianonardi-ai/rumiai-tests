@@ -11,26 +11,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: b9bd0170aa899096f63d10732049d877f5055d06
+          ref: 787e07df365294f095237f3222add7c825bcfec4
           fetch-depth: 1
-      - name: Verify exact revision
+      - name: Normalize and verify exact checkout
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "b9bd0170aa899096f63d10732049d877f5055d06"
+          git remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          test "$(git rev-parse HEAD)" = "787e07df365294f095237f3222add7c825bcfec4"
+          test "$(git config --get remote.origin.url)" = "https://github.com/massimilianonardi-ai/rumiai-tests.git"
           test -z "$(git status --porcelain --untracked-files=no)"
       - name: Package checkout
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/rumiai-tests-b9bd0170aa899096f63d10732049d877f5055d06.tar.gz"
+          name="rumiai-tests-787e07df365294f095237f3222add7c825bcfec4.tar.gz"
+          archive="$RUNNER_TEMP/$name"
           tar -czf "$archive" .
-          sha256sum "$archive" > "$archive.sha256"
+          digest="$(sha256sum "$archive" | awk '{print $1}')"
+          (cd "$RUNNER_TEMP" && printf '%s  %s\n' "$digest" "$name" > "$name.sha256")
+          {
+            printf 'repository\t%s\n' 'massimilianonardi-ai/rumiai-tests'
+            printf 'commit\t%s\n' '787e07df365294f095237f3222add7c825bcfec4'
+            printf 'origin\t%s\n' 'https://github.com/massimilianonardi-ai/rumiai-tests.git'
+            printf 'archive\t%s\n' "$name"
+            printf 'sha256\t%s\n' "$digest"
+          } > "$RUNNER_TEMP/manifest"
       - uses: actions/upload-artifact@v4
         with:
           name: rumiai-tests-menu-bridge
           path: |
-            ${{ runner.temp }}/rumiai-tests-b9bd0170aa899096f63d10732049d877f5055d06.tar.gz
-            ${{ runner.temp }}/rumiai-tests-b9bd0170aa899096f63d10732049d877f5055d06.tar.gz.sha256
+            ${{ runner.temp }}/rumiai-tests-787e07df365294f095237f3222add7c825bcfec4.tar.gz
+            ${{ runner.temp }}/rumiai-tests-787e07df365294f095237f3222add7c825bcfec4.tar.gz.sha256
+            ${{ runner.temp }}/manifest
           if-no-files-found: error
           compression-level: 0
