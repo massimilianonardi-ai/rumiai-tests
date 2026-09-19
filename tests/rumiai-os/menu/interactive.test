@@ -1,0 +1,233 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/menu/interactive.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+decode_result()
+{
+    [ -f "$RUMIAI_MENU_TEST_RESULT" ] || fail "scenario $1 produced no result file"
+    result_text=$(cat "$RUMIAI_MENU_TEST_RESULT") || error "cannot read result for scenario $1"
+    [ -n "$result_text" ] || fail "scenario $1 produced an empty successful result"
+    eval "set -- $result_text" || fail "scenario $1 produced invalid shell serialization"
+    RESULT_COUNT=$#
+    RESULT_1=${1-}
+    RESULT_2=${2-}
+    RESULT_3=${3-}
+    RESULT_4=${4-}
+}
+
+run_scenario()
+{
+    scenario=$1
+    dialogue=$2
+    output=$3
+
+    : > "$RUMIAI_MENU_TEST_RESULT" || error "cannot reset result for $scenario"
+    : > "$RUMIAI_MENU_TEST_STATUS" || error "cannot reset status for $scenario"
+    RUMIAI_MENU_TEST_SCENARIO=$scenario
+    export RUMIAI_MENU_TEST_SCENARIO
+
+    rumiai_test_interactive_run "$dialogue" "$output" "$wrapper" || {
+        cat "$output" >&2 2>/dev/null || :
+        fail "interactive driver failed for $scenario"
+    }
+
+    [ -s "$RUMIAI_MENU_TEST_STATUS" ] || fail "scenario $scenario did not record status"
+    SCENARIO_STATUS=$(cat "$RUMIAI_MENU_TEST_STATUS") || error "cannot read status for $scenario"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+menu_group=${test_dir%/*}
+rumiai_os_group=${menu_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+interactive_library=$suite_root/lib/interactive.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+[ -f "$interactive_library" ] || error 'interactive helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+. "$interactive_library" || error 'cannot source interactive helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+menu=$root/bin/sys/menu
+[ -x "$menu" ] || fail 'menu command is unavailable'
+
+rumiai_test_interactive_require
+status=$?
+case $status in
+    0) : ;;
+    2) skip 'no supported scripted TTY driver is available on this host' ;;
+    *) error 'cannot initialize scripted TTY driver' ;;
+esac
+
+command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
+TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
+TERM=xterm-256color down=$(tput kcud1 2>/dev/null) || skip 'Down capability is unavailable'
+TERM=xterm-256color up=$(tput kcuu1 2>/dev/null) || skip 'Up capability is unavailable'
+[ -n "$down" ] && [ -n "$up" ] || skip 'arrow capabilities are unavailable'
+
+export TERM=xterm-256color
+
+tmp=${TMPDIR:-/tmp}/rumiai-menu-interactive-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+wrapper=$tmp/wrapper
+RUMIAI_MENU_TEST_ROOT=$root
+RUMIAI_MENU_TEST_COMMAND=$menu
+RUMIAI_MENU_TEST_RESULT=$tmp/result
+RUMIAI_MENU_TEST_STATUS=$tmp/status
+RUMIAI_MENU_TEST_FS=$tmp/fs
+export RUMIAI_MENU_TEST_ROOT RUMIAI_MENU_TEST_COMMAND RUMIAI_MENU_TEST_RESULT RUMIAI_MENU_TEST_STATUS RUMIAI_MENU_TEST_FS
+
+mkdir -p "$RUMIAI_MENU_TEST_FS/sub" || error 'cannot prepare filesystem scenario'
+: > "$RUMIAI_MENU_TEST_FS/z-file" || error 'cannot prepare filesystem file'
+: > "$RUMIAI_MENU_TEST_FS/sub/a file" || error 'cannot prepare first subdirectory file'
+: > "$RUMIAI_MENU_TEST_FS/sub/b*file" || error 'cannot prepare second subdirectory file'
+mkdir "$RUMIAI_MENU_TEST_FS/.hidden-dir" || error 'cannot prepare hidden directory'
+: > "$RUMIAI_MENU_TEST_FS/a-file" || error 'cannot prepare mixed-sort file'
+mkdir "$RUMIAI_MENU_TEST_FS/z-dir" || error 'cannot prepare mixed-sort directory'
+
+cat > "$wrapper" <<'EOF_WRAPPER'
+#!/bin/sh
+case $RUMIAI_MENU_TEST_SCENARIO in
+    list-enter)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_LIST_ENTER -- 'single value@:=Single label' > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    list-multi)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_LIST_MULTI -K x -- \
+            'alpha value@:=Alpha' 'star*value@:=Star' third > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    toggle-key)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_TOGGLE -S z -K space -- 'selected value@:=Selected' other > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    fs-browse)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_FS -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    fs-hidden)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_FS_HIDDEN -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    fs-mixed)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_FS_MIXED -K x -n -m -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    cancel)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_CANCEL -- one two > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    *)
+        exit 90
+        ;;
+esac
+child_status=$?
+printf '%s\n' "$child_status" > "$RUMIAI_MENU_TEST_STATUS"
+exit 0
+EOF_WRAPPER
+chmod +x "$wrapper" || error 'cannot make interactive wrapper executable'
+
+# Enter returns the current item in list mode.
+dialogue=$tmp/list-enter.dialogue
+printf '%s\t%s\n' MENU_LIST_ENTER '' > "$dialogue" || error 'cannot create list-enter dialogue'
+run_scenario list-enter "$dialogue" "$tmp/list-enter.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "list-enter status is $SCENARIO_STATUS"
+decode_result list-enter
+[ "$RESULT_COUNT" -eq 2 ] || fail 'list-enter returned wrong argument count'
+[ "$RESULT_1" = enter ] || fail "list-enter key is '$RESULT_1'"
+[ "$RESULT_2" = 'single value' ] || fail "list-enter value is '$RESULT_2'"
+
+# Mark the second item first, then the first item; output must still follow provider order.
+dialogue=$tmp/list-multi.dialogue
+list_multi_response="${down} ${up} x"
+printf '%s\t%s\n' MENU_LIST_MULTI "$list_multi_response" > "$dialogue" || error 'cannot create list-multi dialogue'
+run_scenario list-multi "$dialogue" "$tmp/list-multi.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "list-multi status is $SCENARIO_STATUS"
+decode_result list-multi
+[ "$RESULT_COUNT" -eq 3 ] || fail 'list-multi returned wrong argument count'
+[ "$RESULT_1" = x ] || fail "list-multi key is '$RESULT_1'"
+[ "$RESULT_2" = 'alpha value' ] || fail "list-multi first value is '$RESULT_2'"
+[ "$RESULT_3" = 'star*value' ] || fail "list-multi second value is '$RESULT_3'"
+
+# Reassign the toggle key so Space becomes available as an action key.
+dialogue=$tmp/toggle-key.dialogue
+printf '%s\t%s\n' MENU_TOGGLE 'z ' > "$dialogue" || error 'cannot create toggle-key dialogue'
+run_scenario toggle-key "$dialogue" "$tmp/toggle-key.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "toggle-key status is $SCENARIO_STATUS"
+decode_result toggle-key
+[ "$RESULT_COUNT" -eq 2 ] || fail 'toggle-key returned wrong argument count'
+[ "$RESULT_1" = space ] || fail "toggle-key action is '$RESULT_1'"
+[ "$RESULT_2" = 'selected value' ] || fail "toggle-key value is '$RESULT_2'"
+
+# -n + -c must make the visible subdirectory the first directory instead of .. or .hidden-dir.
+# Enter browses it; marks inside the new view are returned as absolute paths in view order.
+dialogue=$tmp/fs-browse.dialogue
+fs_second_response="${down} ${down} x"
+printf '%s\t%s\n' \
+    "$RUMIAI_MENU_TEST_FS" '' \
+    "$RUMIAI_MENU_TEST_FS/sub" "$fs_second_response" > "$dialogue" || error 'cannot create fs-browse dialogue'
+run_scenario fs-browse "$dialogue" "$tmp/fs-browse.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-browse status is $SCENARIO_STATUS"
+decode_result fs-browse
+[ "$RESULT_COUNT" -eq 3 ] || fail 'fs-browse returned wrong argument count'
+[ "$RESULT_1" = x ] || fail "fs-browse key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub/a file" ] || fail "fs-browse first path is '$RESULT_2'"
+[ "$RESULT_3" = "$RUMIAI_MENU_TEST_FS/sub/b*file" ] || fail "fs-browse second path is '$RESULT_3'"
+
+# With -n, the first root entry must not be the hidden directory.
+dialogue=$tmp/fs-hidden.dialogue
+printf '%s\t%s\n' MENU_FS_HIDDEN x > "$dialogue" || error 'cannot create fs-hidden dialogue'
+run_scenario fs-hidden "$dialogue" "$tmp/fs-hidden.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-hidden status is $SCENARIO_STATUS"
+decode_result fs-hidden
+[ "$RESULT_1" = x ] || fail "fs-hidden key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] || fail "-n did not hide/sort as expected: '$RESULT_2'"
+
+# With -m, lexical order across types puts a-file before the directories.
+dialogue=$tmp/fs-mixed.dialogue
+printf '%s\t%s\n' MENU_FS_MIXED x > "$dialogue" || error 'cannot create fs-mixed dialogue'
+run_scenario fs-mixed "$dialogue" "$tmp/fs-mixed.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-mixed status is $SCENARIO_STATUS"
+decode_result fs-mixed
+[ "$RESULT_1" = x ] || fail "fs-mixed key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/a-file" ] || fail "-m did not mix lexical order as expected: '$RESULT_2'"
+
+# Escape cancels with status 1 and no successful result.
+escape=$(printf '\033X')
+escape=${escape%X}
+dialogue=$tmp/cancel.dialogue
+printf '%s\t%s\n' MENU_CANCEL "$escape" > "$dialogue" || error 'cannot create cancel dialogue'
+run_scenario cancel "$dialogue" "$tmp/cancel.output"
+[ "$SCENARIO_STATUS" -eq 1 ] || fail "cancel status is $SCENARIO_STATUS"
+[ ! -s "$RUMIAI_MENU_TEST_RESULT" ] || fail 'cancel produced a successful result'
+
+exit 0
