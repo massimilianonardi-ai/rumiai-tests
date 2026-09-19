@@ -14,7 +14,7 @@ jobs:
       - name: Checkout exact test suite
         uses: actions/checkout@v4
         with:
-          ref: 72fb1797fad350c1b29b1c1270ab8b015c698592
+          ref: a8d627d4b02c07e6059e6d9aae532848e65c6636
           fetch-depth: 1
           path: rumiai-tests
 
@@ -32,15 +32,23 @@ jobs:
           set -euo pipefail
           git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
-          test "$(git -C rumiai-tests rev-parse HEAD)" = "72fb1797fad350c1b29b1c1270ab8b015c698592"
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "a8d627d4b02c07e6059e6d9aae532848e65c6636"
           test "$(git -C rumiai-os rev-parse HEAD)" = "50b760bd3cfe08922068ceb7d973d7edee12251c"
           test -z "$(git -C rumiai-tests status --porcelain)"
           test -z "$(git -C rumiai-os status --porcelain)"
 
-      - name: Run menu interactive test directly
+      - name: Run gitman tests
         shell: bash
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./tests/rumiai-os/menu/interactive.test
+          ./rumiai-test rumiai-os/gitman
+
+      - name: Run menu tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/menu
