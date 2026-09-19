@@ -55,22 +55,28 @@ grep -F -- '-K a -K r -K c -K s' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman repository menu save action is missing'
 grep -F 'Overwrite repositories configuration?' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman overwrite confirmation is missing'
-grep -F 'git -C "$gitman_action_repository" status --short --branch' "$gitman" >/dev/null 2>&1 ||
+grep -F 'gitman_output_mode=pager' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman does not default to pager output mode'
+grep -F -- '-K backspace -K p' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Git action menu does not expose Backspace and output toggle'
+grep -F 'GIT_PAGER=pager' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman pager mode does not select the RumiAI pager'
+grep -F -- '-R -+F -+X' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman pager mode does not keep short less sessions open with screen restoration'
+grep -F -- '--paginate' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman pager mode does not force Git paging'
+grep -F -- '--no-pager' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman terminal mode does not disable Git paging'
+grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" status --short --branch' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman status action is missing'
-grep -F 'git -C "$gitman_action_repository" log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
+grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman log action is missing'
-grep -F 'git -C "$gitman_action_repository" branch -vv' "$gitman" >/dev/null 2>&1 ||
+grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" branch -vv' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman branch action is missing'
-grep -F 'git -C "$gitman_action_repository" diff' "$gitman" >/dev/null 2>&1 ||
+grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" diff' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman diff action is missing'
-if grep -F -- '--no-pager' "$gitman" >/dev/null 2>&1
-then
-    fail 'gitman overrides Git pager behavior'
-fi
 grep -F "Press any key to continue..." "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman post-command pause is missing'
-grep -F -- '-K backspace' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Git action menu does not configure Backspace'
+    fail 'gitman terminal-mode post-command pause is missing'
 
 if grep -E 'command -- git .* (add|commit|reset|checkout|switch|merge|rebase|fetch|pull|push)( |$)' "$gitman" >/dev/null 2>&1
 then
@@ -83,7 +89,11 @@ printf '%s\n' "$manual_text" | grep -F 'interactive manager for local Git workin
     fail 'manual gitman returned unexpected content'
 printf '%s\n' "$manual_text" | grep -F 'save the current repository set to configuration' >/dev/null 2>&1 ||
     fail 'manual gitman does not document configuration save'
-printf '%s\n' "$manual_text" | grep -F "preserves Git's ordinary pager-selection behavior" >/dev/null 2>&1 ||
-    fail 'manual gitman does not document standard Git pager behavior'
+printf '%s\n' "$manual_text" | grep -F 'pager' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document pager output mode'
+printf '%s\n' "$manual_text" | grep -F 'terminal' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document terminal output mode'
+printf '%s\n' "$manual_text" | grep -F -- '-R -+F -+X' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document held less behavior'
 
 exit 0
