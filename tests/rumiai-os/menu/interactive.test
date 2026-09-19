@@ -88,9 +88,9 @@ esac
 command -v python3 >/dev/null 2>&1 || skip 'python3 is unavailable for PTY cancellation validation'
 command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
 TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
-TERM=xterm-256color down=$(tput kcud1 2>/dev/null) || skip 'Down capability is unavailable'
-TERM=xterm-256color up=$(tput kcuu1 2>/dev/null) || skip 'Up capability is unavailable'
-TERM=xterm-256color backspace=$(tput kbs 2>/dev/null) || skip 'Backspace capability is unavailable'
+down=$(TERM=xterm-256color tput kcud1 2>/dev/null) || skip 'Down capability is unavailable'
+up=$(TERM=xterm-256color tput kcuu1 2>/dev/null) || skip 'Up capability is unavailable'
+backspace=$(TERM=xterm-256color tput kbs 2>/dev/null) || skip 'Backspace capability is unavailable'
 [ -n "$down" ] && [ -n "$up" ] || skip 'arrow capabilities are unavailable'
 [ -n "$backspace" ] || skip 'Backspace capability is unavailable'
 
