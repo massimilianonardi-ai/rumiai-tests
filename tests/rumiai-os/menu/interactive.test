@@ -213,6 +213,164 @@ decode_result toggle-key
 [ "$RESULT_1" = space ] || fail "toggle-key action is '$RESULT_1'"
 [ "$RESULT_2" = 'selected value' ] || fail "toggle-key value is '$RESULT_2'"
 
+# Navigation inside an unchanged viewport and a multi-selection toggle must
+# repaint only affected rows, without emitting the terminal clear capability.
+python3 - "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" <<'PY_INCREMENTAL'
+import os
+import pty
+import select
+import subprocess
+import sys
+import time
+
+m_command, menu_command = sys.argv[1:3]
+env = os.environ.copy()
+env["TERM"] = "xterm-256color"
+clear_seq = subprocess.check_output(["tput", "clear"], env=env)
+down = subprocess.check_output(["tput", "kcud1"], env=env)
+
+
+def run_case(header, extra_args, key, expected_fragment, expected_value):
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+    pid, master = pty.fork()
+
+    if pid == 0:
+        os.dup2(out_w, 1)
+        os.dup2(err_w, 2)
+        for fd in (out_r, err_r, out_w, err_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        os.execve(
+            m_command,
+            [m_command, menu_command, "-H", header, *extra_args, "--", "one", "two", "three"],
+            env,
+        )
+
+    os.close(out_w)
+    os.close(err_w)
+    ui = bytearray()
+    out = bytearray()
+    err = bytearray()
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                ui.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+        if header.encode() in ui and b"> one" in ui:
+            break
+    else:
+        raise AssertionError((header, "initial menu render timed out", bytes(ui), bytes(out), bytes(err)))
+
+    ui.clear()
+    os.write(master, key)
+
+    settle = time.monotonic() + 0.35
+    while time.monotonic() < settle:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.03)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                ui.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+
+    assert clear_seq not in ui, (
+        header,
+        "incremental update emitted full-screen clear",
+        bytes(ui),
+    )
+    assert expected_fragment in ui, (
+        header,
+        "expected incremental row was not rendered",
+        expected_fragment,
+        bytes(ui),
+    )
+
+    os.write(master, b"\n")
+
+    status = None
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                ui.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+
+        waited, wait_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = os.waitstatus_to_exitcode(wait_status)
+            break
+
+    if status is None:
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        raise AssertionError((header, "menu did not exit", bytes(ui), bytes(out), bytes(err)))
+
+    for fd, target in ((out_r, out), (err_r, err)):
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0)
+            if not ready:
+                break
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            target.extend(chunk)
+
+    os.close(out_r)
+    os.close(err_r)
+    os.close(master)
+
+    assert status == 0, (header, status, bytes(out), bytes(err))
+    assert err == b"", (header, status, bytes(out), bytes(err))
+
+    text = out.decode("utf-8", "strict").strip()
+    assert expected_value in text, (header, text)
+
+
+run_case(
+    "MENU_INCREMENTAL_MOVE",
+    [],
+    down,
+    b"> two",
+    "two",
+)
+run_case(
+    "MENU_INCREMENTAL_TOGGLE",
+    ["-M"],
+    b" ",
+    b"> [x] one",
+    "one",
+)
+PY_INCREMENTAL
+status=$?
+[ "$status" -eq 0 ] || fail 'incremental menu rendering validation failed'
+
 # Filesystem mode without -K uses Tab as the fallback action in both
 # single-selection and multi-selection. When an explicit -K exists, Tab must
 # remain inactive rather than becoming an additional implicit action. Use a
