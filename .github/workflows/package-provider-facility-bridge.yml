@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: a21a4cdf31453d896e5af24eb2081061d180ff34
+          ref: b001d3893592ced06106fe268a67862ca7b7b5f8
           fetch-depth: 1
           path: rumiai-os
 
@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C rumiai-tests rev-parse HEAD)" = "${GITHUB_SHA}"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "a21a4cdf31453d896e5af24eb2081061d180ff34"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "b001d3893592ced06106fe268a67862ca7b7b5f8"
           test -z "$(git -C rumiai-tests status --porcelain --untracked-files=no)"
           test -z "$(git -C rumiai-os status --porcelain --untracked-files=no)"
 
@@ -55,9 +55,11 @@ jobs:
             rumiai-os/pkg/provider.test \
             rumiai-os/pkg/dependency.test \
             rumiai-os/pkg/env.test \
+            rumiai-os/pkg/facility-contract.test \
             rumiai-os/pkg/facility-default-global.test \
             rumiai-os/pkg-integration/contract.test \
-            rumiai-os/pkg-launch/contract.test
+            rumiai-os/pkg-launch/contract.test \
+            rumiai-os/srv
           do
             ./rumiai-test -- "$selection"
             current=$?
