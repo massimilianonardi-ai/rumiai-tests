@@ -269,7 +269,8 @@ def run_case(header, extra_args, key, expected_fragment, expected_value):
                 out.extend(chunk)
             else:
                 err.extend(chunk)
-        if header.encode() in ui and b"> one" in ui:
+        initial_selected = b"> [ ] one" if "-M" in extra_args else b"> one"
+        if header.encode() in ui and initial_selected in ui:
             break
     else:
         raise AssertionError((header, "initial menu render timed out", bytes(ui), bytes(out), bytes(err)))
