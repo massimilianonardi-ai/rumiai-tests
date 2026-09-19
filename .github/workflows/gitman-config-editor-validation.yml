@@ -1,0 +1,57 @@
+name: Gitman config editor validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/gitman-config-editor-validation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout validation suite
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: rumiai-tests
+
+      - name: Checkout rumiai-os main
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+
+      - name: Normalize branch checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+          git -C rumiai-tests checkout -B main origin/main
+          git -C rumiai-tests branch --set-upstream-to=origin/main main
+          git -C rumiai-os checkout -B main origin/main
+          git -C rumiai-os branch --set-upstream-to=origin/main main
+
+          git -C rumiai-tests config user.name "RumiAI Validation"
+          git -C rumiai-tests config user.email "validation@rumiai.local"
+
+          test "$(git -C rumiai-os rev-parse HEAD)" = "9fcbc905e070799caf2ac72552d340621d7e03d8"
+          test -z "$(git -C rumiai-tests status --porcelain)"
+          test -z "$(git -C rumiai-os status --porcelain)"
+          awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "9fcbc905e070799caf2ac72552d340621d7e03d8" { found = 1 } END { exit !found }' rumiai-tests/validation/gitman.conf
+
+      - name: Validate gitman
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate gitman
