@@ -1,0 +1,58 @@
+name: Gitman output modes diagnostic
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/gitman-output-modes-diagnostic.yml
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact suite
+        uses: actions/checkout@v4
+        with:
+          ref: 3536bda91a51fa87bd5bb8fb5393a55eb6220149
+          fetch-depth: 1
+          path: rumiai-tests
+
+      - name: Checkout exact product source
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: d39ad30b4788cb642ff242b59b8144914305376e
+          fetch-depth: 0
+          path: rumiai-os-source
+
+      - name: Prepare validation-like isolated target
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-os-source remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+          env_root="${RUNNER_TEMP}/gitman-validation-env"
+          mkdir -p "$env_root/home/.config" "$env_root/home/.cache" "$env_root/home/.local/share" "$env_root/home/.local/state" "$env_root/tmp" "$env_root/runtime"
+          chmod 700 "$env_root/home" "$env_root/tmp" "$env_root/runtime"
+          git clone --no-local --no-checkout -q rumiai-os-source "$env_root/target"
+          git -C "$env_root/target" checkout -q --detach d39ad30b4788cb642ff242b59b8144914305376e
+          git -C "$env_root/target" remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Run interactive test directly in isolated environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_root="${RUNNER_TEMP}/gitman-validation-env"
+          cd rumiai-tests
+          HOME="$env_root/home" \
+          TMPDIR="$env_root/tmp" \
+          TMP="$env_root/tmp" \
+          TEMP="$env_root/tmp" \
+          XDG_CONFIG_HOME="$env_root/home/.config" \
+          XDG_CACHE_HOME="$env_root/home/.cache" \
+          XDG_DATA_HOME="$env_root/home/.local/share" \
+          XDG_STATE_HOME="$env_root/home/.local/state" \
+          XDG_RUNTIME_DIR="$env_root/runtime" \
+          RUMIAI_TEST_RUMIAI_OS_ROOT="$env_root/target" \
+          ./tests/rumiai-os/gitman/interactive.test
