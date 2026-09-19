@@ -27,7 +27,7 @@ cleanup()
   then
     run_pkg default -u -- "$package" >/dev/null 2>&1 || :
 
-    for cleanup_version in 1 2
+    for cleanup_version in 1 2 4
     do
       if [ -d "$root/pkg/$package@$cleanup_version" ] && [ ! -L "$root/pkg/$package@$cleanup_version" ]
       then
@@ -122,6 +122,7 @@ shift
 case $action in
   integrate) pkg_integrate "$@";;
   deintegrate) pkg_deintegrate "$@";;
+  service-resolve) pkg_facility_service_start_resolve "$@";;
   *) exit 2;;
 esac
 EOF_DRIVER
@@ -174,6 +175,54 @@ fi
   fail 'rejected PATH facility-env consumed caller-owned payload'
 [ ! -e "$root/pkg/$package@3" ] && [ ! -L "$root/pkg/$package@3" ] ||
   fail 'rejected PATH facility-env created a concrete package'
+
+service_facility=servicefacility$
+service_command=$package-service-start
+range_service=$tmp/range-service
+payload_service=$tmp/payload-service
+mkdir -p "$range_service/cmd" "$range_service/link" \
+  "$range_service/facility-service/$service_facility" "$payload_service/bin" ||
+  error 'cannot create service integration fixture'
+printf '%s 1\n' "$service_facility" > "$range_service/facility" ||
+  error 'cannot write service facility declaration'
+cat > "$range_service/cmd/$service_command" <<EOF_SERVICE_COMMAND
+#!/usr/bin/env m
+. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+launcher "$package" "\$@"
+EOF_SERVICE_COMMAND
+printf '%s\n' bin/service-target > "$range_service/link/$service_command" ||
+  error 'cannot write service command link'
+printf '%s\n' "$service_command" > "$range_service/facility-service/$service_facility/start" ||
+  error 'cannot write service realization'
+cat > "$payload_service/bin/service-target" <<'EOF_SERVICE_TARGET'
+#!/bin/sh
+exit 0
+EOF_SERVICE_TARGET
+chmod 700 "$payload_service/bin/service-target" ||
+  error 'cannot prepare service target'
+
+integrate 4 "$range_service" "$payload_service" > "$tmp/service-integrate.out" 2> "$tmp/service-integrate.err" || {
+  cat "$tmp/service-integrate.err" >&2
+  fail 'service provider integration failed'
+}
+service_concrete=$root/pkg/$package@4
+[ -f "$service_concrete/facility-service/$service_facility/start" ] &&
+[ ! -L "$service_concrete/facility-service/$service_facility/start" ] ||
+  fail 'facility-service start realization was not materialized'
+
+resolved_service_command=$(
+  "$root/m" "$driver" service-resolve "$service_facility" "$package@4"
+) || fail 'installed service realization did not resolve'
+expected_service_command=$service_concrete/cmd/$service_command
+[ "$resolved_service_command" = "$expected_service_command" ] ||
+  fail "service command resolution mismatch: expected=$expected_service_command observed=$resolved_service_command"
+
+"$root/m" "$driver" deintegrate "$package" 4 > "$tmp/service-remove.out" 2> "$tmp/service-remove.err" || {
+  cat "$tmp/service-remove.err" >&2
+  fail 'service provider deintegration failed'
+}
+[ ! -e "$service_concrete" ] && [ ! -L "$service_concrete" ] ||
+  fail 'service provider concrete remained after deintegration'
 
 range_unsupported=$tmp/range-unsupported
 payload_unsupported=$tmp/payload-unsupported
