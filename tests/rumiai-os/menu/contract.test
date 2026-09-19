@@ -74,6 +74,8 @@ expect_status 2 "$root/m" "$menu" -S enter -- item
 expect_status 2 "$root/m" "$menu" -d "$root" -K backspace
 expect_status 2 "$root/m" "$menu" -d "$root" -K x -P x
 expect_status 2 "$root/m" "$menu" -d "$root" -K x -P enter
+expect_status 2 "$root/m" "$menu" -S tab -d "$root"
+expect_status 2 "$root/m" "$menu" -M -P tab -d "$root"
 
 tmp=${TMPDIR:-/tmp}/rumiai-menu-contract-$$
 umask 077
