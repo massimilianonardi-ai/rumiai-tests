@@ -37,8 +37,7 @@ trap cleanup 0 HUP INT TERM
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 menu_group=${test_dir%/*}
 rumiai_os_group=${menu_group%/*}
-tests_dir=${rumiai_os_group%/*}
-suite_root=${tests_dir%/*}
+suite_root=${rumiai_os_group%/*}
 
 target_library=$suite_root/lib/rumiai-os-target.lib
 [ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
