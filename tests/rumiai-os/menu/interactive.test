@@ -213,24 +213,27 @@ decode_result toggle-key
 [ "$RESULT_1" = space ] || fail "toggle-key action is '$RESULT_1'"
 [ "$RESULT_2" = 'selected value' ] || fail "toggle-key value is '$RESULT_2'"
 
-# Filesystem multi-selection without -K uses Tab as the fallback action.
-# When an explicit -K exists, Tab must remain inactive rather than becoming an
-# additional implicit action. Use a direct PTY because the shared dialogue
-# format itself uses TAB as a record separator.
-tab_default_result=$tmp/fs-tab-default.result
+# Filesystem mode without -K uses Tab as the fallback action in both
+# single-selection and multi-selection. When an explicit -K exists, Tab must
+# remain inactive rather than becoming an additional implicit action. Use a
+# direct PTY because the shared dialogue format itself uses TAB as a record
+# separator.
+tab_single_result=$tmp/fs-tab-single.result
+tab_multi_result=$tmp/fs-tab-multi.result
 tab_explicit_result=$tmp/fs-tab-explicit.result
 python3 - "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
-    "$RUMIAI_MENU_TEST_FS" "$tab_default_result" "$tab_explicit_result" <<'PY_TAB_CONFIRM'
+    "$RUMIAI_MENU_TEST_FS" "$tab_single_result" "$tab_multi_result" \
+    "$tab_explicit_result" <<'PY_TAB_CONFIRM'
 import os
 import pty
 import select
 import sys
 import time
 
-m_command, menu_command, fs_root, default_path, explicit_path = sys.argv[1:6]
+m_command, menu_command, fs_root, single_path, multi_path, explicit_path = sys.argv[1:7]
 
 
-def run_case(header, extra_args, explicit_action):
+def run_case(header, multi, extra_args, explicit_action):
     out_r, out_w = os.pipe()
     err_r, err_w = os.pipe()
     pid, master = pty.fork()
@@ -250,13 +253,16 @@ def run_case(header, extra_args, explicit_action):
             menu_command,
             "-H",
             header,
-            "-M",
+        ]
+        if multi:
+            argv.append("-M")
+        argv.extend([
             "-n",
             "-c",
             *extra_args,
             "-d",
             fs_root,
-        ]
+        ])
         os.execve(m_command, argv, env)
 
     os.close(out_w)
@@ -283,7 +289,8 @@ def run_case(header, extra_args, explicit_action):
     assert header.encode() in ui, (header, bytes(ui), bytes(out), bytes(err))
 
     # At the confined root, the first visible item is the sub directory.
-    os.write(master, b" ")
+    if multi:
+        os.write(master, b" ")
     os.write(master, b"\t")
 
     if explicit_action:
@@ -355,21 +362,31 @@ def run_case(header, extra_args, explicit_action):
     return bytes(out)
 
 
-with open(default_path, "wb") as result:
-    result.write(run_case("MENU_FS_TAB_DEFAULT", [], False))
+with open(single_path, "wb") as result:
+    result.write(run_case("MENU_FS_TAB_SINGLE", False, [], False))
+
+with open(multi_path, "wb") as result:
+    result.write(run_case("MENU_FS_TAB_MULTI", True, [], False))
 
 with open(explicit_path, "wb") as result:
-    result.write(run_case("MENU_FS_TAB_EXPLICIT", ["-K", "x"], True))
+    result.write(run_case("MENU_FS_TAB_EXPLICIT", True, ["-K", "x"], True))
 PY_TAB_CONFIRM
 status=$?
 [ "$status" -eq 0 ] || fail 'filesystem Tab confirmation validation failed'
 
-RUMIAI_MENU_TEST_RESULT=$tab_default_result
-decode_result fs-tab-default
-[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-tab-default returned wrong argument count'
-[ "$RESULT_1" = tab ] || fail "fs-tab-default key is '$RESULT_1'"
+RUMIAI_MENU_TEST_RESULT=$tab_single_result
+decode_result fs-tab-single
+[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-tab-single returned wrong argument count'
+[ "$RESULT_1" = tab ] || fail "fs-tab-single key is '$RESULT_1'"
 [ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] ||
-    fail "fs-tab-default value is '$RESULT_2'"
+    fail "fs-tab-single value is '$RESULT_2'"
+
+RUMIAI_MENU_TEST_RESULT=$tab_multi_result
+decode_result fs-tab-multi
+[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-tab-multi returned wrong argument count'
+[ "$RESULT_1" = tab ] || fail "fs-tab-multi key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] ||
+    fail "fs-tab-multi value is '$RESULT_2'"
 
 RUMIAI_MENU_TEST_RESULT=$tab_explicit_result
 decode_result fs-tab-explicit
