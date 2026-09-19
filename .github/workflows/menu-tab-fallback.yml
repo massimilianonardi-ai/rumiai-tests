@@ -19,6 +19,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout rumiai-os target
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          fetch-depth: 0
+          path: rumiai-os
+
       - name: Normalize repository identity
         shell: bash
         run: |
@@ -26,8 +33,12 @@ jobs:
           git remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
           git config user.name "RumiAI Validation"
           git config user.email "validation@rumiai.local"
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
           git status --short
-          grep -F $'rumiai-os-commit\t4e6de5ec0ace036262bb6016424e235c7bd9bdc0' validation/menu.conf
+          git -C rumiai-os status --short
+          grep -F         shell: bash
+        run: ./rumiai-validate menu
+rumiai-os-commit\t4e6de5ec0ace036262bb6016424e235c7bd9bdc0' validation/menu.conf
 
       - name: Validate menu scope
         shell: bash
