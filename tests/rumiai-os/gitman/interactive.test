@@ -81,6 +81,14 @@ mkdir -p "$repo_link/subdir" || error 'cannot create linked worktree subdirector
 printf '%s\n' probe > "$repo_main/probe.txt" || error 'cannot create untracked status fixture'
 git init -q --bare "$repo_bare" || error 'cannot initialize bare Git repository'
 
+repo_escape=$(printf '%s\n%s' "$work/line" 'literal\n\back')
+git init -q "$repo_escape" || error 'cannot initialize escaped-path Git repository'
+git -C "$repo_escape" config user.name 'RumiAI Test' || error 'cannot configure escaped-path Git test name'
+git -C "$repo_escape" config user.email 'rumiai-test@example.invalid' || error 'cannot configure escaped-path Git test email'
+printf '%s\n' escaped > "$repo_escape/tracked.txt" || error 'cannot create escaped-path tracked fixture'
+git -C "$repo_escape" add tracked.txt || error 'cannot stage escaped-path tracked fixture'
+git -C "$repo_escape" commit -q -m initial || error 'cannot commit escaped-path fixture'
+
 state_user_dir=$root/state/user
 state_current=$state_user_dir/current
 state_user_created=0
@@ -106,7 +114,7 @@ conf_file=$conf_dir/repositories
 
 export TERM=xterm-256color
 
-python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$conf_file" <<'PY_GITMAN'
+python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" <<'PY_GITMAN'
 import os
 import pty
 import select
@@ -115,7 +123,7 @@ import sys
 import time
 from pathlib import Path
 
-m_command, gitman_command, work, repo_main, repo_link, repo_bare, conf_file = sys.argv[1:8]
+m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file = sys.argv[1:9]
 
 env = os.environ.copy()
 env["TERM"] = "xterm-256color"
@@ -226,7 +234,7 @@ def run_explicit_action_and_error_scenario():
                 "Git output began before menu alternate-screen restoration",
                 bytes(s.buffer[action_mark:repo_pos]),
             )
-        s.wait_for("?? probe.txt", start=action_mark)
+        s.wait_for("probe.txt", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
 
         resume_mark = len(s.buffer)
@@ -281,6 +289,68 @@ def run_empty_config_fallback_scenario():
     try:
         s.wait_for("Git repositories")
         s.wait_for(repo_link)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def config_encode(path):
+    return path.replace("\\", "\\\\").replace("\n", "\\n")
+
+
+def run_save_and_escape_roundtrip_scenario():
+    Path(conf_file).write_text("legacy\n", encoding="utf-8")
+
+    display_path = os.path.realpath(repo_escape).replace("\n", "?")
+    expected = config_encode(os.path.realpath(repo_escape)) + "\n"
+
+    s = Session([repo_escape], work)
+    try:
+        s.wait_for("Git repositories")
+        s.wait_for(display_path)
+
+        confirm_mark = len(s.buffer)
+        s.send(b"s")
+        s.wait_for("Overwrite repositories configuration?", start=confirm_mark)
+        assert Path(conf_file).read_text(encoding="utf-8") == "legacy\n", (
+            "configuration changed before overwrite confirmation",
+            Path(conf_file).read_bytes(),
+        )
+
+        no_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=no_mark)
+        assert Path(conf_file).read_text(encoding="utf-8") == "legacy\n", (
+            "default No confirmation overwrote configuration",
+            Path(conf_file).read_bytes(),
+        )
+
+        confirm_mark = len(s.buffer)
+        s.send(b"s")
+        s.wait_for("Overwrite repositories configuration?", start=confirm_mark)
+        s.send(DOWN)
+        s.pump_for(0.15)
+        save_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=save_mark)
+        assert Path(conf_file).read_text(encoding="utf-8") == expected, (
+            "saved configuration did not encode newline/backslash path correctly",
+            expected,
+            Path(conf_file).read_text(encoding="utf-8"),
+        )
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+    s = Session([], work)
+    try:
+        s.wait_for("Git repositories")
+        s.wait_for(display_path)
         s.send(b"\x1b")
         s.wait_exit(0)
     except Exception:
@@ -346,6 +416,7 @@ def run_zero_repository_acquisition_scenario():
 run_explicit_action_and_error_scenario()
 run_config_and_dedup_scenario()
 run_empty_config_fallback_scenario()
+run_save_and_escape_roundtrip_scenario()
 run_add_remove_clear_scenario()
 run_zero_repository_acquisition_scenario()
 PY_GITMAN
