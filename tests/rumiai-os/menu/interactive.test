@@ -141,10 +141,6 @@ case $RUMIAI_MENU_TEST_SCENARIO in
         "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
             -H MENU_FS -M -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
         ;;
-    fs-parent-default)
-        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
-            -H MENU_FS_PARENT_DEFAULT -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
-        ;;
     fs-parent-custom)
         "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
             -H MENU_FS_PARENT_CUSTOM -K x -P z -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
@@ -232,15 +228,146 @@ decode_result fs-browse
 [ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub/a file" ] || fail "fs-browse first path is '$RESULT_2'"
 [ "$RESULT_3" = "$RUMIAI_MENU_TEST_FS/sub/b*file" ] || fail "fs-browse second path is '$RESULT_3'"
 
-# Default Backspace navigates from a child view to its parent, then x returns
-# the first item of the reset parent view.
-dialogue=$tmp/fs-parent-default.dialogue
-printf '%s\t%s\n' \
-    "$RUMIAI_MENU_TEST_FS" '' \
-    "$RUMIAI_MENU_TEST_FS/sub" "${backspace}x" > "$dialogue" ||
-    error 'cannot create fs-parent-default dialogue'
-run_scenario fs-parent-default "$dialogue" "$tmp/fs-parent-default.output"
-[ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-parent-default status is $SCENARIO_STATUS"
+# Default Backspace is validated with a direct PTY because a line-oriented
+# script/Expect dialogue can let the terminal line discipline consume erase.
+: > "$RUMIAI_MENU_TEST_RESULT" || error 'cannot reset default-parent result'
+python3 - "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+    "$RUMIAI_MENU_TEST_FS" "$RUMIAI_MENU_TEST_RESULT" <<'PY_PARENT'
+import os
+import pty
+import select
+import subprocess
+import sys
+import termios
+import time
+
+m_command, menu_command, fs_root, result_path = sys.argv[1:5]
+out_r, out_w = os.pipe()
+err_r, err_w = os.pipe()
+pid, master = pty.fork()
+
+if pid == 0:
+    os.dup2(out_w, 1)
+    os.dup2(err_w, 2)
+    for fd in (out_r, err_r, out_w, err_w):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    env = os.environ.copy()
+    env["TERM"] = "xterm-256color"
+    os.execve(
+        m_command,
+        [
+            m_command,
+            menu_command,
+            "-H",
+            "MENU_FS_PARENT_DEFAULT",
+            "-K",
+            "x",
+            "-n",
+            "-c",
+            "-d",
+            fs_root,
+        ],
+        env,
+    )
+
+os.close(out_w)
+os.close(err_w)
+ui = bytearray()
+out = bytearray()
+err = bytearray()
+
+
+def pump_until(needle, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                ui.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+        if needle in ui:
+            return
+    raise AssertionError(("timed out waiting for UI", needle, bytes(ui), bytes(out), bytes(err)))
+
+
+pump_until(fs_root.encode())
+os.write(master, b"\n")
+pump_until((fs_root + "/sub").encode())
+
+# Discard the child-view transcript so a later root match cannot be satisfied by
+# the root prefix contained in the child path.
+ui.clear()
+kbs = subprocess.check_output(
+    ["tput", "kbs"],
+    env={**os.environ, "TERM": "xterm-256color"},
+)
+os.write(master, kbs)
+pump_until(b"> sub")
+os.write(master, b"x")
+
+status = None
+deadline = time.monotonic() + 3.0
+while time.monotonic() < deadline:
+    ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+    for fd in ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            chunk = b""
+        if fd == master:
+            ui.extend(chunk)
+        elif fd == out_r:
+            out.extend(chunk)
+        else:
+            err.extend(chunk)
+
+    waited, wait_status = os.waitpid(pid, os.WNOHANG)
+    if waited == pid:
+        status = os.waitstatus_to_exitcode(wait_status)
+        break
+
+if status is None:
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+    raise AssertionError("default Backspace parent navigation timed out")
+
+for fd, target in ((out_r, out), (err_r, err)):
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0)
+        if not ready:
+            break
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        target.extend(chunk)
+
+attrs = termios.tcgetattr(master)
+lflag = attrs[3]
+restored = bool(lflag & termios.ICANON) and bool(lflag & termios.ECHO)
+
+os.close(out_r)
+os.close(err_r)
+os.close(master)
+
+assert status == 0, (status, bytes(out), bytes(err))
+assert err == b"", (status, bytes(out), bytes(err))
+assert restored, "terminal state was not restored after parent navigation"
+
+with open(result_path, "wb") as result_file:
+    result_file.write(out)
+PY_PARENT
+status=$?
+[ "$status" -eq 0 ] || fail 'default Backspace parent-navigation validation failed'
 decode_result fs-parent-default
 [ "$RESULT_COUNT" -eq 2 ] || fail 'fs-parent-default returned wrong argument count'
 [ "$RESULT_1" = x ] || fail "fs-parent-default key is '$RESULT_1'"
