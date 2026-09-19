@@ -1,0 +1,40 @@
+name: Facility global current validation
+
+on:
+  push:
+    branches:
+      - validation/facility-global-current-20260919
+
+jobs:
+  structural:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 7e2a4bfe519ac3ee87dab9c820a50bbcdfa2303f
+          path: target
+      - name: Normalize product origin
+        shell: bash
+        run: git -C target remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+      - uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 3809d5854a5c9349786de463a5a803d39e29613c
+          path: target/src/rumiai-tests
+      - name: Shell syntax
+        shell: bash
+        run: |
+          set -eu
+          sh -n target/lib/sys/sh/pkg/pkg-provider.lib.sh
+          sh -n target/lib/sys/sh/pkg/pkg-integration.lib.sh
+      - name: Run provider/package regression tests
+        shell: bash
+        run: |
+          set -eu
+          cd target/src/rumiai-tests
+          for test in             tests/rumiai-os/pkg/provider.test             tests/rumiai-os/pkg/default.test             tests/rumiai-os/pkg/dependency.test             tests/rumiai-os/pkg/facility-default-global.test             tests/rumiai-os/pkg-launch/contract.test
+          do
+            echo "=== $test ==="
+            "./$test"
+          done
