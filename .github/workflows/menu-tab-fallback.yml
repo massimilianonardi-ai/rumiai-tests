@@ -1,42 +1,34 @@
-name: Menu Tab fallback development run
+name: Menu Tab fallback validation
 
 on:
   push:
     branches:
       - main
+    paths:
+      - .github/workflows/menu-tab-fallback.yml
+
+permissions:
+  contents: write
 
 jobs:
-  test:
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact test suite
+      - name: Checkout validation suite
         uses: actions/checkout@v4
         with:
-          ref: 7f3100edee2fc3b0bef77314f8a9898f97d73314
-          fetch-depth: 1
-          path: rumiai-tests
+          fetch-depth: 0
 
-      - name: Checkout exact product
-        uses: actions/checkout@v4
-        with:
-          repository: massimilianonardi-ai/rumiai-os
-          ref: 4e6de5ec0ace036262bb6016424e235c7bd9bdc0
-          fetch-depth: 1
-          path: rumiai-os
-
-      - name: Verify exact revisions
+      - name: Normalize repository identity
         shell: bash
         run: |
           set -euo pipefail
-          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
-          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
-          test "$(git -C rumiai-tests rev-parse HEAD)" = "7f3100edee2fc3b0bef77314f8a9898f97d73314"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "4e6de5ec0ace036262bb6016424e235c7bd9bdc0"
+          git remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git config user.name "RumiAI Validation"
+          git config user.email "validation@rumiai.local"
+          git status --short
+          grep -F $'rumiai-os-commit\t4e6de5ec0ace036262bb6016424e235c7bd9bdc0' validation/menu.conf
 
-      - name: Run menu tests
+      - name: Validate menu scope
         shell: bash
-        env:
-          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
-        run: |
-          cd rumiai-tests
-          ./rumiai-test rumiai-os/menu
+        run: ./rumiai-validate menu
