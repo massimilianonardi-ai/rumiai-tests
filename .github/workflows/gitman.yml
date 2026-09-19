@@ -35,10 +35,10 @@ jobs:
           test "$(git -C rumiai-tests rev-parse HEAD)" = "e51fe1b1fd3a4e80246e67553baa8858937ebf74"
           test "$(git -C rumiai-os rev-parse HEAD)" = "115ade747d3ae3ad6aebe4003b9cd0596dce4ecd"
 
-      - name: Run gitman tests
+      - name: Run gitman interactive test directly
         shell: bash
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-test rumiai-os/gitman
+          ./tests/rumiai-os/gitman/interactive.test
