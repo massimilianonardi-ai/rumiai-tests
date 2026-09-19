@@ -32,6 +32,20 @@ expect_status()
   }
 }
 
+expect_global_env()
+{
+  expected=$1
+  label=$2
+
+  "$root/m" "$env_probe" > "$tmp/$label.out" 2> "$tmp/$label.err" || {
+    cat "$tmp/$label.err" >&2
+    fail "$label bootstrap probe failed"
+  }
+  actual=$(cat "$tmp/$label.out") || error "$label cannot read probe output"
+  [ "$actual" = "$expected" ] ||
+    fail "$label expected global environment '$expected', observed '$actual'"
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
@@ -100,7 +114,8 @@ cat > "$env_probe" <<'EOF_ENV_PROBE'
 if [ "${RUMIAI_TEST_FACILITY_GLOBAL_MARKER+x}" = x ]
 then
   printf '%s\n' "$RUMIAI_TEST_FACILITY_GLOBAL_MARKER"
-  exit 1
+else
+  printf '%s\n' '<unset>'
 fi
 exit 0
 EOF_ENV_PROBE
@@ -205,11 +220,9 @@ run_pkg provider default "$facility" "$provider" > "$tmp/facility-unversioned.ou
   fail 'cannot configure unversioned facility default'
 }
 
-"$root/m" "$env_probe" > "$tmp/ambient-env.out" 2> "$tmp/ambient-env.err" || {
-  cat "$tmp/ambient-env.out" >&2
-  cat "$tmp/ambient-env.err" >&2
-  fail 'facility default injected facility environment into ambient m runtime'
-}
+[ "${RUMIAI_TEST_FACILITY_GLOBAL_MARKER+x}" != x ] ||
+  fail 'facility default retroactively changed the already-running test process'
+expect_global_env 'provider-1' env-unversioned-v1
 
 expected_unversioned="../../pkg/$provider/facility-cmd/$facility/$main_command"
 [ -L "$main_public" ] || fail 'unversioned facility main command was not published'
@@ -231,6 +244,7 @@ run_pkg default "$provider@2" > "$tmp/default-2.out" 2> "$tmp/default-2.err" || 
 [ ! -e "$old_public" ] && [ ! -L "$old_public" ] || fail 'old facility command survived command-set reconciliation'
 [ -L "$new_public" ] || fail 'new facility command was not added after package-default transition'
 [ -L "$collision_public" ] || fail 'new collision command was not added after package-default transition'
+expect_global_env 'provider-2' env-unversioned-v2
 
 run_pkg provider default "$facility" "$provider@1" > "$tmp/pin-1.out" 2> "$tmp/pin-1.err" || {
   cat "$tmp/pin-1.err" >&2
@@ -244,6 +258,7 @@ expected_pinned="../../pkg/$provider@1/facility-cmd/$facility/$main_command"
 [ -L "$old_public" ] || fail 'pinned version-1 command set was not restored'
 [ ! -e "$new_public" ] && [ ! -L "$new_public" ] || fail 'pinned version 1 retained a version-2-only command'
 [ ! -e "$collision_public" ] && [ ! -L "$collision_public" ] || fail 'pinned version 1 retained the version-2 collision command'
+expect_global_env 'provider-1' env-pinned-v1
 
 printf '%s\n' foreign > "$collision_public" || error 'cannot create foreign collision pathname'
 expect_status 1 collision-rejected run_pkg provider default "$facility" "$provider@2"
@@ -253,6 +268,7 @@ configured=$(run_pkg provider default "$facility" 2> "$tmp/collision-query.err")
   fail 'facility default query failed after rejected collision'
 [ "$configured" = "$provider@1" ] || fail 'rejected collision changed authoritative facility selector'
 [ "$(readlink "$main_public")" = "$expected_pinned" ] || fail 'rejected collision changed existing owned projection'
+expect_global_env 'provider-1' env-collision-rollback
 rm -f "$collision_public" || error 'cannot remove foreign collision pathname'
 
 run_pkg provider default "$facility" "$provider" > "$tmp/unversioned-again.out" 2> "$tmp/unversioned-again.err" || {
@@ -260,6 +276,7 @@ run_pkg provider default "$facility" "$provider" > "$tmp/unversioned-again.out" 
   fail 'cannot restore unversioned facility selector'
 }
 [ "$("$main_public")" = 'version=2' ] || fail 'restored unversioned selector did not use package default version 2'
+expect_global_env 'provider-2' env-unversioned-restored
 
 consumer_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$consumer" conf) ||
   error 'cannot resolve consumer system configuration'
@@ -270,6 +287,7 @@ run_pkg provider bind "$consumer" "$facility" "$provider@1" > "$tmp/bind.out" 2>
 }
 [ "$("$main_public")" = 'version=2' ] ||
   fail 'consumer-specific binding changed global facility command publication'
+expect_global_env 'provider-2' env-binding-independent
 run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2> "$tmp/bind-unset.err" ||
   fail 'cannot remove consumer-specific provider binding'
 
@@ -285,12 +303,14 @@ done
 configured=$(run_pkg provider default "$facility" 2> "$tmp/default-still-configured.err") ||
   fail 'facility selector disappeared when provider package default was cleared'
 [ "$configured" = "$provider" ] || fail 'provider package default clear changed facility selector intent'
+expect_global_env '<unset>' env-unversioned-class-absent
 
 run_pkg default "$provider@1" > "$tmp/default-recreate.out" 2> "$tmp/default-recreate.err" || {
   cat "$tmp/default-recreate.err" >&2
   fail 'cannot recreate provider package default'
 }
 [ "$("$main_public")" = 'version=1' ] || fail 'facility commands were not republished when package class reappeared'
+expect_global_env 'provider-1' env-class-recreated
 
 run_pkg provider default "$facility" "$provider@2" > "$tmp/pin-2.out" 2> "$tmp/pin-2.err" || {
   cat "$tmp/pin-2.err" >&2
@@ -299,6 +319,7 @@ run_pkg provider default "$facility" "$provider@2" > "$tmp/pin-2.out" 2> "$tmp/p
 expected_pinned_2="../../pkg/$provider@2/facility-cmd/$facility/$main_command"
 [ "$(readlink "$main_public")" = "$expected_pinned_2" ] || fail 'version-2 pin did not target pinned concrete'
 [ "$("$main_public")" = 'version=2' ] || fail 'version-2 pin did not execute pinned concrete'
+expect_global_env 'provider-2' env-pinned-v2
 
 run_pkg default -u -- "$provider" > "$tmp/pinned-class-clear.out" 2> "$tmp/pinned-class-clear.err" || {
   cat "$tmp/pinned-class-clear.err" >&2
@@ -309,6 +330,7 @@ do
   [ ! -e "$public_path" ] && [ ! -L "$public_path" ] ||
     fail 'pinned no-osarch facility projection remained after package class disappeared'
 done
+expect_global_env '<unset>' env-pinned-class-absent
 
 run_pkg default "$provider@1" > "$tmp/pinned-class-recreate.out" 2> "$tmp/pinned-class-recreate.err" || {
   cat "$tmp/pinned-class-recreate.err" >&2
@@ -318,6 +340,7 @@ run_pkg default "$provider@1" > "$tmp/pinned-class-recreate.out" 2> "$tmp/pinned
   fail 'pinned projection did not republish with its pinned concrete when package class reappeared'
 [ "$("$main_public")" = 'version=2' ] ||
   fail 'republished pinned projection followed package default instead of pinned concrete'
+expect_global_env 'provider-2' env-pinned-class-recreated
 
 run_pkg provider default -u -- "$facility" > "$tmp/facility-unset.out" 2> "$tmp/facility-unset.err" || {
   cat "$tmp/facility-unset.err" >&2
@@ -328,6 +351,7 @@ do
   [ ! -e "$public_path" ] && [ ! -L "$public_path" ] ||
     fail 'owned global facility command remained after facility default unset'
 done
+expect_global_env '<unset>' env-facility-unset
 
 printf 'unversioned-follow=ok\n'
 printf 'command-set-reconcile=ok\n'
@@ -335,5 +359,6 @@ printf 'pinned-selector=ok\n'
 printf 'collision-rollback=ok\n'
 printf 'binding-independent=ok\n'
 printf 'class-presence-reconcile=ok\n'
-printf 'ambient-facility-env=absent\n'
+printf 'global-facility-env=ok\n'
+printf 'running-process-unchanged=ok\n'
 exit 0
