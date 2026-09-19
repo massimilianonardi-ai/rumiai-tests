@@ -213,6 +213,173 @@ decode_result toggle-key
 [ "$RESULT_1" = space ] || fail "toggle-key action is '$RESULT_1'"
 [ "$RESULT_2" = 'selected value' ] || fail "toggle-key value is '$RESULT_2'"
 
+# Filesystem multi-selection without -K uses Tab as the fallback action.
+# When an explicit -K exists, Tab must remain inactive rather than becoming an
+# additional implicit action. Use a direct PTY because the shared dialogue
+# format itself uses TAB as a record separator.
+tab_default_result=$tmp/fs-tab-default.result
+tab_explicit_result=$tmp/fs-tab-explicit.result
+python3 - "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+    "$RUMIAI_MENU_TEST_FS" "$tab_default_result" "$tab_explicit_result" <<'PY_TAB_CONFIRM'
+import os
+import pty
+import select
+import sys
+import time
+
+m_command, menu_command, fs_root, default_path, explicit_path = sys.argv[1:6]
+
+
+def run_case(header, extra_args, explicit_action):
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+    pid, master = pty.fork()
+
+    if pid == 0:
+        os.dup2(out_w, 1)
+        os.dup2(err_w, 2)
+        for fd in (out_r, err_r, out_w, err_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        env = os.environ.copy()
+        env["TERM"] = "xterm-256color"
+        argv = [
+            m_command,
+            menu_command,
+            "-H",
+            header,
+            "-M",
+            "-n",
+            "-c",
+            *extra_args,
+            "-d",
+            fs_root,
+        ]
+        os.execve(m_command, argv, env)
+
+    os.close(out_w)
+    os.close(err_w)
+    ui = bytearray()
+    out = bytearray()
+    err = bytearray()
+
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and header.encode() not in ui:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                ui.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+
+    assert header.encode() in ui, (header, bytes(ui), bytes(out), bytes(err))
+
+    # At the confined root, the first visible item is the sub directory.
+    os.write(master, b" ")
+    os.write(master, b"\t")
+
+    if explicit_action:
+        probe_deadline = time.monotonic() + 0.25
+        while time.monotonic() < probe_deadline:
+            ready, _, _ = select.select([master, out_r, err_r], [], [], 0.02)
+            for fd in ready:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    chunk = b""
+                if fd == master:
+                    ui.extend(chunk)
+                elif fd == out_r:
+                    out.extend(chunk)
+                else:
+                    err.extend(chunk)
+            waited, wait_status = os.waitpid(pid, os.WNOHANG)
+            assert waited == 0, (
+                "Tab unexpectedly completed a filesystem menu with explicit -K",
+                os.waitstatus_to_exitcode(wait_status),
+                bytes(out),
+                bytes(err),
+            )
+        os.write(master, b"x")
+
+    status = None
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                ui.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+
+        waited, wait_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = os.waitstatus_to_exitcode(wait_status)
+            break
+
+    if status is None:
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        raise AssertionError((header, "menu confirmation timed out", bytes(out), bytes(err)))
+
+    for fd, target in ((out_r, out), (err_r, err)):
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0)
+            if not ready:
+                break
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            target.extend(chunk)
+
+    os.close(out_r)
+    os.close(err_r)
+    os.close(master)
+
+    assert status == 0, (header, status, bytes(out), bytes(err))
+    assert err == b"", (header, status, bytes(out), bytes(err))
+    return bytes(out)
+
+
+with open(default_path, "wb") as result:
+    result.write(run_case("MENU_FS_TAB_DEFAULT", [], False))
+
+with open(explicit_path, "wb") as result:
+    result.write(run_case("MENU_FS_TAB_EXPLICIT", ["-K", "x"], True))
+PY_TAB_CONFIRM
+status=$?
+[ "$status" -eq 0 ] || fail 'filesystem Tab confirmation validation failed'
+
+RUMIAI_MENU_TEST_RESULT=$tab_default_result
+decode_result fs-tab-default
+[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-tab-default returned wrong argument count'
+[ "$RESULT_1" = tab ] || fail "fs-tab-default key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] ||
+    fail "fs-tab-default value is '$RESULT_2'"
+
+RUMIAI_MENU_TEST_RESULT=$tab_explicit_result
+decode_result fs-tab-explicit
+[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-tab-explicit returned wrong argument count'
+[ "$RESULT_1" = x ] || fail "explicit -K did not suppress Tab fallback: '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] ||
+    fail "fs-tab-explicit value is '$RESULT_2'"
+
+RUMIAI_MENU_TEST_RESULT=$tmp/result
+
 # -n + -c must make the visible subdirectory the first directory instead of .. or .hidden-dir.
 # Enter browses it; marks inside the new view are returned as absolute paths in view order.
 dialogue=$tmp/fs-browse.dialogue
