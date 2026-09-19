@@ -444,6 +444,186 @@ def config_encode(path):
     return path.replace("\\", "\\\\").replace("\n", "\\n")
 
 
+def clear_editor_markers():
+    for path in (visual_marker, editor_marker, vi_marker):
+        try:
+            Path(path).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def editor_env(content="", exit_status="0"):
+    return {
+        "RUMIAI_GITMAN_EDITOR_WRITE": "yes",
+        "RUMIAI_GITMAN_EDITOR_CONTENT": content,
+        "RUMIAI_GITMAN_EDITOR_EXIT": exit_status,
+        "RUMIAI_GITMAN_VISUAL_MARKER": visual_marker,
+        "RUMIAI_GITMAN_EDITOR_MARKER": editor_marker,
+        "RUMIAI_GITMAN_VI_MARKER": vi_marker,
+    }
+
+
+def prove_current_repository(s, repository):
+    open_mark = len(s.buffer)
+    s.send(b"\n")
+    s.wait_for("[output: pager]", start=open_mark)
+
+    mode_mark = len(s.buffer)
+    s.send(b"p")
+    s.wait_for("[output: terminal]", start=mode_mark)
+
+    action_mark = len(s.buffer)
+    s.send(b"\n")
+    s.wait_for(f"Repository: {repository}", start=action_mark)
+    s.wait_for("Press any key to continue...", start=action_mark)
+
+    resume_mark = len(s.buffer)
+    s.send(b"x")
+    s.wait_for("[output: terminal]", start=resume_mark)
+
+    back_mark = len(s.buffer)
+    s.send(BACKSPACE)
+    s.wait_for("Git repositories", start=back_mark)
+
+
+def run_edit_visual_no_reload_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text("legacy\n", encoding="utf-8")
+    expected = config_encode(os.path.realpath(repo_link)) + "\n"
+
+    session_env = editor_env(expected)
+    session_env["VISUAL"] = visual_editor
+    session_env["EDITOR"] = editor_editor
+
+    s = Session([repo_main], work, extra_env=session_env)
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        editor_pos = s.wait_for("VISUAL_EDITOR_RUNNING", start=edit_mark)
+        if RMCUP:
+            assert RMCUP in bytes(s.buffer[edit_mark:editor_pos]), (
+                "editor started before repository menu restored terminal state",
+                bytes(s.buffer[edit_mark:editor_pos]),
+            )
+        s.wait_for("Reset repositories and reload configuration?", start=edit_mark)
+
+        assert Path(visual_marker).exists(), "VISUAL editor was not selected"
+        assert not Path(editor_marker).exists(), "EDITOR was selected despite VISUAL"
+        assert not Path(vi_marker).exists(), "vi was selected despite VISUAL"
+        assert Path(conf_file).read_text(encoding="utf-8") == expected
+
+        no_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=no_mark)
+
+        # Default No keeps the existing in-memory repository set even though
+        # the edited configuration now names the linked worktree.
+        prove_current_repository(s, repo_main)
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_edit_editor_reload_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text(config_encode(os.path.realpath(repo_main)) + "\n", encoding="utf-8")
+
+    edited = config_encode(os.path.realpath(repo_link)) + "\nmissing-after-edit\n"
+    session_env = editor_env(edited)
+    session_env["EDITOR"] = editor_editor
+
+    s = Session([repo_main], work, extra_env=session_env, unset_env=("VISUAL",))
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        s.wait_for("EDITOR_EDITOR_RUNNING", start=edit_mark)
+        s.wait_for("Reset repositories and reload configuration?", start=edit_mark)
+
+        assert Path(editor_marker).exists(), "EDITOR fallback was not selected"
+        assert not Path(visual_marker).exists(), "VISUAL editor unexpectedly ran"
+        assert not Path(vi_marker).exists(), "vi unexpectedly ran before EDITOR"
+
+        s.send(DOWN)
+        s.pump_for(0.15)
+        reload_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=reload_mark)
+        s.wait_for("not a directory: missing-after-edit", start=reload_mark)
+
+        # Yes resets repo_main and reloads only the valid configuration entry.
+        prove_current_repository(s, repo_link)
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_edit_vi_empty_reload_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text(config_encode(os.path.realpath(repo_main)) + "\n", encoding="utf-8")
+
+    session_env = editor_env("")
+    s = Session([repo_main], work, extra_env=session_env, unset_env=("VISUAL", "EDITOR"))
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        s.wait_for("VI_EDITOR_RUNNING", start=edit_mark)
+        s.wait_for("Reset repositories and reload configuration?", start=edit_mark)
+        assert Path(vi_marker).exists(), "vi fallback was not selected"
+
+        s.send(DOWN)
+        s.pump_for(0.15)
+        reload_mark = len(s.buffer)
+        s.send(b"\n")
+
+        # Explicit reload of an empty file must not apply the startup "." fallback.
+        s.wait_for("Select Git repositories", start=reload_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_edit_failure_preserves_state_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text(config_encode(os.path.realpath(repo_link)) + "\n", encoding="utf-8")
+
+    session_env = editor_env("", exit_status="7")
+    session_env["VISUAL"] = visual_editor
+
+    s = Session([repo_main], work, extra_env=session_env)
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        s.wait_for("VISUAL_EDITOR_RUNNING", start=edit_mark)
+        return_mark = len(s.buffer)
+        s.wait_for("Git repositories", start=return_mark)
+        s.wait_for("configuration editor exited with status 7", start=return_mark)
+
+        # Failed editor exit does not offer reload and leaves repo_main current.
+        prove_current_repository(s, repo_main)
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
 def run_save_and_escape_roundtrip_scenario():
     Path(conf_file).write_text("legacy\n", encoding="utf-8")
 
@@ -608,6 +788,10 @@ def run_zero_repository_acquisition_scenario():
 run_explicit_action_and_error_scenario()
 run_config_and_dedup_scenario()
 run_empty_config_fallback_scenario()
+run_edit_visual_no_reload_scenario()
+run_edit_editor_reload_scenario()
+run_edit_vi_empty_reload_scenario()
+run_edit_failure_preserves_state_scenario()
 run_save_and_escape_roundtrip_scenario()
 run_add_remove_clear_scenario()
 run_zero_repository_acquisition_scenario()
