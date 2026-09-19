@@ -51,8 +51,8 @@ grep -F 'gitman_config_decode()' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman configuration decoder is missing'
 grep -F 'gitman_config_encode()' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman configuration encoder is missing'
-grep -F -- '-K a -K r -K c -K s' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman repository menu save action is missing'
+grep -F -- '-K a -K r -K c -K s -K e' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman repository menu management actions are incomplete'
 grep -F 'Overwrite repositories configuration?' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman overwrite confirmation is missing'
 grep -F 'gitman_output_mode=pager' "$gitman" >/dev/null 2>&1 ||
@@ -89,6 +89,14 @@ printf '%s\n' "$manual_text" | grep -F 'interactive manager for local Git workin
     fail 'manual gitman returned unexpected content'
 printf '%s\n' "$manual_text" | grep -F 'save the current repository set to configuration' >/dev/null 2>&1 ||
     fail 'manual gitman does not document configuration save'
+printf '%s\n' "$manual_text" | grep -F 'EDIT CONFIGURATION' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document configuration editing'
+printf '%s\n' "$manual_text" | grep -F 'VISUAL' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document VISUAL editor selection'
+printf '%s\n' "$manual_text" | grep -F 'EDITOR' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document EDITOR editor selection'
+printf '%s\n' "$manual_text" | grep -F 'falls through to vi' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document vi fallback'
 printf '%s\n' "$manual_text" | grep -F 'pager' >/dev/null 2>&1 ||
     fail 'manual gitman does not document pager output mode'
 printf '%s\n' "$manual_text" | grep -F 'terminal' >/dev/null 2>&1 ||
