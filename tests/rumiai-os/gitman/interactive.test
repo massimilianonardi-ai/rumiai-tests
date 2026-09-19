@@ -112,9 +112,18 @@ conf_dir=$("$root/m" "$state_path" user sys gitman conf) || error 'cannot resolv
 mkdir -p "$conf_dir" || error 'cannot create gitman configuration area'
 conf_file=$conf_dir/repositories
 
+pager_probe=$tmp/fail-pager
+pager_marker=$tmp/pager-invoked
+cat > "$pager_probe" <<'EOF_PAGER'
+#!/bin/sh
+: > "$RUMIAI_GITMAN_PAGER_MARKER"
+exit 99
+EOF_PAGER
+chmod +x "$pager_probe" || error 'cannot make pager probe executable'
+
 export TERM=xterm-256color
 
-python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" <<'PY_GITMAN'
+python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" "$pager_probe" "$pager_marker" <<'PY_GITMAN'
 import os
 import pty
 import select
@@ -123,10 +132,13 @@ import sys
 import time
 from pathlib import Path
 
-m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file = sys.argv[1:9]
+m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file, pager_probe, pager_marker = sys.argv[1:11]
 
 env = os.environ.copy()
 env["TERM"] = "xterm-256color"
+env["GIT_PAGER"] = pager_probe
+env["PAGER"] = pager_probe
+env["RUMIAI_GITMAN_PAGER_MARKER"] = pager_marker
 
 def capability(name):
     return subprocess.check_output(["tput", name], env=env)
@@ -244,6 +256,24 @@ def run_explicit_action_and_error_scenario():
             "successful Git action did not clear the previous bottom-footer error",
             bytes(s.buffer[resume_mark:]),
         )
+
+        # Select Log with a deliberately failing GIT_PAGER/PAGER in the
+        # environment. --no-pager must prevent that helper from being invoked.
+        s.send(DOWN)
+        s.pump_for(0.15)
+        log_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for(f"Repository: {repo_main}", start=log_mark)
+        s.wait_for("initial", start=log_mark)
+        s.wait_for("Press any key to continue...", start=log_mark)
+        assert not Path(pager_marker).exists(), (
+            "Git internal pager was invoked",
+            Path(pager_marker).read_bytes() if Path(pager_marker).exists() else b"",
+        )
+
+        resume_log_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=resume_log_mark)
 
         back_mark = len(s.buffer)
         s.send(BACKSPACE)
