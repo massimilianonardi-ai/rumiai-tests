@@ -1,0 +1,65 @@
+name: Menu revision bridge
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact test suite
+        uses: actions/checkout@v4
+        with:
+          ref: dd5649c0072946c690897918d3025db45a296b4a
+          fetch-depth: 1
+          path: rumiai-tests
+      - name: Checkout exact product
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 2955d720e47d2400fcd4334237fc5e159d1467cc
+          fetch-depth: 1
+          path: rumiai-os
+      - name: Normalize and verify exact checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "dd5649c0072946c690897918d3025db45a296b4a"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "2955d720e47d2400fcd4334237fc5e159d1467cc"
+          test -z "$(git -C rumiai-tests status --porcelain --untracked-files=no)"
+          test -z "$(git -C rumiai-os status --porcelain --untracked-files=no)"
+      - name: Package exact checkouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests_name="rumiai-tests-dd5649c0072946c690897918d3025db45a296b4a.tar.gz"
+          os_name="rumiai-os-2955d720e47d2400fcd4334237fc5e159d1467cc.tar.gz"
+          tests_archive="$RUNNER_TEMP/$tests_name"
+          os_archive="$RUNNER_TEMP/$os_name"
+          tar -C rumiai-tests -czf "$tests_archive" .
+          tar -C rumiai-os -czf "$os_archive" .
+          tests_digest="$(sha256sum "$tests_archive" | awk '{print $1}')"
+          os_digest="$(sha256sum "$os_archive" | awk '{print $1}')"
+          (cd "$RUNNER_TEMP" && printf '%s  %s\n' "$tests_digest" "$tests_name" > "$tests_name.sha256")
+          (cd "$RUNNER_TEMP" && printf '%s  %s\n' "$os_digest" "$os_name" > "$os_name.sha256")
+          {
+            printf 'rumiai-tests-commit\t%s\n' 'dd5649c0072946c690897918d3025db45a296b4a'
+            printf 'rumiai-tests-sha256\t%s\n' "$tests_digest"
+            printf 'rumiai-os-commit\t%s\n' '2955d720e47d2400fcd4334237fc5e159d1467cc'
+            printf 'rumiai-os-sha256\t%s\n' "$os_digest"
+          } > "$RUNNER_TEMP/manifest"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: menu-revision-bridge
+          path: |
+            ${{ runner.temp }}/rumiai-tests-dd5649c0072946c690897918d3025db45a296b4a.tar.gz
+            ${{ runner.temp }}/rumiai-tests-dd5649c0072946c690897918d3025db45a296b4a.tar.gz.sha256
+            ${{ runner.temp }}/rumiai-os-2955d720e47d2400fcd4334237fc5e159d1467cc.tar.gz
+            ${{ runner.temp }}/rumiai-os-2955d720e47d2400fcd4334237fc5e159d1467cc.tar.gz.sha256
+            ${{ runner.temp }}/manifest
+          if-no-files-found: error
+          compression-level: 0
