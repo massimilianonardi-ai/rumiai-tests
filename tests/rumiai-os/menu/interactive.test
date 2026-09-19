@@ -90,7 +90,9 @@ command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
 TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
 TERM=xterm-256color down=$(tput kcud1 2>/dev/null) || skip 'Down capability is unavailable'
 TERM=xterm-256color up=$(tput kcuu1 2>/dev/null) || skip 'Up capability is unavailable'
+TERM=xterm-256color backspace=$(tput kbs 2>/dev/null) || skip 'Backspace capability is unavailable'
 [ -n "$down" ] && [ -n "$up" ] || skip 'arrow capabilities are unavailable'
+[ -n "$backspace" ] || skip 'Backspace capability is unavailable'
 
 export TERM=xterm-256color
 
@@ -121,9 +123,14 @@ case $RUMIAI_MENU_TEST_SCENARIO in
         "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
             -H MENU_LIST_ENTER -- 'single value@:=Single label' > "$RUMIAI_MENU_TEST_RESULT"
         ;;
+    list-space-action)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_LIST_SPACE -K space -- \
+            'space value@:=Space action' other > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
     list-multi)
         "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
-            -H MENU_LIST_MULTI -K x -- \
+            -H MENU_LIST_MULTI -M -K x -- \
             'alpha value@:=Alpha' 'star*value@:=Star' third > "$RUMIAI_MENU_TEST_RESULT"
         ;;
     toggle-key)
@@ -132,7 +139,15 @@ case $RUMIAI_MENU_TEST_SCENARIO in
         ;;
     fs-browse)
         "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
-            -H MENU_FS -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
+            -H MENU_FS -M -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    fs-parent-default)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_FS_PARENT_DEFAULT -K x -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
+        ;;
+    fs-parent-custom)
+        "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
+            -H MENU_FS_PARENT_CUSTOM -K x -P z -n -c -d "$RUMIAI_MENU_TEST_FS" > "$RUMIAI_MENU_TEST_RESULT"
         ;;
     fs-hidden)
         "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" \
@@ -165,6 +180,18 @@ decode_result list-enter
 [ "$RESULT_COUNT" -eq 2 ] || fail 'list-enter returned wrong argument count'
 [ "$RESULT_1" = enter ] || fail "list-enter key is '$RESULT_1'"
 [ "$RESULT_2" = 'single value' ] || fail "list-enter value is '$RESULT_2'"
+grep -F '[ ]' "$tmp/list-enter.output" >/dev/null 2>&1 &&
+    fail 'single-selection rendering unexpectedly showed mark boxes'
+
+# Space is available as an action key when multi-selection is not enabled.
+dialogue=$tmp/list-space-action.dialogue
+printf '%s\t%s\n' MENU_LIST_SPACE ' ' > "$dialogue" || error 'cannot create list-space-action dialogue'
+run_scenario list-space-action "$dialogue" "$tmp/list-space-action.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "list-space-action status is $SCENARIO_STATUS"
+decode_result list-space-action
+[ "$RESULT_COUNT" -eq 2 ] || fail 'list-space-action returned wrong argument count'
+[ "$RESULT_1" = space ] || fail "list-space-action key is '$RESULT_1'"
+[ "$RESULT_2" = 'space value' ] || fail "list-space-action value is '$RESULT_2'"
 
 # Mark the second item first, then the first item; output must still follow provider order.
 dialogue=$tmp/list-multi.dialogue
@@ -177,6 +204,8 @@ decode_result list-multi
 [ "$RESULT_1" = x ] || fail "list-multi key is '$RESULT_1'"
 [ "$RESULT_2" = 'alpha value' ] || fail "list-multi first value is '$RESULT_2'"
 [ "$RESULT_3" = 'star*value' ] || fail "list-multi second value is '$RESULT_3'"
+grep -F '[ ]' "$tmp/list-multi.output" >/dev/null 2>&1 ||
+    fail 'multi-selection rendering did not show mark boxes'
 
 # Reassign the toggle key so Space becomes available as an action key.
 dialogue=$tmp/toggle-key.dialogue
@@ -202,6 +231,35 @@ decode_result fs-browse
 [ "$RESULT_1" = x ] || fail "fs-browse key is '$RESULT_1'"
 [ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub/a file" ] || fail "fs-browse first path is '$RESULT_2'"
 [ "$RESULT_3" = "$RUMIAI_MENU_TEST_FS/sub/b*file" ] || fail "fs-browse second path is '$RESULT_3'"
+
+# Default Backspace navigates from a child view to its parent, then x returns
+# the first item of the reset parent view.
+dialogue=$tmp/fs-parent-default.dialogue
+printf '%s\t%s\n' \
+    "$RUMIAI_MENU_TEST_FS" '' \
+    "$RUMIAI_MENU_TEST_FS/sub" "${backspace}x" > "$dialogue" ||
+    error 'cannot create fs-parent-default dialogue'
+run_scenario fs-parent-default "$dialogue" "$tmp/fs-parent-default.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-parent-default status is $SCENARIO_STATUS"
+decode_result fs-parent-default
+[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-parent-default returned wrong argument count'
+[ "$RESULT_1" = x ] || fail "fs-parent-default key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] ||
+    fail "Backspace did not return to the parent view: '$RESULT_2'"
+
+# -P replaces Backspace with another parent-navigation key.
+dialogue=$tmp/fs-parent-custom.dialogue
+printf '%s\t%s\n' \
+    "$RUMIAI_MENU_TEST_FS" '' \
+    "$RUMIAI_MENU_TEST_FS/sub" 'zx' > "$dialogue" ||
+    error 'cannot create fs-parent-custom dialogue'
+run_scenario fs-parent-custom "$dialogue" "$tmp/fs-parent-custom.output"
+[ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-parent-custom status is $SCENARIO_STATUS"
+decode_result fs-parent-custom
+[ "$RESULT_COUNT" -eq 2 ] || fail 'fs-parent-custom returned wrong argument count'
+[ "$RESULT_1" = x ] || fail "fs-parent-custom key is '$RESULT_1'"
+[ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/sub" ] ||
+    fail "custom parent key did not return to the parent view: '$RESULT_2'"
 
 # With -n, the first root entry must not be the hidden directory.
 dialogue=$tmp/fs-hidden.dialogue
