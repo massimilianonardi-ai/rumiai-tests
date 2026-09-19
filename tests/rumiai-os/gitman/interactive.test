@@ -292,15 +292,21 @@ def run_config_and_dedup_scenario():
     s = Session([], work)
     try:
         s.wait_for("Git repositories")
-        s.wait_for(repo_main)
-        s.wait_for(repo_link)
 
+        # If the root/subdirectory candidates were not deduplicated, one Down
+        # would select the duplicate main worktree rather than the linked one.
         s.send(DOWN)
         s.pump_for(0.15)
         mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Status", start=mark)
-        s.wait_for(repo_link, start=mark)
+
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for(f"Repository: {repo_link}", start=action_mark)
+        s.wait_for("Press any key to continue...", start=action_mark)
+        s.send(b"x")
+        s.wait_for("Status", start=action_mark)
 
         back_mark = len(s.buffer)
         s.send(b"\x1b")
@@ -318,7 +324,16 @@ def run_empty_config_fallback_scenario():
     s = Session([], os.path.join(repo_link, "subdir"))
     try:
         s.wait_for("Git repositories")
-        s.wait_for(repo_link)
+        s.send(b"\n")
+        s.wait_for("Status")
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for(f"Repository: {repo_link}", start=action_mark)
+        s.wait_for("Press any key to continue...", start=action_mark)
+        s.send(b"x")
+        s.wait_for("Status", start=action_mark)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories")
         s.send(b"\x1b")
         s.wait_exit(0)
     except Exception:
@@ -333,13 +348,11 @@ def config_encode(path):
 def run_save_and_escape_roundtrip_scenario():
     Path(conf_file).write_text("legacy\n", encoding="utf-8")
 
-    display_path = os.path.realpath(repo_escape).replace("\n", "?")
     expected = config_encode(os.path.realpath(repo_escape)) + "\n"
 
     s = Session([repo_escape], work)
     try:
         s.wait_for("Git repositories")
-        s.wait_for(display_path)
 
         confirm_mark = len(s.buffer)
         s.send(b"s")
@@ -380,7 +393,16 @@ def run_save_and_escape_roundtrip_scenario():
     s = Session([], work)
     try:
         s.wait_for("Git repositories")
-        s.wait_for(display_path)
+        s.send(b"\n")
+        s.wait_for("Status")
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for(f"Repository: {os.path.realpath(repo_escape)}", start=action_mark)
+        s.wait_for("Press any key to continue...", start=action_mark)
+        s.send(b"x")
+        s.wait_for("Status", start=action_mark)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories")
         s.send(b"\x1b")
         s.wait_exit(0)
     except Exception:
