@@ -43,12 +43,12 @@ jobs:
           git -C rumiai-tests config user.name "RumiAI Validation"
           git -C rumiai-tests config user.email "validation@rumiai.local"
 
-          test "$(git -C rumiai-os rev-parse HEAD)" = "d39ad30b4788cb642ff242b59b8144914305376e"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "124770453db50f1fac59496bee2d843aef9505fd"
           test -z "$(git -C rumiai-tests status --porcelain)"
           test -z "$(git -C rumiai-os status --porcelain)"
 
           for scope in pager gitman; do
-            awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "d39ad30b4788cb642ff242b59b8144914305376e" { found = 1 } END { exit !found }' "rumiai-tests/validation/$scope.conf"
+            awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "124770453db50f1fac59496bee2d843aef9505fd" { found = 1 } END { exit !found }' "rumiai-tests/validation/$scope.conf"
           done
 
       - name: Validate pager
@@ -59,7 +59,7 @@ jobs:
           cd rumiai-tests
           ./rumiai-validate pager
 
-      # Rerun after removing the width-dependent repository-label assertion.
+      # Validate final visible mode header behavior.
       - name: Validate gitman
         shell: bash
         env:
