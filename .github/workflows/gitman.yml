@@ -1,4 +1,4 @@
-name: Gitman and menu validation
+name: Gitman and menu development run
 
 on:
   push:
@@ -7,54 +7,48 @@ on:
     paths:
       - .github/workflows/gitman.yml
 
-permissions:
-  contents: write
-
 jobs:
-  validate:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout validation suite
+      - name: Checkout exact test suite
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: 5d524ad458cc79a0ee296b75bee9f29bb43aeda3
+          fetch-depth: 1
           path: rumiai-tests
 
-      - name: Checkout rumiai-os main
+      - name: Checkout exact product
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: main
-          fetch-depth: 0
+          ref: 50b760bd3cfe08922068ceb7d973d7edee12251c
+          fetch-depth: 1
           path: rumiai-os
 
-      - name: Normalize branch checkouts
+      - name: Verify exact revisions
         shell: bash
         run: |
           set -euo pipefail
           git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
-          git -C rumiai-tests config user.name "RumiAI Validation"
-          git -C rumiai-tests config user.email "validation@rumiai.local"
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
-          git -C rumiai-os checkout -B main origin/main
-          test "$(git -C rumiai-tests symbolic-ref --short HEAD)" = "main"
-          test "$(git -C rumiai-os symbolic-ref --short HEAD)" = "main"
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "5d524ad458cc79a0ee296b75bee9f29bb43aeda3"
           test "$(git -C rumiai-os rev-parse HEAD)" = "50b760bd3cfe08922068ceb7d973d7edee12251c"
           test -z "$(git -C rumiai-tests status --porcelain)"
           test -z "$(git -C rumiai-os status --porcelain)"
-          for scope in gitman menu
-          do
-            awk -F '\t' '$1 == "rumiai-os-commit" && $2 == "50b760bd3cfe08922068ceb7d973d7edee12251c" { found = 1 } END { exit !found }' "rumiai-tests/validation/$scope.conf"
-          done
 
-      - name: Validate gitman scope
+      - name: Run gitman tests
         shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-validate gitman
+          ./rumiai-test rumiai-os/gitman
 
-      - name: Validate menu scope
+      - name: Run menu tests
         shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-validate menu
+          ./rumiai-test rumiai-os/menu
