@@ -47,15 +47,26 @@ jobs:
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd rumiai-tests
-          ./rumiai-test -- rumiai-os/bootstrap
-          ./rumiai-test -- rumiai-os/pkg/provider.test
-          ./rumiai-test -- rumiai-os/pkg/dependency.test
-          ./rumiai-test -- rumiai-os/pkg/env.test
-          ./rumiai-test -- rumiai-os/pkg/facility-default-global.test
-          ./rumiai-test -- rumiai-os/pkg-integration/contract.test
-          ./rumiai-test -- rumiai-os/pkg-launch/contract.test
+          status=0
+          for selection in \
+            rumiai-os/bootstrap \
+            rumiai-os/pkg/provider.test \
+            rumiai-os/pkg/dependency.test \
+            rumiai-os/pkg/env.test \
+            rumiai-os/pkg/facility-default-global.test \
+            rumiai-os/pkg-integration/contract.test \
+            rumiai-os/pkg-launch/contract.test
+          do
+            ./rumiai-test -- "$selection"
+            current=$?
+            if [ "$current" -gt "$status" ]
+            then
+              status=$current
+            fi
+          done
+          exit "$status"
 
       - name: Upload run evidence
         if: always()
@@ -64,3 +75,4 @@ jobs:
           name: package-provider-facility-${{ matrix.os }}-${{ github.sha }}
           path: rumiai-tests/.runs
           if-no-files-found: ignore
+          include-hidden-files: true
