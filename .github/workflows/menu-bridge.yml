@@ -1,0 +1,36 @@
+name: Menu bridge snapshot
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b9bd0170aa899096f63d10732049d877f5055d06
+          fetch-depth: 1
+      - name: Verify exact revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b9bd0170aa899096f63d10732049d877f5055d06"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Package checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/rumiai-tests-b9bd0170aa899096f63d10732049d877f5055d06.tar.gz"
+          tar -czf "$archive" .
+          sha256sum "$archive" > "$archive.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rumiai-tests-menu-bridge
+          path: |
+            ${{ runner.temp }}/rumiai-tests-b9bd0170aa899096f63d10732049d877f5055d06.tar.gz
+            ${{ runner.temp }}/rumiai-tests-b9bd0170aa899096f63d10732049d877f5055d06.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
