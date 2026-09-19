@@ -1,0 +1,52 @@
+name: Gitman output modes development
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/gitman-output-modes-development.yml
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact test suite
+        uses: actions/checkout@v4
+        with:
+          ref: bb20a7fa6a35611918d75dd238d00e5c8c3a824d
+          fetch-depth: 1
+          path: rumiai-tests
+
+      - name: Checkout exact product
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: d39ad30b4788cb642ff242b59b8144914305376e
+          fetch-depth: 1
+          path: rumiai-os
+
+      - name: Normalize repository identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "bb20a7fa6a35611918d75dd238d00e5c8c3a824d"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "d39ad30b4788cb642ff242b59b8144914305376e"
+
+      - name: Run pager tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/pager
+
+      - name: Run gitman tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/gitman
