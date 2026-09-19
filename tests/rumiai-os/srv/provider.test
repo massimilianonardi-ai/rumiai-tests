@@ -43,7 +43,12 @@ run_pkg()
 
 run_srv()
 {
-  PATH="${legacy_bin-}:$PATH" "$root/m" "$root/bin/sys/srv" "$@"
+  if [ -n "${legacy_bin-}" ]
+  then
+    PATH="$legacy_bin:$PATH" "$root/m" "$root/bin/sys/srv" "$@"
+  else
+    "$root/m" "$root/bin/sys/srv" "$@"
+  fi
 }
 
 cleanup()
