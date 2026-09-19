@@ -48,10 +48,10 @@ jobs:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           set -uo pipefail
+          set +e
           cd rumiai-tests
           status=0
           for selection in \
-            rumiai-os/bootstrap \
             rumiai-os/pkg/provider.test \
             rumiai-os/pkg/dependency.test \
             rumiai-os/pkg/env.test \

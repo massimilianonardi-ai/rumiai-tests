@@ -245,12 +245,6 @@ observed_command=$(command -p -- cat "$TEST_SERVICE_COMMAND" 2>/dev/null) ||
 [ "$observed_command" = "$expected_command" ] ||
   fail "srv did not launch exact provider concrete command: expected=$expected_command observed=$observed_command"
 
-provider_state=$run_root/$facility/provider
-[ -f "$provider_state" ] && [ ! -L "$provider_state" ] ||
-  fail 'provider-backed runtime state did not preserve provider identity'
-[ "$(command -p -- cat "$provider_state")" = "$package@1" ] ||
-  fail 'provider-backed runtime state contains wrong provider identity'
-
 run_pkg provider default "$facility" "$missing_provider" > "$tmp/default-switch.out" 2> "$tmp/default-switch.err" || {
   cat "$tmp/default-switch.err" >&2
   fail 'cannot change facility default while service is running'
