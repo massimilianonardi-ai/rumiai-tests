@@ -56,8 +56,7 @@ run_scenario()
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 menu_group=${test_dir%/*}
 rumiai_os_group=${menu_group%/*}
-tests_dir=${rumiai_os_group%/*}
-suite_root=${tests_dir%/*}
+suite_root=${rumiai_os_group%/*}
 
 target_library=$suite_root/lib/rumiai-os-target.lib
 interactive_library=$suite_root/lib/interactive.lib
@@ -86,6 +85,7 @@ case $status in
     *) error 'cannot initialize scripted TTY driver' ;;
 esac
 
+command -v python3 >/dev/null 2>&1 || skip 'python3 is unavailable for PTY cancellation validation'
 command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
 TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
 TERM=xterm-256color down=$(tput kcud1 2>/dev/null) || skip 'Down capability is unavailable'
@@ -221,13 +221,100 @@ decode_result fs-mixed
 [ "$RESULT_1" = x ] || fail "fs-mixed key is '$RESULT_1'"
 [ "$RESULT_2" = "$RUMIAI_MENU_TEST_FS/a-file" ] || fail "-m did not mix lexical order as expected: '$RESULT_2'"
 
-# Escape cancels with status 1 and no successful result.
-escape=$(printf '\033X')
-escape=${escape%X}
-dialogue=$tmp/cancel.dialogue
-printf '%s\t%s\n' MENU_CANCEL "$escape" > "$dialogue" || error 'cannot create cancel dialogue'
-run_scenario cancel "$dialogue" "$tmp/cancel.output"
-[ "$SCENARIO_STATUS" -eq 1 ] || fail "cancel status is $SCENARIO_STATUS"
-[ ! -s "$RUMIAI_MENU_TEST_RESULT" ] || fail 'cancel produced a successful result'
+# Escape cancels with status 1, no successful stdout result, and restored TTY state.
+python3 - "$RUMIAI_MENU_TEST_ROOT/m" "$RUMIAI_MENU_TEST_COMMAND" <<'PY_CANCEL'
+import os
+import pty
+import select
+import sys
+import termios
+import time
+
+m_command, menu_command = sys.argv[1:3]
+out_r, out_w = os.pipe()
+err_r, err_w = os.pipe()
+pid, master = pty.fork()
+
+if pid == 0:
+    os.dup2(out_w, 1)
+    os.dup2(err_w, 2)
+    for fd in (out_r, err_r, out_w, err_w):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    env = os.environ.copy()
+    env["TERM"] = "xterm-256color"
+    os.execve(
+        m_command,
+        [m_command, menu_command, "-H", "MENU_CANCEL", "--", "one", "two"],
+        env,
+    )
+
+os.close(out_w)
+os.close(err_w)
+
+setup_deadline = time.monotonic() + 0.5
+while time.monotonic() < setup_deadline:
+    ready, _, _ = select.select([master], [], [], 0.02)
+    if ready:
+        try:
+            os.read(master, 4096)
+        except OSError:
+            pass
+        break
+
+os.write(master, b"\x1b")
+out = bytearray()
+err = bytearray()
+status = None
+deadline = time.monotonic() + 3.0
+
+while time.monotonic() < deadline:
+    ready, _, _ = select.select([out_r, err_r, master], [], [], 0.05)
+    for fd in ready:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            chunk = b""
+        if fd == out_r:
+            out.extend(chunk)
+        elif fd == err_r:
+            err.extend(chunk)
+    waited, wait_status = os.waitpid(pid, os.WNOHANG)
+    if waited == pid:
+        status = os.waitstatus_to_exitcode(wait_status)
+        break
+
+if status is None:
+    os.kill(pid, 9)
+    os.waitpid(pid, 0)
+    raise AssertionError("menu cancellation timed out")
+
+for fd, target in ((out_r, out), (err_r, err)):
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0)
+        if not ready:
+            break
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        target.extend(chunk)
+
+attrs = termios.tcgetattr(master)
+lflag = attrs[3]
+restored = bool(lflag & termios.ICANON) and bool(lflag & termios.ECHO)
+
+os.close(out_r)
+os.close(err_r)
+os.close(master)
+
+assert status == 1, (status, bytes(out), bytes(err))
+assert out == b"", (status, bytes(out), bytes(err))
+assert err == b"", (status, bytes(out), bytes(err))
+assert restored, "terminal state was not restored after Escape cancellation"
+PY_CANCEL
+status=$?
+[ "$status" -eq 0 ] || fail 'Escape cancellation validation failed'
 
 exit 0
