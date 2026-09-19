@@ -65,7 +65,7 @@ case $(sed -n '1p' "$menu_lib") in '#!'*) fail 'menu.lib.sh must not have a sheb
 [ -f "$menu_lib_manual" ] && [ ! -L "$menu_lib_manual" ] || fail 'menu.lib.sh operational manual is missing'
 
 expect_status 2 "$root/m" "$menu"
-expect_status 2 "$root/m" "$menu" -d "$root"
+expect_status 2 "$root/m" "$menu" -P tab -d "$root"
 expect_status 2 "$root/m" "$menu" -M -K space -- item
 expect_status 2 "$root/m" "$menu" -S x -K x -- item
 expect_status 2 "$root/m" "$menu" -n -- item
