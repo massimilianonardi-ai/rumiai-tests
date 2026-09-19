@@ -55,14 +55,18 @@ grep -F -- '-K a -K r -K c -K s' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman repository menu save action is missing'
 grep -F 'Overwrite repositories configuration?' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman overwrite confirmation is missing'
-grep -F 'git -C "$gitman_action_repository" --no-pager status --short --branch' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager-free status action is missing'
-grep -F 'git -C "$gitman_action_repository" --no-pager log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager-free log action is missing'
-grep -F 'git -C "$gitman_action_repository" --no-pager branch -vv' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager-free branch action is missing'
-grep -F 'git -C "$gitman_action_repository" --no-pager diff' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager-free diff action is missing'
+grep -F 'git -C "$gitman_action_repository" status --short --branch' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman status action is missing'
+grep -F 'git -C "$gitman_action_repository" log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman log action is missing'
+grep -F 'git -C "$gitman_action_repository" branch -vv' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch action is missing'
+grep -F 'git -C "$gitman_action_repository" diff' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman diff action is missing'
+if grep -F -- '--no-pager' "$gitman" >/dev/null 2>&1
+then
+    fail 'gitman overrides Git pager behavior'
+fi
 grep -F "Press any key to continue..." "$gitman" >/dev/null 2>&1 ||
     fail 'gitman post-command pause is missing'
 grep -F -- '-K backspace' "$gitman" >/dev/null 2>&1 ||
@@ -79,5 +83,7 @@ printf '%s\n' "$manual_text" | grep -F 'interactive manager for local Git workin
     fail 'manual gitman returned unexpected content'
 printf '%s\n' "$manual_text" | grep -F 'save the current repository set to configuration' >/dev/null 2>&1 ||
     fail 'manual gitman does not document configuration save'
+printf '%s\n' "$manual_text" | grep -F "preserves Git's ordinary pager-selection behavior" >/dev/null 2>&1 ||
+    fail 'manual gitman does not document standard Git pager behavior'
 
 exit 0
