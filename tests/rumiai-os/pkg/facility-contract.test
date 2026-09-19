@@ -77,6 +77,12 @@ shift
 case "$action" in
   contract) pkg_facility_contract_validate "$@" ;;
   provider) pkg_facility_provider_validate "$@" ;;
+  provider-inert)
+    JAVA_HOME=caller-value
+    export JAVA_HOME
+    pkg_facility_provider_validate "$@" || exit $?
+    [ "$JAVA_HOME" = caller-value ]
+    ;;
   *) exit 2 ;;
 esac
 EOF_DRIVER
@@ -84,8 +90,8 @@ chmod 700 "$driver" || error 'cannot prepare facility driver'
 
 facility=facilityprobe$$
 catalog=$tmp/catalog
-contract=$catalog/$facility/25
-provider=$tmp/provider
+contract=$catalog/facility/$facility/25
+provider=$catalog/pkg/provider/linux-x86_64/range
 payload=$tmp/payload
 
 make_valid()
@@ -126,9 +132,9 @@ make_valid || error 'cannot prepare valid facility/provider fixture'
 
 # Conformance is inert: it must not create provider-selection configuration.
 expect_status 1 default-before "$root/m" "$root/bin/sys/pkg" provider default "$facility"
-"$root/m" "$driver" provider "$catalog" "$provider" "$payload" >/dev/null 2> "$tmp/provider-inert.err" || {
+"$root/m" "$driver" provider-inert "$catalog" "$provider" "$payload" >/dev/null 2> "$tmp/provider-inert.err" || {
   cat "$tmp/provider-inert.err" >&2
-  fail 'provider revalidation failed'
+  fail 'provider validation changed process environment'
 }
 expect_status 1 default-after "$root/m" "$root/bin/sys/pkg" provider default "$facility"
 
@@ -174,6 +180,12 @@ make_valid || error 'cannot reset valid fixture'
 printf '%s 26\n' "$facility" > "$provider/facility" ||
   error 'cannot prepare missing-compatibility declaration'
 expect_status 1 missing-contract "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
+# Provider definitions outside catalog/pkg are rejected: conformance is snapshot-bound.
+make_valid || error 'cannot reset valid fixture'
+outside=$tmp/outside-provider
+cp -R "$provider" "$outside" || error 'cannot prepare outside provider definition'
+expect_status 1 outside-catalog "$root/m" "$driver" provider "$catalog" "$outside" "$payload"
 
 # Facility realization without a declaration is invalid.
 make_valid || error 'cannot reset valid fixture'
