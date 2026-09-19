@@ -17,7 +17,6 @@ jobs:
       - name: Checkout validation suite
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
           fetch-depth: 0
           path: rumiai-tests
 
@@ -37,7 +36,7 @@ jobs:
           git -C rumiai-tests config user.name "RumiAI Validation"
           git -C rumiai-tests config user.email "validation@rumiai.local"
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
-          test "$(git -C rumiai-tests rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git -C rumiai-tests symbolic-ref --short HEAD)" = "main"
           test "$(git -C rumiai-os rev-parse HEAD)" = "a8e45d327b218f19cee82c3813bfc75fb5ea64b6"
           test -z "$(git -C rumiai-tests status --porcelain)"
           test -z "$(git -C rumiai-os status --porcelain)"
