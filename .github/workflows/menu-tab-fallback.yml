@@ -28,6 +28,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git -C rumiai-tests remote set-url origin https://github.com/massimilianonardi-ai/rumiai-tests.git
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
           test "$(git -C rumiai-tests rev-parse HEAD)" = "7f3100edee2fc3b0bef77314f8a9898f97d73314"
           test "$(git -C rumiai-os rev-parse HEAD)" = "4e6de5ec0ace036262bb6016424e235c7bd9bdc0"
 
