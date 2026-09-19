@@ -66,10 +66,14 @@ case $(sed -n '1p' "$menu_lib") in '#!'*) fail 'menu.lib.sh must not have a sheb
 
 expect_status 2 "$root/m" "$menu"
 expect_status 2 "$root/m" "$menu" -d "$root"
-expect_status 2 "$root/m" "$menu" -K space -- item
+expect_status 2 "$root/m" "$menu" -M -K space -- item
 expect_status 2 "$root/m" "$menu" -S x -K x -- item
 expect_status 2 "$root/m" "$menu" -n -- item
+expect_status 2 "$root/m" "$menu" -P x -- item
 expect_status 2 "$root/m" "$menu" -S enter -- item
+expect_status 2 "$root/m" "$menu" -d "$root" -K backspace
+expect_status 2 "$root/m" "$menu" -d "$root" -K x -P x
+expect_status 2 "$root/m" "$menu" -d "$root" -K x -P enter
 
 tmp=${TMPDIR:-/tmp}/rumiai-menu-contract-$$
 umask 077
@@ -82,6 +86,8 @@ for function_name in \
     menu_reset \
     menu_key_clear \
     menu_key_add \
+    menu_multiselect_enable \
+    menu_multiselect_disable \
     menu_toggle_key_set \
     menu_run_provider \
     menu_array_provider
@@ -90,12 +96,30 @@ do
 done
 array menu_result_values size result_size || exit 12
 [ "$result_size" -eq 0 ] || exit 13
-menu_toggle_key_set tab || exit 14
-menu_key_add tab >/dev/null 2>&1 && exit 15
+
+# Single selection is the default, so Space is initially available as an action.
+menu_key_add ' ' || exit 14
+menu_multiselect_enable >/dev/null 2>&1 && exit 15
 [ "$?" -eq 2 ] || exit 16
-menu_key_add x || exit 17
-menu_key_add x >/dev/null 2>&1 && exit 18
-[ "$?" -eq 2 ] || exit 19
+
+menu_key_clear || exit 17
+menu_multiselect_enable || exit 18
+menu_key_add ' ' >/dev/null 2>&1 && exit 19
+[ "$?" -eq 2 ] || exit 20
+
+menu_multiselect_disable || exit 21
+menu_key_add ' ' || exit 22
+menu_key_clear || exit 23
+
+menu_toggle_key_set tab || exit 24
+menu_multiselect_enable || exit 25
+menu_key_add tab >/dev/null 2>&1 && exit 26
+[ "$?" -eq 2 ] || exit 27
+menu_multiselect_disable || exit 28
+
+menu_key_add x || exit 29
+menu_key_add x >/dev/null 2>&1 && exit 30
+[ "$?" -eq 2 ] || exit 31
 exit 0
 EOF_PROBE
 chmod +x "$api_probe" || error 'cannot make library API probe executable'
