@@ -182,7 +182,7 @@ fi
 [ ! -e "$root/pkg/$package@3" ] && [ ! -L "$root/pkg/$package@3" ] ||
   fail 'rejected PATH facility-env created a concrete package'
 
-shared_facility=sharedfacility$
+shared_facility=sharedfacility${package#pitest}
 range_shared=$tmp/range-shared
 payload_shared=$tmp/payload-shared
 mkdir -p "$range_shared/facility-cmd/$shared_facility" "$range_shared/facility-env" "$payload_shared/bin" ||
