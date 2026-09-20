@@ -137,18 +137,39 @@ command -v ps >/dev/null 2>&1 || error 'ps unavailable'
 command -v awk >/dev/null 2>&1 || error 'awk unavailable'
 
 host_os=$(command -p -- uname -s) || error 'cannot identify host OS'
+uid=$(command -p -- id -u) || error 'cannot determine uid'
+case "$uid" in ""|*[!0123456789]*) error 'invalid host uid' ;; esac
+host_user=$(command -p -- id -un) || error 'cannot determine account name'
+case "$host_user" in ""|*/*|*'
+'*) error 'invalid account name' ;; esac
+
 case "$host_os" in
   Linux)
     command -v systemctl >/dev/null 2>&1 || skip 'systemctl unavailable'
-    systemctl --user show-environment >/dev/null 2>&1 || skip 'systemd user manager unavailable'
-    manifest=${HOME:?}/.config/systemd/user
+    command -v getent >/dev/null 2>&1 || skip 'getent unavailable'
+    host_home=$(getent passwd "$uid" 2>/dev/null | command -p -- awk -F: -v uid="$uid" '$3 == uid { print $6; exit }') ||
+      error 'cannot resolve host account home'
+    case "$host_home" in /*) : ;; *) error 'invalid host account home' ;; esac
+    host_runtime=/run/user/$uid
+    [ -d "$host_runtime" ] || skip 'systemd user runtime unavailable'
+    XDG_RUNTIME_DIR="$host_runtime" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$host_runtime/bus" \
+      systemctl --user show-environment >/dev/null 2>&1 ||
+      skip 'systemd user manager unavailable'
+    manifest=$host_home/.config/systemd/user
     ;;
   Darwin)
     command -v launchctl >/dev/null 2>&1 || skip 'launchctl unavailable'
     command -v plutil >/dev/null 2>&1 || skip 'plutil unavailable'
-    uid=$(command -p -- id -u) || error 'cannot determine uid'
+    command -v dscl >/dev/null 2>&1 || skip 'dscl unavailable'
+    host_home=$(
+      dscl . -read "/Users/$host_user" NFSHomeDirectory 2>/dev/null |
+        command -p -- sed -n 's/^NFSHomeDirectory: //p' |
+        command -p -- sed -n '1p'
+    ) || error 'cannot resolve host account home'
+    case "$host_home" in /*) : ;; *) error 'invalid host account home' ;; esac
     launchctl print "gui/$uid" >/dev/null 2>&1 || skip 'launchd gui domain unavailable'
-    manifest=${HOME:?}/Library/LaunchAgents
+    manifest=$host_home/Library/LaunchAgents
     ;;
   *)
     skip "user host supervision is not implemented for $host_os"
