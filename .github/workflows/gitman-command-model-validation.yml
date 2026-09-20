@@ -1,0 +1,59 @@
+name: gitman-command-model-validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/gitman-command-model-validation.yml
+
+jobs:
+  gitman:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout exact test suite
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: rumiai-tests
+
+      - name: Checkout exact product
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 22d5e1a57dcbd7e95c268f4357fac2d7478eb058
+          fetch-depth: 1
+          path: rumiai-os
+
+      - name: Verify exact revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "22d5e1a57dcbd7e95c268f4357fac2d7478eb058"
+          test -z "$(git -C rumiai-tests status --porcelain --untracked-files=no)"
+          test -z "$(git -C rumiai-os status --porcelain --untracked-files=no)"
+
+      - name: Run gitman scope
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test -- rumiai-os/gitman
+
+      - name: Upload run evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitman-command-model-${{ matrix.os }}-${{ github.sha }}
+          path: rumiai-tests/.runs
+          if-no-files-found: ignore
+          include-hidden-files: true
