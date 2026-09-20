@@ -14,20 +14,6 @@ resolve_test_dir()
     CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-run_status()
-{
-    "$@" >/dev/null 2>&1
-    RUN_STATUS=$?
-}
-
-expect_status()
-{
-    expected=$1
-    shift
-    run_status "$@"
-    [ "$RUN_STATUS" -eq "$expected" ] || fail "expected status $expected, got $RUN_STATUS from $*"
-}
-
 cleanup()
 {
     [ -z "${tmp-}" ] || rm -rf "$tmp"
@@ -57,7 +43,7 @@ manual=$root/res/sys/manual/pager
 manual_command=$root/bin/sys/manual
 
 [ -f "$pager" ] && [ -x "$pager" ] || fail 'pager is missing or not executable'
-[ "$(sed -n '1p' "$pager")" = '#!/usr/bin/env m' ] || fail 'pager has the wrong interpreter header'
+[ "$(sed -n '1p' "$pager")" = '#!/bin/sh' ] || fail 'pager is not standalone POSIX sh'
 command -p sh -n "$pager" || fail 'pager is not valid POSIX-shell syntax'
 [ -f "$manual" ] && [ ! -L "$manual" ] || fail 'pager operational manual is missing'
 [ -x "$manual_command" ] || fail 'manual command is unavailable'
@@ -67,29 +53,25 @@ umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 
 printf '%s\n' 'stdin payload' |
-    "$root/m" "$pager" > "$tmp/stdin.out" ||
-    fail 'pager stdin pass-through failed'
+    TERM=dumb LESS= LESSOPEN= LESSCLOSE= "$pager" > "$tmp/stdin.out" ||
+    fail 'pager stdin delegation failed'
 printf '%s\n' 'stdin payload' > "$tmp/stdin.expected" || error 'cannot create stdin expectation'
 cmp "$tmp/stdin.expected" "$tmp/stdin.out" >/dev/null 2>&1 ||
-    fail 'pager stdin pass-through changed content'
+    fail 'selected pager backend changed simple stdin content'
 
-printf '%s\n' 'file one' > "$tmp/file one" || error 'cannot create first pager fixture'
-printf '%s\n' 'file two' > "$tmp/file-two" || error 'cannot create second pager fixture'
-cat "$tmp/file one" "$tmp/file-two" > "$tmp/files.expected" || error 'cannot create files expectation'
-"$root/m" "$pager" "$tmp/file one" "$tmp/file-two" > "$tmp/files.out" ||
-    fail 'pager multiple-file pass-through failed'
-cmp "$tmp/files.expected" "$tmp/files.out" >/dev/null 2>&1 ||
-    fail 'pager multiple-file pass-through changed content'
-
-expect_status 1 "$root/m" "$pager" "$tmp/missing"
-mkdir "$tmp/directory" || error 'cannot create directory fixture'
-expect_status 1 "$root/m" "$pager" "$tmp/directory"
+printf '%s\n' 'file payload' > "$tmp/file payload" || error 'cannot create pager file fixture'
+TERM=dumb LESS= LESSOPEN= LESSCLOSE= "$pager" "$tmp/file payload" > "$tmp/file.out" ||
+    fail 'pager file delegation failed'
+cmp "$tmp/file payload" "$tmp/file.out" >/dev/null 2>&1 ||
+    fail 'selected pager backend changed simple file content'
 
 manual_text=$("$root/m" "$manual_command" --no-pager pager) ||
     fail 'manual pager lookup failed'
 printf '%s\n' "$manual_text" | grep -F 'pager [file ...]' >/dev/null 2>&1 ||
     fail 'manual pager does not document zero-or-more file operands'
-printf '%s\n' "$manual_text" | grep -F 'With no file operands, pager reads standard input.' >/dev/null 2>&1 ||
-    fail 'manual pager does not document stdin mode'
+printf '%s\n' "$manual_text" | grep -F 'passes the operands unchanged' >/dev/null 2>&1 ||
+    fail 'manual pager does not document transparent file delegation'
+printf '%s\n' "$manual_text" | grep -F 'does not inspect terminal state' >/dev/null 2>&1 ||
+    fail 'manual pager still documents terminal-state policy'
 
 exit 0
