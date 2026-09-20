@@ -210,6 +210,9 @@ env["RUMIAI_GITMAN_PAGER_MARKER"] = pager_marker
 env["RUMIAI_GITMAN_LESS_MARKER"] = less_marker
 env["RUMIAI_GITMAN_LESS_ENV"] = less_env
 
+repo_main_real = os.path.realpath(repo_main)
+repo_link_real = os.path.realpath(repo_link)
+
 def capability(name):
     return subprocess.check_output(["tput", name], env=env)
 
@@ -344,7 +347,7 @@ def run_explicit_action_and_error_scenario():
 
         terminal_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for(f"Repository: {repo_main}", start=terminal_mark)
+        s.wait_for(f"Repository: {repo_main_real}", start=terminal_mark)
         s.wait_for("Action: status", start=terminal_mark)
         s.wait_for("probe.txt", start=terminal_mark)
         s.wait_for("Press any key to continue...", start=terminal_mark)
@@ -395,7 +398,7 @@ def run_config_and_dedup_scenario():
 
         action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for(f"Repository: {repo_link}", start=action_mark)
+        s.wait_for(f"Repository: {repo_link_real}", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
         s.send(b"x")
@@ -425,7 +428,7 @@ def run_empty_config_fallback_scenario():
         s.wait_for("[output: terminal]", start=mode_mark)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for(f"Repository: {repo_link}", start=action_mark)
+        s.wait_for(f"Repository: {repo_link_real}", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
         s.send(b"x")
@@ -520,7 +523,7 @@ def run_edit_visual_no_reload_scenario():
 
         # Default No keeps the existing in-memory repository set even though
         # the edited configuration now names the linked worktree.
-        prove_current_repository(s, repo_main)
+        prove_current_repository(s, repo_main_real)
 
         s.send(b"\x1b")
         s.wait_exit(0)
@@ -558,7 +561,7 @@ def run_edit_editor_reload_scenario():
         s.wait_for("not a directory: missing-after-edit", start=reload_mark)
 
         # Yes resets repo_main and reloads only the valid configuration entry.
-        prove_current_repository(s, repo_link)
+        prove_current_repository(s, repo_link_real)
 
         s.send(b"\x1b")
         s.wait_exit(0)
@@ -615,7 +618,7 @@ def run_edit_failure_preserves_state_scenario():
         s.wait_for("configuration editor exited with status 7", start=return_mark)
 
         # Failed editor exit does not offer reload and leaves repo_main current.
-        prove_current_repository(s, repo_main)
+        prove_current_repository(s, repo_main_real)
 
         s.send(b"\x1b")
         s.wait_exit(0)
@@ -726,7 +729,7 @@ def run_add_remove_clear_scenario():
         s.wait_for("[output: terminal]", start=added_mode_mark)
         added_action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for(f"Repository: {repo_link}", start=added_action_mark)
+        s.wait_for(f"Repository: {repo_link_real}", start=added_action_mark)
         s.wait_for("Press any key to continue...", start=added_action_mark)
         added_resume_mark = len(s.buffer)
         s.send(b"x")
@@ -754,7 +757,7 @@ def run_add_remove_clear_scenario():
         s.wait_for("Status", start=open_remaining_mark)
         remaining_action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for(f"Repository: {repo_main}", start=remaining_action_mark)
+        s.wait_for(f"Repository: {repo_main_real}", start=remaining_action_mark)
         s.wait_for("Press any key to continue...", start=remaining_action_mark)
         remaining_resume_mark = len(s.buffer)
         s.send(b"x")
