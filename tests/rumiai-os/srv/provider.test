@@ -228,6 +228,10 @@ log_root=$("$root/m" "$root/bin/sys/state-path" user sys srv log) ||
 
 run_srv start "$facility" > "$tmp/start.out" 2> "$tmp/start.err" || {
   cat "$tmp/start.err" >&2
+  [ ! -f "$log_root/$facility.log" ] || {
+    printf '%s\n' "$TEST_ID: provider service log follows" >&2
+    cat "$log_root/$facility.log" >&2
+  }
   fail 'provider-backed srv start failed'
 }
 
