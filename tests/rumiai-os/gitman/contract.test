@@ -67,21 +67,34 @@ grep -F -- '--paginate' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman pager mode does not force Git paging'
 grep -F -- '--no-pager' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman terminal mode does not disable Git paging'
-grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" status --short --branch' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman status action is missing'
-grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman log action is missing'
-grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" branch -vv' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch action is missing'
-grep -F 'command -- git "$gitman_exec_paging" -C "$gitman_exec_repository" diff' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman diff action is missing'
+grep -F 'gitman_git_run()' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic Git runner is missing'
+grep -F 'command -- git --paginate -C "$gitman_git_run_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic pager runner does not execute an explicit Git argument vector'
+grep -F 'command -- git --no-pager -C "$gitman_git_run_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic terminal runner does not execute an explicit Git argument vector'
+grep -F 'gitman_action_dispatch()' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman action dispatcher is missing'
+grep -F 'gitman_action_handler="gitman_action_$2"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman action dispatcher does not use the handler naming convention'
+grep -F "status 'Status: git status --short --branch'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman status menu label does not expose its Git command'
+grep -F "log 'Log: git log --oneline --decorate --graph -n 50'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman log menu label does not expose its Git command'
+grep -F "branch 'Branches: git branch -vv'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch menu label does not expose its Git command'
+grep -F "diff 'Diff: git diff'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman diff menu label does not expose its Git command'
+grep -F 'gitman_git_run "$1" status status --short --branch' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman status handler is missing'
+grep -F 'gitman_git_run "$1" log log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman log handler is missing'
+grep -F 'gitman_git_run "$1" branch branch -vv' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch handler is missing'
+grep -F 'gitman_git_run "$1" diff diff' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman diff handler is missing'
 grep -F "Press any key to continue..." "$gitman" >/dev/null 2>&1 ||
     fail 'gitman terminal-mode post-command pause is missing'
-
-if grep -E 'command -- git .* (add|commit|reset|checkout|switch|merge|rebase|fetch|pull|push)( |$)' "$gitman" >/dev/null 2>&1
-then
-    fail 'gitman first-delivery source contains a mutating Git action'
-fi
 
 manual_text=$("$root/m" "$manual_command" --no-pager gitman) ||
     fail 'manual gitman lookup failed'
@@ -103,5 +116,9 @@ printf '%s\n' "$manual_text" | grep -F 'terminal' >/dev/null 2>&1 ||
     fail 'manual gitman does not document terminal output mode'
 printf '%s\n' "$manual_text" | grep -F -- '-R -+F -+X' >/dev/null 2>&1 ||
     fail 'manual gitman does not document held less behavior'
+printf '%s\n' "$manual_text" | grep -F 'Status: git status --short --branch' >/dev/null 2>&1 ||
+    fail 'manual gitman does not expose concrete leaf action commands'
+printf '%s\n' "$manual_text" | grep -F 'action model itself is not restricted to read-only' >/dev/null 2>&1 ||
+    fail 'manual gitman still claims a read-only action model'
 
 exit 0
