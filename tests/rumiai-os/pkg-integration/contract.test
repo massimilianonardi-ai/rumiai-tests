@@ -27,7 +27,7 @@ cleanup()
   then
     run_pkg default -u -- "$package" >/dev/null 2>&1 || :
 
-    for cleanup_version in 1 2 4
+    for cleanup_version in 1 2 4 5
     do
       if [ -d "$root/pkg/$package@$cleanup_version" ] && [ ! -L "$root/pkg/$package@$cleanup_version" ]
       then
@@ -176,7 +176,89 @@ fi
 [ ! -e "$root/pkg/$package@3" ] && [ ! -L "$root/pkg/$package@3" ] ||
   fail 'rejected PATH facility-env created a concrete package'
 
-service_facility=servicefacility$$
+shared_facility=sharedfacility$
+range_shared=$tmp/range-shared
+payload_shared=$tmp/payload-shared
+mkdir -p "$range_shared/facility-cmd/$shared_facility" "$range_shared/facility-env" "$payload_shared/bin" ||
+  error 'cannot create shared facility realization fixture'
+printf '%s 1\n' "$shared_facility" > "$range_shared/facility" ||
+  error 'cannot write shared facility declaration'
+printf '%s\n' bin/tool > "$range_shared/facility-cmd/$shared_facility/tool" ||
+  error 'cannot write shared facility command realization'
+tab=$(printf '\t')
+printf 'TOOL_HOME%sroot\n' "$tab" > "$range_shared/facility-env/$shared_facility" ||
+  error 'cannot write shared facility env realization'
+cat > "$payload_shared/bin/tool" <<'EOF_TOOL'
+#!/bin/sh
+exit 0
+EOF_TOOL
+chmod 700 "$payload_shared/bin/tool" || error 'cannot prepare shared facility target'
+
+integrate 5 "$range_shared" "$payload_shared" > "$tmp/shared.out" 2> "$tmp/shared.err" || {
+  cat "$tmp/shared.err" >&2
+  fail 'valid shared cmd/env facility realization failed integration'
+}
+shared_concrete=$root/pkg/$package@5
+[ -L "$shared_concrete/facility-cmd/$shared_facility/tool" ] ||
+  fail 'shared facility command realization was not materialized'
+[ -f "$shared_concrete/facility-env/$shared_facility" ] &&
+[ ! -L "$shared_concrete/facility-env/$shared_facility" ] ||
+  fail 'shared facility env realization was not materialized'
+
+"$root/m" "$driver" deintegrate "$package" 5 > "$tmp/shared-remove.out" 2> "$tmp/shared-remove.err" || {
+  cat "$tmp/shared-remove.err" >&2
+  fail 'shared facility realization deintegration failed'
+}
+[ ! -e "$shared_concrete" ] && [ ! -L "$shared_concrete" ] ||
+  fail 'shared facility concrete remained after deintegration'
+
+range_bad_cmd=$tmp/range-bad-cmd
+payload_bad_cmd=$tmp/payload-bad-cmd
+mkdir -p "$range_bad_cmd/facility-cmd/$shared_facility" "$payload_bad_cmd/bin" ||
+  error 'cannot create invalid facility command fixture'
+printf '%s 1\n' "$shared_facility" > "$range_bad_cmd/facility" ||
+  error 'cannot write invalid facility command declaration'
+printf '%s\n' ../outside > "$range_bad_cmd/facility-cmd/$shared_facility/tool" ||
+  error 'cannot write invalid facility command realization'
+cat > "$payload_bad_cmd/bin/tool" <<'EOF_BAD_TOOL'
+#!/bin/sh
+exit 0
+EOF_BAD_TOOL
+chmod 700 "$payload_bad_cmd/bin/tool" || error 'cannot prepare invalid facility command payload'
+if integrate 6 "$range_bad_cmd" "$payload_bad_cmd" > "$tmp/bad-cmd.out" 2> "$tmp/bad-cmd.err"
+then
+  fail 'pkg_integrate accepted an escaping facility command realization'
+else
+  [ "$?" -eq 1 ] || fail 'invalid facility command rejection did not return 1'
+fi
+[ -d "$payload_bad_cmd" ] || fail 'rejected facility command consumed caller-owned payload'
+[ ! -e "$root/pkg/$package@6" ] && [ ! -L "$root/pkg/$package@6" ] ||
+  fail 'invalid facility command created a concrete package'
+
+range_bad_env=$tmp/range-bad-env
+payload_bad_env=$tmp/payload-bad-env
+mkdir -p "$range_bad_env/facility-env" "$payload_bad_env/bin" ||
+  error 'cannot create invalid facility env fixture'
+printf '%s 1\n' "$shared_facility" > "$range_bad_env/facility" ||
+  error 'cannot write invalid facility env declaration'
+printf 'TOOL_HOME%sroot-path ../outside\n' "$tab" > "$range_bad_env/facility-env/$shared_facility" ||
+  error 'cannot write invalid facility env realization'
+cat > "$payload_bad_env/bin/tool" <<'EOF_BAD_ENV'
+#!/bin/sh
+exit 0
+EOF_BAD_ENV
+chmod 700 "$payload_bad_env/bin/tool" || error 'cannot prepare invalid facility env payload'
+if integrate 7 "$range_bad_env" "$payload_bad_env" > "$tmp/bad-env.out" 2> "$tmp/bad-env.err"
+then
+  fail 'pkg_integrate accepted an escaping facility environment realization'
+else
+  [ "$?" -eq 1 ] || fail 'invalid facility environment rejection did not return 1'
+fi
+[ -d "$payload_bad_env" ] || fail 'rejected facility environment consumed caller-owned payload'
+[ ! -e "$root/pkg/$package@7" ] && [ ! -L "$root/pkg/$package@7" ] ||
+  fail 'invalid facility environment created a concrete package'
+
+service_facility=servicefacility$
 service_command=$package-service-start
 range_service=$tmp/range-service
 payload_service=$tmp/payload-service
