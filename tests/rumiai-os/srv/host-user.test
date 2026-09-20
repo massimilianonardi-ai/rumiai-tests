@@ -207,22 +207,25 @@ EOF_SERVICE_COMMAND
   printf '%s\n' bin/service-target > "$provider_range/link/$service_command" || return 1
   printf '%s\n' "$service_command" > "$provider_range/facility-service/$facility/start" || return 1
 
-  cat > "$provider_payload/bin/service-target" <<EOF_TARGET
-#!/bin/sh
-marker=\$HOME/host-user-events
+  {
+    printf '%s\n' '#!/bin/sh'
+    printf 'provider_version=%s\n' "$provider_version"
+    cat <<'EOF_TARGET'
+marker=$HOME/host-user-events
 on_term()
 {
-  printf '%s\\n' "term $provider_version \\$\\$" >> "\$marker"
+  printf '%s\n' "term $provider_version $" >> "$marker"
   exit 0
 }
 trap on_term TERM
 trap 'exit 0' HUP INT
-printf '%s\\n' "start $provider_version \\$\\$" >> "\$marker"
+printf '%s\n' "start $provider_version $" >> "$marker"
 while :
 do
   sleep 1
 done
 EOF_TARGET
+  } > "$provider_payload/bin/service-target"
   chmod 700 "$provider_payload/bin/service-target" || return 1
 
   "$root/m" "$driver" integrate "$package" "$provider_version" "$provider_range" "$provider_payload"
