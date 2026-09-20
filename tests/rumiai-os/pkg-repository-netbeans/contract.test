@@ -116,7 +116,9 @@ expected_versions='100
 [ "$(pkg_repository_list_versions "$repository_dir")" = "$expected_versions" ] || fail "list_versions did not filter/order full releases"
 [ "$(pkg_repository_compare_versions "$repository_dir" 100 99)" = -1 ] || fail "compare_versions interpreted numeric-looking tags"
 [ "$(pkg_repository_compare_versions "$repository_dir" 99 100)" = 1 ] || fail "reverse compare_versions is incorrect"
+: > "$NETBEANS_HTTP_LOG" || error "cannot reset HTTP log"
 [ "$(pkg_repository_compare_versions "$repository_dir" 100 100)" = 0 ] || fail "equal compare_versions is incorrect"
+[ ! -s "$NETBEANS_HTTP_LOG" ] || fail "equal compare_versions performed an unnecessary GitHub API request"
 
 write_valid_range
 NETBEANS_SIDECAR_MODE=ok; export NETBEANS_SIDECAR_MODE
