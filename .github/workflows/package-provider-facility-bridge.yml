@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - .github/workflows/package-provider-facility-bridge.yml
+      - rumiai-validate
+      - lib/sh/rumiai-validate.lib.sh
+      - lib/rumiai-os-target.lib
+      - tests/external/temurin/**
       - tests/rumiai-os/pkg/**
       - tests/rumiai-os/pkg-integration/**
       - tests/rumiai-os/pkg-launch/**
@@ -14,8 +18,11 @@ on:
       - validation/srv.conf
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  targeted:
+  formal-validation:
     strategy:
       fail-fast: false
       matrix:
@@ -24,69 +31,41 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout exact test suite
+      - name: Checkout current test suite
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
+          ref: main
+          fetch-depth: 0
           path: rumiai-tests
+          persist-credentials: true
 
-      - name: Checkout exact product
+      - name: Checkout product source/update point
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: b18d0fc804814c7b99e841df6f5d1fc22d2e5a90
-          fetch-depth: 1
+          ref: main
+          fetch-depth: 0
           path: rumiai-os
+          persist-credentials: true
 
-      - name: Normalize target origin
+      - name: Normalize product origin
         shell: bash
         run: |
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
 
-      - name: Verify exact revisions
+      - name: Run formal provider/facility validation
         shell: bash
         run: |
-          set -euo pipefail
-          test "$(git -C rumiai-tests rev-parse HEAD)" = "${GITHUB_SHA}"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "b18d0fc804814c7b99e841df6f5d1fc22d2e5a90"
-          test -z "$(git -C rumiai-tests status --porcelain --untracked-files=no)"
-          test -z "$(git -C rumiai-os status --porcelain --untracked-files=no)"
-
-      - name: Run provider facility scope
-        shell: bash
-        env:
-          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
-        run: |
-          set -uo pipefail
-          set +e
           cd rumiai-tests
-          status=0
-          for selection in \
-            external/temurin/install-live.test \
-            rumiai-os/pkg/provider.test \
-            rumiai-os/pkg/dependency.test \
-            rumiai-os/pkg/env.test \
-            rumiai-os/pkg/facility-contract.test \
-            rumiai-os/pkg/facility-default-global.test \
-            rumiai-os/pkg-integration/contract.test \
-            rumiai-os/pkg-launch/contract.test \
-            rumiai-os/srv
-          do
-            ./rumiai-test -- "$selection"
-            current=$?
-            if [ "$current" -gt "$status" ]
-            then
-              status=$current
-            fi
-          done
-          exit "$status"
+          ./rumiai-validate package-provider-facility
 
-      - name: Upload run evidence
+      - name: Upload recoverable local evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: package-provider-facility-${{ matrix.os }}-${{ github.sha }}
-          path: rumiai-tests/.runs
+          name: package-provider-facility-formal-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
           if-no-files-found: ignore
           include-hidden-files: true
