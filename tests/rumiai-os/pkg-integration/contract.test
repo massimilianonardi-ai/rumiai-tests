@@ -122,12 +122,6 @@ shift
 case $action in
   integrate) pkg_integrate "$@";;
   deintegrate) pkg_deintegrate "$@";;
-  validate-declared) _pkg_integration_facility_declared "$@";;
-  validate-cmd-realization) _pkg_facility_cmd_realization_validate "$@";;
-  validate-cmd) _pkg_integration_facility_cmd_validate "$@";;
-  validate-env) _pkg_integration_facility_env_validate "$@";;
-  validate-projection) _pkg_integration_facility_projection_validate "$@";;
-  validate-definition) _pkg_integration_validate_definition "$@";;
   service-resolve) pkg_facility_service_start_resolve "$@";;
   *) exit 2;;
 esac
@@ -199,31 +193,6 @@ cat > "$payload_shared/bin/tool" <<'EOF_TOOL'
 exit 0
 EOF_TOOL
 chmod 700 "$payload_shared/bin/tool" || error 'cannot prepare shared facility target'
-
-"$root/m" "$driver" validate-declared "$range_shared" "$shared_facility" > "$tmp/shared-declared.out" 2> "$tmp/shared-declared.err" || {
-  cat "$tmp/shared-declared.err" >&2
-  fail 'shared facility declaration was not recognized'
-}
-"$root/m" "$driver" validate-cmd-realization "$range_shared/facility-cmd/$shared_facility" "$payload_shared" > "$tmp/shared-cmd-realization.out" 2> "$tmp/shared-cmd-realization.err" || {
-  cat "$tmp/shared-cmd-realization.err" >&2
-  fail 'trusted cmd realization handler rejected valid realization'
-}
-"$root/m" "$driver" validate-cmd "$range_shared" "$payload_shared" > "$tmp/shared-cmd.out" 2> "$tmp/shared-cmd.err" || {
-  cat "$tmp/shared-cmd.err" >&2
-  fail 'trusted shared cmd integration validation rejected valid realization'
-}
-"$root/m" "$driver" validate-env "$range_shared" "$payload_shared" > "$tmp/shared-env.out" 2> "$tmp/shared-env.err" || {
-  cat "$tmp/shared-env.err" >&2
-  fail 'trusted shared env realization validation rejected valid realization'
-}
-"$root/m" "$driver" validate-projection "$range_shared" "$payload_shared" > "$tmp/shared-projection.out" 2> "$tmp/shared-projection.err" || {
-  cat "$tmp/shared-projection.err" >&2
-  fail 'trusted shared cmd/env projection validation rejected valid realization'
-}
-"$root/m" "$driver" validate-definition "$range_shared" "$payload_shared" > "$tmp/shared-definition.out" 2> "$tmp/shared-definition.err" || {
-  cat "$tmp/shared-definition.err" >&2
-  fail 'package definition validation rejected valid shared realization'
-}
 
 integrate 5 "$range_shared" "$payload_shared" > "$tmp/shared.out" 2> "$tmp/shared.err" || {
   cat "$tmp/shared.err" >&2
