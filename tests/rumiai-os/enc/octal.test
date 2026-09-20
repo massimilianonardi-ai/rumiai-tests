@@ -76,6 +76,13 @@ printf 'ABC' > "$tmp/args.expected" || error 'cannot create argument expectation
 cmp -s "$tmp/args.expected" "$tmp/args" ||
     fail 'o2a decoded separate octet arguments incorrectly'
 
+(
+    IFS=,
+    o2a 101 102 103 > "$tmp/nondefault-ifs"
+) || fail 'o2a depended on caller IFS while joining arguments'
+cmp -s "$tmp/args.expected" "$tmp/nondefault-ifs" ||
+    fail 'o2a decoded arguments incorrectly with non-default caller IFS'
+
 a2o A B | o2a > "$tmp/a2o-args" || fail 'a2o argument output was not decodable'
 printf 'AB' > "$tmp/a2o-args.expected" || error 'cannot create a2o argument expectation'
 cmp -s "$tmp/a2o-args.expected" "$tmp/a2o-args" ||
