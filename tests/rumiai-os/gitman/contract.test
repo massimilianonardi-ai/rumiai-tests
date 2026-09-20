@@ -67,12 +67,16 @@ grep -F -- '--paginate' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman pager mode does not force Git paging'
 grep -F -- '--no-pager' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman terminal mode does not disable Git paging'
+grep -F 'gitman_git_exec()' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic Git executor is missing'
 grep -F 'gitman_git_run()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic Git runner is missing'
-grep -F 'command -- git --paginate -C "$gitman_git_run_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic pager runner does not execute an explicit Git argument vector'
-grep -F 'command -- git --no-pager -C "$gitman_git_run_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic terminal runner does not execute an explicit Git argument vector'
+    fail 'gitman acknowledged Git runner is missing'
+grep -F 'command -- git --paginate -C "$gitman_git_exec_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic pager executor does not execute an explicit Git argument vector'
+grep -F 'command -- git --no-pager -C "$gitman_git_exec_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic terminal executor does not execute an explicit Git argument vector'
+grep -F 'gitman_git_exec "$@" || return $?' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman acknowledged runner does not delegate to the generic executor'
 grep -F 'gitman_action_dispatch()' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman action dispatcher is missing'
 grep -F 'gitman_action_handler="gitman_action_$2"' "$gitman" >/dev/null 2>&1 ||
@@ -85,6 +89,8 @@ grep -F "pull 'Pull: git pull'" "$gitman" >/dev/null 2>&1 ||
     fail 'gitman Pull action is missing'
 grep -F "commit 'Commit: git commit -m <commit-message>'" "$gitman" >/dev/null 2>&1 ||
     fail 'gitman Commit action is missing'
+grep -F "sync_push 'Sync + Push: git add --all → git commit -m <commit-message> → git pull --no-rebase --no-edit → git push'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Sync + Push shortcut is missing'
 grep -F "changes 'Changes >'" "$gitman" >/dev/null 2>&1 ||
     fail 'gitman Changes submenu is missing'
 grep -F "history 'History >'" "$gitman" >/dev/null 2>&1 ||
@@ -153,6 +159,16 @@ grep -F "Commit message: " "$gitman" >/dev/null 2>&1 ||
     fail 'gitman commit-message prompt is missing'
 grep -F 'commit -m "$gitman_commit_message"' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman commit handler does not pass the acquired message as one argument'
+grep -F 'status --porcelain' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Sync + Push does not inspect local changes before staging'
+grep -F "gitman_git_exec \"\$gitman_sync_repository\" 'add --all' add --all" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Sync + Push does not stage local changes'
+grep -F "gitman_git_exec \"\$gitman_sync_repository\" 'commit -m <commit-message>' commit -m \"\$gitman_commit_message\"" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Sync + Push does not commit local changes'
+grep -F "gitman_git_exec \"\$gitman_sync_repository\" 'pull --no-rebase --no-edit' pull --no-rebase --no-edit" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Sync + Push does not use explicit merge pull semantics'
+grep -F 'gitman_git_exec "$gitman_sync_repository" push push' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Sync + Push does not push after integration'
 grep -F "for-each-ref --format='%(refname:short)' refs/heads" "$gitman" >/dev/null 2>&1 ||
     fail 'gitman branch enumeration is missing'
 grep -F 'Switch: git switch $gitman_switch_branch_display' "$gitman" >/dev/null 2>&1 ||
@@ -188,6 +204,12 @@ printf '%s\n' "$manual_text" | grep -F 'Changes >' >/dev/null 2>&1 ||
     fail 'manual gitman does not document grouped action menus'
 printf '%s\n' "$manual_text" | grep -F 'Commit: git commit -m <commit-message>' >/dev/null 2>&1 ||
     fail 'manual gitman does not document commit command template'
+printf '%s\n' "$manual_text" | grep -F 'SYNC + PUSH' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document the Sync + Push workflow'
+printf '%s\n' "$manual_text" | grep -F 'git pull --no-rebase --no-edit' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document explicit merge pull semantics'
+printf '%s\n' "$manual_text" | grep -F 'merge conflict prevents git push' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document stop-before-push conflict behavior'
 printf '%s\n' "$manual_text" | grep -F 'Switch: git switch feature/example' >/dev/null 2>&1 ||
     fail 'manual gitman does not document concrete switch labels'
 printf '%s\n' "$manual_text" | grep -F 'git stash pop' >/dev/null 2>&1 ||
