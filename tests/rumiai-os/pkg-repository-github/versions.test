@@ -84,6 +84,9 @@ printf -- '%s\n' "github" > "$ambiguous_repository_dir/type"
 printf -- '%s\n' "acme" > "$ambiguous_repository_dir/owner"
 printf -- '%s\n' "ambiguous" > "$ambiguous_repository_dir/repository"
 
+GITHUB_HTTP_LOG="$tmp/http.log"
+export GITHUB_HTTP_LOG
+
 cat > "$fakebin/http-fetch" <<'EOF_HTTP_FETCH'
 #!/bin/sh
 url=
@@ -91,6 +94,7 @@ for arg
 do
   url=$arg
 done
+[ -z "${GITHUB_HTTP_LOG-}" ] || printf '%s\n' "$url" >> "$GITHUB_HTTP_LOG"
 
 case "$url" in
   *'/repos/acme/ambiguous/releases?per_page=100&page=1')
@@ -184,8 +188,10 @@ compare="$(pkg_repository_compare_versions "$repository_dir" "v1" "v2")" || fail
 compare="$(pkg_repository_compare_versions "$repository_dir" "v2" "v1")" || fail "descending version comparison failed"
 [ "$compare" = 1 ] || fail "v2 versus v1 returned $compare instead of 1"
 
+: > "$GITHUB_HTTP_LOG" || error "cannot reset HTTP log"
 compare="$(pkg_repository_compare_versions "$repository_dir" "v1" "v1")" || fail "equal version comparison failed"
 [ "$compare" = 0 ] || fail "v1 versus v1 returned $compare instead of 0"
+[ ! -s "$GITHUB_HTTP_LOG" ] || fail "equal version comparison performed an unnecessary GitHub API request"
 
 compare="$(pkg_repository_compare_versions "$repository_dir" "v1a" "v1b")" || fail "published_at tie-break comparison failed"
 [ "$compare" = -1 ] || fail "v1a versus v1b returned $compare instead of -1"

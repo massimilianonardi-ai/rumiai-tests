@@ -45,10 +45,29 @@ write_valid_range()
   printf -- '%s\n' sha256 > "$range_dir/digest_type"
 }
 
+GRAALVM_HTTP_LOG="$tmp/http.log"
+export GRAALVM_HTTP_LOG
+
 cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
 #!/bin/sh
 for url do :; done
+[ -z "${GRAALVM_HTTP_LOG-}" ] || printf '%s\n' "$url" >> "$GRAALVM_HTTP_LOG"
 case "$url" in
+  'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/latest')
+    case "${GRAALVM_LATEST_MODE-ok}" in
+      ok)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z"}'
+        ;;
+      foreign)
+        printf '%s\n' '{"tag_name":"graal-26.0.0","draft":false,"prerelease":false,"created_at":"2026-09-01T00:00:00Z","published_at":"2026-09-01T00:01:00Z"}'
+        ;;
+      malformed)
+        printf '%s\n' '{"tag_name":25,"draft":false,"prerelease":false,"created_at":"2026-09-01T00:00:00Z","published_at":"2026-09-01T00:01:00Z"}'
+        ;;
+      *) exit 87;;
+    esac
+    ;;
+
   'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=100&page=1')
     case "${GRAALVM_LIST_MODE-ok}" in
       ok)
@@ -62,6 +81,12 @@ case "$url" in
         ;;
       malformed)
         printf '%s\n' '[{"tag_name":25,"draft":false,"prerelease":false,"created_at":"2026-06-01T00:00:00Z","published_at":"2026-07-01T00:00:00Z"}]'
+        ;;
+      forbidden)
+        exit 86
+        ;;
+      *)
+        exit 85
         ;;
     esac
     ;;
@@ -101,6 +126,7 @@ chmod 700 "$tmp/bin/http-fetch" || error "cannot make fake http-fetch executable
 PATH="$tmp/bin:/usr/bin:/bin"; export PATH
 m_LIB_DIR="$root/lib"; export m_LIB_DIR
 GRAALVM_LIST_MODE=ok; export GRAALVM_LIST_MODE
+GRAALVM_LATEST_MODE=ok; export GRAALVM_LATEST_MODE
 GRAALVM_RELEASE_MODE=ok; export GRAALVM_RELEASE_MODE
 . "$library" || error "cannot source GraalVM repository adapter"
 
@@ -109,11 +135,29 @@ expected_versions='25.1.3
 25.2.4
 25.3.4.1'
 [ "$(pkg_repository_list_versions "$repository_dir")" = "$expected_versions" ] || fail "list_versions did not filter and order GraalVM 25 releases"
-[ "$(pkg_repository_resolve_version "$repository_dir")" = '25.3.4.1' ] || fail "latest resolution failed"
+
+: > "$GRAALVM_HTTP_LOG" || error "cannot reset HTTP log"
+GRAALVM_LIST_MODE=forbidden; export GRAALVM_LIST_MODE
+[ "$(pkg_repository_resolve_version "$repository_dir")" = '25.3.4.1' ] || fail "latest fast-path resolution failed"
+[ "$(cat "$GRAALVM_HTTP_LOG")" = 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/latest' ] ||
+  fail "latest fast path made unexpected GitHub API requests"
+
+: > "$GRAALVM_HTTP_LOG" || error "cannot reset HTTP log"
+GRAALVM_LATEST_MODE=foreign; export GRAALVM_LATEST_MODE
+GRAALVM_LIST_MODE=ok; export GRAALVM_LIST_MODE
+[ "$(pkg_repository_resolve_version "$repository_dir")" = '25.3.4.1' ] || fail "foreign latest release did not fall back to supported GraalVM 25 listing"
+grep -Fx 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/latest' "$GRAALVM_HTTP_LOG" >/dev/null 2>&1 ||
+  fail "foreign latest fallback did not query releases/latest"
+grep -Fx 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=100&page=1' "$GRAALVM_HTTP_LOG" >/dev/null 2>&1 ||
+  fail "foreign latest fallback did not query the release listing"
+GRAALVM_LATEST_MODE=ok; export GRAALVM_LATEST_MODE
+
 [ "$(pkg_repository_resolve_version "$repository_dir" '25.2.4')" = '25.2.4' ] || fail "exact resolution failed"
 [ "$(pkg_repository_compare_versions "$repository_dir" '25.1.3' '25.2.4')" = -1 ] || fail "forward compare_versions is incorrect"
 [ "$(pkg_repository_compare_versions "$repository_dir" '25.2.4' '25.1.3')" = 1 ] || fail "reverse compare_versions is incorrect"
+: > "$GRAALVM_HTTP_LOG" || error "cannot reset HTTP log"
 [ "$(pkg_repository_compare_versions "$repository_dir" '25.2.4' '25.2.4')" = 0 ] || fail "equal compare_versions is incorrect"
+[ ! -s "$GRAALVM_HTTP_LOG" ] || fail "equal compare_versions performed an unnecessary GitHub API request"
 
 for field_value in 'type other' 'owner other' 'repository other'
 do
