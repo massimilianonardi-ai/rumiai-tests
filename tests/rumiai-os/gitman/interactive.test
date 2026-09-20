@@ -104,6 +104,23 @@ git -C "$repo_actions" remote add origin "$repo_actions_remote" || error 'cannot
 git -C "$repo_actions" push -q -u origin HEAD || error 'cannot seed action remote'
 printf '%s\n' action-change > "$repo_actions/action.txt" || error 'cannot create action untracked fixture'
 
+repo_sync="$work/sync"
+repo_sync_remote="$work/sync-remote.git"
+repo_sync_peer="$work/sync-peer"
+git init -q "$repo_sync" || error 'cannot initialize sync Git repository'
+git -C "$repo_sync" config user.name 'RumiAI Test' || error 'cannot configure sync Git test name'
+git -C "$repo_sync" config user.email 'rumiai-test@example.invalid' || error 'cannot configure sync Git test email'
+git -C "$repo_sync" branch -m sync-main || error 'cannot name sync Git branch'
+printf '%s\n' base > "$repo_sync/shared.txt" || error 'cannot create sync tracked fixture'
+git -C "$repo_sync" add shared.txt || error 'cannot stage sync fixture'
+git -C "$repo_sync" commit -q -m initial || error 'cannot commit sync fixture'
+git init -q --bare "$repo_sync_remote" || error 'cannot initialize sync remote'
+git -C "$repo_sync" remote add origin "$repo_sync_remote" || error 'cannot add sync remote'
+git -C "$repo_sync" push -q -u origin sync-main || error 'cannot seed sync remote'
+git clone -q -b sync-main "$repo_sync_remote" "$repo_sync_peer" || error 'cannot clone sync peer'
+git -C "$repo_sync_peer" config user.name 'RumiAI Peer' || error 'cannot configure sync peer name'
+git -C "$repo_sync_peer" config user.email 'rumiai-peer@example.invalid' || error 'cannot configure sync peer email'
+
 state_user_dir=$root/state/user
 state_current=$state_user_dir/current
 state_user_created=0
@@ -204,7 +221,7 @@ chmod +x "$tmp/bin/vi" || error 'cannot make vi editor fixture executable'
 
 export TERM=xterm-256color
 
-python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" "$pager_probe" "$pager_marker" "$tmp/bin" "$less_marker" "$less_env" "$visual_editor" "$editor_editor" "$visual_marker" "$editor_marker" "$vi_marker" "$repo_actions" <<'PY_GITMAN'
+python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" "$pager_probe" "$pager_marker" "$tmp/bin" "$less_marker" "$less_env" "$visual_editor" "$editor_editor" "$visual_marker" "$editor_marker" "$vi_marker" "$repo_actions" "$repo_sync" "$repo_sync_peer" <<'PY_GITMAN'
 import os
 import pty
 import select
@@ -213,7 +230,7 @@ import sys
 import time
 from pathlib import Path
 
-m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file, pager_probe, pager_marker, fake_bin, less_marker, less_env, visual_editor, editor_editor, visual_marker, editor_marker, vi_marker, repo_actions = sys.argv[1:20]
+m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file, pager_probe, pager_marker, fake_bin, less_marker, less_env, visual_editor, editor_editor, visual_marker, editor_marker, vi_marker, repo_actions, repo_sync, repo_sync_peer = sys.argv[1:22]
 
 env = os.environ.copy()
 env["TERM"] = "xterm-256color"
@@ -819,13 +836,14 @@ def run_action_tree_navigation_scenario():
         s.wait_for("Diff: git diff", start=open_mark)
         s.wait_for("Pull: git pull", start=open_mark)
         s.wait_for("Commit: git commit -m <commit-message>", start=open_mark)
+        s.wait_for("Sync + Push: git add --all", start=open_mark)
         s.wait_for("Changes >", start=open_mark)
         s.wait_for("History >", start=open_mark)
         s.wait_for("Branches >", start=open_mark)
         s.wait_for("Remote >", start=open_mark)
         s.wait_for("Stash >", start=open_mark)
 
-        move_down(s, 4)
+        move_down(s, 5)
         changes_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Diff staged: git diff --staged", start=changes_mark)
@@ -833,7 +851,7 @@ def run_action_tree_navigation_scenario():
         s.send(b"\x1b")
         s.wait_for("Status: git status --short --branch", start=changes_mark)
 
-        move_down(s, 5)
+        move_down(s, 6)
         history_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Log: git log --oneline --decorate --graph -n 50", start=history_mark)
@@ -841,7 +859,7 @@ def run_action_tree_navigation_scenario():
         s.send(b"\x1b")
         s.wait_for("Status: git status --short --branch", start=history_mark)
 
-        move_down(s, 6)
+        move_down(s, 7)
         branches_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("List: git branch -vv", start=branches_mark)
@@ -849,7 +867,7 @@ def run_action_tree_navigation_scenario():
         s.send(b"\x1b")
         s.wait_for("Status: git status --short --branch", start=branches_mark)
 
-        move_down(s, 7)
+        move_down(s, 8)
         remote_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Remotes: git remote -v", start=remote_mark)
@@ -889,7 +907,7 @@ def run_mutating_action_scenario():
         s.send(b"p")
         s.wait_for("[output: terminal]", start=mode_mark)
 
-        move_down(s, 4)
+        move_down(s, 5)
         changes_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Add all: git add --all", start=changes_mark)
@@ -926,7 +944,7 @@ def run_mutating_action_scenario():
         s.send(b"x")
         s.wait_for("Status: git status --short --branch", start=commit_mark)
 
-        move_down(s, 7)
+        move_down(s, 8)
         remote_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Push: git push", start=remote_mark)
@@ -948,7 +966,7 @@ def run_mutating_action_scenario():
         s.send(b"\x1b")
         s.wait_for("Status: git status --short --branch", start=push_mark)
 
-        move_down(s, 6)
+        move_down(s, 7)
         branches_mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("Switch >", start=branches_mark)
@@ -1012,8 +1030,113 @@ def run_mutating_action_scenario():
         raise
 
 
+def run_sync_push_scenario():
+    # Prepare a remote commit that diverges from an unpublished local change.
+    Path(repo_sync_peer, "remote.txt").write_text("remote-one\n", encoding="utf-8")
+    subprocess.check_call(["git", "-C", repo_sync_peer, "add", "--all"], env=env)
+    subprocess.check_call(["git", "-C", repo_sync_peer, "commit", "-q", "-m", "remote one"], env=env)
+    subprocess.check_call(["git", "-C", repo_sync_peer, "push", "-q"], env=env)
+    Path(repo_sync, "local.txt").write_text("local-one\n", encoding="utf-8")
+
+    s = Session([repo_sync], work)
+    try:
+        s.wait_for("Git repositories")
+        s.send(b"\n")
+        s.wait_for("Sync + Push: git add --all")
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+
+        move_down(s, 4)
+        sync_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Commit message: ", start=sync_mark)
+        s.send(b"sync local one\n")
+        s.wait_for("Action: add --all", start=sync_mark)
+        s.wait_for("Action: commit -m <commit-message>", start=sync_mark)
+        s.wait_for("Action: pull --no-rebase --no-edit", start=sync_mark)
+        s.wait_for("Action: push", start=sync_mark)
+        s.wait_for("Press any key to continue...", start=sync_mark)
+
+        local_subjects = subprocess.check_output(
+            ["git", "-C", repo_sync, "log", "--format=%s", "-4"],
+            env=env,
+            text=True,
+        )
+        assert "sync local one" in local_subjects, local_subjects
+        assert "remote one" in local_subjects, local_subjects
+        local_head = subprocess.check_output(
+            ["git", "-C", repo_sync, "rev-parse", "HEAD"], env=env, text=True
+        ).strip()
+        upstream_head = subprocess.check_output(
+            ["git", "-C", repo_sync, "rev-parse", "@{u}"], env=env, text=True
+        ).strip()
+        assert local_head == upstream_head, (local_head, upstream_head)
+        assert subprocess.check_output(
+            ["git", "-C", repo_sync, "status", "--porcelain"], env=env, text=True
+        ).strip() == ""
+
+        s.send(b"x")
+        s.wait_for("Sync + Push: git add --all", start=sync_mark)
+
+        # A clean repository skips message acquisition, add and commit.
+        move_down(s, 4)
+        clean_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Action: pull --no-rebase --no-edit", start=clean_mark)
+        s.wait_for("Action: push", start=clean_mark)
+        pause_pos = s.wait_for("Press any key to continue...", start=clean_mark)
+        clean_segment = bytes(s.buffer[clean_mark:pause_pos])
+        assert b"Commit message:" not in clean_segment, clean_segment
+        assert b"Action: add --all" not in clean_segment, clean_segment
+        assert b"Action: commit -m <commit-message>" not in clean_segment, clean_segment
+
+        s.send(b"x")
+        s.wait_for("Sync + Push: git add --all", start=pause_pos)
+
+        # Create a real conflicting divergence. Pull must fail and push must not
+        # even be attempted.
+        subprocess.check_call(["git", "-C", repo_sync_peer, "pull", "-q", "--ff-only"], env=env)
+        Path(repo_sync_peer, "shared.txt").write_text("remote-conflict\n", encoding="utf-8")
+        subprocess.check_call(["git", "-C", repo_sync_peer, "add", "--all"], env=env)
+        subprocess.check_call(["git", "-C", repo_sync_peer, "commit", "-q", "-m", "remote conflict"], env=env)
+        subprocess.check_call(["git", "-C", repo_sync_peer, "push", "-q"], env=env)
+        peer_head = subprocess.check_output(
+            ["git", "-C", repo_sync_peer, "rev-parse", "HEAD"], env=env, text=True
+        ).strip()
+
+        Path(repo_sync, "shared.txt").write_text("local-conflict\n", encoding="utf-8")
+        move_down(s, 4)
+        conflict_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Commit message: ", start=conflict_mark)
+        s.send(b"sync conflict local\n")
+        s.wait_for("Action: pull --no-rebase --no-edit", start=conflict_mark)
+        pause_pos = s.wait_for("Press any key to continue...", start=conflict_mark)
+        conflict_segment = bytes(s.buffer[conflict_mark:pause_pos])
+        assert b"Action: push" not in conflict_segment, conflict_segment
+        remote_head = subprocess.check_output(
+            ["git", "--git-dir", os.path.join(work, "sync-remote.git"), "rev-parse", "refs/heads/sync-main"],
+            env=env,
+            text=True,
+        ).strip()
+        assert remote_head == peer_head, (remote_head, peer_head)
+
+        s.send(b"x")
+        s.wait_for("git pull --no-rebase --no-edit failed", start=pause_pos)
+        repo_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=repo_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
 run_action_tree_navigation_scenario()
 run_mutating_action_scenario()
+run_sync_push_scenario()
 
 run_explicit_action_and_error_scenario()
 run_config_and_dedup_scenario()
