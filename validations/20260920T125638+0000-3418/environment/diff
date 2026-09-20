@@ -1,0 +1,1288 @@
+--- /var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T//rumiai-validation-evidence-20260920T125638+0000-3418/environment/before	2026-09-20 12:56:41
++++ /var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T//rumiai-validation-evidence-20260920T125638+0000-3418/environment/after	2026-09-20 12:59:01
+@@ -5,6 +5,8 @@
+ home/.local	directory	755				
+ home/.local/share	directory	755				
+ home/.local/state	directory	755				
++home/Library	directory	700				
++home/Library/LaunchAgents	directory	700				
+ runtime	directory	700				
+ target	directory	755				
+ target/.git	directory	755				
+@@ -54,10 +56,14 @@
+ target/.gitignore	file	644	237	1789908998.481321414		
+ target/README.md	file	644	6175	1789908998.481486081		
+ target/bin	directory	755				
+-target/bin/ai-osarch	symlink	755			ai-linux-arm64	
+-target/bin/ext-osarch	symlink	755			ext-linux-arm64	
++target/bin/ai-macos-arm64	directory	700				
++target/bin/ai-osarch	symlink	700			ai-macos-arm64	
++target/bin/ext	directory	700				
++target/bin/ext-macos-arm64	directory	700				
++target/bin/ext-osarch	symlink	700			ext-macos-arm64	
+ target/bin/sys	directory	755				
+-target/bin/sys-osarch	symlink	755			sys-linux-arm64	
++target/bin/sys-macos-arm64	directory	700				
++target/bin/sys-osarch	symlink	700			sys-macos-arm64	
+ target/bin/sys/#_osarch-set	file	755	182	1789908998.481765998		
+ target/bin/sys/#_osarch-update	file	755	102	1789908998.481842706		
+ target/bin/sys/#_readc	file	755	7686	1789908998.481913206		
+@@ -127,6 +133,7 @@
+ target/lib/sys/sh/rand.lib.sh	file	644	2462	1789908998.491806164		
+ target/lib/sys/sh/term.lib.sh	file	644	23056	1789908998.491931997		
+ target/m	file	755	4240	1789908998.492046081		
++target/pkg	directory	700				
+ target/product-name	file	644	7	1789908998.492104081		
+ target/product-version	file	644	6	1789908998.492164331		
+ target/res	directory	755				
+@@ -238,7 +245,1236 @@
+ target/state/system/current	symlink	755			profile/main	
+ target/state/system/profile	directory	755				
+ target/state/system/profile/main	directory	755				
++target/state/system/profile/main/pkg	directory	700				
+ target/state/system/profile/main/sys	directory	755				
++target/state/system/profile/main/sys/pkg	directory	700				
++target/state/system/profile/main/sys/pkg/cache	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/FETCH_HEAD	file	600	111	1789909024.482502706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/HEAD	file	600	21	1789909003.046424581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/ORIG_HEAD	file	600	41	1789909003.689001247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/config	file	600	347	1789909003.051776497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/description	file	600	73	1789909002.565355372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/applypatch-msg.sample	file	700	478	1789909002.565955664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/commit-msg.sample	file	700	1972	1789909002.565560456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/fsmonitor-watchman.sample	file	700	4611	1789909002.566041914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/post-update.sample	file	700	189	1789909002.566353498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/pre-applypatch.sample	file	700	424	1789909002.566544122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/pre-commit.sample	file	700	1649	1789909002.565851914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/pre-merge-commit.sample	file	700	416	1789909002.566452747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/pre-push.sample	file	700	1374	1789909002.566627372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/pre-rebase.sample	file	700	4898	1789909002.565666664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/pre-receive.sample	file	700	544	1789909002.566162581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/prepare-commit-msg.sample	file	700	1492	1789909002.566260914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/push-to-checkout.sample	file	700	2783	1789909002.566812414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/sendemail-validate.sample	file	700	2308	1789909002.565760331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/hooks/update.sample	file	700	3650	1789909002.566708539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/index	file	600	109542	1789909016.428105289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/info	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/info/exclude	file	600	240	1789909002.565128581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/logs	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/logs/HEAD	file	600	249	1789909003.049469039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/logs/refs	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/logs/refs/heads	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/logs/refs/heads/main	file	600	249	1789909003.049904914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/objects	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/objects/info	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/objects/pack	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/objects/pack/pack-90322146c24bebac112bf2ecb8b0ec5bb1f86216.idx	file	400	21176	1789909003.036013289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/objects/pack/pack-90322146c24bebac112bf2ecb8b0ec5bb1f86216.pack	file	400	50688	1789909003.035631747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/objects/pack/pack-90322146c24bebac112bf2ecb8b0ec5bb1f86216.rev	file	400	2924	1789909003.036706123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/packed-refs	file	600	112	1789909003.046125539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/refs	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/refs/heads	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/refs/heads/main	file	600	41	1789909003.046757956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/.git/refs/tags	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jar	file	600	0	1789909003.055160956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jarsigner	file	600	0	1789909003.055230872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/java	file	600	0	1789909003.055271581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/javac	file	600	0	1789909003.055341331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/javadoc	file	600	0	1789909003.055386414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/javap	file	600	0	1789909003.055425873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jcmd	file	600	0	1789909003.055469247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jconsole	file	600	0	1789909003.055505331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jdb	file	600	0	1789909003.055553039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jdeprscan	file	600	0	1789909003.055603706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jdeps	file	600	0	1789909003.055663123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jfr	file	600	0	1789909003.055726956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jhsdb	file	600	0	1789909003.055774747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jimage	file	600	0	1789909003.055809373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jinfo	file	600	0	1789909003.055849331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jlink	file	600	0	1789909003.055882747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jmap	file	600	0	1789909003.055932414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jmod	file	600	0	1789909003.055978331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jnativescan	file	600	0	1789909003.056038622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jpackage	file	600	0	1789909003.056089706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jps	file	600	0	1789909003.056131831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jrunscript	file	600	0	1789909003.056166122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jshell	file	600	0	1789909003.056208122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jstack	file	600	0	1789909003.056242081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jstat	file	600	0	1789909003.056296122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jstatd	file	600	0	1789909003.056335289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/jwebserver	file	600	0	1789909003.056370747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/keytool	file	600	0	1789909003.056411039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/rmiregistry	file	600	0	1789909003.056464539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/cmd/serialver	file	600	0	1789909003.056505623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/facility/java/25/env/JAVA_HOME	file	600	0	1789909003.056602081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/archive_regex	file	600	97	1789909003.056907498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/cmd/chrome	file	600	86	1789909003.057102247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/digest_type	file	600	7	1789909003.057203914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/format	file	600	4	1789909003.057287164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/link/chrome	file	600	32	1789909003.057414206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/n0001=153.0.8010.36-1/setuid_root	file	600	33	1789909003.057494956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chrome/linux-x86_64/repository/type	file	600	7	1789909003.057633664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/archive_regex	file	600	20	1789909003.057826498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/cmd/chromium	file	600	88	1789909003.057958206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/digest_type	file	600	4	1789909003.058060997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/env	file	600	460	1789909003.058406664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/format	file	600	4	1789909003.058717206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/link/chromium	file	600	7	1789909003.059084539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/n0001=1697793/setuid_root	file	600	15	1789909003.059390622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/repository/platform	file	600	10	1789909003.059738456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/linux-x86_64/repository/type	file	600	9	1789909003.060000956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/archive_regex	file	600	18	1789909003.060374872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/cmd/chromium	file	600	88	1789909003.060537289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/digest_type	file	600	4	1789909003.060635331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/format	file	600	4	1789909003.060755581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/n0001=1697808/link/chromium	file	600	37	1789909003.060894664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/repository/platform	file	600	8	1789909003.061000122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-arm64/repository/type	file	600	9	1789909003.061162956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/archive_regex	file	600	18	1789909003.061355247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/cmd/chromium	file	600	88	1789909003.061500581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/digest_type	file	600	4	1789909003.061567622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/format	file	600	4	1789909003.061674164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/n0001=1697801/link/chromium	file	600	37	1789909003.061833164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/repository/platform	file	600	4	1789909003.061991789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/macos-x86_64/repository/type	file	600	9	1789909003.062058123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/archive_regex	file	600	18	1789909003.062236248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/cmd/chromium	file	600	88	1789909003.062353122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/digest_type	file	600	4	1789909003.062431206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/format	file	600	4	1789909003.062564622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/n0001=1697025/link/chromium	file	600	11	1789909003.062700372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/repository/platform	file	600	10	1789909003.062846414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-arm64/repository/type	file	600	9	1789909003.062915706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/archive_regex	file	600	18	1789909003.063102539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/cmd/chromium	file	600	88	1789909003.063230456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/digest_type	file	600	4	1789909003.063292289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/format	file	600	4	1789909003.063378789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/n0001=1697030/link/chromium	file	600	11	1789909003.063509081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/repository/platform	file	600	8	1789909003.063621081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/chromium/windows-x86_64/repository/type	file	600	9	1789909003.063710372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/archive_regex	file	600	65	1789909003.063924289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/cmd/dbeaver	file	600	300	1789909003.064068664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/digest_type	file	600	7	1789909003.064261372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/format	file	600	7	1789909003.064343706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/n0001=26.1.5/link/dbeaver	file	600	8	1789909003.064469248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/repository/owner	file	600	8	1789909003.064584373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/repository/repository	file	600	8	1789909003.064641206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-arm64/repository/type	file	600	7	1789909003.064715998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/archive_regex	file	600	64	1789909003.064895706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/cmd/dbeaver	file	600	300	1789909003.065383956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/digest_type	file	600	7	1789909003.065663539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/format	file	600	7	1789909003.065877581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/n0001=26.1.5/link/dbeaver	file	600	8	1789909003.066150789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/repository/owner	file	600	8	1789909003.066426622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/repository/repository	file	600	8	1789909003.066621039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/linux-x86_64/repository/type	file	600	7	1789909003.066798747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/archive_regex	file	600	61	1789909003.067191581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/cmd/dbeaver	file	600	300	1789909003.067467706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/digest_type	file	600	7	1789909003.067626122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/format	file	600	4	1789909003.067783497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/n0001=26.1.5/link/dbeaver	file	600	35	1789909003.068045456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/repository/owner	file	600	8	1789909003.068401831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/repository/repository	file	600	8	1789909003.068578122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-arm64/repository/type	file	600	7	1789909003.068748622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/archive_regex	file	600	60	1789909003.069165164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/cmd/dbeaver	file	600	300	1789909003.069473206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/digest_type	file	600	7	1789909003.071696581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/format	file	600	4	1789909003.071899998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/n0001=26.1.5/link/dbeaver	file	600	35	1789909003.072452456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/repository/owner	file	600	8	1789909003.072790081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/repository/repository	file	600	8	1789909003.073032789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/macos-x86_64/repository/type	file	600	7	1789909003.073266039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/archive_regex	file	600	62	1789909003.073751872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/cmd/dbeaver	file	600	300	1789909003.074269039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/digest_type	file	600	7	1789909003.074581789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/format	file	600	4	1789909003.074710872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/n0001=26.1.5/link/dbeaver	file	600	12	1789909003.074886414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/repository/owner	file	600	8	1789909003.075034289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/repository/repository	file	600	8	1789909003.075103956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/dbeaver/windows-x86_64/repository/type	file	600	7	1789909003.075358956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/archive_regex	file	600	52	1789909003.076178747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/cmd/electron	file	600	88	1789909003.076574289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/digest_type	file	600	7	1789909003.076844706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/format	file	600	4	1789909003.077110623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/link/electron	file	600	9	1789909003.077484414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/n0001=v44.3.0/setuid_root	file	600	15	1789909003.077710497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/repository/owner	file	600	9	1789909003.078039081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/repository/repository	file	600	9	1789909003.078354247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-arm64/repository/type	file	600	7	1789909003.078597831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/archive_regex	file	600	50	1789909003.079069164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/cmd/electron	file	600	88	1789909003.079479123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/digest_type	file	600	7	1789909003.079591289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/format	file	600	4	1789909003.079668706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/link/electron	file	600	9	1789909003.079801247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/n0001=v44.3.0/setuid_root	file	600	15	1789909003.080667081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/repository/owner	file	600	9	1789909003.080809914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/repository/repository	file	600	9	1789909003.080913248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/linux-x86_64/repository/type	file	600	7	1789909003.081250664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/archive_regex	file	600	53	1789909003.081431914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/cmd/electron	file	600	88	1789909003.081542122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/digest_type	file	600	7	1789909003.081608748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/format	file	600	4	1789909003.081681581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/n0001=v44.3.0/link/electron	file	600	37	1789909003.081789664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/repository/owner	file	600	9	1789909003.081923789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/repository/repository	file	600	9	1789909003.081993914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/electron/macos-arm64/repository/type	file	600	7	1789909003.082048997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/archive_regex	file	600	71	1789909003.082251081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/digest_type	file	600	7	1789909003.082316539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility	file	600	8	1789909003.082397164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jar	file	600	8	1789909003.082551831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jarsigner	file	600	14	1789909003.082633956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/java	file	600	9	1789909003.082703289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/javac	file	600	10	1789909003.082771372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/javadoc	file	600	12	1789909003.082843164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/javap	file	600	10	1789909003.082907914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jcmd	file	600	9	1789909003.082974581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jconsole	file	600	13	1789909003.083029622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jdb	file	600	8	1789909003.083104581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jdeprscan	file	600	14	1789909003.083161706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jdeps	file	600	10	1789909003.083243081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jfr	file	600	8	1789909003.083341456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jhsdb	file	600	10	1789909003.083417247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jimage	file	600	11	1789909003.083724872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jinfo	file	600	10	1789909003.083805664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jlink	file	600	10	1789909003.083892414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jmap	file	600	9	1789909003.083948539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jmod	file	600	9	1789909003.084002914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jnativescan	file	600	16	1789909003.084073873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jpackage	file	600	13	1789909003.084166414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jps	file	600	8	1789909003.084243872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jrunscript	file	600	15	1789909003.084302706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jshell	file	600	11	1789909003.084365914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jstack	file	600	11	1789909003.084430081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jstat	file	600	10	1789909003.084518581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jstatd	file	600	11	1789909003.084655956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/jwebserver	file	600	15	1789909003.085079456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/keytool	file	600	12	1789909003.085349997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/rmiregistry	file	600	16	1789909003.085560373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-cmd/java/serialver	file	600	14	1789909003.085793039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/facility-env/java	file	600	15	1789909003.085970372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/n0001=25.3.4.1/format	file	600	7	1789909003.086064372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/repository/owner	file	600	8	1789909003.086192706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/repository/repository	file	600	18	1789909003.086277081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-arm64/repository/type	file	600	8	1789909003.086349956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/archive_regex	file	600	67	1789909003.086479831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/digest_type	file	600	7	1789909003.086539747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility	file	600	8	1789909003.086599122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jar	file	600	8	1789909003.086733497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jarsigner	file	600	14	1789909003.086800456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/java	file	600	9	1789909003.086870623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/javac	file	600	10	1789909003.086935706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/javadoc	file	600	12	1789909003.087043164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/javap	file	600	10	1789909003.087118914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jcmd	file	600	9	1789909003.087207956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jconsole	file	600	13	1789909003.087279664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jdb	file	600	8	1789909003.087349456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jdeprscan	file	600	14	1789909003.087410581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jdeps	file	600	10	1789909003.087480914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jfr	file	600	8	1789909003.087565997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jhsdb	file	600	10	1789909003.087633498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jimage	file	600	11	1789909003.087700498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jinfo	file	600	10	1789909003.087913664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jlink	file	600	10	1789909003.088005164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jmap	file	600	9	1789909003.088091956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jmod	file	600	9	1789909003.088156747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jnativescan	file	600	16	1789909003.088245039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jpackage	file	600	13	1789909003.088313789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jps	file	600	8	1789909003.088394706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jrunscript	file	600	15	1789909003.088464581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jshell	file	600	11	1789909003.088566372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jstack	file	600	11	1789909003.088655872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jstat	file	600	10	1789909003.088708122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jstatd	file	600	11	1789909003.088759414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/jwebserver	file	600	15	1789909003.088816873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/keytool	file	600	12	1789909003.088877164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/rmiregistry	file	600	16	1789909003.088969456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-cmd/java/serialver	file	600	14	1789909003.089038581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/facility-env/java	file	600	15	1789909003.089165706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/n0001=25.3.4.1/format	file	600	7	1789909003.089247206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/repository/owner	file	600	8	1789909003.089353622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/repository/repository	file	600	18	1789909003.089432122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/linux-x86_64/repository/type	file	600	8	1789909003.089501164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/archive_regex	file	600	71	1789909003.089672289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/digest_type	file	600	7	1789909003.089756414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility	file	600	8	1789909003.089826873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jar	file	600	13	1789909003.089965414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jarsigner	file	600	19	1789909003.090029331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/java	file	600	14	1789909003.090096956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/javac	file	600	15	1789909003.090174247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/javadoc	file	600	17	1789909003.090251581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/javap	file	600	15	1789909003.090315206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jcmd	file	600	14	1789909003.090391789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jconsole	file	600	18	1789909003.090465164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jdb	file	600	13	1789909003.090537748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jdeprscan	file	600	19	1789909003.090597206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jdeps	file	600	15	1789909003.090654497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jfr	file	600	13	1789909003.090717206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jhsdb	file	600	15	1789909003.090795997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jimage	file	600	16	1789909003.090872122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jinfo	file	600	15	1789909003.090930956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jlink	file	600	15	1789909003.091030539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jmap	file	600	14	1789909003.091114914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jmod	file	600	14	1789909003.091192123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jnativescan	file	600	21	1789909003.091253914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jpackage	file	600	18	1789909003.091337164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jps	file	600	13	1789909003.091417622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jrunscript	file	600	20	1789909003.091508914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jshell	file	600	16	1789909003.091582414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jstack	file	600	16	1789909003.091649081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jstat	file	600	15	1789909003.091782539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jstatd	file	600	16	1789909003.091877997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/jwebserver	file	600	20	1789909003.091968706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/keytool	file	600	17	1789909003.092045289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/rmiregistry	file	600	21	1789909003.092120873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-cmd/java/serialver	file	600	19	1789909003.092191539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/facility-env/java	file	600	25	1789909003.092293331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/n0001=25.3.4.1/format	file	600	7	1789909003.092352706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/repository/owner	file	600	8	1789909003.092510998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/repository/repository	file	600	18	1789909003.092592122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/macos-arm64/repository/type	file	600	8	1789909003.092660872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/archive_regex	file	600	65	1789909003.092793372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/digest_type	file	600	7	1789909003.092873248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility	file	600	8	1789909003.092949789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jar	file	600	12	1789909003.093101914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jarsigner	file	600	18	1789909003.093168831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/java	file	600	13	1789909003.093234373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/javac	file	600	14	1789909003.093297622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/javadoc	file	600	16	1789909003.093359664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/javap	file	600	14	1789909003.093422997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jcmd	file	600	13	1789909003.093489039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jconsole	file	600	17	1789909003.093555081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jdb	file	600	12	1789909003.093636081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jdeprscan	file	600	18	1789909003.093735706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jdeps	file	600	14	1789909003.093839039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jfr	file	600	12	1789909003.093910747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jhsdb	file	600	14	1789909003.093989872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jimage	file	600	15	1789909003.094064331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jinfo	file	600	14	1789909003.094127539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jlink	file	600	14	1789909003.094194622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jmap	file	600	13	1789909003.094260289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jmod	file	600	13	1789909003.094358414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jnativescan	file	600	20	1789909003.094459997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jpackage	file	600	17	1789909003.094534164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jps	file	600	12	1789909003.094604081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jrunscript	file	600	19	1789909003.094692331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jshell	file	600	15	1789909003.094779914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jstack	file	600	15	1789909003.094855831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jstat	file	600	14	1789909003.094918456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jstatd	file	600	15	1789909003.094992289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/jwebserver	file	600	19	1789909003.095145914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/keytool	file	600	16	1789909003.095214456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/rmiregistry	file	600	20	1789909003.095286831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-cmd/java/serialver	file	600	18	1789909003.095364206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/facility-env/java	file	600	15	1789909003.095492498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/n0001=25.3.4.1/format	file	600	4	1789909003.095560248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/repository/owner	file	600	8	1789909003.095665831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/repository/repository	file	600	18	1789909003.095804414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/graalvm/windows-x86_64/repository/type	file	600	8	1789909003.095896164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/archive_regex	file	600	17	1789909003.096071331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/cmd/jq	file	600	82	1789909003.096167664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/digest_type	file	600	7	1789909003.096246497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/format	file	600	11	1789909003.096308998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/n0001=jq-1.8.2/link/jq	file	600	15	1789909003.096438706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/repository/owner	file	600	7	1789909003.096547372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/repository/repository	file	600	3	1789909003.096607456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-arm64/repository/type	file	600	7	1789909003.096669581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/archive_regex	file	600	17	1789909003.096822539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/cmd/jq	file	600	82	1789909003.096956539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/digest_type	file	600	7	1789909003.097033289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/format	file	600	11	1789909003.097107623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/n0001=jq-1.8.2/link/jq	file	600	15	1789909003.097210622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/repository/owner	file	600	7	1789909003.097301789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/repository/repository	file	600	3	1789909003.097354914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/linux-x86_64/repository/type	file	600	7	1789909003.097427164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/archive_regex	file	600	17	1789909003.097557456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/cmd/jq	file	600	82	1789909003.097692498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/digest_type	file	600	7	1789909003.097817081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/format	file	600	11	1789909003.097899581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/n0001=jq-1.8.2/link/jq	file	600	15	1789909003.098034706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/repository/owner	file	600	7	1789909003.098144039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/repository/repository	file	600	3	1789909003.098215414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-arm64/repository/type	file	600	7	1789909003.098290998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/archive_regex	file	600	17	1789909003.098583706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/cmd/jq	file	600	82	1789909003.098747248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/digest_type	file	600	7	1789909003.098824539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/format	file	600	11	1789909003.098904123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/n0001=jq-1.8.2/link/jq	file	600	15	1789909003.099032664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/repository/owner	file	600	7	1789909003.099162372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/repository/repository	file	600	3	1789909003.099330747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/macos-x86_64/repository/type	file	600	7	1789909003.099440956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/archive_regex	file	600	24	1789909003.099635164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/cmd/jq	file	600	82	1789909003.099772206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/digest_type	file	600	7	1789909003.099856164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/format	file	600	11	1789909003.099928289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/n0001=jq-1.8.2/link/jq	file	600	21	1789909003.100055622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/repository/owner	file	600	7	1789909003.100245956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/repository/repository	file	600	3	1789909003.100317372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-arm64/repository/type	file	600	7	1789909003.100404831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/archive_regex	file	600	24	1789909003.100604997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/cmd/jq	file	600	82	1789909003.100722206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/digest_type	file	600	7	1789909003.100791747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/format	file	600	11	1789909003.100969414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/n0001=jq-1.8.2/link/jq	file	600	21	1789909003.101075747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/repository/owner	file	600	7	1789909003.101190331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/repository/repository	file	600	3	1789909003.101259581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/jq/windows-x86_64/repository/type	file	600	7	1789909003.101327997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/archive_regex	file	600	49	1789909003.101569664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/cmd/keycloak	file	600	88	1789909003.101894123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/dependency	file	600	9	1789909003.101985622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/digest_type	file	600	7	1789909003.102075164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/format	file	600	7	1789909003.102180289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/link/keycloak	file	600	10	1789909003.102306706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/var	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/var/conf	file	600	5	1789909003.102760456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/n0001=26.7.3/var/data	file	600	5	1789909003.102833456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/repository/owner	file	600	9	1789909003.102931414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/repository/repository	file	600	9	1789909003.102989706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-arm64/repository/type	file	600	7	1789909003.103048831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/archive_regex	file	600	49	1789909003.103190664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/cmd/keycloak	file	600	88	1789909003.103313873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/dependency	file	600	9	1789909003.103452872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/digest_type	file	600	7	1789909003.103542373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/format	file	600	7	1789909003.103641164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/link/keycloak	file	600	10	1789909003.103766581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/var	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/var/conf	file	600	5	1789909003.103869831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/n0001=26.7.3/var/data	file	600	5	1789909003.103947123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/repository/owner	file	600	9	1789909003.104078289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/repository/repository	file	600	9	1789909003.104208997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/linux-x86_64/repository/type	file	600	7	1789909003.104282956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/archive_regex	file	600	49	1789909003.104464831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/cmd/keycloak	file	600	88	1789909003.104583206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/dependency	file	600	9	1789909003.104655706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/digest_type	file	600	7	1789909003.104732622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/format	file	600	7	1789909003.104831872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/link/keycloak	file	600	10	1789909003.105025873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/var	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/var/conf	file	600	5	1789909003.105152539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/n0001=26.7.3/var/data	file	600	5	1789909003.105222706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/repository/owner	file	600	9	1789909003.105341498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/repository/repository	file	600	9	1789909003.105413789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-arm64/repository/type	file	600	7	1789909003.105485706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/archive_regex	file	600	49	1789909003.105748372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/cmd/keycloak	file	600	88	1789909003.105886081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/dependency	file	600	9	1789909003.105975122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/digest_type	file	600	7	1789909003.106054331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/format	file	600	7	1789909003.106142497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/link/keycloak	file	600	10	1789909003.106265206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/var	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/var/conf	file	600	5	1789909003.106477373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/n0001=26.7.3/var/data	file	600	5	1789909003.106548747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/repository/owner	file	600	9	1789909003.106655498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/repository/repository	file	600	9	1789909003.106720414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/keycloak/macos-x86_64/repository/type	file	600	7	1789909003.106798206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/archive_regex	file	600	57	1789909003.106983206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/cmd/mvn	file	600	85	1789909003.107171581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/dependency	file	600	10	1789909003.107246123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/digest_type	file	600	7	1789909003.107305081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/format	file	600	7	1789909003.107388498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/n0001=4.0.0-rc-6/link/mvn	file	600	8	1789909003.107498497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-arm64/repository/type	file	600	13	1789909003.107610039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/archive_regex	file	600	57	1789909003.107805247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/cmd/mvn	file	600	85	1789909003.107958289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/dependency	file	600	10	1789909003.108028747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/digest_type	file	600	7	1789909003.108113873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/format	file	600	7	1789909003.108206456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/n0001=4.0.0-rc-6/link/mvn	file	600	8	1789909003.108309414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/linux-x86_64/repository/type	file	600	13	1789909003.108430622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/archive_regex	file	600	57	1789909003.108654914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/cmd/mvn	file	600	85	1789909003.108801081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/dependency	file	600	10	1789909003.108877039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/digest_type	file	600	7	1789909003.108949498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/format	file	600	7	1789909003.109032497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/n0001=4.0.0-rc-6/link/mvn	file	600	8	1789909003.109238289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-arm64/repository/type	file	600	13	1789909003.109352081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/archive_regex	file	600	57	1789909003.109498997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/cmd/mvn	file	600	85	1789909003.109597414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/dependency	file	600	10	1789909003.109657497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/digest_type	file	600	7	1789909003.109717248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/format	file	600	7	1789909003.109799664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/n0001=4.0.0-rc-6/link/mvn	file	600	8	1789909003.109938123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/macos-x86_64/repository/type	file	600	13	1789909003.110038664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/archive_regex	file	600	57	1789909003.110170747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/cmd/mvn	file	600	85	1789909003.110264498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/dependency	file	600	10	1789909003.110328456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/digest_type	file	600	7	1789909003.110403581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/format	file	600	7	1789909003.110478039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/n0001=4.0.0-rc-6/link/mvn	file	600	8	1789909003.110594414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-arm64/repository/type	file	600	13	1789909003.110694206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/archive_regex	file	600	57	1789909003.110847914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/cmd/mvn	file	600	85	1789909003.110960122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/dependency	file	600	10	1789909003.111043372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/digest_type	file	600	7	1789909003.111126122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/format	file	600	7	1789909003.111208539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/n0001=4.0.0-rc-6/link/mvn	file	600	8	1789909003.111347539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/maven/windows-x86_64/repository/type	file	600	13	1789909003.111446039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/archive_regex	file	600	37	1789909003.111626747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/cmd/micromamba	file	600	90	1789909003.111815956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/digest_type	file	600	7	1789909003.111908539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/format	file	600	8	1789909003.111981414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/n0001=2.9.0-0/link/micromamba	file	600	15	1789909003.112089873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/repository/owner	file	600	10	1789909003.112195414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/repository/repository	file	600	20	1789909003.112257414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-arm64/repository/type	file	600	7	1789909003.112323664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/archive_regex	file	600	32	1789909003.112551581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/cmd/micromamba	file	600	90	1789909003.112749872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/digest_type	file	600	7	1789909003.112848539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/format	file	600	8	1789909003.112952122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/n0001=2.9.0-0/link/micromamba	file	600	15	1789909003.113076247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/repository/owner	file	600	10	1789909003.113213539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/repository/repository	file	600	20	1789909003.113356373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/linux-x86_64/repository/type	file	600	7	1789909003.113450581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/archive_regex	file	600	33	1789909003.113711706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/cmd/micromamba	file	600	90	1789909003.113886247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/digest_type	file	600	7	1789909003.113962039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/format	file	600	8	1789909003.114025956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/n0001=2.9.0-0/link/micromamba	file	600	15	1789909003.114124289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/repository/owner	file	600	10	1789909003.114220206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/repository/repository	file	600	20	1789909003.114372039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-arm64/repository/type	file	600	7	1789909003.114455498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/archive_regex	file	600	30	1789909003.114611456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/cmd/micromamba	file	600	90	1789909003.114713789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/digest_type	file	600	7	1789909003.114773456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/format	file	600	8	1789909003.114837289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/n0001=2.9.0-0/link/micromamba	file	600	15	1789909003.114946164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/repository/owner	file	600	10	1789909003.115161248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/repository/repository	file	600	20	1789909003.115228497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/macos-x86_64/repository/type	file	600	7	1789909003.115294581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/archive_regex	file	600	33	1789909003.115440248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/cmd/micromamba	file	600	90	1789909003.115536456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/digest_type	file	600	7	1789909003.115600539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/format	file	600	8	1789909003.115765081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/n0001=2.9.0-0/link/micromamba	file	600	27	1789909003.115891997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/repository/owner	file	600	10	1789909003.115993914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/repository/repository	file	600	20	1789909003.116062206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-arm64/repository/type	file	600	7	1789909003.116129289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/archive_regex	file	600	30	1789909003.116262831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/cmd/micromamba	file	600	90	1789909003.116426039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/digest_type	file	600	7	1789909003.116498289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/format	file	600	8	1789909003.116566872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/n0001=2.9.0-0/link/micromamba	file	600	27	1789909003.116674456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/repository/owner	file	600	10	1789909003.116771081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/repository/repository	file	600	20	1789909003.116828664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/micromamba/windows-x86_64/repository/type	file	600	7	1789909003.116890122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/archive_regex	file	600	49	1789909003.117136914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/cmd/netbeans	file	600	88	1789909003.117246372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/dependency	file	600	9	1789909003.117302414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/digest_type	file	600	7	1789909003.117365581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/format	file	600	4	1789909003.117426581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/n0001=31/link/netbeans	file	600	13	1789909003.117530873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/repository/owner	file	600	7	1789909003.117782498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/repository/repository	file	600	9	1789909003.117911373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-arm64/repository/type	file	600	9	1789909003.118044998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/archive_regex	file	600	49	1789909003.118329456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/cmd/netbeans	file	600	88	1789909003.118479622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/dependency	file	600	9	1789909003.118598706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/digest_type	file	600	7	1789909003.118814456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/format	file	600	4	1789909003.119062873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/n0001=31/link/netbeans	file	600	13	1789909003.119185831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/repository/owner	file	600	7	1789909003.119280164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/repository/repository	file	600	9	1789909003.119392039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/linux-x86_64/repository/type	file	600	9	1789909003.119485039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/archive_regex	file	600	49	1789909003.119619206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/cmd/netbeans	file	600	88	1789909003.119930872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/dependency	file	600	9	1789909003.120003998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/digest_type	file	600	7	1789909003.120071122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/format	file	600	4	1789909003.120135456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/n0001=31/link/netbeans	file	600	13	1789909003.120235622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/repository/owner	file	600	7	1789909003.120336164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/repository/repository	file	600	9	1789909003.120400123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-arm64/repository/type	file	600	9	1789909003.120552998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/archive_regex	file	600	49	1789909003.120696706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/cmd/netbeans	file	600	88	1789909003.120784247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/dependency	file	600	9	1789909003.120846373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/digest_type	file	600	7	1789909003.120905706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/format	file	600	4	1789909003.120964997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/n0001=31/link/netbeans	file	600	13	1789909003.121062831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/repository/owner	file	600	7	1789909003.121236706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/repository/repository	file	600	9	1789909003.121310039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/macos-x86_64/repository/type	file	600	9	1789909003.121376872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/archive_regex	file	600	49	1789909003.121520997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/cmd/netbeans	file	600	88	1789909003.121633039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/dependency	file	600	9	1789909003.121693914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/digest_type	file	600	7	1789909003.121819206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/format	file	600	4	1789909003.121985998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/n0001=31/link/netbeans	file	600	17	1789909003.122119873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/repository/owner	file	600	7	1789909003.122262706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/repository/repository	file	600	9	1789909003.122353581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/netbeans/windows-x86_64/repository/type	file	600	9	1789909003.122442706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/archive_regex	file	600	52	1789909003.122658914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/cmd/node	file	600	86	1789909003.122885997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/cmd/npm	file	600	86	1789909003.122951331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/cmd/npx	file	600	86	1789909003.123015997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/digest_type	file	600	7	1789909003.123105247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/env	file	600	290	1789909003.123181539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/format	file	600	7	1789909003.123273789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/link/node	file	600	9	1789909003.123426372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/link/npm	file	600	8	1789909003.123501164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/n0001=v26.8.2/link/npx	file	600	8	1789909003.123668123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/repository/owner	file	600	7	1789909003.123850372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/repository/repository	file	600	5	1789909003.123915956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-arm64/repository/type	file	600	7	1789909003.123982372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/archive_regex	file	600	50	1789909003.124156706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/cmd/node	file	600	86	1789909003.124338414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/cmd/npm	file	600	86	1789909003.124402081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/cmd/npx	file	600	86	1789909003.124537997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/digest_type	file	600	7	1789909003.124608039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/env	file	600	290	1789909003.124669331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/format	file	600	7	1789909003.124760039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/link/node	file	600	9	1789909003.124871081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/link/npm	file	600	8	1789909003.124938331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/n0001=v26.8.2/link/npx	file	600	8	1789909003.125018247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/repository/owner	file	600	7	1789909003.125154539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/repository/repository	file	600	5	1789909003.125315956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/linux-x86_64/repository/type	file	600	7	1789909003.125398747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/archive_regex	file	600	53	1789909003.125546081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/cmd/node	file	600	86	1789909003.125661747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/cmd/npm	file	600	86	1789909003.125748331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/cmd/npx	file	600	86	1789909003.125828456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/digest_type	file	600	7	1789909003.125902581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/env	file	600	290	1789909003.126060622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/format	file	600	7	1789909003.126129623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/link/node	file	600	9	1789909003.126244706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/link/npm	file	600	8	1789909003.126315914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/n0001=v26.8.2/link/npx	file	600	8	1789909003.126376539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/repository/owner	file	600	7	1789909003.126481581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/repository/repository	file	600	5	1789909003.126540581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-arm64/repository/type	file	600	7	1789909003.126612873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/archive_regex	file	600	51	1789909003.126837247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/cmd/node	file	600	86	1789909003.126933081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/cmd/npm	file	600	86	1789909003.126995373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/cmd/npx	file	600	86	1789909003.127058164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/digest_type	file	600	7	1789909003.127123206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/env	file	600	290	1789909003.127186331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/format	file	600	7	1789909003.127299956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/link/node	file	600	9	1789909003.127405956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/link/npm	file	600	8	1789909003.127471789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/n0001=v26.8.2/link/npx	file	600	8	1789909003.127562623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/repository/owner	file	600	7	1789909003.127670331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/repository/repository	file	600	5	1789909003.127730414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/macos-x86_64/repository/type	file	600	7	1789909003.127791997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/archive_regex	file	600	46	1789909003.128048497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/cmd/node	file	600	86	1789909003.128352873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/cmd/npm	file	600	86	1789909003.128449414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/cmd/npx	file	600	86	1789909003.128513414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/digest_type	file	600	7	1789909003.128590414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/env	file	600	286	1789909003.128675539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/format	file	600	4	1789909003.128735747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/link/node	file	600	9	1789909003.128987164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/link/npm	file	600	4	1789909003.129049664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/n0001=v26.8.2/link/npx	file	600	4	1789909003.129110331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/repository/owner	file	600	7	1789909003.129201622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/repository/repository	file	600	5	1789909003.129299456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-arm64/repository/type	file	600	7	1789909003.129360664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/archive_regex	file	600	44	1789909003.129492914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/cmd/node	file	600	86	1789909003.129664289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/cmd/npm	file	600	86	1789909003.129731831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/cmd/npx	file	600	86	1789909003.129794831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/digest_type	file	600	7	1789909003.129863081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/env	file	600	286	1789909003.129927872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/format	file	600	4	1789909003.129992747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/link/node	file	600	9	1789909003.130088164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/link/npm	file	600	4	1789909003.130148914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/n0001=v26.8.2/link/npx	file	600	4	1789909003.130276914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/repository/owner	file	600	7	1789909003.130389872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/repository/repository	file	600	5	1789909003.130451872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/nodejs/windows-x86_64/repository/type	file	600	7	1789909003.130512831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/archive_regex	file	600	59	1789909003.130687831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/cmd/pulsar	file	600	86	1789909003.130786872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/digest_type	file	600	7	1789909003.130949831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/format	file	600	7	1789909003.131043706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/link/pulsar	file	600	7	1789909003.131166664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/n0001=v1.132.1/setuid_root	file	600	15	1789909003.131239872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/repository/owner	file	600	12	1789909003.131343164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/repository/repository	file	600	7	1789909003.131406914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-arm64/repository/type	file	600	7	1789909003.131470831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/archive_regex	file	600	48	1789909003.131678539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/cmd/pulsar	file	600	86	1789909003.131778289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/digest_type	file	600	7	1789909003.131860206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/format	file	600	7	1789909003.131932497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/link/pulsar	file	600	7	1789909003.132064081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/n0001=v1.132.1/setuid_root	file	600	15	1789909003.132137414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/repository/owner	file	600	12	1789909003.132253706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/repository/repository	file	600	7	1789909003.132431872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/linux-x86_64/repository/type	file	600	7	1789909003.132505372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/archive_regex	file	600	61	1789909003.132650706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/cmd/pulsar	file	600	86	1789909003.132758748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/digest_type	file	600	7	1789909003.132830581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/format	file	600	4	1789909003.132911789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/n0001=v1.132.1/link/pulsar	file	600	33	1789909003.133063622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/repository/owner	file	600	12	1789909003.133225872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/repository/repository	file	600	7	1789909003.133299956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-arm64/repository/type	file	600	7	1789909003.133366206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/archive_regex	file	600	53	1789909003.133506248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/cmd/pulsar	file	600	86	1789909003.133640081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/digest_type	file	600	7	1789909003.133701998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/format	file	600	4	1789909003.133874039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/n0001=v1.132.1/link/pulsar	file	600	33	1789909003.134066622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/repository/owner	file	600	12	1789909003.134210331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/repository/repository	file	600	7	1789909003.134297706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/macos-x86_64/repository/type	file	600	7	1789909003.134375081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/archive_regex	file	600	50	1789909003.134531997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/cmd/pulsar	file	600	86	1789909003.134715497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/digest_type	file	600	7	1789909003.134869831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/format	file	600	4	1789909003.134930622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/link	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/n0001=v1.132.1/link/pulsar	file	600	11	1789909003.135057498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/repository/owner	file	600	12	1789909003.135270539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/repository/repository	file	600	7	1789909003.135395247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/pulsar/windows-x86_64/repository/type	file	600	7	1789909003.135488789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/archive_regex	file	600	77	1789909003.135839123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/digest_type	file	600	7	1789909003.135942831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility	file	600	8	1789909003.136034247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jar	file	600	8	1789909003.136263164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jarsigner	file	600	14	1789909003.136391497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/java	file	600	9	1789909003.136504539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/javac	file	600	10	1789909003.136575539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/javadoc	file	600	12	1789909003.136872914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/javap	file	600	10	1789909003.136977122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jcmd	file	600	9	1789909003.137063914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jconsole	file	600	13	1789909003.137142581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jdb	file	600	8	1789909003.137238414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jdeprscan	file	600	14	1789909003.137319831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jdeps	file	600	10	1789909003.137393997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jfr	file	600	8	1789909003.137473414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jhsdb	file	600	10	1789909003.137562206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jimage	file	600	11	1789909003.137714997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jinfo	file	600	10	1789909003.137800247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jlink	file	600	10	1789909003.137864414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jmap	file	600	9	1789909003.137937872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jmod	file	600	9	1789909003.138002706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jnativescan	file	600	16	1789909003.138064747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jpackage	file	600	13	1789909003.138174831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jps	file	600	8	1789909003.138246122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jrunscript	file	600	15	1789909003.138368997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jshell	file	600	11	1789909003.138440081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jstack	file	600	11	1789909003.138512748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jstat	file	600	10	1789909003.138579622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jstatd	file	600	11	1789909003.138662748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/jwebserver	file	600	15	1789909003.138734747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/keytool	file	600	12	1789909003.138801123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/rmiregistry	file	600	16	1789909003.138880706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-cmd/java/serialver	file	600	14	1789909003.138941498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/facility-env/java	file	600	15	1789909003.139154956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/n0001=25+36/format	file	600	7	1789909003.139236456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/repository/architecture	file	600	8	1789909003.139347248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/repository/feature_version	file	600	3	1789909003.139421747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/repository/os	file	600	6	1789909003.139488289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-arm64/repository/type	file	600	8	1789909003.139556956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/archive_regex	file	600	73	1789909003.139719914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/digest_type	file	600	7	1789909003.139908247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility	file	600	8	1789909003.139977581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jar	file	600	8	1789909003.140128039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jarsigner	file	600	14	1789909003.140191164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/java	file	600	9	1789909003.140253706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/javac	file	600	10	1789909003.140315497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/javadoc	file	600	12	1789909003.140385831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/javap	file	600	10	1789909003.140535081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jcmd	file	600	9	1789909003.140617581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jconsole	file	600	13	1789909003.140688623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jdb	file	600	8	1789909003.140772748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jdeprscan	file	600	14	1789909003.140843039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jdeps	file	600	10	1789909003.140923081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jfr	file	600	8	1789909003.140997289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jhsdb	file	600	10	1789909003.141071456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jimage	file	600	11	1789909003.141188581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jinfo	file	600	10	1789909003.141320914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jlink	file	600	10	1789909003.141396248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jmap	file	600	9	1789909003.141457497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jmod	file	600	9	1789909003.141517122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jnativescan	file	600	16	1789909003.141587622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jpackage	file	600	13	1789909003.141652289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jps	file	600	8	1789909003.141714706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jrunscript	file	600	15	1789909003.141774372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jshell	file	600	11	1789909003.141931914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jstack	file	600	11	1789909003.142021039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jstat	file	600	10	1789909003.142099622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jstatd	file	600	11	1789909003.142180664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/jwebserver	file	600	15	1789909003.142245247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/keytool	file	600	12	1789909003.142312539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/rmiregistry	file	600	16	1789909003.142386998		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-cmd/java/serialver	file	600	14	1789909003.142454289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/facility-env/java	file	600	15	1789909003.142625539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/n0001=25+36/format	file	600	7	1789909003.142695164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/repository/architecture	file	600	4	1789909003.142803122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/repository/feature_version	file	600	3	1789909003.142870123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/repository/os	file	600	6	1789909003.142951456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/linux-x86_64/repository/type	file	600	8	1789909003.143011247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/archive_regex	file	600	75	1789909003.143171456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/digest_type	file	600	7	1789909003.143333206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility	file	600	8	1789909003.143441164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jar	file	600	13	1789909003.143602289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jarsigner	file	600	19	1789909003.143674997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/java	file	600	14	1789909003.143747206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/javac	file	600	15	1789909003.143819747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/javadoc	file	600	17	1789909003.143893039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/javap	file	600	15	1789909003.144045081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jcmd	file	600	14	1789909003.144117747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jconsole	file	600	18	1789909003.144180373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jdb	file	600	13	1789909003.144240248		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jdeprscan	file	600	19	1789909003.144305081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jdeps	file	600	15	1789909003.144374914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jfr	file	600	13	1789909003.144439748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jhsdb	file	600	15	1789909003.144516956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jimage	file	600	16	1789909003.144587747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jinfo	file	600	15	1789909003.144746873		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jlink	file	600	15	1789909003.144837497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jmap	file	600	14	1789909003.144908706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jmod	file	600	14	1789909003.144985289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jnativescan	file	600	21	1789909003.145064706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jpackage	file	600	18	1789909003.145140831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jps	file	600	13	1789909003.145211372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jrunscript	file	600	20	1789909003.145282956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jshell	file	600	16	1789909003.145379456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jstack	file	600	16	1789909003.145541081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jstat	file	600	15	1789909003.145615997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jstatd	file	600	16	1789909003.145695748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/jwebserver	file	600	20	1789909003.145752581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/keytool	file	600	17	1789909003.145815664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/rmiregistry	file	600	21	1789909003.145937748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-cmd/java/serialver	file	600	19	1789909003.146019289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/facility-env/java	file	600	25	1789909003.146142872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/n0001=25+36/format	file	600	7	1789909003.146221623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/repository/architecture	file	600	8	1789909003.146343247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/repository/feature_version	file	600	3	1789909003.146429664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/repository/os	file	600	4	1789909003.146515539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-arm64/repository/type	file	600	8	1789909003.146602497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/archive_regex	file	600	71	1789909003.146883372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/digest_type	file	600	7	1789909003.146976331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility	file	600	8	1789909003.147059456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jar	file	600	13	1789909003.147215706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jarsigner	file	600	19	1789909003.147298164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/java	file	600	14	1789909003.147381206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/javac	file	600	15	1789909003.147541956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/javadoc	file	600	17	1789909003.147650247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/javap	file	600	15	1789909003.147729872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jcmd	file	600	14	1789909003.147807414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jconsole	file	600	18	1789909003.147902956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jdb	file	600	13	1789909003.148006956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jdeprscan	file	600	19	1789909003.148101539		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jdeps	file	600	15	1789909003.148182081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jfr	file	600	13	1789909003.148257289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jhsdb	file	600	15	1789909003.148399081		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jimage	file	600	16	1789909003.148483914		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jinfo	file	600	15	1789909003.148577581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jlink	file	600	15	1789909003.148658372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jmap	file	600	14	1789909003.148724581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jmod	file	600	14	1789909003.148801289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jnativescan	file	600	21	1789909003.148881122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jpackage	file	600	18	1789909003.148957831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jps	file	600	13	1789909003.149099872		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jrunscript	file	600	20	1789909003.149183497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jshell	file	600	16	1789909003.149250997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jstack	file	600	16	1789909003.149323372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jstat	file	600	15	1789909003.149410497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jstatd	file	600	16	1789909003.149499581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/jwebserver	file	600	20	1789909003.149559039		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/keytool	file	600	17	1789909003.149618122		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/rmiregistry	file	600	21	1789909003.149685789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-cmd/java/serialver	file	600	19	1789909003.149851748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/facility-env/java	file	600	25	1789909003.150026581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/n0001=25+36/format	file	600	7	1789909003.150099956		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/repository/architecture	file	600	4	1789909003.150212831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/repository/feature_version	file	600	3	1789909003.150284456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/repository/os	file	600	4	1789909003.150361831		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/macos-x86_64/repository/type	file	600	8	1789909003.150456664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/archive_regex	file	600	71	1789909003.150708497		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/digest_type	file	600	7	1789909003.150784747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility	file	600	8	1789909003.150857622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jar	file	600	12	1789909003.150995498		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jarsigner	file	600	18	1789909003.151059373		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/java	file	600	13	1789909003.151122206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/javac	file	600	14	1789909003.151190622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/javadoc	file	600	16	1789909003.151346289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/javap	file	600	14	1789909003.151441414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jcmd	file	600	13	1789909003.151520123		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jconsole	file	600	17	1789909003.151595456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jdb	file	600	12	1789909003.151673206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jdeprscan	file	600	18	1789909003.151746456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jdeps	file	600	14	1789909003.151822622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jfr	file	600	12	1789909003.151898581		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jhsdb	file	600	14	1789909003.151967206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jimage	file	600	15	1789909003.152116372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jinfo	file	600	14	1789909003.152192414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jlink	file	600	14	1789909003.152271623		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jmap	file	600	13	1789909003.152331748		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jmod	file	600	13	1789909003.152397164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jnativescan	file	600	20	1789909003.152462206		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jpackage	file	600	17	1789909003.152530747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jps	file	600	12	1789909003.152596747		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jrunscript	file	600	19	1789909003.152751164		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jshell	file	600	15	1789909003.152844247		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jstack	file	600	15	1789909003.152919289		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jstat	file	600	14	1789909003.153035789		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jstatd	file	600	15	1789909003.153129331		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/jwebserver	file	600	19	1789909003.153212622		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/keytool	file	600	16	1789909003.153284997		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/rmiregistry	file	600	20	1789909003.153359456		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-cmd/java/serialver	file	600	18	1789909003.153518414		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-env	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/facility-env/java	file	600	15	1789909003.153636706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/n0001=25+36/format	file	600	4	1789909003.153692706		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/repository	directory	700				
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/repository/architecture	file	600	4	1789909003.153801664		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/repository/feature_version	file	600	3	1789909003.153861372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/repository/os	file	600	8	1789909003.153925372		
++target/state/system/profile/main/sys/pkg/cache/pkg-catalog/pkg/temurin/windows-x86_64/repository/type	file	600	8	1789909003.153987122		
++target/state/system/profile/main/sys/pkg/conf	directory	700				
++target/state/system/profile/main/sys/pkg/conf/provider	directory	700				
++target/state/system/profile/main/sys/pkg/conf/provider/default	directory	700				
++target/state/system/profile/main/sys/pkg/data	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/depjava12513	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/globalfacility18004	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/java	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/launchjava21862	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/servicefacility20910	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/srvfacility28151	directory	700				
++target/state/system/profile/main/sys/pkg/data/providers/srvhost24869	directory	700				
++target/state/system/profile/main/sys/pkg/run	directory	700				
+ target/state/system/profile/main/sys/shell	directory	755				
+ target/state/system/profile/main/sys/shell/conf	directory	755				
+ target/state/system/profile/main/sys/shell/conf/bash	directory	755				
+@@ -249,4 +1485,13 @@
+ target/state/system/profile/main/sys/shell/conf/zsh/.zprofile	file	644	301	1789908998.509858622		
+ target/state/system/profile/main/sys/shell/conf/zsh/.zshenv	file	644	654	1789908998.509947081		
+ target/state/system/profile/main/sys/shell/conf/zsh/.zshrc	file	644	996	1789908998.510579414		
++target/state/user	directory	700				
++target/state/user/default	directory	700				
++target/state/user/default/pkg	directory	700				
++target/state/user/default/pkg/srvprovider28151	directory	700				
++target/state/user/default/pkg/srvprovider28151/home	directory	700				
++target/state/user/default/sys	directory	700				
++target/state/user/default/sys/srv	directory	700				
++target/state/user/default/sys/srv/log	directory	700				
++target/state/user/default/sys/srv/run	directory	700				
+ tmp	directory	700				
