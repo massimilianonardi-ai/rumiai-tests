@@ -79,7 +79,10 @@ osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
   cat "$tmp/osarch-update.err" >&2
   fail 'cannot align runtime osarch selectors with the current host'
 }
-[ "$osarch" = linux-x86_64 ] || skip "Keycloak validation is linux-x86_64-only; target is $osarch"
+case $osarch in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) :;;
+  *) skip "Keycloak is not declared for $osarch";;
+esac
 
 run_pkg versions keycloak > "$tmp/keycloak-preexisting.out" 2> "$tmp/keycloak-preexisting.err"
 status=$?

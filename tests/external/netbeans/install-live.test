@@ -22,14 +22,16 @@ run_pkg()
 cleanup()
 {
   trap - 0 HUP INT TERM
-  if [ "${netbeans_installed-0}" -eq 1 ] && [ -n "${root-}" ]
-  then
+  if [ "${java_default_set-0}" -eq 1 ] && [ -n "${root-}" ]; then
+    run_pkg provider default -u -- java >/dev/null 2>&1 || :
+  fi
+  if [ "${netbeans_installed-0}" -eq 1 ] && [ -n "${root-}" ]; then
     run_pkg uninstall netbeans >/dev/null 2>&1 || :
   fi
-  if [ "${java_installed-0}" -eq 1 ] && [ -n "${root-}" ]
-  then
-    run_pkg uninstall java >/dev/null 2>&1 || :
+  if [ "${temurin_installed-0}" -eq 1 ] && [ -n "${root-}" ]; then
+    run_pkg uninstall temurin >/dev/null 2>&1 || :
   fi
+  [ -z "${netbeans_user_state-}" ] || rm -rf "$netbeans_user_state" 2>/dev/null || :
   [ -z "${tmp-}" ] || rm -rf "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -51,6 +53,7 @@ esac
 
 [ -x "$root/m" ] || fail 'm bootstrap is missing'
 [ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
 
 tmp=${TMPDIR:-/tmp}/rumiai-netbeans-install-live-$$
 umask 077
@@ -66,43 +69,64 @@ printf '%s\n' "$m_OSARCH"
 EOF_PROBE
 chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
-[ "$osarch" = linux-x86_64 ] || skip "NetBeans matrix validation is linux-x86_64-only; target is $osarch"
+"$root/m" "$root/bin/sys/osarch" update > "$tmp/osarch-update.out" 2> "$tmp/osarch-update.err" || {
+  cat "$tmp/osarch-update.err" >&2
+  fail 'cannot align runtime osarch selectors with the current host'
+}
+case $osarch in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) :;;
+  *) skip "NetBeans is not declared for $osarch";;
+esac
 
 run_pkg versions netbeans > "$tmp/netbeans-preexisting.out" 2> "$tmp/netbeans-preexisting.err"
 status=$?
 case $status in
   0) skip 'NetBeans is already installed in the supplied target';;
   1) :;;
-  *)
-    cat "$tmp/netbeans-preexisting.err" >&2
-    fail "cannot determine pre-existing NetBeans installation state (status $status)"
-    ;;
+  *) cat "$tmp/netbeans-preexisting.err" >&2; fail "cannot determine pre-existing NetBeans installation state (status $status)";;
 esac
 
-run_pkg versions java > "$tmp/java-preexisting.out" 2> "$tmp/java-preexisting.err"
+user_home=$("$root/m" "$root/bin/sys/state-path" user pkg netbeans home) || error 'cannot resolve NetBeans user state'
+netbeans_user_state=${user_home%/home}
+if [ -e "$netbeans_user_state" ] || [ -L "$netbeans_user_state" ]; then
+  skip 'NetBeans package state already exists in the supplied target'
+fi
+
+run_pkg provider default java > "$tmp/java-default-preexisting.out" 2> "$tmp/java-default-preexisting.err"
 status=$?
 case $status in
-  0) skip 'Temurin Java package is already installed in the supplied target';;
-  1)
-    printf '%s\n' "$TEST_ID: installing Temurin Java provider" >&2
-    run_pkg install java > "$tmp/java-install.out" 2> "$tmp/java-install.err" || {
-      cat "$tmp/java-install.out" >&2
-      cat "$tmp/java-install.err" >&2
-      fail 'pkg install java failed'
-    }
-    java_installed=1
-    ;;
-  *)
-    cat "$tmp/java-preexisting.err" >&2
-    fail "cannot determine pre-existing Java installation state (status $status)"
-    ;;
+  0) skip 'java facility default is already configured in the supplied target';;
+  1) :;;
+  *) fail "cannot determine pre-existing java facility default (status $status)";;
 esac
 
-java_identity=$(run_pkg default java 2> "$tmp/java-default.err") || {
-  cat "$tmp/java-default.err" >&2
-  fail 'Temurin Java provider has no queryable current default'
+run_pkg versions temurin > "$tmp/temurin-preexisting.out" 2> "$tmp/temurin-preexisting.err"
+status=$?
+case $status in
+  0) skip 'Temurin package is already installed in the supplied target';;
+  1)
+    printf '%s\n' "$TEST_ID: installing Temurin Java provider" >&2
+    run_pkg install temurin > "$tmp/temurin-install.out" 2> "$tmp/temurin-install.err" || {
+      cat "$tmp/temurin-install.out" >&2
+      cat "$tmp/temurin-install.err" >&2
+      fail 'pkg install temurin failed'
+    }
+    temurin_installed=1
+    ;;
+  *) cat "$tmp/temurin-preexisting.err" >&2; fail "cannot determine pre-existing Temurin installation state (status $status)";;
+esac
+
+temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
+  cat "$tmp/temurin-default.err" >&2
+  fail 'Temurin provider has no queryable current package default'
 }
-[ -n "$java_identity" ] || fail 'Temurin Java provider identity is empty'
+[ -n "$temurin_identity" ] || fail 'Temurin provider identity is empty'
+
+run_pkg provider default java temurin > "$tmp/java-default-set.out" 2> "$tmp/java-default-set.err" || {
+  cat "$tmp/java-default-set.err" >&2
+  fail 'cannot configure Temurin as java facility default'
+}
+java_default_set=1
 
 printf '%s\n' "$TEST_ID: installing current catalog-selected NetBeans" >&2
 run_pkg install netbeans > "$tmp/install.out" 2> "$tmp/install.err" || {
@@ -118,12 +142,20 @@ identity=$(run_pkg default netbeans 2> "$tmp/default.err") || {
 }
 [ -n "$identity" ] || fail 'NetBeans current identity is empty'
 
+[ ! -e "$root/pkg/$identity/binding" ] && [ ! -L "$root/pkg/$identity/binding" ] ||
+  fail 'NetBeans install materialized an install-time provider binding'
+[ ! -e "$root/pkg/$identity/env" ] && [ ! -L "$root/pkg/$identity/env" ] ||
+  fail 'NetBeans still contains provider-specific package environment'
+[ "$(cat "$root/pkg/$identity/dependency" 2>/dev/null)" = 'java =25' ] ||
+  fail 'NetBeans installed dependency is not provider-independent java =25'
+
 public="$root/bin/ext-$osarch/netbeans"
 [ -e "$public" ] || [ -L "$public" ] || fail 'NetBeans public command binding is missing'
 [ -x "$public" ] || fail 'NetBeans public command binding is not executable'
 
 printf 'installed=%s\n' "$identity"
-printf 'java-provider=%s\n' "$java_identity"
+printf 'java-provider=%s\n' "$temurin_identity"
+printf 'provider-independent-dependency=ok\n'
 printf 'public-command-binding=ok\n'
 
 exit 0

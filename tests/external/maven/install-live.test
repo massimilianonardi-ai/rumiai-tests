@@ -76,7 +76,10 @@ osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
   cat "$tmp/osarch-update.err" >&2
   fail 'cannot align runtime osarch selectors with the current host'
 }
-[ "$osarch" = linux-x86_64 ] || skip "Maven matrix validation is linux-x86_64-only; target is $osarch"
+case $osarch in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) :;;
+  *) skip "Maven is not declared for $osarch";;
+esac
 
 run_pkg versions maven > "$tmp/maven-preexisting.out" 2> "$tmp/maven-preexisting.err"
 status=$?
