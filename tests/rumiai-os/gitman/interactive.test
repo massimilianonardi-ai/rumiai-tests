@@ -868,8 +868,9 @@ def run_action_tree_navigation_scenario():
         s.send(b"\x1b")
         s.wait_for("Status: git status --short --branch", start=stash_mark)
 
+        repo_mark = len(s.buffer)
         s.send(b"\x1b")
-        s.wait_for("Git repositories")
+        s.wait_for("Git repositories", start=repo_mark)
         s.send(b"\x1b")
         s.wait_exit(0)
     except Exception:
@@ -1001,8 +1002,9 @@ def run_mutating_action_scenario():
         s.wait_for("List: git stash list", start=stash_pop_mark)
         s.send(b"\x1b")
         s.wait_for("Status: git status --short --branch", start=stash_pop_mark)
+        repo_mark = len(s.buffer)
         s.send(b"\x1b")
-        s.wait_for("Git repositories")
+        s.wait_for("Git repositories", start=repo_mark)
         s.send(b"\x1b")
         s.wait_exit(0)
     except Exception:
