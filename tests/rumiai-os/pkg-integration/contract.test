@@ -122,6 +122,8 @@ shift
 case $action in
   integrate) pkg_integrate "$@";;
   deintegrate) pkg_deintegrate "$@";;
+  validate-cmd) _pkg_integration_facility_cmd_validate "$@";;
+  validate-env) _pkg_integration_facility_env_validate "$@";;
   validate-projection) _pkg_integration_facility_projection_validate "$@";;
   validate-definition) _pkg_integration_validate_definition "$@";;
   service-resolve) pkg_facility_service_start_resolve "$@";;
@@ -196,6 +198,14 @@ exit 0
 EOF_TOOL
 chmod 700 "$payload_shared/bin/tool" || error 'cannot prepare shared facility target'
 
+"$root/m" "$driver" validate-cmd "$range_shared" "$payload_shared" > "$tmp/shared-cmd.out" 2> "$tmp/shared-cmd.err" || {
+  cat "$tmp/shared-cmd.err" >&2
+  fail 'trusted shared cmd realization validation rejected valid realization'
+}
+"$root/m" "$driver" validate-env "$range_shared" "$payload_shared" > "$tmp/shared-env.out" 2> "$tmp/shared-env.err" || {
+  cat "$tmp/shared-env.err" >&2
+  fail 'trusted shared env realization validation rejected valid realization'
+}
 "$root/m" "$driver" validate-projection "$range_shared" "$payload_shared" > "$tmp/shared-projection.out" 2> "$tmp/shared-projection.err" || {
   cat "$tmp/shared-projection.err" >&2
   fail 'trusted shared cmd/env projection validation rejected valid realization'
