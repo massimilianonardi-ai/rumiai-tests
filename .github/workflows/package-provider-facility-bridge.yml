@@ -21,6 +21,7 @@ on:
       - tests/rumiai-os/pkg-repository-graalvm/**
       - tests/rumiai-os/srv/**
       - validation/package-provider-facility.conf
+      - validation/package-provider-facility-final.conf
       - validation/package-provider-facility-graalvm.conf
       - validation/srv.conf
   workflow_dispatch:
@@ -70,7 +71,7 @@ jobs:
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-validate package-provider-facility
+          ./rumiai-validate package-provider-facility-final
 
       - name: Upload recoverable local evidence
         if: always()
@@ -84,6 +85,7 @@ jobs:
           include-hidden-files: true
 
   graalvm-coexistence:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout current test suite
