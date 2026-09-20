@@ -309,7 +309,7 @@ def run_explicit_action_and_error_scenario():
         mark = len(s.buffer)
         s.send(b"\n")
         s.wait_for("[output: pager]", start=mark)
-        s.wait_for("Status", start=mark)
+        s.wait_for("Status: git status --short --branch", start=mark)
 
         # Default pager mode must override caller Git pager selection, force
         # even Status through RumiAI pager, preserve caller LESS options, and
