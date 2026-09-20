@@ -78,21 +78,87 @@ grep -F 'gitman_action_dispatch()' "$gitman" >/dev/null 2>&1 ||
 grep -F 'gitman_action_handler="gitman_action_$2"' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman action dispatcher does not use the handler naming convention'
 grep -F "status 'Status: git status --short --branch'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman status menu label does not expose its Git command'
-grep -F "log 'Log: git log --oneline --decorate --graph -n 50'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman log menu label does not expose its Git command'
-grep -F "branch 'Branches: git branch -vv'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch menu label does not expose its Git command'
+    fail 'gitman root Status action is missing'
 grep -F "diff 'Diff: git diff'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman diff menu label does not expose its Git command'
+    fail 'gitman root Diff action is missing'
+grep -F "pull 'Pull: git pull'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Pull action is missing'
+grep -F "commit 'Commit: git commit -m <commit-message>'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Commit action is missing'
+grep -F "changes 'Changes >'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Changes submenu is missing'
+grep -F "history 'History >'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman History submenu is missing'
+grep -F "branches 'Branches >'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Branches submenu is missing'
+grep -F "remote 'Remote >'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Remote submenu is missing'
+grep -F "stash 'Stash >'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman Stash submenu is missing'
+grep -F "diff_staged 'Diff staged: git diff --staged'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman staged diff action is missing'
+grep -F "add_all 'Add all: git add --all'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman add-all action is missing'
+grep -F "log 'Log: git log --oneline --decorate --graph -n 50'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman log action is missing'
+grep -F "show_head 'Show HEAD: git show HEAD'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman show-HEAD action is missing'
+grep -F "branch 'List: git branch -vv'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch-list action is missing'
+grep -F "switch 'Switch >'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch-switch action is missing'
+grep -F "remotes 'Remotes: git remote -v'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman remote-list action is missing'
+grep -F "fetch 'Fetch: git fetch'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman fetch action is missing'
+grep -F "push 'Push: git push'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman push action is missing'
+grep -F "stash_list 'List: git stash list'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman stash-list action is missing'
+grep -F "stash_push 'Push: git stash push'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman stash-push action is missing'
+grep -F "stash_pop 'Pop: git stash pop'" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman stash-pop action is missing'
+grep -F 'gitman_action_group()' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman generic action-group loop is missing'
 grep -F 'gitman_git_run "$1" status status --short --branch' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman status handler is missing'
-grep -F 'gitman_git_run "$1" log log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman log handler is missing'
-grep -F 'gitman_git_run "$1" branch branch -vv' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch handler is missing'
 grep -F 'gitman_git_run "$1" diff diff' "$gitman" >/dev/null 2>&1 ||
     fail 'gitman diff handler is missing'
+grep -F 'gitman_git_run "$1" pull pull' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman pull handler is missing'
+grep -F 'gitman_git_run "$1" '''diff --staged''' diff --staged' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman staged-diff handler is missing'
+grep -F 'gitman_git_run "$1" '''add --all''' add --all' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman add-all handler is missing'
+grep -F 'gitman_git_run "$1" log log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman log handler is missing'
+grep -F 'gitman_git_run "$1" '''show HEAD''' show HEAD' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman show-HEAD handler is missing'
+grep -F 'gitman_git_run "$1" branch branch -vv' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch handler is missing'
+grep -F 'gitman_git_run "$1" '''remote -v''' remote -v' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman remote-list handler is missing'
+grep -F 'gitman_git_run "$1" fetch fetch' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman fetch handler is missing'
+grep -F 'gitman_git_run "$1" push push' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman push handler is missing'
+grep -F 'gitman_git_run "$1" '''stash list''' stash list' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman stash-list handler is missing'
+grep -F 'gitman_git_run "$1" '''stash push''' stash push' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman stash-push handler is missing'
+grep -F 'gitman_git_run "$1" '''stash pop''' stash pop' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman stash-pop handler is missing'
+grep -F "Commit message: " "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman commit-message prompt is missing'
+grep -F 'commit -m "$gitman_commit_message"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman commit handler does not pass the acquired message as one argument'
+grep -F "for-each-ref --format='%(refname:short)' refs/heads" "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman branch enumeration is missing'
+grep -F 'Switch: git switch $gitman_switch_branch_display' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman switch menu does not expose the concrete branch command'
+grep -F 'switch "$gitman_switch_branch"' "$gitman" >/dev/null 2>&1 ||
+    fail 'gitman switch handler does not execute the selected branch'
 grep -F "Press any key to continue..." "$gitman" >/dev/null 2>&1 ||
     fail 'gitman terminal-mode post-command pause is missing'
 
@@ -117,8 +183,16 @@ printf '%s\n' "$manual_text" | grep -F 'terminal' >/dev/null 2>&1 ||
 printf '%s\n' "$manual_text" | grep -F -- '-R -+F -+X' >/dev/null 2>&1 ||
     fail 'manual gitman does not document held less behavior'
 printf '%s\n' "$manual_text" | grep -F 'Status: git status --short --branch' >/dev/null 2>&1 ||
-    fail 'manual gitman does not expose concrete leaf action commands'
-printf '%s\n' "$manual_text" | grep -F 'action model itself is not restricted to read-only' >/dev/null 2>&1 ||
-    fail 'manual gitman still claims a read-only action model'
+    fail 'manual gitman does not expose concrete root actions'
+printf '%s\n' "$manual_text" | grep -F 'Changes >' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document grouped action menus'
+printf '%s\n' "$manual_text" | grep -F 'Commit: git commit -m <commit-message>' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document commit command template'
+printf '%s\n' "$manual_text" | grep -F 'Switch: git switch feature/example' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document concrete switch labels'
+printf '%s\n' "$manual_text" | grep -F 'git stash pop' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document stash actions'
+printf '%s\n' "$manual_text" | grep -F 'both inspection and mutating Git operations' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document mutating action semantics'
 
 exit 0
