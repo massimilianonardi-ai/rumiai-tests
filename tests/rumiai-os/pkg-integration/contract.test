@@ -258,7 +258,7 @@ fi
 [ ! -e "$root/pkg/$package@7" ] && [ ! -L "$root/pkg/$package@7" ] ||
   fail 'invalid facility environment created a concrete package'
 
-service_facility=servicefacility$
+service_facility=servicefacility${package#pitest}
 service_command=$package-service-start
 range_service=$tmp/range-service
 payload_service=$tmp/payload-service
