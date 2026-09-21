@@ -1,0 +1,246 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/enc/encoded-file-edit.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+assert_no_edit_tmp()
+{
+    if find "$files" -type d -name '.encoded-file-edit.*' -print |
+       grep -q .
+    then
+        fail 'encoded_file_edit left a temporary directory behind'
+    fi
+}
+
+expect_status()
+{
+    expected=$1
+    shift
+
+    "$@"
+    observed=$?
+
+    [ "$observed" -eq "$expected" ] ||
+        fail "expected status $expected, got $observed: $*"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+core_library=$root/lib/sys/sh/core.lib.sh
+enc_library=$root/lib/sys/sh/enc.lib.sh
+[ -f "$core_library" ] && [ ! -L "$core_library" ] ||
+    fail 'core.lib.sh is missing or is not a regular library file'
+[ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
+    fail 'enc.lib.sh is missing or is not a regular library file'
+
+. "$core_library" || error 'cannot source core.lib.sh'
+. "$enc_library" || error 'cannot source enc.lib.sh'
+
+tmp=${TMPDIR:-/tmp}/rumiai-encoded-file-edit-$$
+files=$tmp/files
+bin=$tmp/bin
+umask 077
+mkdir "$tmp" "$files" "$bin" || error 'cannot create test workspace'
+
+cat > "$bin/vsed" <<'EOF_VSED'
+#!/bin/sh
+
+if grep -R -F 'PLAIN:' "$FAKE_VSED_SCAN" >/dev/null 2>&1
+then
+    exit 91
+fi
+
+case ${FAKE_VSED_MODE-save} in
+    save)
+        sed 's/^PLAIN:/EDITED:/'
+        ;;
+    cancel)
+        cat >/dev/null
+        exit 1
+        ;;
+    fail)
+        cat >/dev/null
+        exit 2
+        ;;
+    conflict)
+        printf '%s' 'CONCURRENT' > "$FAKE_VSED_TARGET" || exit 92
+        sed 's/^PLAIN:/EDITED:/'
+        ;;
+    *)
+        exit 93
+        ;;
+esac
+EOF_VSED
+chmod 700 "$bin/vsed" || error 'cannot make fake vsed executable'
+
+old_path=$PATH
+PATH=$bin:$PATH
+export PATH
+
+FAKE_VSED_SCAN=$files
+FAKE_VSED_MODE=save
+FAKE_VSED_TARGET=
+export FAKE_VSED_SCAN FAKE_VSED_MODE FAKE_VSED_TARGET
+
+decode()
+{
+    _test_decode_input=$(cat)
+
+    case $_test_decode_input in
+        DECODE_FAIL)
+            printf '%s' 'PLAIN:UNAUTHENTICATED'
+            return 1
+            ;;
+        *)
+            printf 'PLAIN:%s' "$_test_decode_input"
+            ;;
+    esac
+}
+
+encode()
+{
+    _test_encode_input=$(cat)
+
+    case $_test_encode_input in
+        *ENCODE_FAIL*)
+            printf '%s' 'PARTIAL-CIPHERTEXT'
+            return 1
+            ;;
+        *)
+            printf 'CIPHER:%s' "$_test_encode_input"
+            ;;
+    esac
+}
+
+expect_status 1 encoded_file_edit
+expect_status 2 encoded_file_edit "$files/missing"
+assert_no_edit_tmp
+
+printf '%s' 'ONE' > "$files/one" || error 'cannot create first ciphertext fixture'
+printf '%s' 'TWO' > "$files/two" || error 'cannot create second ciphertext fixture'
+
+encoded_file_edit "$files/one" "$files/two" ||
+    fail 'multi-file encrypted edit failed'
+
+[ "$(cat "$files/one")" = 'CIPHER:EDITED:ONE' ] ||
+    fail 'first encrypted file was not edited and re-encoded'
+[ "$(cat "$files/two")" = 'CIPHER:EDITED:TWO' ] ||
+    fail 'second encrypted file was not edited and re-encoded'
+assert_no_edit_tmp
+
+printf '%s' 'DECODE_FAIL' > "$files/decode-fail" ||
+    error 'cannot create decode-failure fixture'
+expect_status 4 encoded_file_edit "$files/decode-fail"
+[ "$(cat "$files/decode-fail")" = 'DECODE_FAIL' ] ||
+    fail 'decode failure changed the original ciphertext'
+assert_no_edit_tmp
+
+printf '%s' 'CANCEL' > "$files/cancel" ||
+    error 'cannot create cancel fixture'
+FAKE_VSED_MODE=cancel
+export FAKE_VSED_MODE
+expect_status 5 encoded_file_edit "$files/cancel"
+[ "$(cat "$files/cancel")" = 'CANCEL' ] ||
+    fail 'vsed cancellation changed the original ciphertext'
+assert_no_edit_tmp
+
+printf '%s' 'VSED_FAIL' > "$files/vsed-fail" ||
+    error 'cannot create vsed-failure fixture'
+FAKE_VSED_MODE=fail
+export FAKE_VSED_MODE
+expect_status 6 encoded_file_edit "$files/vsed-fail"
+[ "$(cat "$files/vsed-fail")" = 'VSED_FAIL' ] ||
+    fail 'vsed failure changed the original ciphertext'
+assert_no_edit_tmp
+
+printf '%s' 'ENCODE_FAIL' > "$files/encode-fail" ||
+    error 'cannot create encode-failure fixture'
+FAKE_VSED_MODE=save
+export FAKE_VSED_MODE
+expect_status 7 encoded_file_edit "$files/encode-fail"
+[ "$(cat "$files/encode-fail")" = 'ENCODE_FAIL' ] ||
+    fail 'encode failure changed the original ciphertext'
+assert_no_edit_tmp
+
+printf '%s' 'CONFLICT' > "$files/conflict" ||
+    error 'cannot create conflict fixture'
+FAKE_VSED_MODE=conflict
+FAKE_VSED_TARGET=$files/conflict
+export FAKE_VSED_MODE FAKE_VSED_TARGET
+expect_status 8 encoded_file_edit "$files/conflict"
+[ "$(cat "$files/conflict")" = 'CONCURRENT' ] ||
+    fail 'concurrent target content was overwritten'
+assert_no_edit_tmp
+
+printf '%s' 'FIRST' > "$files/first" ||
+    error 'cannot create sequential first fixture'
+printf '%s' 'SECOND' > "$files/second" ||
+    error 'cannot create sequential second fixture'
+printf '%s' 'THIRD' > "$files/third" ||
+    error 'cannot create sequential third fixture'
+
+FAKE_VSED_MODE=save
+FAKE_VSED_TARGET=
+export FAKE_VSED_MODE FAKE_VSED_TARGET
+
+decode()
+{
+    _test_decode_input=$(cat)
+    case $_test_decode_input in
+        SECOND)
+            printf '%s' 'PLAIN:SECOND'
+            return 1
+            ;;
+        *)
+            printf 'PLAIN:%s' "$_test_decode_input"
+            ;;
+    esac
+}
+
+expect_status 4 encoded_file_edit "$files/first" "$files/second" "$files/third"
+[ "$(cat "$files/first")" = 'CIPHER:EDITED:FIRST' ] ||
+    fail 'completed file before a later failure was not committed'
+[ "$(cat "$files/second")" = 'SECOND' ] ||
+    fail 'failing file was modified'
+[ "$(cat "$files/third")" = 'THIRD' ] ||
+    fail 'processing continued after the first failing file'
+assert_no_edit_tmp
+
+PATH=$old_path
+export PATH
+unset FAKE_VSED_SCAN FAKE_VSED_MODE FAKE_VSED_TARGET
+
+exit 0
