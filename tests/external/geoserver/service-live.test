@@ -165,6 +165,14 @@ cleanup()
     run_pkg uninstall temurin >/dev/null 2>&1 || :
   fi
 
+  if [ -n "${sudo_bin-}" ]
+  then
+    [ -z "${geoserver_system_service_state-}" ] ||
+      "$sudo_bin" -n command -p -- rm -rf -- "$geoserver_system_service_state" 2>/dev/null || :
+    [ -z "${system_srv_state-}" ] ||
+      "$sudo_bin" -n command -p -- rm -rf -- "$system_srv_state" 2>/dev/null || :
+  fi
+
   [ -z "${geoserver_system_state-}" ] || command -p -- rm -rf -- "$geoserver_system_state" 2>/dev/null || :
   [ -z "${geoserver_user_state-}" ] || command -p -- rm -rf -- "$geoserver_user_state" 2>/dev/null || :
   [ -z "${temurin_system_state-}" ] || command -p -- rm -rf -- "$temurin_system_state" 2>/dev/null || :
@@ -322,8 +330,20 @@ geoserver_system_state=${geoserver_system_conf%/conf}
 geoserver_user_state=${geoserver_user_home%/home}
 temurin_system_state=${temurin_system_conf%/conf}
 temurin_user_state=${temurin_user_home%/home}
+geoserver_system_service_home=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver home geoserver) ||
+  error 'cannot resolve GeoServer system-service state'
+geoserver_system_service_state=${geoserver_system_service_home%/home}
+system_srv_conf=$("$root/m" "$root/bin/sys/state-path" system sys srv conf) ||
+  error 'cannot resolve system srv state'
+system_srv_state=${system_srv_conf%/conf}
 
-for state_root in "$geoserver_system_state" "$geoserver_user_state" "$temurin_system_state" "$temurin_user_state"
+for state_root in \
+  "$geoserver_system_state" \
+  "$geoserver_user_state" \
+  "$temurin_system_state" \
+  "$temurin_user_state" \
+  "$geoserver_system_service_state" \
+  "$system_srv_state"
 do
   if [ -e "$state_root" ] || [ -L "$state_root" ]
   then
@@ -447,8 +467,7 @@ host_installed=0
 [ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
   fail 'GeoServer host manifest remained after uninstall'
 
-system_service_home=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver home geoserver) ||
-  error 'cannot resolve GeoServer system-service package HOME'
+system_service_home=$geoserver_system_service_home
 
 run_srv_system install geoserver "$host_user" > "$tmp/system-install.out" 2> "$tmp/system-install.err" || {
   command -p -- cat "$tmp/system-install.err" >&2

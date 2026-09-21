@@ -76,13 +76,18 @@ run_srv()
   "$root/m" "$root/bin/sys/srv" "$@"
 }
 
+run_srv_system()
+{
+  "$sudo_bin" -n "$root/m" "$root/bin/sys/srv" host system "$@"
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
 
   if [ -n "${facility-}" ]
   then
-    run_srv host system uninstall "$facility" >/dev/null 2>&1 || :
+    [ -z "${sudo_bin-}" ] || run_srv_system uninstall "$facility" >/dev/null 2>&1 || :
     run_pkg provider default -u -- "$facility" >/dev/null 2>&1 || :
   fi
   if [ -n "${dep_facility-}" ]
@@ -115,7 +120,13 @@ cleanup()
     done
   fi
 
-  [ -z "${service_state_identity-}" ] || command -p -- rm -rf -- "$service_state_identity" 2>/dev/null || :
+  if [ -n "${sudo_bin-}" ]
+  then
+    [ -z "${service_state_identity-}" ] ||
+      "$sudo_bin" -n command -p -- rm -rf -- "$service_state_identity" 2>/dev/null || :
+    [ -z "${system_srv_state-}" ] ||
+      "$sudo_bin" -n command -p -- rm -rf -- "$system_srv_state" 2>/dev/null || :
+  fi
   [ -z "${package_system_identity-}" ] || command -p -- rm -rf -- "$package_system_identity" 2>/dev/null || :
 
   if [ "${pkg_store_created-0}" -eq 1 ]
@@ -133,42 +144,24 @@ rumiai_os_group=${test_dir%/*}
 tests_dir=${rumiai_os_group%/*}
 suite_root=${tests_dir%/*}
 
-if [ "${RUMIAI_TEST_SYSTEM_ELEVATED-}" = 1 ]
-then
-  root=${RUMIAI_TEST_SYSTEM_TARGET-}
-  service_account=${RUMIAI_TEST_SYSTEM_ACCOUNT-}
-  case "$root" in /*) : ;; *) error 'invalid elevated target path' ;; esac
-  [ -d "$root" ] || error 'elevated target is unavailable'
-else
-  . "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
-  root=$(rumiai_test_target_rumiai_os_find "$suite_root")
-  status=$?
-  case $status in
-    0) : ;;
-    1) skip 'rumiai-os target checkout not found' ;;
-    2) fail 'invalid explicit rumiai-os target' ;;
-    *) error 'target discovery failed' ;;
-  esac
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
 
-  current_uid=$(command -p -- id -u) || error 'cannot determine current uid'
-  case "$current_uid" in ""|*[!0-9]*) error 'invalid current uid' ;; esac
+current_uid=$(command -p -- id -u) || error 'cannot determine current uid'
+case "$current_uid" in ""|*[!0-9]*) error 'invalid current uid' ;; esac
+[ "$current_uid" -ne 0 ] || skip 'host-system test requires a non-root execution account'
 
-  if [ "$current_uid" -ne 0 ]
-  then
-    service_account=$(command -p -- id -un) || error 'cannot determine service account'
-    sudo_bin=$(command -v sudo 2>/dev/null) || skip 'sudo unavailable for administrative host-system test'
-    "$sudo_bin" -n true >/dev/null 2>&1 || skip 'passwordless sudo unavailable for administrative host-system test'
-    exec "$sudo_bin" -n env \
-      RUMIAI_TEST_SYSTEM_ELEVATED=1 \
-      RUMIAI_TEST_SYSTEM_TARGET="$root" \
-      RUMIAI_TEST_SYSTEM_ACCOUNT="$service_account" \
-      "$test_script"
-    error 'cannot elevate host-system test'
-  fi
-
-  service_account=${SUDO_USER-}
-  [ -n "$service_account" ] || skip 'no non-root service account available for host-system test'
-fi
+service_account=$(command -p -- id -un) || error 'cannot determine service account'
+sudo_bin=$(command -v sudo 2>/dev/null) || skip 'sudo unavailable for administrative host-system test'
+"$sudo_bin" -n true >/dev/null 2>&1 || skip 'passwordless sudo unavailable for administrative host-system test'
+service_uid=$current_uid
 
 [ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
 [ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing or not executable'
@@ -176,13 +169,8 @@ fi
 [ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing or not executable'
 [ -f "$root/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || fail 'pkg-integration library is missing'
 
-admin_uid=$(command -p -- id -u) || error 'cannot determine administrative uid'
-[ "$admin_uid" -eq 0 ] || error 'elevated host-system test is not root'
-
-service_uid=$(command -p -- id -u "$service_account" 2>/dev/null) ||
-  skip 'selected service account is unavailable after elevation'
-case "$service_uid" in ""|*[!0-9]*|0) skip 'selected service account is not a usable non-root account' ;; esac
-
+[ "$(command -p -- id -u "$service_account" 2>/dev/null)" = "$service_uid" ] ||
+  skip 'selected service account is unavailable'
 host_os=$(command -p -- uname -s) || error 'cannot identify host OS'
 case "$host_os" in
   Linux)
@@ -201,8 +189,6 @@ esac
 
 command -v ps >/dev/null 2>&1 || error 'ps unavailable'
 command -v awk >/dev/null 2>&1 || error 'awk unavailable'
-sudo_bin=$(command -v sudo 2>/dev/null) || error 'sudo unavailable after elevation'
-
 tmp=${TMPDIR:-/tmp}/rumiai-srv-host-system-$$
 umask 077
 command -p -- mkdir "$tmp" || error 'cannot create temporary directory'
@@ -216,6 +202,7 @@ pkg_store_created=0
 host_installed=0
 service_state_identity=
 package_system_identity=
+system_srv_state=
 
 if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
 then
@@ -337,6 +324,17 @@ package_system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$package"
   error 'cannot resolve package system state'
 package_system_identity=${package_system_conf%/conf}
 marker=$service_home/host-system-events
+system_srv_conf=$("$root/m" "$root/bin/sys/state-path" system sys srv conf) ||
+  error 'cannot resolve system srv state'
+system_srv_state=${system_srv_conf%/conf}
+
+for state_root in "$service_state_identity" "$system_srv_state"
+do
+  if [ -e "$state_root" ] || [ -L "$state_root" ]
+  then
+    skip 'system service state already exists in the supplied environment'
+  fi
+done
 
 case "$host_os" in
   Linux) host_manifest=/etc/systemd/system/m-srv-$facility.service ;;
@@ -345,7 +343,7 @@ esac
 [ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
   skip 'synthetic system host registration unexpectedly already exists'
 
-if run_srv host system install "$facility" root > "$tmp/root-account.out" 2> "$tmp/root-account.err"
+if run_srv_system install "$facility" root > "$tmp/root-account.out" 2> "$tmp/root-account.err"
 then
   fail 'root was accepted as system-service execution account'
 else
@@ -355,7 +353,7 @@ fi
 [ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
   fail 'rejected root execution account created a native manifest'
 
-run_srv host system install "$facility" "$service_account" > "$tmp/install.out" 2> "$tmp/install.err" || {
+run_srv_system install "$facility" "$service_account" > "$tmp/install.out" 2> "$tmp/install.err" || {
   command -p -- cat "$tmp/install.err" >&2
   fail 'cannot install system host integration'
 }
@@ -380,7 +378,7 @@ binding_file=$package_system_conf/binding/$dep_facility
 "$sudo_bin" -n -u "$service_account" command -p -- cat "$binding_file" >/dev/null 2>&1 ||
   fail 'service account cannot read prepared dependency binding'
 
-if "$sudo_bin" -n -u "$service_account" "$root/m" "$root/bin/sys/srv" host system start "$facility" > "$tmp/nonadmin.out" 2> "$tmp/nonadmin.err"
+if run_srv host system start "$facility" > "$tmp/nonadmin.out" 2> "$tmp/nonadmin.err"
 then
   fail 'non-root service account was allowed to mutate system host lifecycle'
 else
@@ -388,7 +386,7 @@ else
 fi
 [ "$status" -eq 1 ] || fail "non-root administrative rejection returned $status instead of 1"
 
-run_srv host system start "$facility" > "$tmp/start-1.out" 2> "$tmp/start-1.err" || {
+run_srv_system start "$facility" > "$tmp/start-1.out" 2> "$tmp/start-1.err" || {
   command -p -- cat "$tmp/start-1.err" >&2
   fail 'cannot start system-hosted provider version 1'
 }
@@ -408,7 +406,7 @@ set -- $start_line
 [ "$5" = "$service_home" ] || fail 'provider did not receive system State Instance HOME'
 [ "$6" = dependency-ok ] || fail 'provider dependency environment was not resolved under service account'
 
-run_srv host system stop "$facility" > "$tmp/stop-1.out" 2> "$tmp/stop-1.err" || {
+run_srv_system stop "$facility" > "$tmp/stop-1.out" 2> "$tmp/stop-1.err" || {
   command -p -- cat "$tmp/stop-1.err" >&2
   fail 'cannot stop system-hosted provider version 1'
 }
@@ -418,7 +416,7 @@ wait_pid_gone "$pid1" || fail 'provider version 1 remained alive after system st
 run_pkg default "$package@2" >/dev/null 2> "$tmp/package-default-2.err" ||
   fail 'cannot move service provider package default to version 2'
 
-if run_srv host system start "$facility" > "$tmp/stale-start.out" 2> "$tmp/stale-start.err"
+if run_srv_system start "$facility" > "$tmp/stale-start.out" 2> "$tmp/stale-start.err"
 then
   fail 'stale system registration started after provider default changed'
 else
@@ -427,19 +425,19 @@ fi
 [ "$status" -eq 1 ] || fail "stale system registration returned $status instead of 1"
 [ ! -s "$marker" ] || fail 'stale registration launched a provider process'
 
-run_srv host system install "$facility" "$service_account" > "$tmp/reinstall.out" 2> "$tmp/reinstall.err" || {
+run_srv_system install "$facility" "$service_account" > "$tmp/reinstall.out" 2> "$tmp/reinstall.err" || {
   command -p -- cat "$tmp/reinstall.err" >&2
   fail 'cannot reconcile system registration to provider version 2'
 }
 [ ! -s "$marker" ] || fail 'system reinstall unexpectedly started the provider'
 
-run_srv host system start "$facility" > "$tmp/start-2.out" 2> "$tmp/start-2.err" || {
+run_srv_system start "$facility" > "$tmp/start-2.out" 2> "$tmp/start-2.err" || {
   command -p -- cat "$tmp/start-2.err" >&2
   fail 'cannot start reconciled provider version 2'
 }
 pid2=$(wait_start 2) || fail 'reconciled system registration did not start provider version 2'
 
-run_srv host system restart "$facility" > "$tmp/restart-2.out" 2> "$tmp/restart-2.err" || {
+run_srv_system restart "$facility" > "$tmp/restart-2.out" 2> "$tmp/restart-2.err" || {
   command -p -- cat "$tmp/restart-2.err" >&2
   fail 'cannot restart system-hosted provider version 2'
 }
@@ -447,11 +445,11 @@ pid3=$(wait_start 2 "$pid2") || fail 'system restart did not produce a replaceme
 [ "$pid3" != "$pid2" ] || fail 'system restart reused the previous provider pid'
 wait_pid_gone "$pid2" || fail 'previous provider process remained alive after system restart'
 
-run_srv host system stop "$facility" > "$tmp/stop-2.out" 2> "$tmp/stop-2.err" ||
+run_srv_system stop "$facility" > "$tmp/stop-2.out" 2> "$tmp/stop-2.err" ||
   fail 'cannot stop restarted system provider'
 wait_pid_gone "$pid3" || fail 'restarted provider remained alive after system stop'
 
-run_srv host system uninstall "$facility" > "$tmp/uninstall.out" 2> "$tmp/uninstall.err" || {
+run_srv_system uninstall "$facility" > "$tmp/uninstall.out" 2> "$tmp/uninstall.err" || {
   command -p -- cat "$tmp/uninstall.err" >&2
   fail 'cannot uninstall system host integration'
 }
