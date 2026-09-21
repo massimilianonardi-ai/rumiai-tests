@@ -1,0 +1,59 @@
+system/m.srv.srvsys25711 = {
+	active count = 0
+	path = /Library/LaunchDaemons/m.srv.srvsys25711.plist
+	type = LaunchDaemon
+	state = not running
+
+	program = /private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/rumiai-validate-env-1778-1/target/m
+	arguments = {
+		/private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/rumiai-validate-env-1778-1/target/m
+		/private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/rumiai-validate-env-1778-1/target/bin/sys/srv
+		--host-system-run
+		srvsys25711
+		srvsysprovider25711@1
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => m.srv.srvsys25711
+	}
+
+	domain = system
+	username = runner
+
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 1
+
+	resource coalition = {
+		ID = 1385
+		type = resource
+		state = active
+		active count = 1
+		name = m.srv.srvsys25711
+	}
+
+	jetsam coalition = {
+		ID = 1386
+		type = jetsam
+		state = active
+		active count = 1
+		name = m.srv.srvsys25711
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+
+	properties = runatload | inferred program | system service | tle system
+}
+rumiai-os/srv/host-system.test: system supervisor did not start provider version 1
