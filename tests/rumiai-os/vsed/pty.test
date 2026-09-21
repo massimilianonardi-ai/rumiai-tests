@@ -254,11 +254,18 @@ assert tput_calls.count("clear") == 2, tput_calls
 assert tput_calls.count("lines") == 1, tput_calls
 assert tput_calls.count("cols") == 1, tput_calls
 
+with open(log_path, "wb"):
+    pass
 status, out, err, restored = run_vsed(b"a\nb", b"X\nY\x18")
 assert status == 0, (status, out, err)
 assert out == b"X\nYa\nb", (status, out, err)
 assert err == b"", (status, out, err)
 assert restored, "terminal state was not restored after edited stream save"
+with open(log_path, "r", encoding="utf-8") as f:
+    tput_calls = [line.rstrip("\n") for line in f]
+assert tput_calls.count("civis") == 2, tput_calls
+assert tput_calls.count("cnorm") == 2, tput_calls
+assert tput_calls.count("clear") == 2, tput_calls
 
 file_path = os.path.join(base, "files", "secret.txt")
 with open(file_path, "wb") as f:
@@ -556,6 +563,7 @@ EOF_EXPECT
     [ "$cols_count" -eq 1 ] ||
       fail "Darwin printable burst probed cols $cols_count times"
 
+    : > "$tput_log" || error 'cannot reset Enter tput trace'
     input=$tmp/edit.input
     output=$tmp/edit.output
     error_file=$tmp/edit.error
@@ -567,6 +575,318 @@ EOF_EXPECT
     cmp "$expected" "$output" >/dev/null 2>&1 ||
       fail 'Darwin stream edit produced unexpected document'
     [ ! -s "$error_file" ] || fail 'Darwin stream edit emitted stderr'
+    civis_count=$(grep -c '^civis
+    file_path=$tmp/files/secret.txt
+    output=$tmp/file.output
+    error_file=$tmp/file.error
+    expected=$tmp/file.expected
+    : > "$tmp/empty.input" || error 'cannot create empty input fixture'
+    printf 'abc\nxyz' > "$file_path" || error 'cannot create file fixture'
+    printf 'Qabc\nxyz' > "$expected" || error 'cannot create file expectation'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect file fixture directory'
+    run_darwin file-save file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" file-save 0 ||
+      fail 'Darwin file editing failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin file save produced unexpected document'
+    [ ! -s "$output" ] || fail 'Darwin file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin file save emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect file fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin file save created collateral files'
+
+    new_path=$tmp/files/new.txt
+    rm -f "$new_path" || error 'cannot reset new-file fixture'
+    : > "$output" || error 'cannot reset new-file stdout'
+    : > "$error_file" || error 'cannot reset new-file stderr'
+    run_darwin new-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$new_path" file-save 0 ||
+      fail 'Darwin new-file editing failed'
+    printf 'Q' > "$expected" || error 'cannot create new-file expectation'
+    cmp "$expected" "$new_path" >/dev/null 2>&1 ||
+      fail 'Darwin new-file save produced unexpected document'
+    [ "$(stat -f '%Lp' "$new_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin new file was not created with mode 0600'
+    [ ! -s "$output" ] || fail 'Darwin new-file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin new-file save emitted stderr'
+
+    empty_path=$tmp/files/empty.txt
+    rm -f "$empty_path" || error 'cannot reset empty-file fixture'
+    : > "$output" || error 'cannot reset empty-file stdout'
+    : > "$error_file" || error 'cannot reset empty-file stderr'
+    run_darwin empty-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$empty_path" save 0 ||
+      fail 'Darwin empty new-file save failed'
+    [ -f "$empty_path" ] && [ ! -s "$empty_path" ] ||
+      fail 'Darwin empty new-file save did not create an empty file'
+    [ "$(stat -f '%Lp' "$empty_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin empty new file was not created with mode 0600'
+
+    cancel_new_path=$tmp/files/cancel-new.txt
+    rm -f "$cancel_new_path" || error 'cannot reset new-file cancel fixture'
+    : > "$output" || error 'cannot reset new-file cancel stdout'
+    : > "$error_file" || error 'cannot reset new-file cancel stderr'
+    run_darwin cancel-new file "$tmp/empty.input" "$output" "$error_file" \
+      "$cancel_new_path" cancel 1 ||
+      fail 'Darwin new-file cancellation failed'
+    [ ! -e "$cancel_new_path" ] && [ ! -L "$cancel_new_path" ] ||
+      fail 'Darwin cancel created the new-file pathname'
+
+    printf 'sensitive' > "$file_path" || error 'cannot reset cancel fixture'
+    cp "$file_path" "$expected" || error 'cannot create cancel expectation'
+    : > "$output" || error 'cannot reset cancel stdout'
+    : > "$error_file" || error 'cannot reset cancel stderr'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect cancel fixture directory'
+    run_darwin cancel file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" cancel 1 ||
+      fail 'Darwin cancellation failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin cancel modified the file'
+    [ ! -s "$output" ] || fail 'Darwin cancel emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin cancel emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect cancel fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin cancel created collateral files'
+    ;;
+
+  *)
+    skip "no scripted TTY driver is defined for $system"
+    ;;
+esac
+
+bad_path=$tmp/files/bad.txt
+bad_out=$tmp/bad.out
+bad_err=$tmp/bad.err
+printf 'safe\runsafe' > "$bad_path" ||
+  error 'cannot create unsupported-input fixture'
+
+"$m_path" "$command_path" "$bad_path" > "$bad_out" 2> "$bad_err"
+status=$?
+[ "$status" -eq 2 ] || fail "unsupported control content status is $status"
+[ ! -s "$bad_out" ] || fail 'unsupported control content emitted stdout'
+grep -F 'safe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+grep -F 'unsafe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+printf 'safe\runsafe' > "$tmp/bad.expected" ||
+  error 'cannot create unsupported-input expectation'
+cmp "$tmp/bad.expected" "$bad_path" >/dev/null 2>&1 ||
+  fail 'unsupported control input was rewritten'
+
+exit 0
+ "$tput_log" 2>/dev/null || :)
+    cnorm_count=$(grep -c '^cnorm
+    file_path=$tmp/files/secret.txt
+    output=$tmp/file.output
+    error_file=$tmp/file.error
+    expected=$tmp/file.expected
+    : > "$tmp/empty.input" || error 'cannot create empty input fixture'
+    printf 'abc\nxyz' > "$file_path" || error 'cannot create file fixture'
+    printf 'Qabc\nxyz' > "$expected" || error 'cannot create file expectation'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect file fixture directory'
+    run_darwin file-save file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" file-save 0 ||
+      fail 'Darwin file editing failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin file save produced unexpected document'
+    [ ! -s "$output" ] || fail 'Darwin file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin file save emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect file fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin file save created collateral files'
+
+    new_path=$tmp/files/new.txt
+    rm -f "$new_path" || error 'cannot reset new-file fixture'
+    : > "$output" || error 'cannot reset new-file stdout'
+    : > "$error_file" || error 'cannot reset new-file stderr'
+    run_darwin new-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$new_path" file-save 0 ||
+      fail 'Darwin new-file editing failed'
+    printf 'Q' > "$expected" || error 'cannot create new-file expectation'
+    cmp "$expected" "$new_path" >/dev/null 2>&1 ||
+      fail 'Darwin new-file save produced unexpected document'
+    [ "$(stat -f '%Lp' "$new_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin new file was not created with mode 0600'
+    [ ! -s "$output" ] || fail 'Darwin new-file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin new-file save emitted stderr'
+
+    empty_path=$tmp/files/empty.txt
+    rm -f "$empty_path" || error 'cannot reset empty-file fixture'
+    : > "$output" || error 'cannot reset empty-file stdout'
+    : > "$error_file" || error 'cannot reset empty-file stderr'
+    run_darwin empty-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$empty_path" save 0 ||
+      fail 'Darwin empty new-file save failed'
+    [ -f "$empty_path" ] && [ ! -s "$empty_path" ] ||
+      fail 'Darwin empty new-file save did not create an empty file'
+    [ "$(stat -f '%Lp' "$empty_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin empty new file was not created with mode 0600'
+
+    cancel_new_path=$tmp/files/cancel-new.txt
+    rm -f "$cancel_new_path" || error 'cannot reset new-file cancel fixture'
+    : > "$output" || error 'cannot reset new-file cancel stdout'
+    : > "$error_file" || error 'cannot reset new-file cancel stderr'
+    run_darwin cancel-new file "$tmp/empty.input" "$output" "$error_file" \
+      "$cancel_new_path" cancel 1 ||
+      fail 'Darwin new-file cancellation failed'
+    [ ! -e "$cancel_new_path" ] && [ ! -L "$cancel_new_path" ] ||
+      fail 'Darwin cancel created the new-file pathname'
+
+    printf 'sensitive' > "$file_path" || error 'cannot reset cancel fixture'
+    cp "$file_path" "$expected" || error 'cannot create cancel expectation'
+    : > "$output" || error 'cannot reset cancel stdout'
+    : > "$error_file" || error 'cannot reset cancel stderr'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect cancel fixture directory'
+    run_darwin cancel file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" cancel 1 ||
+      fail 'Darwin cancellation failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin cancel modified the file'
+    [ ! -s "$output" ] || fail 'Darwin cancel emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin cancel emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect cancel fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin cancel created collateral files'
+    ;;
+
+  *)
+    skip "no scripted TTY driver is defined for $system"
+    ;;
+esac
+
+bad_path=$tmp/files/bad.txt
+bad_out=$tmp/bad.out
+bad_err=$tmp/bad.err
+printf 'safe\runsafe' > "$bad_path" ||
+  error 'cannot create unsupported-input fixture'
+
+"$m_path" "$command_path" "$bad_path" > "$bad_out" 2> "$bad_err"
+status=$?
+[ "$status" -eq 2 ] || fail "unsupported control content status is $status"
+[ ! -s "$bad_out" ] || fail 'unsupported control content emitted stdout'
+grep -F 'safe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+grep -F 'unsafe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+printf 'safe\runsafe' > "$tmp/bad.expected" ||
+  error 'cannot create unsupported-input expectation'
+cmp "$tmp/bad.expected" "$bad_path" >/dev/null 2>&1 ||
+  fail 'unsupported control input was rewritten'
+
+exit 0
+ "$tput_log" 2>/dev/null || :)
+    clear_count=$(grep -c '^clear
+    file_path=$tmp/files/secret.txt
+    output=$tmp/file.output
+    error_file=$tmp/file.error
+    expected=$tmp/file.expected
+    : > "$tmp/empty.input" || error 'cannot create empty input fixture'
+    printf 'abc\nxyz' > "$file_path" || error 'cannot create file fixture'
+    printf 'Qabc\nxyz' > "$expected" || error 'cannot create file expectation'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect file fixture directory'
+    run_darwin file-save file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" file-save 0 ||
+      fail 'Darwin file editing failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin file save produced unexpected document'
+    [ ! -s "$output" ] || fail 'Darwin file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin file save emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect file fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin file save created collateral files'
+
+    new_path=$tmp/files/new.txt
+    rm -f "$new_path" || error 'cannot reset new-file fixture'
+    : > "$output" || error 'cannot reset new-file stdout'
+    : > "$error_file" || error 'cannot reset new-file stderr'
+    run_darwin new-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$new_path" file-save 0 ||
+      fail 'Darwin new-file editing failed'
+    printf 'Q' > "$expected" || error 'cannot create new-file expectation'
+    cmp "$expected" "$new_path" >/dev/null 2>&1 ||
+      fail 'Darwin new-file save produced unexpected document'
+    [ "$(stat -f '%Lp' "$new_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin new file was not created with mode 0600'
+    [ ! -s "$output" ] || fail 'Darwin new-file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin new-file save emitted stderr'
+
+    empty_path=$tmp/files/empty.txt
+    rm -f "$empty_path" || error 'cannot reset empty-file fixture'
+    : > "$output" || error 'cannot reset empty-file stdout'
+    : > "$error_file" || error 'cannot reset empty-file stderr'
+    run_darwin empty-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$empty_path" save 0 ||
+      fail 'Darwin empty new-file save failed'
+    [ -f "$empty_path" ] && [ ! -s "$empty_path" ] ||
+      fail 'Darwin empty new-file save did not create an empty file'
+    [ "$(stat -f '%Lp' "$empty_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin empty new file was not created with mode 0600'
+
+    cancel_new_path=$tmp/files/cancel-new.txt
+    rm -f "$cancel_new_path" || error 'cannot reset new-file cancel fixture'
+    : > "$output" || error 'cannot reset new-file cancel stdout'
+    : > "$error_file" || error 'cannot reset new-file cancel stderr'
+    run_darwin cancel-new file "$tmp/empty.input" "$output" "$error_file" \
+      "$cancel_new_path" cancel 1 ||
+      fail 'Darwin new-file cancellation failed'
+    [ ! -e "$cancel_new_path" ] && [ ! -L "$cancel_new_path" ] ||
+      fail 'Darwin cancel created the new-file pathname'
+
+    printf 'sensitive' > "$file_path" || error 'cannot reset cancel fixture'
+    cp "$file_path" "$expected" || error 'cannot create cancel expectation'
+    : > "$output" || error 'cannot reset cancel stdout'
+    : > "$error_file" || error 'cannot reset cancel stderr'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect cancel fixture directory'
+    run_darwin cancel file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" cancel 1 ||
+      fail 'Darwin cancellation failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin cancel modified the file'
+    [ ! -s "$output" ] || fail 'Darwin cancel emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin cancel emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect cancel fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin cancel created collateral files'
+    ;;
+
+  *)
+    skip "no scripted TTY driver is defined for $system"
+    ;;
+esac
+
+bad_path=$tmp/files/bad.txt
+bad_out=$tmp/bad.out
+bad_err=$tmp/bad.err
+printf 'safe\runsafe' > "$bad_path" ||
+  error 'cannot create unsupported-input fixture'
+
+"$m_path" "$command_path" "$bad_path" > "$bad_out" 2> "$bad_err"
+status=$?
+[ "$status" -eq 2 ] || fail "unsupported control content status is $status"
+[ ! -s "$bad_out" ] || fail 'unsupported control content emitted stdout'
+grep -F 'safe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+grep -F 'unsafe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+printf 'safe\runsafe' > "$tmp/bad.expected" ||
+  error 'cannot create unsupported-input expectation'
+cmp "$tmp/bad.expected" "$bad_path" >/dev/null 2>&1 ||
+  fail 'unsupported control input was rewritten'
+
+exit 0
+ "$tput_log" 2>/dev/null || :)
+    [ "$civis_count" -eq 2 ] ||
+      fail "Darwin Enter redraw hid cursor $civis_count times"
+    [ "$cnorm_count" -eq 2 ] ||
+      fail "Darwin Enter redraw restored cursor $cnorm_count times"
+    [ "$clear_count" -eq 2 ] ||
+      fail "Darwin Enter redraw used clear $clear_count times"
 
     file_path=$tmp/files/secret.txt
     output=$tmp/file.output
