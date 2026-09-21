@@ -20,25 +20,30 @@ cleanup()
 }
 trap cleanup 0 HUP INT TERM
 
-assert_no_edit_tmp()
+expect_failure()
 {
-    if find "$files" -type d -name '.encoded-file-edit.*' -print |
-       grep -q .
+    if "$@"
     then
-        fail 'encoded_file_edit left a temporary directory behind'
+        fail "expected failure: $*"
     fi
 }
 
-expect_status()
+mode_of()
 {
-    expected=$1
-    shift
+    LC_ALL=C command -p ls -ld "$1" |
+        command -p awk '{ print $1 }'
+}
 
-    "$@"
-    observed=$?
+owner_group_of()
+{
+    LC_ALL=C command -p ls -ln "$1" |
+        command -p awk '{ print $3 ":" $4 }'
+}
 
-    [ "$observed" -eq "$expected" ] ||
-        fail "expected status $expected, got $observed: $*"
+same_mtime()
+{
+    [ -z "$(command -p find "$1" -newer "$2" -print)" ] &&
+    [ -z "$(command -p find "$2" -newer "$1" -print)" ]
 }
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
@@ -78,16 +83,6 @@ mkdir "$tmp" "$files" "$bin" || error 'cannot create test workspace'
 cat > "$bin/vsed" <<'EOF_VSED'
 #!/bin/sh
 
-for _fake_vsed_file in "$FAKE_VSED_SCAN"/.encoded-file-edit.*/*
-do
-    [ -f "$_fake_vsed_file" ] || continue
-
-    if grep -F 'PLAIN:' "$_fake_vsed_file" >/dev/null 2>&1
-    then
-        exit 91
-    fi
-done
-
 case ${FAKE_VSED_MODE-save} in
     save)
         sed 's/^PLAIN:/EDITED:/'
@@ -101,11 +96,11 @@ case ${FAKE_VSED_MODE-save} in
         exit 2
         ;;
     conflict)
-        printf '%s' 'CONCURRENT' > "$FAKE_VSED_TARGET" || exit 92
+        printf '%s' 'CONCURRENT' > "$FAKE_VSED_TARGET" || exit 91
         sed 's/^PLAIN:/EDITED:/'
         ;;
     *)
-        exit 93
+        exit 92
         ;;
 esac
 EOF_VSED
@@ -115,10 +110,9 @@ old_path=$PATH
 PATH=$bin:$PATH
 export PATH
 
-FAKE_VSED_SCAN=$files
 FAKE_VSED_MODE=save
 FAKE_VSED_TARGET=
-export FAKE_VSED_SCAN FAKE_VSED_MODE FAKE_VSED_TARGET
+export FAKE_VSED_MODE FAKE_VSED_TARGET
 
 decode()
 {
@@ -150,9 +144,10 @@ encode()
     esac
 }
 
-expect_status 1 encoded_file_edit
-expect_status 2 encoded_file_edit "$files/missing"
-assert_no_edit_tmp
+expect_failure encoded_file_edit
+expect_failure encoded_file_edit --preserve-timestamp
+expect_failure encoded_file_edit --unknown-option
+expect_failure encoded_file_edit "$files/missing"
 
 printf '%s' 'ONE' > "$files/one" || error 'cannot create first ciphertext fixture'
 printf '%s' 'TWO' > "$files/two" || error 'cannot create second ciphertext fixture'
@@ -164,62 +159,112 @@ encoded_file_edit "$files/one" "$files/two" ||
     fail 'first encrypted file was not edited and re-encoded'
 [ "$(cat "$files/two")" = 'CIPHER:EDITED:TWO' ] ||
     fail 'second encrypted file was not edited and re-encoded'
-assert_no_edit_tmp
+[ ! -e "$files/one.$$" ] || fail 'first temporary ciphertext was not removed'
+[ ! -e "$files/two.$$" ] || fail 'second temporary ciphertext was not removed'
+
+printf '%s' 'META' > "$files/meta" || error 'cannot create metadata fixture'
+chmod 751 "$files/meta" || error 'cannot set metadata fixture mode'
+touch -t 200001010000 "$files/meta" || error 'cannot set metadata fixture mtime'
+: > "$files/meta.reference" || error 'cannot create metadata reference'
+touch -r "$files/meta" "$files/meta.reference" || error 'cannot seed metadata reference timestamp'
+
+meta_mode_before=$(mode_of "$files/meta") || error 'cannot read metadata fixture mode'
+meta_owner_before=$(owner_group_of "$files/meta") || error 'cannot read metadata fixture ownership'
+
+encoded_file_edit --preserve-timestamp "$files/meta" ||
+    fail 'timestamp-preserving encrypted edit failed'
+
+meta_mode_after=$(mode_of "$files/meta") || error 'cannot read resulting mode'
+meta_owner_after=$(owner_group_of "$files/meta") || error 'cannot read resulting ownership'
+
+[ "$meta_mode_after" = "$meta_mode_before" ] ||
+    fail 'encrypted edit changed permission/executable bits'
+[ "$meta_owner_after" = "$meta_owner_before" ] ||
+    fail 'encrypted edit changed owner/group'
+[ -x "$files/meta" ] ||
+    fail 'encrypted edit did not preserve executable permission'
+same_mtime "$files/meta" "$files/meta.reference" ||
+    fail '--preserve-timestamp did not preserve mtime'
+
+printf '%s' 'NEW_TIME' > "$files/new-time" || error 'cannot create default-timestamp fixture'
+touch -t 200001010000 "$files/new-time" || error 'cannot set default-timestamp fixture mtime'
+: > "$files/new-time.reference" || error 'cannot create default-timestamp reference'
+touch -r "$files/new-time" "$files/new-time.reference" ||
+    error 'cannot seed default-timestamp reference'
+
+encoded_file_edit "$files/new-time" ||
+    fail 'default-timestamp encrypted edit failed'
+
+command -p find "$files/new-time" -newer "$files/new-time.reference" -print |
+    grep -q . ||
+        fail 'default encrypted edit did not update mtime'
 
 printf '%s' 'DECODE_FAIL' > "$files/decode-fail" ||
     error 'cannot create decode-failure fixture'
-expect_status 4 encoded_file_edit "$files/decode-fail"
+expect_failure encoded_file_edit "$files/decode-fail"
 [ "$(cat "$files/decode-fail")" = 'DECODE_FAIL' ] ||
     fail 'decode failure changed the original ciphertext'
-assert_no_edit_tmp
+[ ! -e "$files/decode-fail.$$" ] ||
+    fail 'decode failure left temporary ciphertext behind'
 
 printf '%s' 'CANCEL' > "$files/cancel" ||
     error 'cannot create cancel fixture'
 FAKE_VSED_MODE=cancel
 export FAKE_VSED_MODE
-expect_status 5 encoded_file_edit "$files/cancel"
+expect_failure encoded_file_edit "$files/cancel"
 [ "$(cat "$files/cancel")" = 'CANCEL' ] ||
     fail 'vsed cancellation changed the original ciphertext'
-assert_no_edit_tmp
+[ ! -e "$files/cancel.$$" ] ||
+    fail 'vsed cancellation left temporary ciphertext behind'
 
 printf '%s' 'VSED_FAIL' > "$files/vsed-fail" ||
     error 'cannot create vsed-failure fixture'
 FAKE_VSED_MODE=fail
 export FAKE_VSED_MODE
-expect_status 6 encoded_file_edit "$files/vsed-fail"
+expect_failure encoded_file_edit "$files/vsed-fail"
 [ "$(cat "$files/vsed-fail")" = 'VSED_FAIL' ] ||
     fail 'vsed failure changed the original ciphertext'
-assert_no_edit_tmp
+[ ! -e "$files/vsed-fail.$$" ] ||
+    fail 'vsed failure left temporary ciphertext behind'
 
 printf '%s' 'ENCODE_FAIL' > "$files/encode-fail" ||
     error 'cannot create encode-failure fixture'
 FAKE_VSED_MODE=save
 export FAKE_VSED_MODE
-expect_status 7 encoded_file_edit "$files/encode-fail"
+expect_failure encoded_file_edit "$files/encode-fail"
 [ "$(cat "$files/encode-fail")" = 'ENCODE_FAIL' ] ||
     fail 'encode failure changed the original ciphertext'
-assert_no_edit_tmp
+[ ! -e "$files/encode-fail.$$" ] ||
+    fail 'encode failure left temporary ciphertext behind'
 
 printf '%s' 'CONFLICT' > "$files/conflict" ||
     error 'cannot create conflict fixture'
 FAKE_VSED_MODE=conflict
 FAKE_VSED_TARGET=$files/conflict
 export FAKE_VSED_MODE FAKE_VSED_TARGET
-expect_status 8 encoded_file_edit "$files/conflict"
+expect_failure encoded_file_edit "$files/conflict"
 [ "$(cat "$files/conflict")" = 'CONCURRENT' ] ||
     fail 'concurrent target content was overwritten'
-assert_no_edit_tmp
+[ ! -e "$files/conflict.$$" ] ||
+    fail 'conflict failure left temporary ciphertext behind'
 
-printf '%s' 'FIRST' > "$files/first" ||
-    error 'cannot create sequential first fixture'
-printf '%s' 'SECOND' > "$files/second" ||
-    error 'cannot create sequential second fixture'
-printf '%s' 'THIRD' > "$files/third" ||
-    error 'cannot create sequential third fixture'
-
+printf '%s' 'COLLISION' > "$files/collision" ||
+    error 'cannot create collision fixture'
+printf '%s' 'PREEXISTING' > "$files/collision.$$" ||
+    error 'cannot create temporary-name collision fixture'
 FAKE_VSED_MODE=save
 FAKE_VSED_TARGET=
 export FAKE_VSED_MODE FAKE_VSED_TARGET
+expect_failure encoded_file_edit "$files/collision"
+[ "$(cat "$files/collision")" = 'COLLISION' ] ||
+    fail 'temporary-name collision changed the target'
+[ "$(cat "$files/collision.$$")" = 'PREEXISTING' ] ||
+    fail 'temporary-name collision removed or changed the pre-existing file'
+rm -f "$files/collision.$$" || error 'cannot remove collision fixture'
+
+printf '%s' 'FIRST' > "$files/first" || error 'cannot create sequential first fixture'
+printf '%s' 'SECOND' > "$files/second" || error 'cannot create sequential second fixture'
+printf '%s' 'THIRD' > "$files/third" || error 'cannot create sequential third fixture'
 
 decode()
 {
@@ -235,17 +280,16 @@ decode()
     esac
 }
 
-expect_status 4 encoded_file_edit "$files/first" "$files/second" "$files/third"
+expect_failure encoded_file_edit "$files/first" "$files/second" "$files/third"
 [ "$(cat "$files/first")" = 'CIPHER:EDITED:FIRST' ] ||
     fail 'completed file before a later failure was not committed'
 [ "$(cat "$files/second")" = 'SECOND' ] ||
     fail 'failing file was modified'
 [ "$(cat "$files/third")" = 'THIRD' ] ||
     fail 'processing continued after the first failing file'
-assert_no_edit_tmp
 
 PATH=$old_path
 export PATH
-unset FAKE_VSED_SCAN FAKE_VSED_MODE FAKE_VSED_TARGET
+unset FAKE_VSED_MODE FAKE_VSED_TARGET
 
 exit 0
