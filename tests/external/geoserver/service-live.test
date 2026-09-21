@@ -168,9 +168,9 @@ cleanup()
   if [ -n "${sudo_bin-}" ]
   then
     [ -z "${geoserver_system_service_state-}" ] ||
-      "$sudo_bin" -n command -p -- rm -rf -- "$geoserver_system_service_state" 2>/dev/null || :
+      "$sudo_bin" -n "$rm_bin" -rf -- "$geoserver_system_service_state" 2>/dev/null || :
     [ -z "${system_srv_state-}" ] ||
-      "$sudo_bin" -n command -p -- rm -rf -- "$system_srv_state" 2>/dev/null || :
+      "$sudo_bin" -n "$rm_bin" -rf -- "$system_srv_state" 2>/dev/null || :
   fi
 
   [ -z "${geoserver_system_state-}" ] || command -p -- rm -rf -- "$geoserver_system_state" 2>/dev/null || :
@@ -202,6 +202,7 @@ esac
 [ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
 command -v ps >/dev/null 2>&1 || error 'ps unavailable'
 command -v awk >/dev/null 2>&1 || error 'awk unavailable'
+rm_bin=$(command -p -v rm) || error 'rm unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-geoserver-service-live-$$
 umask 077

@@ -123,9 +123,9 @@ cleanup()
   if [ -n "${sudo_bin-}" ]
   then
     [ -z "${service_state_identity-}" ] ||
-      "$sudo_bin" -n command -p -- rm -rf -- "$service_state_identity" 2>/dev/null || :
+      "$sudo_bin" -n "$rm_bin" -rf -- "$service_state_identity" 2>/dev/null || :
     [ -z "${system_srv_state-}" ] ||
-      "$sudo_bin" -n command -p -- rm -rf -- "$system_srv_state" 2>/dev/null || :
+      "$sudo_bin" -n "$rm_bin" -rf -- "$system_srv_state" 2>/dev/null || :
   fi
   [ -z "${package_system_identity-}" ] || command -p -- rm -rf -- "$package_system_identity" 2>/dev/null || :
 
@@ -189,6 +189,8 @@ esac
 
 command -v ps >/dev/null 2>&1 || error 'ps unavailable'
 command -v awk >/dev/null 2>&1 || error 'awk unavailable'
+cat_bin=$(command -p -v cat) || error 'cat unavailable'
+rm_bin=$(command -p -v rm) || error 'rm unavailable'
 tmp=${TMPDIR:-/tmp}/rumiai-srv-host-system-$$
 umask 077
 command -p -- mkdir "$tmp" || error 'cannot create temporary directory'
@@ -373,9 +375,9 @@ system_pkg_conf=$("$root/m" "$root/bin/sys/state-path" system sys pkg conf) ||
   error 'cannot resolve provider system configuration'
 service_default_file=$system_pkg_conf/provider/default/$facility
 binding_file=$package_system_conf/binding/$dep_facility
-"$sudo_bin" -n -u "$service_account" command -p -- cat "$service_default_file" >/dev/null 2>&1 ||
+"$sudo_bin" -n -u "$service_account" "$cat_bin" "$service_default_file" >/dev/null 2>&1 ||
   fail 'service account cannot read prepared service facility default'
-"$sudo_bin" -n -u "$service_account" command -p -- cat "$binding_file" >/dev/null 2>&1 ||
+"$sudo_bin" -n -u "$service_account" "$cat_bin" "$binding_file" >/dev/null 2>&1 ||
   fail 'service account cannot read prepared dependency binding'
 
 if run_srv host system start "$facility" > "$tmp/nonadmin.out" 2> "$tmp/nonadmin.err"
