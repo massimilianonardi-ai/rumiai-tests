@@ -12,6 +12,7 @@ resolve_test_dir()
   self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
+
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; suite_root=${rumiai_os_group%/*}
 . "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
@@ -24,12 +25,12 @@ command -p -- sh -n "$library" >/dev/null 2>&1 || fail 'GeoServer repository ada
 
 tmp=${TMPDIR:-/tmp}/rumiai-geoserver-repository-$$
 umask 077
-mkdir "$tmp" "$tmp/repository" "$tmp/range" "$tmp/bin" || error 'cannot create fixture'
-trap 'rm -rf "$tmp"' 0 HUP INT TERM
+command -p -- mkdir "$tmp" "$tmp/repository" "$tmp/range" "$tmp/bin" || error 'cannot create fixture'
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
 repository=$tmp/repository
 range=$tmp/range
 printf '%s\n' geoserver > "$repository/type"
-printf '%s\n' '^geoserver-[A-Za-z0-9][A-Za-z0-9._+~-]*-bin\.zip$' > "$range/archive_regex"
+printf '%s\n' '^geoserver-[A-Za-z0-9][A-Za-z0-9._+~-]*-bin\\.zip$' > "$range/archive_regex"
 printf '%s\n' md5 > "$range/digest_type"
 
 cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
@@ -37,15 +38,56 @@ cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
 printf '%s\n' "$*" >> "$GEOSERVER_HTTP_LOG"
 for url do :; done
 case "$url" in
-  'https://sourceforge.net/projects/geoserver/files/GeoServer/?format=json')
-    printf '%s\n' '{"files":[{"name":"3.0.0","type":"d"},{"name":"2.28.5","type":"d"},{"name":"3.0.1","type":"d"},{"name":"preview","type":"d"},{"name":"README.md","type":"f"}]}'
+  'https://api.github.com/repos/geoserver/geoserver/releases?per_page=100&page=1')
+    printf '%s\n' '[
+      {"tag_name":"3.0.0","draft":false,"prerelease":false},
+      {"tag_name":"2.28.5","draft":false,"prerelease":false},
+      {"tag_name":"3.0.1","draft":false,"prerelease":false},
+      {"tag_name":"3.1.0-RC","draft":false,"prerelease":true},
+      {"tag_name":"3.0.2","draft":true,"prerelease":false},
+      {"tag_name":"not-a-version","draft":false,"prerelease":false}
+    ]'
     ;;
-  'https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/?format=json')
-    case "${GEOSERVER_FOLDER_MODE-ok}" in
-      ok) printf '%s\n' '{"files":[{"name":"geoserver-3.0.1-bin.zip","type":"f","size":123456789,"md5":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},{"name":"geoserver-3.0.1-war.zip","type":"f","size":23456789,"md5":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}]}' ;;
-      duplicate) printf '%s\n' '{"files":[{"name":"geoserver-3.0.1-bin.zip","type":"f","size":1,"md5":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},{"name":"geoserver-3.0.1-bin.zip","type":"f","size":2,"md5":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}]}' ;;
-      bad-md5) printf '%s\n' '{"files":[{"name":"geoserver-3.0.1-bin.zip","type":"f","size":123456789,"md5":"bad"}]}' ;;
-      bad-size) printf '%s\n' '{"files":[{"name":"geoserver-3.0.1-bin.zip","type":"f","size":0,"md5":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}]}' ;;
+  'https://api.github.com/repos/geoserver/geoserver/releases/tags/3.0.0')
+    printf '%s\n' '{"tag_name":"3.0.0","draft":false,"prerelease":false}'
+    ;;
+  'https://api.github.com/repos/geoserver/geoserver/releases/tags/3.0.1')
+    printf '%s\n' '{"tag_name":"3.0.1","draft":false,"prerelease":false}'
+    ;;
+  'https://api.github.com/repos/geoserver/geoserver/releases/tags/3.0.2')
+    exit 22
+    ;;
+  'https://sourceforge.net/projects/geoserver/rss?path=/GeoServer/3.0.1/')
+    case "${GEOSERVER_RSS_MODE-ok}" in
+      ok)
+        cat <<'EOF_RSS'
+<?xml version="1.0" encoding="UTF-8"?>
+<rss><channel>
+<item><media:content xmlns:media="http://video.search.yahoo.com/mrss/" type="application/zip; charset=binary" url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-war.zip/download" filesize="23456789"><media:hash algo="md5">bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</media:hash></media:content></item>
+<item><media:content xmlns:media="http://video.search.yahoo.com/mrss/" type="application/zip; charset=binary" url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download" filesize="123456789"><media:hash algo="md5">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</media:hash></media:content></item>
+</channel></rss>
+EOF_RSS
+        ;;
+      duplicate)
+        cat <<'EOF_RSS'
+<rss><channel>
+<item><media:content url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download" filesize="1"><media:hash algo="md5">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</media:hash></media:content></item>
+<item><media:content url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download" filesize="2"><media:hash algo="md5">bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb</media:hash></media:content></item>
+</channel></rss>
+EOF_RSS
+        ;;
+      bad-md5)
+        printf '%s\n' '<rss><channel><item><media:content url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download" filesize="123456789"><media:hash algo="md5">bad</media:hash></media:content></item></channel></rss>'
+        ;;
+      wrong-algo)
+        printf '%s\n' '<rss><channel><item><media:content url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download" filesize="123456789"><media:hash algo="sha1">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</media:hash></media:content></item></channel></rss>'
+        ;;
+      bad-size)
+        printf '%s\n' '<rss><channel><item><media:content url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download" filesize="0"><media:hash algo="md5">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</media:hash></media:content></item></channel></rss>'
+        ;;
+      absent)
+        printf '%s\n' '<rss><channel><item><media:content url="https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-war.zip/download" filesize="1"><media:hash algo="md5">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</media:hash></media:content></item></channel></rss>'
+        ;;
     esac
     ;;
   *) exit 88;;
@@ -56,7 +98,7 @@ chmod 700 "$tmp/bin/http-fetch" || error 'cannot prepare fake http-fetch'
 PATH="$tmp/bin:/usr/bin:/bin"; export PATH
 m_LIB_DIR=$root/lib; export m_LIB_DIR
 GEOSERVER_HTTP_LOG=$tmp/http.log; export GEOSERVER_HTTP_LOG
-GEOSERVER_FOLDER_MODE=ok; export GEOSERVER_FOLDER_MODE
+GEOSERVER_RSS_MODE=ok; export GEOSERVER_RSS_MODE
 . "$library" || error 'cannot source GeoServer adapter'
 
 expected_versions='2.28.5
@@ -82,15 +124,15 @@ size=123456789
 digest=md5:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 [ "$out" = "$expected" ] || fail 'artifact descriptor incorrect'
 
-for mode in duplicate bad-md5 bad-size
+for mode in duplicate bad-md5 wrong-algo bad-size absent
 do
-  GEOSERVER_FOLDER_MODE=$mode; export GEOSERVER_FOLDER_MODE
+  GEOSERVER_RSS_MODE=$mode; export GEOSERVER_RSS_MODE
   if pkg_repository_resolve_artifact "$repository" "$range" 3.0.1 >/dev/null 2>&1; then fail "$mode metadata accepted"; fi
 done
-GEOSERVER_FOLDER_MODE=ok; export GEOSERVER_FOLDER_MODE
+GEOSERVER_RSS_MODE=ok; export GEOSERVER_RSS_MODE
 printf '%s\n' sha256 > "$range/digest_type"
 if pkg_repository_resolve_artifact "$repository" "$range" 3.0.1 >/dev/null 2>&1; then fail 'wrong digest type accepted'; fi
 printf '%s\n' md5 > "$range/digest_type"
-printf '%s\n' '^other\.zip$' > "$range/archive_regex"
+printf '%s\n' '^other\\.zip$' > "$range/archive_regex"
 if pkg_repository_resolve_artifact "$repository" "$range" 3.0.1 >/dev/null 2>&1; then fail 'wrong archive regex accepted'; fi
 exit 0

@@ -15,27 +15,6 @@ resolve_test_dir()
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
 }
 
-raw_probe()
-{
-  probe_label=$1
-  shift
-  probe_file=$tmp/$probe_label.body
-  if "$root/m" "$root/bin/sys/http-fetch" "$@" > "$probe_file" 2> "$tmp/$probe_label.err"
-  then
-    probe_bytes=$(command -p -- wc -c < "$probe_file" | command -p -- tr -d ' ')
-    probe_first=$(LC_ALL=C command -p -- awk '{
-      line=$0
-      sub(/^[[:space:]]+/, "", line)
-      if (line != "") { print substr(line,1,1); exit }
-    }' "$probe_file")
-    printf '%s\n' "$TEST_ID: probe $probe_label status=0 bytes=$probe_bytes first=$probe_first" >&2
-  else
-    probe_status=$?
-    printf '%s\n' "$TEST_ID: probe $probe_label status=$probe_status" >&2
-    [ ! -s "$tmp/$probe_label.err" ] || command -p -- cat "$tmp/$probe_label.err" >&2
-  fi
-}
-
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 package_group=${test_dir%/*}
 external_group=${package_group%/*}
@@ -72,51 +51,18 @@ export PATH m_LIB_DIR
 . "$library" || error 'cannot source GeoServer repository adapter'
 
 version=3.0.1
-resolved=$(pkg_repository_resolve_version "$tmp/repository" "$version" 2> "$tmp/version.err")
-status=$?
-if [ "$status" -ne 0 ]
-then
-  [ ! -s "$tmp/version.err" ] || command -p -- cat "$tmp/version.err" >&2
-  raw_probe root-current -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/?format=json'
-  raw_probe root-accept -H 'Accept: application/json' -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/?format=json'
-  raw_probe root-rest -H 'Accept: application/json' -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/'
-  raw_probe file-resource -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/geoserver-$version-bin.zip"
-  raw_probe file-format-json -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/geoserver-$version-bin.zip?format=json"
-  raw_probe release-rss -- "https://sourceforge.net/projects/geoserver/rss?path=/GeoServer/$version/"
-  if [ -f "$tmp/release-rss.body" ]
-  then
-    LC_ALL=C command -p -- awk '
-      /geoserver-3[.]0[.]1-bin[.]zip|filesize|hash/ {
-        line=$0
-        gsub(/[[:space:]]+/, " ", line)
-        print "rss: " substr(line,1,500)
-      }
-    ' "$tmp/release-rss.body" >&2
-  fi
-  fail "live GeoServer exact-version resolution failed with status $status"
-fi
+resolved=$(pkg_repository_resolve_version "$tmp/repository" "$version") ||
+  fail 'live GeoServer exact-version resolution failed'
 [ "$resolved" = "$version" ] ||
   fail "GeoServer exact-version resolution returned $resolved instead of $version"
 
-artifact=$(pkg_repository_resolve_artifact "$tmp/repository" "$tmp/range" "$version" 2> "$tmp/artifact.err")
-status=$?
-if [ "$status" -ne 0 ]
-then
-  [ ! -s "$tmp/artifact.err" ] || command -p -- cat "$tmp/artifact.err" >&2
-  raw_probe folder-current -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/?format=json"
-  raw_probe folder-accept -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/?format=json"
-  raw_probe folder-rest -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/"
-  fail "live GeoServer artifact resolution failed with status $status"
-fi
-
-printf '%s\n' "$artifact" | command -p -- grep -Fx "name=geoserver-$version-bin.zip" >/dev/null 2>&1 ||
-  fail 'live GeoServer artifact descriptor has wrong name'
-printf '%s\n' "$artifact" | command -p -- grep -F 'url=https://sourceforge.net/projects/geoserver/files/GeoServer/' >/dev/null 2>&1 ||
-  fail 'live GeoServer artifact descriptor has wrong URL'
-printf '%s\n' "$artifact" | command -p -- grep -E '^size=[1-9][0-9]*$' >/dev/null 2>&1 ||
-  fail 'live GeoServer artifact descriptor has invalid size'
-printf '%s\n' "$artifact" | command -p -- grep -E '^digest=md5:[0-9a-f]{32}$' >/dev/null 2>&1 ||
-  fail 'live GeoServer artifact descriptor has invalid MD5'
+artifact=$(pkg_repository_resolve_artifact "$tmp/repository" "$tmp/range" "$version") ||
+  fail 'live GeoServer artifact resolution failed'
+expected='name=geoserver-3.0.1-bin.zip
+url=https://sourceforge.net/projects/geoserver/files/GeoServer/3.0.1/geoserver-3.0.1-bin.zip/download
+size=126971831
+digest=md5:1b8b60c512dd983f7996074d69119566'
+[ "$artifact" = "$expected" ] || fail 'live GeoServer artifact metadata differs from the expected upstream release'
 
 printf 'version=%s\n' "$version"
 printf 'repository-live=ok\n'
