@@ -78,10 +78,15 @@ mkdir "$tmp" "$files" "$bin" || error 'cannot create test workspace'
 cat > "$bin/vsed" <<'EOF_VSED'
 #!/bin/sh
 
-if grep -R -F 'PLAIN:' "$FAKE_VSED_SCAN" >/dev/null 2>&1
-then
-    exit 91
-fi
+for _fake_vsed_file in "$FAKE_VSED_SCAN"/.encoded-file-edit.*/*
+do
+    [ -f "$_fake_vsed_file" ] || continue
+
+    if grep -F 'PLAIN:' "$_fake_vsed_file" >/dev/null 2>&1
+    then
+        exit 91
+    fi
+done
 
 case ${FAKE_VSED_MODE-save} in
     save)
