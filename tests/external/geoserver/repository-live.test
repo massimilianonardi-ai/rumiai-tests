@@ -80,6 +80,7 @@ then
   raw_probe root-current -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/?format=json'
   raw_probe root-accept -H 'Accept: application/json' -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/?format=json'
   raw_probe root-rest -H 'Accept: application/json' -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/'
+  raw_probe file-resource -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/geoserver-$version-bin.zip"
   fail "live GeoServer exact-version resolution failed with status $status"
 fi
 [ "$resolved" = "$version" ] ||
