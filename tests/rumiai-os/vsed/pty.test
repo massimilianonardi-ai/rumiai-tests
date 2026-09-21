@@ -274,7 +274,14 @@ case ${RUMIAI_VSED_MODE-} in
 esac
 
 after=$(stty -g) || exit 91
-[ "$before" = "$after" ] || exit 92
+if [ "$before" != "$after" ]
+then
+  {
+    printf '%s\n' "TTY before: $before"
+    printf '%s\n' "TTY after:  $after"
+  } > "$RUMIAI_VSED_TTY_DIAGNOSTIC"
+  exit 92
+fi
 exit "$status"
 EOF_DRIVER
     chmod +x "$driver" || error 'cannot create Darwin vsed driver'
@@ -368,12 +375,21 @@ EOF_EXPECT
       RUMIAI_VSED_FILE=$file_path
       RUMIAI_VSED_KEYS=$keys
       RUMIAI_VSED_EXPECTED_STATUS=$expected_status
+      RUMIAI_VSED_TTY_DIAGNOSTIC=$tmp/$case_name.tty
       export RUMIAI_VSED_BASE RUMIAI_VSED_CASE RUMIAI_VSED_DRIVER \
         RUMIAI_VSED_MODE RUMIAI_VSED_M RUMIAI_VSED_COMMAND RUMIAI_VSED_INPUT \
         RUMIAI_VSED_OUTPUT RUMIAI_VSED_ERROR RUMIAI_VSED_FILE \
-        RUMIAI_VSED_KEYS RUMIAI_VSED_EXPECTED_STATUS
+        RUMIAI_VSED_KEYS RUMIAI_VSED_EXPECTED_STATUS \
+        RUMIAI_VSED_TTY_DIAGNOSTIC
 
+      rm -f "$RUMIAI_VSED_TTY_DIAGNOSTIC" || return 1
       expect -f "$expect_driver"
+      status=$?
+      if [ "$status" -ne 0 ] && [ -s "$RUMIAI_VSED_TTY_DIAGNOSTIC" ]
+      then
+        cat "$RUMIAI_VSED_TTY_DIAGNOSTIC" >&2
+      fi
+      return "$status"
     }
 
     input=$tmp/stream.input
