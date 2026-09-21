@@ -111,30 +111,49 @@ def run_vsed(initial=b"", keys=b"\x18", file_path=None, timeout=5.0):
     os.close(in_w)
 
     screen = bytearray()
+    out = bytearray()
+    err = bytearray()
     deadline_setup = time.monotonic() + 2.0
     ready_for_keys = False
+    setup_status = None
+
     while time.monotonic() < deadline_setup:
-        ready, _, _ = select.select([master], [], [], 0.05)
-        if not ready:
-            continue
-        try:
-            chunk = os.read(master, 4096)
-        except OSError:
-            chunk = b""
-        screen.extend(chunk)
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                screen.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+
         if b"^X save" in screen:
             ready_for_keys = True
             break
 
+        waited, wait_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            setup_status = os.waitstatus_to_exitcode(wait_status)
+            break
+
     if not ready_for_keys:
-        os.kill(pid, 9)
-        os.waitpid(pid, 0)
-        raise AssertionError(("vsed did not enter interactive screen", bytes(screen)))
+        if setup_status is None:
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
+        raise AssertionError((
+            "vsed did not enter interactive screen",
+            setup_status,
+            bytes(out),
+            bytes(err),
+            bytes(screen),
+        ))
 
     os.write(master, keys)
 
-    out = bytearray()
-    err = bytearray()
     deadline = time.monotonic() + timeout
     status = None
 
