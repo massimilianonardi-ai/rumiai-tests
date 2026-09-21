@@ -43,6 +43,11 @@ run_srv()
   "$root/m" "$root/bin/sys/srv" "$@"
 }
 
+run_srv_system()
+{
+  "$sudo_bin" -n "$root/m" "$root/bin/sys/srv" host system "$@"
+}
+
 host_pid_get()
 {
   case "$host_os" in
@@ -84,9 +89,51 @@ wait_host_pid()
   return 1
 }
 
+system_host_pid_get()
+{
+  case "$host_os" in
+    Linux)
+      "$sudo_bin" -n systemctl show m-srv-geoserver.service --property MainPID --value 2>/dev/null
+      ;;
+    Darwin)
+      "$sudo_bin" -n launchctl print system/m.srv.geoserver 2>/dev/null |
+        command -p -- awk '$1 == "pid" && $2 == "=" && $3 ~ /^[0-9]+$/ { print $3; exit }'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_system_host_pid()
+{
+  previous=${1-}
+  wait_count=0
+  while [ "$wait_count" -lt 40 ]
+  do
+    current=$(system_host_pid_get 2>/dev/null) || current=
+    case "$current" in
+      ""|0|*[!0123456789]*) : ;;
+      *)
+        if [ "$current" != "$previous" ] && pid_exists "$current"
+        then
+          printf '%s\n' "$current"
+          return 0
+        fi
+        ;;
+    esac
+    command -p -- sleep 1
+    wait_count=$((wait_count + 1))
+  done
+  return 1
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
+
+  if [ "${system_host_installed-0}" -eq 1 ] && [ -n "${root-}" ] && [ -n "${sudo_bin-}" ]
+  then
+    run_srv_system uninstall geoserver >/dev/null 2>&1 || :
+  fi
 
   if [ "${host_installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
@@ -215,8 +262,28 @@ case "$host_os" in
     ;;
 esac
 
+sudo_bin=$(command -v sudo 2>/dev/null) ||
+  skip 'sudo unavailable for GeoServer system-host validation'
+"$sudo_bin" -n true >/dev/null 2>&1 ||
+  skip 'passwordless sudo unavailable for GeoServer system-host validation'
+
+case "$host_os" in
+  Linux)
+    "$sudo_bin" -n systemctl show-environment >/dev/null 2>&1 ||
+      skip 'systemd system manager unavailable'
+    system_host_manifest=/etc/systemd/system/m-srv-geoserver.service
+    ;;
+  Darwin)
+    "$sudo_bin" -n launchctl print system >/dev/null 2>&1 ||
+      skip 'launchd system domain unavailable'
+    system_host_manifest=/Library/LaunchDaemons/m.srv.geoserver.plist
+    ;;
+esac
+
 [ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
   skip 'GeoServer user host integration already exists in the supplied host account'
+[ ! -e "$system_host_manifest" ] && [ ! -L "$system_host_manifest" ] ||
+  skip 'GeoServer system host integration already exists in the supplied host'
 
 for package in geoserver temurin
 do
@@ -380,9 +447,73 @@ host_installed=0
 [ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
   fail 'GeoServer host manifest remained after uninstall'
 
+system_service_home=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver home geoserver) ||
+  error 'cannot resolve GeoServer system-service package HOME'
+
+run_srv_system install geoserver "$host_user" > "$tmp/system-install.out" 2> "$tmp/system-install.err" || {
+  command -p -- cat "$tmp/system-install.err" >&2
+  fail 'cannot install GeoServer system host integration'
+}
+system_host_installed=1
+[ -f "$system_host_manifest" ] && [ ! -L "$system_host_manifest" ] ||
+  fail 'GeoServer system host manifest was not persisted as a regular file'
+[ -d "$system_service_home" ] && [ ! -L "$system_service_home" ] ||
+  fail 'GeoServer system-service package HOME was not prepared'
+system_home_uid=$(command -p -- ls -dn "$system_service_home" | command -p -- awk 'NR == 1 { print $3 }') ||
+  error 'cannot inspect GeoServer system-service HOME ownership'
+[ "$system_home_uid" = "$uid" ] ||
+  fail 'GeoServer system-service HOME is not owned by the selected execution account'
+
+system_pid_after_install=$(system_host_pid_get 2>/dev/null) || system_pid_after_install=
+case "$system_pid_after_install" in
+  ""|0) : ;;
+  *) fail 'GeoServer system install unexpectedly started the service' ;;
+esac
+
+run_srv_system start geoserver > "$tmp/system-start.out" 2> "$tmp/system-start.err" || {
+  command -p -- cat "$tmp/system-start.err" >&2
+  fail 'cannot start GeoServer system host integration'
+}
+system_pid1=$(wait_system_host_pid) || {
+  case "$host_os" in
+    Linux) "$sudo_bin" -n systemctl status m-srv-geoserver.service --no-pager >&2 || : ;;
+    Darwin) "$sudo_bin" -n launchctl print system/m.srv.geoserver >&2 || : ;;
+  esac
+  fail 'system supervisor did not retain a live GeoServer foreground process'
+}
+
+run_srv_system restart geoserver > "$tmp/system-restart.out" 2> "$tmp/system-restart.err" || {
+  command -p -- cat "$tmp/system-restart.err" >&2
+  fail 'cannot restart GeoServer system host integration'
+}
+system_pid2=$(wait_system_host_pid "$system_pid1") ||
+  fail 'GeoServer system restart did not produce a new live process'
+wait_pid_gone "$system_pid1" ||
+  fail 'previous GeoServer system-host process remained alive after restart'
+
+run_srv_system stop geoserver > "$tmp/system-stop.out" 2> "$tmp/system-stop.err" || {
+  command -p -- cat "$tmp/system-stop.err" >&2
+  fail 'cannot stop GeoServer system host integration'
+}
+wait_pid_gone "$system_pid2" ||
+  fail 'GeoServer system-host process remained alive after stop'
+
+run_srv_system uninstall geoserver > "$tmp/system-uninstall.out" 2> "$tmp/system-uninstall.err" || {
+  command -p -- cat "$tmp/system-uninstall.err" >&2
+  fail 'cannot uninstall GeoServer system host integration'
+}
+system_host_installed=0
+[ ! -e "$system_host_manifest" ] && [ ! -L "$system_host_manifest" ] ||
+  fail 'GeoServer system host manifest remained after uninstall'
+[ -d "$system_service_home" ] ||
+  fail 'GeoServer system host uninstall deleted package state'
+[ "$(command -p -- id -u "$host_user" 2>/dev/null)" = "$uid" ] ||
+  fail 'GeoServer system host lifecycle modified the execution account'
+
 printf 'geoserver=%s\n' "$geoserver_identity"
 printf 'java-provider=%s\n' "$temurin_identity"
 printf 'portable-service=ok\n'
 printf 'host-user-service=ok\n'
+printf 'host-system-service=ok\n'
 
 exit 0
