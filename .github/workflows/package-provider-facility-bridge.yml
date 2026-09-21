@@ -75,6 +75,7 @@ jobs:
 
       - name: Upload recoverable local evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: package-provider-facility-formal-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -124,6 +125,7 @@ jobs:
 
       - name: Upload recoverable local evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: package-provider-facility-graalvm-formal-${{ github.run_id }}-${{ github.run_attempt }}

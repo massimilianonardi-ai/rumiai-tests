@@ -66,6 +66,7 @@ jobs:
 
       - name: Upload recoverable local evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: geoserver-service-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
