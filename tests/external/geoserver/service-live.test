@@ -1,0 +1,388 @@
+#!/bin/sh
+
+TEST_ID=external/geoserver/service-live.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+pid_exists()
+{
+  seen=$(command -p -- ps -p "$1" -o pid= 2>/dev/null | command -p -- awk 'NR == 1 { print $1 }')
+  [ "$seen" = "$1" ]
+}
+
+wait_pid_gone()
+{
+  wait_pid=$1
+  wait_count=0
+  while pid_exists "$wait_pid" && [ "$wait_count" -lt 20 ]
+  do
+    command -p -- sleep 1
+    wait_count=$((wait_count + 1))
+  done
+  ! pid_exists "$wait_pid"
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+run_srv()
+{
+  "$root/m" "$root/bin/sys/srv" "$@"
+}
+
+host_pid_get()
+{
+  case "$host_os" in
+    Linux)
+      HOME="$host_home" \
+      XDG_CONFIG_HOME="$host_home/.config" \
+      XDG_RUNTIME_DIR="$host_runtime" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$host_runtime/bus" \
+        systemctl --user show "$host_unit" --property MainPID --value 2>/dev/null
+      ;;
+    Darwin)
+      launchctl print "$host_target" 2>/dev/null |
+        command -p -- awk '$1 == "pid" && $2 == "=" && $3 ~ /^[0-9]+$/ { print $3; exit }'
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_host_pid()
+{
+  previous=${1-}
+  wait_count=0
+  while [ "$wait_count" -lt 30 ]
+  do
+    current=$(host_pid_get 2>/dev/null) || current=
+    case "$current" in
+      ""|0|*[!0123456789]*) : ;;
+      *)
+        if [ "$current" != "$previous" ] && pid_exists "$current"
+        then
+          printf '%s\n' "$current"
+          return 0
+        fi
+        ;;
+    esac
+    command -p -- sleep 1
+    wait_count=$((wait_count + 1))
+  done
+  return 1
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ "${host_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_srv host user uninstall geoserver >/dev/null 2>&1 || :
+  fi
+
+  if [ "${portable_started-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_srv stop -f geoserver >/dev/null 2>&1 || :
+  fi
+
+  if [ "${geoserver_default_set-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg provider default -u -- geoserver >/dev/null 2>&1 || :
+  fi
+
+  if [ "${java_default_set-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg provider default -u -- java >/dev/null 2>&1 || :
+  fi
+
+  if [ "${geoserver_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall geoserver >/dev/null 2>&1 || :
+  fi
+
+  if [ "${temurin_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall temurin >/dev/null 2>&1 || :
+  fi
+
+  [ -z "${geoserver_system_state-}" ] || command -p -- rm -rf -- "$geoserver_system_state" 2>/dev/null || :
+  [ -z "${geoserver_user_state-}" ] || command -p -- rm -rf -- "$geoserver_user_state" 2>/dev/null || :
+  [ -z "${temurin_system_state-}" ] || command -p -- rm -rf -- "$temurin_system_state" 2>/dev/null || :
+  [ -z "${temurin_user_state-}" ] || command -p -- rm -rf -- "$temurin_user_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/srv" ] || fail 'srv command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+command -v ps >/dev/null 2>&1 || error 'ps unavailable'
+command -v awk >/dev/null 2>&1 || error 'awk unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-geoserver-service-live-$$
+umask 077
+command -p -- mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+"$root/m" "$root/bin/sys/osarch" update > "$tmp/osarch-update.out" 2> "$tmp/osarch-update.err" || {
+  command -p -- cat "$tmp/osarch-update.err" >&2
+  fail 'cannot align runtime osarch selectors with the current host'
+}
+case "$osarch" in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) :;;
+  *) skip "GeoServer is not declared for $osarch";;
+esac
+
+host_os=$(command -p -- uname -s) || error 'cannot identify host OS'
+uid=$(command -p -- id -u) || error 'cannot determine uid'
+case "$uid" in ""|*[!0123456789]*) error 'invalid host uid' ;; esac
+host_user=$(command -p -- id -un) || error 'cannot determine account name'
+case "$host_user" in ""|*/*|*'
+'*) error 'invalid account name' ;; esac
+
+case "$host_os" in
+  Linux)
+    command -v systemctl >/dev/null 2>&1 || skip 'systemctl unavailable'
+    command -v getent >/dev/null 2>&1 || skip 'getent unavailable'
+    host_home=$(getent passwd "$uid" 2>/dev/null | command -p -- awk -F: -v uid="$uid" '$3 == uid { print $6; exit }') ||
+      error 'cannot resolve host account home'
+    case "$host_home" in /*) :;; *) error 'invalid host account home' ;; esac
+    host_runtime=/run/user/$uid
+    [ -d "$host_runtime" ] || skip 'systemd user runtime unavailable'
+    HOME="$host_home" \
+    XDG_CONFIG_HOME="$host_home/.config" \
+    XDG_RUNTIME_DIR="$host_runtime" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$host_runtime/bus" \
+      systemctl --user show-environment >/dev/null 2>&1 ||
+      skip 'systemd user manager unavailable'
+    host_manifest=$host_home/.config/systemd/user/m-srv-geoserver.service
+    host_unit=m-srv-geoserver.service
+    ;;
+  Darwin)
+    command -v launchctl >/dev/null 2>&1 || skip 'launchctl unavailable'
+    command -v plutil >/dev/null 2>&1 || skip 'plutil unavailable'
+    command -v dscl >/dev/null 2>&1 || skip 'dscl unavailable'
+    host_home=$(
+      dscl . -read "/Users/$host_user" NFSHomeDirectory 2>/dev/null |
+        command -p -- sed -n 's/^NFSHomeDirectory: //p' |
+        command -p -- sed -n '1p'
+    ) || error 'cannot resolve host account home'
+    case "$host_home" in /*) :;; *) error 'invalid host account home' ;; esac
+    launchctl print "gui/$uid" >/dev/null 2>&1 || skip 'launchd gui domain unavailable'
+    host_manifest=$host_home/Library/LaunchAgents/m.srv.geoserver.plist
+    host_target=gui/$uid/m.srv.geoserver
+    ;;
+  *)
+    skip "user host supervision is not implemented for $host_os"
+    ;;
+esac
+
+[ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
+  skip 'GeoServer user host integration already exists in the supplied host account'
+
+for package in geoserver temurin
+do
+  run_pkg versions "$package" > "$tmp/$package-preexisting.out" 2> "$tmp/$package-preexisting.err"
+  status=$?
+  case $status in
+    0) skip "$package is already installed in the supplied target";;
+    1) :;;
+    *)
+      command -p -- cat "$tmp/$package-preexisting.err" >&2
+      fail "cannot determine pre-existing $package installation state (status $status)"
+      ;;
+  esac
+done
+
+for facility in java geoserver
+do
+  run_pkg provider default "$facility" > "$tmp/$facility-default-preexisting.out" 2> "$tmp/$facility-default-preexisting.err"
+  status=$?
+  case $status in
+    0) skip "$facility facility default is already configured in the supplied target";;
+    1) :;;
+    *) fail "cannot determine pre-existing $facility facility default (status $status)";;
+  esac
+done
+
+geoserver_system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver conf) ||
+  error 'cannot resolve GeoServer system state'
+geoserver_user_home=$("$root/m" "$root/bin/sys/state-path" user pkg geoserver home) ||
+  error 'cannot resolve GeoServer user state'
+temurin_system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg temurin conf) ||
+  error 'cannot resolve Temurin system state'
+temurin_user_home=$("$root/m" "$root/bin/sys/state-path" user pkg temurin home) ||
+  error 'cannot resolve Temurin user state'
+geoserver_system_state=${geoserver_system_conf%/conf}
+geoserver_user_state=${geoserver_user_home%/home}
+temurin_system_state=${temurin_system_conf%/conf}
+temurin_user_state=${temurin_user_home%/home}
+
+for state_root in "$geoserver_system_state" "$geoserver_user_state" "$temurin_system_state" "$temurin_user_state"
+do
+  if [ -e "$state_root" ] || [ -L "$state_root" ]
+  then
+    skip 'package state already exists in the supplied environment'
+  fi
+done
+
+java_version=21.0.12.1+1
+printf '%s\n' "$TEST_ID: installing Temurin $java_version" >&2
+run_pkg install "temurin@$java_version" > "$tmp/temurin-install.out" 2> "$tmp/temurin-install.err" || {
+  command -p -- cat "$tmp/temurin-install.out" >&2
+  command -p -- cat "$tmp/temurin-install.err" >&2
+  fail 'pkg install Temurin Java 21 failed'
+}
+temurin_installed=1
+temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
+  command -p -- cat "$tmp/temurin-default.err" >&2
+  fail 'Temurin has no queryable package default'
+}
+[ "$(command -p -- cat "$root/pkg/$temurin_identity/facility" 2>/dev/null)" = 'java 21' ] ||
+  fail 'installed Temurin does not declare java 21'
+
+run_pkg provider default java "$temurin_identity" > "$tmp/java-default-set.out" 2> "$tmp/java-default-set.err" || {
+  command -p -- cat "$tmp/java-default-set.err" >&2
+  fail 'cannot configure exact Temurin Java 21 provider'
+}
+java_default_set=1
+
+geoserver_version=3.0.1
+printf '%s\n' "$TEST_ID: installing GeoServer $geoserver_version" >&2
+run_pkg install "geoserver@$geoserver_version" > "$tmp/geoserver-install.out" 2> "$tmp/geoserver-install.err" || {
+  command -p -- cat "$tmp/geoserver-install.out" >&2
+  command -p -- cat "$tmp/geoserver-install.err" >&2
+  fail 'pkg install GeoServer failed'
+}
+geoserver_installed=1
+geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") || {
+  command -p -- cat "$tmp/geoserver-default.err" >&2
+  fail 'GeoServer has no queryable package default'
+}
+[ -n "$geoserver_identity" ] || fail 'GeoServer concrete identity is empty'
+[ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility" 2>/dev/null)" = 'geoserver 1' ] ||
+  fail 'installed GeoServer does not declare geoserver 1'
+[ "$(command -p -- cat "$root/pkg/$geoserver_identity/dependency" 2>/dev/null)" = 'java >=17 <22' ] ||
+  fail 'installed GeoServer dependency is not java >=17 <22'
+[ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility-service/geoserver/start" 2>/dev/null)" = 'geoserver-start' ] ||
+  fail 'GeoServer service realization was not materialized'
+[ ! -e "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] &&
+[ ! -L "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] ||
+  fail 'GeoServer internal service command was incorrectly published as a facility cmd part'
+
+run_pkg provider default geoserver "$geoserver_identity" > "$tmp/geoserver-provider-set.out" 2> "$tmp/geoserver-provider-set.err" || {
+  command -p -- cat "$tmp/geoserver-provider-set.err" >&2
+  fail 'cannot configure exact GeoServer service provider'
+}
+geoserver_default_set=1
+
+run_srv start geoserver > "$tmp/srv-start.out" 2> "$tmp/srv-start.err" || {
+  command -p -- cat "$tmp/srv-start.err" >&2
+  run_root=$("$root/m" "$root/bin/sys/state-path" user sys srv log 2>/dev/null) || run_root=
+  [ -z "$run_root" ] || [ ! -f "$run_root/geoserver.log" ] || command -p -- cat "$run_root/geoserver.log" >&2
+  fail 'provider-backed srv start GeoServer failed'
+}
+portable_started=1
+portable_pid=$(command -p -- sed -n 's/^srv: geoserver started pid=//p' "$tmp/srv-start.out" | command -p -- sed -n '1p')
+case "$portable_pid" in ""|*[!0123456789]*) fail 'srv start did not report a valid GeoServer pid' ;; esac
+pid_exists "$portable_pid" || fail 'GeoServer foreground process is not alive after srv start'
+command -p -- sleep 2
+pid_exists "$portable_pid" || fail 'GeoServer provider did not remain foreground after launch'
+
+missing_selector="geoserver@9.9.9!$osarch"
+run_pkg provider default geoserver "$missing_selector" > "$tmp/geoserver-missing-default.out" 2> "$tmp/geoserver-missing-default.err" || {
+  command -p -- cat "$tmp/geoserver-missing-default.err" >&2
+  fail 'cannot change GeoServer selector intent while service is running'
+}
+
+run_srv stop -f geoserver > "$tmp/srv-stop.out" 2> "$tmp/srv-stop.err" || {
+  command -p -- cat "$tmp/srv-stop.err" >&2
+  fail 'srv stop failed after GeoServer facility default changed'
+}
+wait_pid_gone "$portable_pid" || fail 'GeoServer process remained alive after srv stop'
+portable_started=0
+
+run_pkg provider default geoserver "$geoserver_identity" > "$tmp/geoserver-provider-restore.out" 2> "$tmp/geoserver-provider-restore.err" || {
+  command -p -- cat "$tmp/geoserver-provider-restore.err" >&2
+  fail 'cannot restore exact GeoServer provider'
+}
+
+run_srv host user install geoserver > "$tmp/host-install.out" 2> "$tmp/host-install.err" || {
+  command -p -- cat "$tmp/host-install.err" >&2
+  fail 'cannot install GeoServer user host integration'
+}
+host_installed=1
+[ -f "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
+  fail 'GeoServer host manifest was not persisted as a regular file'
+
+run_srv host user start geoserver > "$tmp/host-start.out" 2> "$tmp/host-start.err" || {
+  command -p -- cat "$tmp/host-start.err" >&2
+  fail 'cannot start hosted GeoServer'
+}
+host_pid1=$(wait_host_pid) || fail 'host supervisor did not retain a live GeoServer foreground process'
+
+run_srv host user restart geoserver > "$tmp/host-restart.out" 2> "$tmp/host-restart.err" || {
+  command -p -- cat "$tmp/host-restart.err" >&2
+  fail 'cannot restart hosted GeoServer'
+}
+host_pid2=$(wait_host_pid "$host_pid1") || fail 'host restart did not produce a new live GeoServer process'
+wait_pid_gone "$host_pid1" || fail 'previous GeoServer host process remained alive after restart'
+
+run_srv host user stop geoserver > "$tmp/host-stop.out" 2> "$tmp/host-stop.err" || {
+  command -p -- cat "$tmp/host-stop.err" >&2
+  fail 'cannot stop hosted GeoServer'
+}
+wait_pid_gone "$host_pid2" || fail 'GeoServer host process remained alive after host stop'
+
+run_srv host user uninstall geoserver > "$tmp/host-uninstall.out" 2> "$tmp/host-uninstall.err" || {
+  command -p -- cat "$tmp/host-uninstall.err" >&2
+  fail 'cannot uninstall GeoServer user host integration'
+}
+host_installed=0
+[ ! -e "$host_manifest" ] && [ ! -L "$host_manifest" ] ||
+  fail 'GeoServer host manifest remained after uninstall'
+
+printf 'geoserver=%s\n' "$geoserver_identity"
+printf 'java-provider=%s\n' "$temurin_identity"
+printf 'portable-service=ok\n'
+printf 'host-user-service=ok\n'
+
+exit 0
