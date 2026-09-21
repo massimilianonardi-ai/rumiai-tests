@@ -81,6 +81,18 @@ then
   raw_probe root-accept -H 'Accept: application/json' -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/?format=json'
   raw_probe root-rest -H 'Accept: application/json' -- 'https://sourceforge.net/projects/geoserver/files/GeoServer/'
   raw_probe file-resource -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/geoserver-$version-bin.zip"
+  raw_probe file-format-json -H 'Accept: application/json' -- "https://sourceforge.net/projects/geoserver/files/GeoServer/$version/geoserver-$version-bin.zip?format=json"
+  raw_probe release-rss -- "https://sourceforge.net/projects/geoserver/rss?path=/GeoServer/$version/"
+  if [ -f "$tmp/release-rss.body" ]
+  then
+    LC_ALL=C command -p -- awk '
+      /geoserver-3[.]0[.]1-bin[.]zip|filesize|hash/ {
+        line=$0
+        gsub(/[[:space:]]+/, " ", line)
+        print "rss: " substr(line,1,500)
+      }
+    ' "$tmp/release-rss.body" >&2
+  fi
   fail "live GeoServer exact-version resolution failed with status $status"
 fi
 [ "$resolved" = "$version" ] ||
