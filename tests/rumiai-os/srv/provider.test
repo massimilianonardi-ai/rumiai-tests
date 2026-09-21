@@ -287,6 +287,16 @@ invalid_status=$?
 
 run_pkg provider default -u -- "$facility" > "$tmp/default-unset.out" 2> "$tmp/default-unset.err" ||
   fail 'cannot remove service facility default'
+
+run_srv start "$facility" > "$tmp/no-default-start.out" 2> "$tmp/no-default-start.err"
+no_default_status=$?
+[ "$no_default_status" -eq 1 ] || {
+  command -p -- cat "$tmp/no-default-start.err" >&2
+  fail "service without provider default returned $no_default_status instead of 1"
+}
+[ ! -e "$legacy_marker" ] ||
+  fail 'service without provider default fell back to PATH'
+
 run_pkg default -u -- "$package" > "$tmp/package-default-unset.out" 2> "$tmp/package-default-unset.err" ||
   fail 'cannot remove provider package default'
 
