@@ -1,0 +1,284 @@
+grep: create: No such file or directory
+grep: empty: No such file or directory
+grep: input: No such file or directory
+grep: fixture
+    printf abcnxyz > "$file_path" || error cannot: No such file or directory
+grep: create: No such file or directory
+grep: file: No such file or directory
+grep: fixture
+    printf Qabcnxyz > "$expected" || error cannot: No such file or directory
+grep: create: No such file or directory
+grep: file: No such file or directory
+grep: expectation
+    before=$(directory_names "$tmp/files") ||
+      error cannot: No such file or directory
+grep: inspect: No such file or directory
+grep: file: No such file or directory
+grep: fixture: No such file or directory
+grep: directory
+    run_darwin file-save file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" file-save 0 ||
+      fail Darwin: No such file or directory
+grep: file: No such file or directory
+grep: editing: No such file or directory
+grep: failed
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail Darwin: No such file or directory
+grep: file: No such file or directory
+grep: save: No such file or directory
+grep: produced: No such file or directory
+grep: unexpected: No such file or directory
+grep: document
+    [ ! -s "$output" ] || fail Darwin: No such file or directory
+grep: file: No such file or directory
+grep: save: No such file or directory
+grep: emitted: No such file or directory
+grep: stdout
+    [ ! -s "$error_file" ] || fail Darwin: No such file or directory
+grep: file: No such file or directory
+grep: save: No such file or directory
+grep: emitted: No such file or directory
+grep: stderr
+    after=$(directory_names "$tmp/files") ||
+      error cannot: No such file or directory
+grep: re-inspect: No such file or directory
+grep: file: No such file or directory
+grep: fixture: No such file or directory
+grep: directory
+    [ "$before" = "$after" ] || fail Darwin: No such file or directory
+grep: file: No such file or directory
+grep: save: No such file or directory
+grep: created: No such file or directory
+grep: collateral: No such file or directory
+grep: files
+
+    new_path=$tmp/files/new.txt
+    rm -f "$new_path" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: new-file: No such file or directory
+grep: fixture
+    : > "$output" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: new-file: No such file or directory
+grep: stdout
+    : > "$error_file" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: new-file: No such file or directory
+grep: stderr
+    run_darwin new-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$new_path" file-save 0 ||
+      fail Darwin: No such file or directory
+grep: new-file: No such file or directory
+grep: editing: No such file or directory
+grep: failed
+    printf Q > "$expected" || error cannot: No such file or directory
+grep: create: No such file or directory
+grep: new-file: No such file or directory
+grep: expectation
+    cmp "$expected" "$new_path" >/dev/null 2>&1 ||
+      fail Darwin: No such file or directory
+grep: new-file: No such file or directory
+grep: save: No such file or directory
+grep: produced: No such file or directory
+grep: unexpected: No such file or directory
+grep: document
+    [ "$(stat -f %Lp "$new_path" 2>/dev/null)" = 600 ] ||
+      fail Darwin: No such file or directory
+grep: new: No such file or directory
+grep: file: No such file or directory
+grep: was: No such file or directory
+grep: not: No such file or directory
+grep: created: No such file or directory
+grep: with: No such file or directory
+grep: mode: No such file or directory
+grep: 0600
+    [ ! -s "$output" ] || fail Darwin: No such file or directory
+grep: new-file: No such file or directory
+grep: save: No such file or directory
+grep: emitted: No such file or directory
+grep: stdout
+    [ ! -s "$error_file" ] || fail Darwin: No such file or directory
+grep: new-file: No such file or directory
+grep: save: No such file or directory
+grep: emitted: No such file or directory
+grep: stderr
+
+    empty_path=$tmp/files/empty.txt
+    rm -f "$empty_path" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: empty-file: No such file or directory
+grep: fixture
+    : > "$output" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: empty-file: No such file or directory
+grep: stdout
+    : > "$error_file" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: empty-file: No such file or directory
+grep: stderr
+    run_darwin empty-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$empty_path" save 0 ||
+      fail Darwin: No such file or directory
+grep: empty: No such file or directory
+grep: new-file: No such file or directory
+grep: save: No such file or directory
+grep: failed
+    [ -f "$empty_path" ] && [ ! -s "$empty_path" ] ||
+      fail Darwin: No such file or directory
+grep: empty: No such file or directory
+grep: new-file: No such file or directory
+grep: save: No such file or directory
+grep: did: No such file or directory
+grep: not: No such file or directory
+grep: create: No such file or directory
+grep: an: No such file or directory
+grep: empty: No such file or directory
+grep: file
+    [ "$(stat -f %Lp "$empty_path" 2>/dev/null)" = 600 ] ||
+      fail Darwin: No such file or directory
+grep: empty: No such file or directory
+grep: new: No such file or directory
+grep: file: No such file or directory
+grep: was: No such file or directory
+grep: not: No such file or directory
+grep: created: No such file or directory
+grep: with: No such file or directory
+grep: mode: No such file or directory
+grep: 0600
+
+    cancel_new_path=$tmp/files/cancel-new.txt
+    rm -f "$cancel_new_path" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: new-file: No such file or directory
+grep: cancel: No such file or directory
+grep: fixture
+    : > "$output" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: new-file: No such file or directory
+grep: cancel: No such file or directory
+grep: stdout
+    : > "$error_file" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: new-file: No such file or directory
+grep: cancel: No such file or directory
+grep: stderr
+    run_darwin cancel-new file "$tmp/empty.input" "$output" "$error_file" \
+      "$cancel_new_path" cancel 1 ||
+      fail Darwin: No such file or directory
+grep: new-file: No such file or directory
+grep: cancellation: No such file or directory
+grep: failed
+    [ ! -e "$cancel_new_path" ] && [ ! -L "$cancel_new_path" ] ||
+      fail Darwin: No such file or directory
+grep: cancel: No such file or directory
+grep: created: No such file or directory
+grep: the: No such file or directory
+grep: new-file: No such file or directory
+grep: pathname
+
+    printf sensitive > "$file_path" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: cancel: No such file or directory
+grep: fixture
+    cp "$file_path" "$expected" || error cannot: No such file or directory
+grep: create: No such file or directory
+grep: cancel: No such file or directory
+grep: expectation
+    : > "$output" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: cancel: No such file or directory
+grep: stdout
+    : > "$error_file" || error cannot: No such file or directory
+grep: reset: No such file or directory
+grep: cancel: No such file or directory
+grep: stderr
+    before=$(directory_names "$tmp/files") ||
+      error cannot: No such file or directory
+grep: inspect: No such file or directory
+grep: cancel: No such file or directory
+grep: fixture: No such file or directory
+grep: directory
+    run_darwin cancel file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" cancel 1 ||
+      fail Darwin: No such file or directory
+grep: cancellation: No such file or directory
+grep: failed
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail Darwin: No such file or directory
+grep: cancel: No such file or directory
+grep: modified: No such file or directory
+grep: the: No such file or directory
+grep: file
+    [ ! -s "$output" ] || fail Darwin: No such file or directory
+grep: cancel: No such file or directory
+grep: emitted: No such file or directory
+grep: stdout
+    [ ! -s "$error_file" ] || fail Darwin: No such file or directory
+grep: cancel: No such file or directory
+grep: emitted: No such file or directory
+grep: stderr
+    after=$(directory_names "$tmp/files") ||
+      error cannot: No such file or directory
+grep: re-inspect: No such file or directory
+grep: cancel: No such file or directory
+grep: fixture: No such file or directory
+grep: directory
+    [ "$before" = "$after" ] || fail Darwin: No such file or directory
+grep: cancel: No such file or directory
+grep: created: No such file or directory
+grep: collateral: No such file or directory
+grep: files
+    ;;
+
+  *)
+    skip "no scripted TTY driver is defined for $system"
+    ;;
+esac
+
+bad_path=$tmp/files/bad.txt
+bad_out=$tmp/bad.out
+bad_err=$tmp/bad.err
+printf saferunsafe > "$bad_path" ||
+  error cannot: No such file or directory
+grep: create: No such file or directory
+grep: unsupported-input: No such file or directory
+grep: fixture
+
+"$m_path" "$command_path" "$bad_path" > "$bad_out" 2> "$bad_err"
+status=$?
+[ "$status" -eq 2 ] || fail "unsupported control content status is $status"
+[ ! -s "$bad_out" ] || fail unsupported: No such file or directory
+grep: control: No such file or directory
+grep: content: No such file or directory
+grep: emitted: No such file or directory
+grep: stdout
+grep -F safe "$bad_err" >/dev/null 2>&1 &&
+  fail unsupported-input: No such file or directory
+grep: diagnostic: No such file or directory
+grep: leaked: No such file or directory
+grep: document: No such file or directory
+grep: content
+grep -F unsafe "$bad_err" >/dev/null 2>&1 &&
+  fail unsupported-input: No such file or directory
+grep: diagnostic: No such file or directory
+grep: leaked: No such file or directory
+grep: document: No such file or directory
+grep: content
+printf saferunsafe > "$tmp/bad.expected" ||
+  error cannot: No such file or directory
+grep: create: No such file or directory
+grep: unsupported-input: No such file or directory
+grep: expectation
+cmp "$tmp/bad.expected" "$bad_path" >/dev/null 2>&1 ||
+  fail unsupported: No such file or directory
+grep: control: No such file or directory
+grep: input: No such file or directory
+grep: was: No such file or directory
+grep: rewritten
+
+exit 0
+ "$tput_log" 2>/dev/null || :)
+    cnorm_count=$(grep -c ^cnorm: No such file or directory
+/Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/vsed/pty.test: command substitution: line 927: syntax error near unexpected token `;;'
+/Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/vsed/pty.test: command substitution: line 927: `    ;;'
+rumiai-os/vsed/pty.test: no scripted TTY driver is defined for Darwin
