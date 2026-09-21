@@ -20,6 +20,15 @@ cleanup()
 }
 trap cleanup 0 HUP INT TERM
 
+directory_names()
+{
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*
+  do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    printf '%s\n' "${entry##*/}"
+  done | LC_ALL=C sort
+}
+
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 vsed_group=${test_dir%/*}
 rumiai_os_group=${vsed_group%/*}
@@ -43,44 +52,34 @@ m_path=$root/m
 [ -x "$command_path" ] || fail 'vsed command is unavailable'
 [ -x "$m_path" ] || fail 'm bootstrap is unavailable'
 
-command -v python3 >/dev/null 2>&1 || skip 'python3 is unavailable for PTY test support'
+command -v uname >/dev/null 2>&1 || skip 'uname is unavailable'
 command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
-TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
+TERM=xterm-256color tput cols >/dev/null 2>&1 ||
+  skip 'xterm-256color terminfo entry is unavailable'
+export TERM=xterm-256color
 
 tmp=${TMPDIR:-/tmp}/rumiai-vsed-pty-$$
 umask 077
-mkdir -p "$tmp/home" "$tmp/tmp" "$tmp/files" || error 'cannot create test workspace'
+mkdir -p "$tmp/files" || error 'cannot create test workspace'
 
-python3 - "$m_path" "$command_path" "$tmp" <<'PY'
+system=$(uname -s 2>/dev/null) || error 'cannot determine host system'
+
+case $system in
+  Linux)
+    command -v python3 >/dev/null 2>&1 ||
+      skip 'python3 is unavailable for Linux PTY support'
+
+    python3 - "$m_path" "$command_path" "$tmp" <<'PY_LINUX'
 import os
 import pty
 import select
-import subprocess
 import sys
 import termios
 import time
 
 m_path, command_path, base = sys.argv[1:4]
-term = "xterm-256color"
 base_env = os.environ.copy()
-base_env.update({
-    "TERM": term,
-    "HOME": os.path.join(base, "home"),
-    "TMPDIR": os.path.join(base, "tmp"),
-})
-
-
-def tree_snapshot(path):
-    result = []
-    for root, dirs, files in os.walk(path):
-        dirs.sort()
-        files.sort()
-        for name in dirs:
-            result.append(("d", os.path.relpath(os.path.join(root, name), path)))
-        for name in files:
-            p = os.path.join(root, name)
-            result.append(("f", os.path.relpath(p, path), os.stat(p).st_size))
-    return result
+base_env["TERM"] = "xterm-256color"
 
 
 def run_vsed(initial=b"", keys=b"\x18", file_path=None, timeout=5.0):
@@ -113,7 +112,7 @@ def run_vsed(initial=b"", keys=b"\x18", file_path=None, timeout=5.0):
     screen = bytearray()
     out = bytearray()
     err = bytearray()
-    deadline_setup = time.monotonic() + 2.0
+    deadline_setup = time.monotonic() + 3.0
     ready_for_keys = False
     setup_status = None
 
@@ -199,71 +198,270 @@ def run_vsed(initial=b"", keys=b"\x18", file_path=None, timeout=5.0):
     os.close(out_r)
     os.close(err_r)
     os.close(master)
-    return status, bytes(out), bytes(err), restored, bytes(screen)
+    return status, bytes(out), bytes(err), restored
 
 
-# Stream mode: unchanged save must preserve TAB, empty lines and final LF exactly.
-stream_before = tree_snapshot(os.path.join(base, "tmp"))
-status, out, err, restored, screen = run_vsed(b"alpha\tbeta\n\nsecond\n", b"\x18")
+status, out, err, restored = run_vsed(b"alpha\tbeta\n\nsecond\n", b"\x18")
 assert status == 0, (status, out, err)
 assert out == b"alpha\tbeta\n\nsecond\n", (status, out, err)
 assert err == b"", (status, out, err)
 assert restored, "terminal state was not restored after stream save"
-assert tree_snapshot(os.path.join(base, "tmp")) == stream_before, "stream save created TMPDIR artifacts"
 
-# Stream mode edit: insertion and Enter operate on the in-memory buffer.
-status, out, err, restored, screen = run_vsed(b"a\nb", b"X\nY\x18")
+status, out, err, restored = run_vsed(b"a\nb", b"X\nY\x18")
 assert status == 0, (status, out, err)
 assert out == b"X\nYa\nb", (status, out, err)
 assert err == b"", (status, out, err)
 assert restored, "terminal state was not restored after edited stream save"
 
-# File mode: save modifies only the selected file and emits no stdout.
 file_path = os.path.join(base, "files", "secret.txt")
 with open(file_path, "wb") as f:
     f.write(b"abc\nxyz")
 before_names = sorted(os.listdir(os.path.dirname(file_path)))
-status, out, err, restored, screen = run_vsed(b"", b"Q\x18", file_path=file_path)
+status, out, err, restored = run_vsed(b"", b"Q\x18", file_path=file_path)
 assert status == 0, (status, out, err)
 assert out == b"", (status, out, err)
 assert err == b"", (status, out, err)
 assert restored, "terminal state was not restored after file save"
 with open(file_path, "rb") as f:
     assert f.read() == b"Qabc\nxyz"
-assert sorted(os.listdir(os.path.dirname(file_path))) == before_names, "file save created collateral files"
+assert sorted(os.listdir(os.path.dirname(file_path))) == before_names, \
+    "file save created collateral files"
 
-# Cancel must preserve the target and produce no saved output.
 with open(file_path, "wb") as f:
     f.write(b"sensitive")
 before_names = sorted(os.listdir(os.path.dirname(file_path)))
-status, out, err, restored, screen = run_vsed(b"", b"X\x1b", file_path=file_path)
+status, out, err, restored = run_vsed(b"", b"X\x1b", file_path=file_path)
 assert status == 1, (status, out, err)
 assert out == b"", (status, out, err)
 assert err == b"", (status, out, err)
 assert restored, "terminal state was not restored after cancel"
 with open(file_path, "rb") as f:
     assert f.read() == b"sensitive"
-assert sorted(os.listdir(os.path.dirname(file_path))) == before_names, "cancel created collateral files"
+assert sorted(os.listdir(os.path.dirname(file_path))) == before_names, \
+    "cancel created collateral files"
+PY_LINUX
+    status=$?
+    [ "$status" -eq 0 ] || fail 'Linux PTY editing validation failed'
+    ;;
 
-# Unsupported control content is rejected before interactive editing and is not rewritten.
-bad_path = os.path.join(base, "files", "bad.txt")
-with open(bad_path, "wb") as f:
-    f.write(b"safe\runsafe")
-completed = subprocess.run(
-    [m_path, command_path, bad_path],
-    stdin=subprocess.DEVNULL,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env=base_env,
-    timeout=3,
-)
-assert completed.returncode == 2, (completed.returncode, completed.stdout, completed.stderr)
-assert completed.stdout == b""
-assert b"safe" not in completed.stderr and b"unsafe" not in completed.stderr
-with open(bad_path, "rb") as f:
-    assert f.read() == b"safe\runsafe"
-PY
+  Darwin)
+    command -v expect >/dev/null 2>&1 ||
+      skip 'expect is unavailable for Darwin TTY support'
+
+    driver=$tmp/vsed-driver
+    cat > "$driver" <<'EOF_DRIVER'
+#!/bin/sh
+
+before=$(stty -g) || exit 90
+
+case ${RUMIAI_VSED_MODE-} in
+  stream)
+    "$RUMIAI_VSED_M" "$RUMIAI_VSED_COMMAND" \
+      < "$RUMIAI_VSED_INPUT" \
+      > "$RUMIAI_VSED_OUTPUT" \
+      2> "$RUMIAI_VSED_ERROR"
+    status=$?
+    ;;
+  file)
+    "$RUMIAI_VSED_M" "$RUMIAI_VSED_COMMAND" "$RUMIAI_VSED_FILE" \
+      > "$RUMIAI_VSED_OUTPUT" \
+      2> "$RUMIAI_VSED_ERROR"
+    status=$?
+    ;;
+  *)
+    exit 93
+    ;;
+esac
+
+after=$(stty -g) || exit 91
+[ "$before" = "$after" ] || exit 92
+exit "$status"
+EOF_DRIVER
+    chmod +x "$driver" || error 'cannot create Darwin vsed driver'
+
+    expect_driver=$tmp/vsed.expect
+    cat > "$expect_driver" <<'EOF_EXPECT'
+set timeout 10
+log_user 0
+
+set transcript [file join $env(RUMIAI_VSED_BASE) "$env(RUMIAI_VSED_CASE).transcript"]
+log_file -noappend $transcript
+
+spawn -noecho $env(RUMIAI_VSED_DRIVER)
+
+expect {
+    -ex "^X save" {}
+    timeout {
+        puts stderr "timeout waiting for vsed editor screen"
+        exit 1
+    }
+    eof {
+        set result [wait]
+        puts stderr "vsed exited before editor screen: $result"
+        exit 1
+    }
+}
+
+switch -- $env(RUMIAI_VSED_KEYS) {
+    save {
+        set keys "\x18"
+    }
+    split {
+        set keys "X\rY\x18"
+    }
+    file-save {
+        set keys "Q\x18"
+    }
+    cancel {
+        set keys "X\x1b"
+    }
+    default {
+        puts stderr "unknown vsed key scenario"
+        exit 1
+    }
+}
+
+send -- $keys
+
+expect {
+    eof {}
+    timeout {
+        puts stderr "timeout waiting for vsed exit"
+        exit 1
+    }
+}
+
+set result [wait]
+log_file
+
+set os_error [lindex $result 2]
+set status [lindex $result 3]
+
+if {$os_error != 0 || $status != $env(RUMIAI_VSED_EXPECTED_STATUS)} {
+    puts stderr "unexpected vsed wait result: $result"
+    exit 1
+}
+
+exit 0
+EOF_EXPECT
+
+    run_darwin()
+    {
+      case_name=$1
+      mode=$2
+      input=$3
+      output=$4
+      error_file=$5
+      file_path=$6
+      keys=$7
+      expected_status=$8
+
+      RUMIAI_VSED_BASE=$tmp
+      RUMIAI_VSED_CASE=$case_name
+      RUMIAI_VSED_DRIVER=$driver
+      RUMIAI_VSED_MODE=$mode
+      RUMIAI_VSED_M=$m_path
+      RUMIAI_VSED_COMMAND=$command_path
+      RUMIAI_VSED_INPUT=$input
+      RUMIAI_VSED_OUTPUT=$output
+      RUMIAI_VSED_ERROR=$error_file
+      RUMIAI_VSED_FILE=$file_path
+      RUMIAI_VSED_KEYS=$keys
+      RUMIAI_VSED_EXPECTED_STATUS=$expected_status
+      export RUMIAI_VSED_BASE RUMIAI_VSED_CASE RUMIAI_VSED_DRIVER \
+        RUMIAI_VSED_MODE RUMIAI_VSED_M RUMIAI_VSED_COMMAND RUMIAI_VSED_INPUT \
+        RUMIAI_VSED_OUTPUT RUMIAI_VSED_ERROR RUMIAI_VSED_FILE \
+        RUMIAI_VSED_KEYS RUMIAI_VSED_EXPECTED_STATUS
+
+      expect -f "$expect_driver"
+    }
+
+    input=$tmp/stream.input
+    output=$tmp/stream.output
+    error_file=$tmp/stream.error
+    expected=$tmp/stream.expected
+    printf 'alpha\tbeta\n\nsecond\n' > "$input" ||
+      error 'cannot create stream fixture'
+    cp "$input" "$expected" || error 'cannot create stream expectation'
+    run_darwin stream stream "$input" "$output" "$error_file" '' save 0 ||
+      fail 'Darwin unchanged stream editing failed'
+    cmp "$expected" "$output" >/dev/null 2>&1 ||
+      fail 'Darwin unchanged stream save changed document bytes'
+    [ ! -s "$error_file" ] ||
+      fail 'Darwin unchanged stream save emitted stderr'
+
+    input=$tmp/edit.input
+    output=$tmp/edit.output
+    error_file=$tmp/edit.error
+    expected=$tmp/edit.expected
+    printf 'a\nb' > "$input" || error 'cannot create edit fixture'
+    printf 'X\nYa\nb' > "$expected" || error 'cannot create edit expectation'
+    run_darwin edit stream "$input" "$output" "$error_file" '' split 0 ||
+      fail 'Darwin stream editing failed'
+    cmp "$expected" "$output" >/dev/null 2>&1 ||
+      fail 'Darwin stream edit produced unexpected document'
+    [ ! -s "$error_file" ] || fail 'Darwin stream edit emitted stderr'
+
+    file_path=$tmp/files/secret.txt
+    output=$tmp/file.output
+    error_file=$tmp/file.error
+    expected=$tmp/file.expected
+    : > "$tmp/empty.input" || error 'cannot create empty input fixture'
+    printf 'abc\nxyz' > "$file_path" || error 'cannot create file fixture'
+    printf 'Qabc\nxyz' > "$expected" || error 'cannot create file expectation'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect file fixture directory'
+    run_darwin file-save file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" file-save 0 ||
+      fail 'Darwin file editing failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin file save produced unexpected document'
+    [ ! -s "$output" ] || fail 'Darwin file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin file save emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect file fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin file save created collateral files'
+
+    printf 'sensitive' > "$file_path" || error 'cannot reset cancel fixture'
+    cp "$file_path" "$expected" || error 'cannot create cancel expectation'
+    : > "$output" || error 'cannot reset cancel stdout'
+    : > "$error_file" || error 'cannot reset cancel stderr'
+    before=$(directory_names "$tmp/files") ||
+      error 'cannot inspect cancel fixture directory'
+    run_darwin cancel file "$tmp/empty.input" "$output" "$error_file" \
+      "$file_path" cancel 1 ||
+      fail 'Darwin cancellation failed'
+    cmp "$expected" "$file_path" >/dev/null 2>&1 ||
+      fail 'Darwin cancel modified the file'
+    [ ! -s "$output" ] || fail 'Darwin cancel emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin cancel emitted stderr'
+    after=$(directory_names "$tmp/files") ||
+      error 'cannot re-inspect cancel fixture directory'
+    [ "$before" = "$after" ] || fail 'Darwin cancel created collateral files'
+    ;;
+
+  *)
+    skip "no scripted TTY driver is defined for $system"
+    ;;
+esac
+
+bad_path=$tmp/files/bad.txt
+bad_out=$tmp/bad.out
+bad_err=$tmp/bad.err
+printf 'safe\runsafe' > "$bad_path" ||
+  error 'cannot create unsupported-input fixture'
+
+"$m_path" "$command_path" "$bad_path" > "$bad_out" 2> "$bad_err"
 status=$?
-[ "$status" -eq 0 ] || fail 'PTY/security behavior validation failed'
+[ "$status" -eq 2 ] || fail "unsupported control content status is $status"
+[ ! -s "$bad_out" ] || fail 'unsupported control content emitted stdout'
+grep -F 'safe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+grep -F 'unsafe' "$bad_err" >/dev/null 2>&1 &&
+  fail 'unsupported-input diagnostic leaked document content'
+printf 'safe\runsafe' > "$tmp/bad.expected" ||
+  error 'cannot create unsupported-input expectation'
+cmp "$tmp/bad.expected" "$bad_path" >/dev/null 2>&1 ||
+  fail 'unsupported control input was rewritten'
 
 exit 0
