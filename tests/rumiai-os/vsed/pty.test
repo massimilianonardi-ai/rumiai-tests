@@ -73,6 +73,7 @@ case $system in
 import os
 import pty
 import select
+import stat
 import sys
 import termios
 import time
@@ -82,32 +83,42 @@ base_env = os.environ.copy()
 base_env["TERM"] = "xterm-256color"
 
 
-def run_vsed(initial=b"", keys=b"\x18", file_path=None, timeout=5.0):
-    in_r, in_w = os.pipe()
+def run_vsed(initial=b"", keys=b"\x18", file_path=None, timeout=5.0, stdin_terminal=False):
+    in_r = in_w = None
+    if not stdin_terminal:
+        in_r, in_w = os.pipe()
+
     out_r, out_w = os.pipe()
     err_r, err_w = os.pipe()
     pid, master = pty.fork()
 
     if pid == 0:
-        os.dup2(in_r, 0)
+        if not stdin_terminal:
+            os.dup2(in_r, 0)
         os.dup2(out_w, 1)
         os.dup2(err_w, 2)
-        for fd in (in_r, in_w, out_r, out_w, err_r, err_w):
+
+        fds = [out_r, out_w, err_r, err_w]
+        if not stdin_terminal:
+            fds.extend([in_r, in_w])
+        for fd in fds:
             try:
                 os.close(fd)
             except OSError:
                 pass
+
         argv = [m_path, command_path]
         if file_path is not None:
             argv.append(file_path)
         os.execve(m_path, argv, base_env)
 
-    os.close(in_r)
     os.close(out_w)
     os.close(err_w)
 
-    os.write(in_w, initial)
-    os.close(in_w)
+    if not stdin_terminal:
+        os.close(in_r)
+        os.write(in_w, initial)
+        os.close(in_w)
 
     screen = bytearray()
     out = bytearray()
@@ -207,6 +218,13 @@ assert out == b"alpha\tbeta\n\nsecond\n", (status, out, err)
 assert err == b"", (status, out, err)
 assert restored, "terminal state was not restored after stream save"
 
+# No-operand invocation with terminal stdin must start from an empty buffer.
+status, out, err, restored = run_vsed(keys=b"N\x18", stdin_terminal=True)
+assert status == 0, (status, out, err)
+assert out == b"N", (status, out, err)
+assert err == b"", (status, out, err)
+assert restored, "terminal state was not restored after empty interactive save"
+
 status, out, err, restored = run_vsed(b"a\nb", b"X\nY\x18")
 assert status == 0, (status, out, err)
 assert out == b"X\nYa\nb", (status, out, err)
@@ -226,6 +244,37 @@ with open(file_path, "rb") as f:
     assert f.read() == b"Qabc\nxyz"
 assert sorted(os.listdir(os.path.dirname(file_path))) == before_names, \
     "file save created collateral files"
+
+# A missing file operand starts empty and is created only on save.
+new_path = os.path.join(base, "files", "new.txt")
+assert not os.path.lexists(new_path)
+status, out, err, restored = run_vsed(b"", b"N\x18", file_path=new_path)
+assert status == 0, (status, out, err)
+assert out == b"", (status, out, err)
+assert err == b"", (status, out, err)
+assert restored, "terminal state was not restored after new-file save"
+with open(new_path, "rb") as f:
+    assert f.read() == b"N"
+assert stat.S_IMODE(os.stat(new_path).st_mode) == 0o600, \
+    oct(stat.S_IMODE(os.stat(new_path).st_mode))
+
+empty_path = os.path.join(base, "files", "empty.txt")
+assert not os.path.lexists(empty_path)
+status, out, err, restored = run_vsed(b"", b"\x18", file_path=empty_path)
+assert status == 0, (status, out, err)
+assert os.path.isfile(empty_path)
+assert os.path.getsize(empty_path) == 0
+assert stat.S_IMODE(os.stat(empty_path).st_mode) == 0o600, \
+    oct(stat.S_IMODE(os.stat(empty_path).st_mode))
+
+cancel_new_path = os.path.join(base, "files", "cancel-new.txt")
+assert not os.path.lexists(cancel_new_path)
+status, out, err, restored = run_vsed(b"", b"X\x1b", file_path=cancel_new_path)
+assert status == 1, (status, out, err)
+assert out == b"", (status, out, err)
+assert err == b"", (status, out, err)
+assert restored, "terminal state was not restored after new-file cancel"
+assert not os.path.lexists(cancel_new_path), "cancel created the new-file pathname"
 
 with open(file_path, "wb") as f:
     f.write(b"sensitive")
@@ -285,6 +334,12 @@ case ${RUMIAI_VSED_MODE-} in
       2> "$RUMIAI_VSED_ERROR"
     status=$?
     ;;
+  stream-terminal)
+    "$RUMIAI_VSED_M" "$RUMIAI_VSED_COMMAND" \
+      > "$RUMIAI_VSED_OUTPUT" \
+      2> "$RUMIAI_VSED_ERROR"
+    status=$?
+    ;;
   file)
     "$RUMIAI_VSED_M" "$RUMIAI_VSED_COMMAND" "$RUMIAI_VSED_FILE" \
       > "$RUMIAI_VSED_OUTPUT" \
@@ -335,6 +390,9 @@ expect {
 switch -- $env(RUMIAI_VSED_KEYS) {
     save {
         set keys "\x18"
+    }
+    terminal-save {
+        set keys "N\x18"
     }
     split {
         set keys "X\rY\x18"
@@ -429,6 +487,19 @@ EOF_EXPECT
     [ ! -s "$error_file" ] ||
       fail 'Darwin unchanged stream save emitted stderr'
 
+    : > "$tmp/empty.input" || error 'cannot create empty input fixture'
+    output=$tmp/terminal.output
+    error_file=$tmp/terminal.error
+    expected=$tmp/terminal.expected
+    printf 'N' > "$expected" || error 'cannot create terminal-input expectation'
+    run_darwin terminal-empty stream-terminal "$tmp/empty.input" "$output" \
+      "$error_file" '' terminal-save 0 ||
+      fail 'Darwin empty terminal-stdin editing failed'
+    cmp "$expected" "$output" >/dev/null 2>&1 ||
+      fail 'Darwin terminal-stdin session did not start empty'
+    [ ! -s "$error_file" ] ||
+      fail 'Darwin terminal-stdin session emitted stderr'
+
     input=$tmp/edit.input
     output=$tmp/edit.output
     error_file=$tmp/edit.error
@@ -460,6 +531,43 @@ EOF_EXPECT
     after=$(directory_names "$tmp/files") ||
       error 'cannot re-inspect file fixture directory'
     [ "$before" = "$after" ] || fail 'Darwin file save created collateral files'
+
+    new_path=$tmp/files/new.txt
+    rm -f "$new_path" || error 'cannot reset new-file fixture'
+    : > "$output" || error 'cannot reset new-file stdout'
+    : > "$error_file" || error 'cannot reset new-file stderr'
+    run_darwin new-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$new_path" file-save 0 ||
+      fail 'Darwin new-file editing failed'
+    printf 'Q' > "$expected" || error 'cannot create new-file expectation'
+    cmp "$expected" "$new_path" >/dev/null 2>&1 ||
+      fail 'Darwin new-file save produced unexpected document'
+    [ "$(stat -f '%Lp' "$new_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin new file was not created with mode 0600'
+    [ ! -s "$output" ] || fail 'Darwin new-file save emitted stdout'
+    [ ! -s "$error_file" ] || fail 'Darwin new-file save emitted stderr'
+
+    empty_path=$tmp/files/empty.txt
+    rm -f "$empty_path" || error 'cannot reset empty-file fixture'
+    : > "$output" || error 'cannot reset empty-file stdout'
+    : > "$error_file" || error 'cannot reset empty-file stderr'
+    run_darwin empty-file file "$tmp/empty.input" "$output" "$error_file" \
+      "$empty_path" save 0 ||
+      fail 'Darwin empty new-file save failed'
+    [ -f "$empty_path" ] && [ ! -s "$empty_path" ] ||
+      fail 'Darwin empty new-file save did not create an empty file'
+    [ "$(stat -f '%Lp' "$empty_path" 2>/dev/null)" = 600 ] ||
+      fail 'Darwin empty new file was not created with mode 0600'
+
+    cancel_new_path=$tmp/files/cancel-new.txt
+    rm -f "$cancel_new_path" || error 'cannot reset new-file cancel fixture'
+    : > "$output" || error 'cannot reset new-file cancel stdout'
+    : > "$error_file" || error 'cannot reset new-file cancel stderr'
+    run_darwin cancel-new file "$tmp/empty.input" "$output" "$error_file" \
+      "$cancel_new_path" cancel 1 ||
+      fail 'Darwin new-file cancellation failed'
+    [ ! -e "$cancel_new_path" ] && [ ! -L "$cancel_new_path" ] ||
+      fail 'Darwin cancel created the new-file pathname'
 
     printf 'sensitive' > "$file_path" || error 'cannot reset cancel fixture'
     cp "$file_path" "$expected" || error 'cannot create cancel expectation'

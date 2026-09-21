@@ -45,6 +45,10 @@ command -p sh -n "$command_path" || fail 'vsed is not valid POSIX-shell syntax'
 manual_text=$("$root/m" "$manual_command" --no-pager vsed) || fail 'manual vsed lookup failed'
 printf '%s\n' "$manual_text" | grep -F 'vsed <file>' >/dev/null 2>&1 ||
   fail 'manual does not document file mode'
+printf '%s\n' "$manual_text" | grep -F 'starts immediately with an empty' >/dev/null 2>&1 ||
+  fail 'manual does not document empty terminal-stdin mode'
+printf '%s\n' "$manual_text" | grep -F 'non-existing pathname' >/dev/null 2>&1 ||
+  fail 'manual does not document new-file mode'
 printf '%s\n' "$manual_text" | grep -F 'does not create plaintext temporary' >/dev/null 2>&1 ||
   fail 'manual does not document the memory-only storage guarantee'
 printf '%s\n' "$manual_text" | grep -F 'Ctrl-X' >/dev/null 2>&1 ||
