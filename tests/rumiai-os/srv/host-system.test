@@ -85,6 +85,10 @@ cleanup()
     run_srv host system uninstall "$facility" >/dev/null 2>&1 || :
     run_pkg provider default -u -- "$facility" >/dev/null 2>&1 || :
   fi
+  if [ -n "${dep_facility-}" ]
+  then
+    run_pkg provider default -u -- "$dep_facility" >/dev/null 2>&1 || :
+  fi
 
   if [ -n "${package-}" ] && [ -n "${dep_facility-}" ]
   then
@@ -299,6 +303,13 @@ prepare_dependency_provider > "$tmp/integrate-dep.out" 2> "$tmp/integrate-dep.er
   command -p -- cat "$tmp/integrate-dep.err" >&2
   fail 'cannot integrate dependency provider'
 }
+run_pkg default "$dep_package@1" >/dev/null 2> "$tmp/dep-default.err" ||
+  fail 'cannot select dependency package default'
+run_pkg provider default "$dep_facility" "$dep_package" >/dev/null 2> "$tmp/dep-facility-default.err" || {
+  command -p -- cat "$tmp/dep-facility-default.err" >&2
+  fail 'cannot configure dependency facility default'
+}
+
 prepare_service_provider 1 > "$tmp/integrate-1.out" 2> "$tmp/integrate-1.err" || {
   command -p -- cat "$tmp/integrate-1.err" >&2
   fail 'cannot integrate system service provider version 1'
@@ -308,8 +319,6 @@ prepare_service_provider 2 > "$tmp/integrate-2.out" 2> "$tmp/integrate-2.err" ||
   fail 'cannot integrate system service provider version 2'
 }
 
-run_pkg default "$dep_package@1" >/dev/null 2> "$tmp/dep-default.err" ||
-  fail 'cannot select dependency package default'
 run_pkg default "$package@1" >/dev/null 2> "$tmp/package-default-1.err" ||
   fail 'cannot select service package default version 1'
 run_pkg provider bind "$package" "$dep_facility" "$dep_package" >/dev/null 2> "$tmp/dependency-bind.err" || {
