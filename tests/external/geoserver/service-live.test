@@ -177,6 +177,12 @@ cleanup()
   [ -z "${geoserver_user_state-}" ] || command -p -- rm -rf -- "$geoserver_user_state" 2>/dev/null || :
   [ -z "${temurin_system_state-}" ] || command -p -- rm -rf -- "$temurin_system_state" 2>/dev/null || :
   [ -z "${temurin_user_state-}" ] || command -p -- rm -rf -- "$temurin_user_state" 2>/dev/null || :
+
+  if [ "${system_pkg_state_root_created-0}" -eq 1 ] && [ -n "${system_pkg_state_root-}" ] && [ -n "${sudo_bin-}" ]
+  then
+    "$sudo_bin" -n "$rm_bin" -rf -- "$system_pkg_state_root" 2>/dev/null || :
+  fi
+
   [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -334,6 +340,12 @@ temurin_user_state=${temurin_user_home%/home}
 geoserver_system_service_home=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver home geoserver) ||
   error 'cannot resolve GeoServer system-service state'
 geoserver_system_service_state=${geoserver_system_service_home%/home}
+system_pkg_state_root=${geoserver_system_service_state%/*}
+system_pkg_state_root_created=0
+if [ ! -e "$system_pkg_state_root" ] && [ ! -L "$system_pkg_state_root" ]
+then
+  system_pkg_state_root_created=1
+fi
 system_srv_conf=$("$root/m" "$root/bin/sys/state-path" system sys srv conf) ||
   error 'cannot resolve system srv state'
 system_srv_state=${system_srv_conf%/conf}
