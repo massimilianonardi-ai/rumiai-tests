@@ -252,7 +252,30 @@ PY_LINUX
     cat > "$driver" <<'EOF_DRIVER'
 #!/bin/sh
 
-before=$(stty -g) || exit 90
+tty_state()
+{
+  state=$(stty -g) || return 1
+
+  case $state in
+    *:lflag=*:oflag=*)
+      prefix=${state%%:lflag=*}
+      rest=${state#*:lflag=}
+      lflag_hex=${rest%%:*}
+      suffix=${rest#*:}
+      lflag_dec=$(printf '%d' "0x$lflag_hex" 2>/dev/null) || return 1
+
+      # Darwin PENDIN (0x20000000) is a kernel-managed transient state flag.
+      # Ignore only that bit while preserving every other stty -g field.
+      lflag_dec=$((lflag_dec & ~536870912))
+      printf '%s:lflag=%s:%s\n' "$prefix" "$lflag_dec" "$suffix"
+      ;;
+    *)
+      printf '%s\n' "$state"
+      ;;
+  esac
+}
+
+before=$(tty_state) || exit 90
 
 case ${RUMIAI_VSED_MODE-} in
   stream)
@@ -273,7 +296,7 @@ case ${RUMIAI_VSED_MODE-} in
     ;;
 esac
 
-after=$(stty -g) || exit 91
+after=$(tty_state) || exit 91
 if [ "$before" != "$after" ]
 then
   {
