@@ -44,10 +44,14 @@ jobs:
       - name: Diagnose managed runtime entrypoints
         shell: bash
         run: |
+          workspace="$(pwd)"
           ./rumiai-os/m pkg default nodejs
-          PATH="$(pwd)/rumiai-os/bin/sys:$PATH"
+          PATH="$workspace/rumiai-os/bin/sys:$PATH"
           export PATH
-          "$(pwd)/rumiai-os/bin/sys/pkg" default nodejs
+          "$workspace/rumiai-os/bin/sys/pkg" default nodejs
+          cd rumiai-tests
+          "$workspace/rumiai-os/m" pkg default nodejs
+          "$workspace/rumiai-os/bin/sys/pkg" default nodejs
 
       - name: Run targeted mk permanent tests
         shell: bash
