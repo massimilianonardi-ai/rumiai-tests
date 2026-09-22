@@ -262,8 +262,7 @@ expect_status 1 run_pkg provider default "$facility"
 build_plan="$tmp/build-unsatisfied.plan.json"
 "$command_path" --project "$project" --plan build > "$build_plan" ||
   fail "MK-42 unsatisfied requirement plan failed"
-"$root/m" node - "$build_plan" "$facility" <<'EOF_NODE' ||
-  fail "MK-42 unsatisfied requirement was not preserved in plan"
+"$root/m" node - "$build_plan" "$facility" <<'EOF_NODE' || fail "MK-42 unsatisfied requirement was not preserved in plan"
 const fs = require('fs');
 const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const req = plan.requirements.find(value => value.name === 'tool');
@@ -285,8 +284,7 @@ selected="$(run_pkg provider default "$facility" 2> "$tmp/default-after-build.er
 satisfied_plan="$tmp/build-satisfied.plan.json"
 "$command_path" --project "$project" --plan build > "$satisfied_plan" ||
   fail "MK-43 satisfied requirement plan failed"
-"$root/m" node - "$satisfied_plan" "$provider@1" <<'EOF_NODE' ||
-  fail "MK-43 selected provider was not exposed by the plan"
+"$root/m" node - "$satisfied_plan" "$provider@1" <<'EOF_NODE' || fail "MK-43 selected provider was not exposed by the plan"
 const fs = require('fs');
 const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const req = plan.requirements.find(value => value.name === 'tool');
@@ -322,8 +320,7 @@ run_pkg default "$provider@2" >/dev/null 2> "$tmp/provider-v2-default.err" ||
 provider_changed_plan="$tmp/provider-changed.plan.json"
 "$command_path" --project "$project" --plan incremental > "$provider_changed_plan" ||
   fail "provider-changed incremental plan failed"
-"$root/m" node - "$provider_changed_plan" "$provider@2" <<'EOF_NODE' ||
-  fail "MK-47 provider identity change did not invalidate incremental freshness"
+"$root/m" node - "$provider_changed_plan" "$provider@2" <<'EOF_NODE' || fail "MK-47 provider identity change did not invalidate incremental freshness"
 const fs = require('fs');
 const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const req = plan.requirements.find(value => value.name === 'tool');
@@ -339,8 +336,7 @@ EOF_NODE
 strict_plan="$tmp/strict.plan.json"
 "$command_path" --project "$project" --profile strict --plan build > "$strict_plan" ||
   fail "profile requirement plan failed"
-"$root/m" node - "$strict_plan" <<'EOF_NODE' ||
-  fail "profile did not replace the named requirement"
+"$root/m" node - "$strict_plan" <<'EOF_NODE' || fail "profile did not replace the named requirement"
 const fs = require('fs');
 const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const req = plan.requirements.find(value => value.name === 'tool');
