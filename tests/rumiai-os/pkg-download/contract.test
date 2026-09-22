@@ -231,7 +231,9 @@ size=4
 EOF_DESCRIPTOR
 mirror_target=$(PKG_DOWNLOAD_LIBRARY="$library" PATH="$tmp/bin:/usr/bin:/bin" /bin/sh "$mirror_driver" "$stage" < "$descriptor") ||
   fail 'ordered URL fallback failed'
-[ "$mirror_target" = "$stage/mirror.bin" ] || fail 'mirror fallback returned wrong target'
+stage_real=$(CDPATH= cd -- "$stage" 2>/dev/null && pwd -P) ||
+  error 'cannot resolve canonical staging directory'
+[ "$mirror_target" = "$stage_real/mirror.bin" ] || fail 'mirror fallback returned wrong target'
 [ "$(cat "$mirror_target")" = good ] || fail 'mirror fallback retained wrong candidate content'
 
 descriptor=$tmp/mirror-exhausted
