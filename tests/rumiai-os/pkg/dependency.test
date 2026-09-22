@@ -218,6 +218,15 @@ resolved=$(resolve_consumer 2> "$tmp/resolve-a1.err") || {
 [ "$resolved" = "$facility$tab$provider_a@1" ] ||
   fail "generic facility default resolved unexpectedly: $resolved"
 
+requirement_provider=$(run_pkg requirement resolve "$facility" '>=17' 2> "$tmp/requirement-a1.err") || {
+  cat "$tmp/requirement-a1.err" >&2
+  fail 'PKG-75 system-default requirement query did not resolve provider A v1'
+}
+[ "$requirement_provider" = "$provider_a@1" ] ||
+  fail "PKG-75 requirement query resolved unexpected provider: $requirement_provider"
+expect_status 1 requirement-incompatible run_pkg requirement resolve "$facility" '>17'
+expect_status 2 requirement-invalid-constraint run_pkg requirement resolve "$facility" invalid
+
 # Generic selector follows a later provider package-default change.
 integrate_provider "$provider_a" 2 21 > "$tmp/prova2.out" 2> "$tmp/prova2.err" ||
   fail 'cannot integrate provider A v2'
@@ -227,6 +236,11 @@ resolved=$(resolve_consumer 2> "$tmp/resolve-a2.err") ||
   fail 'generic selector failed after provider package default changed'
 [ "$resolved" = "$facility$tab$provider_a@2" ] ||
   fail 'generic selector did not follow provider package default'
+
+requirement_provider=$(run_pkg requirement resolve "$facility" '>=17' '<25' 2> "$tmp/requirement-a2.err") ||
+  fail 'PKG-75 requirement query did not follow the facility/package default'
+[ "$requirement_provider" = "$provider_a@2" ] ||
+  fail 'PKG-75 requirement query did not resolve provider A v2'
 
 # Explicit consumer binding overrides facility default.
 integrate_provider "$provider_b" 1 25 > "$tmp/provb.out" 2> "$tmp/provb.err" ||
@@ -239,6 +253,11 @@ resolved=$(resolve_consumer 2> "$tmp/resolve-b.err") ||
   fail 'consumer binding did not resolve'
 [ "$resolved" = "$facility$tab$provider_b@1" ] ||
   fail 'consumer binding did not override facility default'
+
+requirement_provider=$(run_pkg requirement resolve "$facility" '>=17' 2> "$tmp/requirement-binding-independent.err") ||
+  fail 'PKG-76 global requirement query failed while a consumer binding existed'
+[ "$requirement_provider" = "$provider_a@2" ] ||
+  fail 'PKG-76 package-consumer binding incorrectly affected global requirement query'
 
 # Explicit version is pinned even when the provider package default is different.
 run_pkg provider bind "$consumer" "$facility" "$provider_a@1" >/dev/null 2> "$tmp/bind-pinned.err" ||
@@ -269,6 +288,7 @@ resolved=$(resolve_consumer 2> "$tmp/resolve-inherited.err") ||
 run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/default-unset.err" ||
   fail 'cannot remove facility default'
 expect_status 1 no-default-after-install resolve_consumer
+expect_status 1 requirement-no-default run_pkg requirement resolve "$facility" '>=17'
 
 # Provider-selection configuration protects an explicitly referenced concrete.
 run_pkg provider default "$facility" "$provider_b@1" >/dev/null 2> "$tmp/default-exact.err" ||
@@ -336,4 +356,5 @@ run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/platform-default-
 printf 'provider-selection=ok\n'
 printf 'late-binding=ok\n'
 printf 'no-install-time-binding=ok\n'
+printf 'global-requirement-query=ok\n'
 exit 0
