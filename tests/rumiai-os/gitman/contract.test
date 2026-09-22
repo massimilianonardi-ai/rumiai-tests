@@ -196,6 +196,12 @@ printf '%s\n' "$manual_text" | grep -F 'pager' >/dev/null 2>&1 ||
     fail 'manual gitman does not document pager output mode'
 printf '%s\n' "$manual_text" | grep -F 'terminal' >/dev/null 2>&1 ||
     fail 'manual gitman does not document terminal output mode'
+printf '%s\n' "$manual_text" | grep -F -- '--------------------------------------------------' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document terminal sequence separators'
+printf '%s\n' "$manual_text" | grep -F '<selected-menu-label>' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document selected menu labels in terminal headers'
+printf '%s\n' "$manual_text" | grep -F 'exactly 50 hyphen characters' >/dev/null 2>&1 ||
+    fail 'manual gitman does not document the terminal separator width'
 printf '%s\n' "$manual_text" | grep -F -- '-R -+F -+X' >/dev/null 2>&1 ||
     fail 'manual gitman does not document held less behavior'
 printf '%s\n' "$manual_text" | grep -F 'Status: git status --short --branch' >/dev/null 2>&1 ||
