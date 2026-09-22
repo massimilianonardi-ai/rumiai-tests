@@ -1,0 +1,48 @@
+name: mk-runtime-refinement-development
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/mk-runtime-refinement-development.yml
+
+permissions:
+  contents: read
+
+jobs:
+  targeted-development:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout exact test-suite revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: rumiai-tests
+
+      - name: Checkout exact rumiai-os revision
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 926179d3cb8808623dfe6f0bfed1e982dd0763ee
+          path: rumiai-os
+
+      - name: Install managed mk runtime
+        shell: bash
+        run: |
+          ./rumiai-os/m pkg install nodejs
+          ./rumiai-os/m pkg default nodejs
+
+      - name: Run targeted mk permanent tests
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/mk
