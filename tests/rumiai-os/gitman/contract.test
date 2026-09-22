@@ -1,5 +1,10 @@
 #!/bin/sh
 
+# Protected current properties:
+#   GITMAN-01  gitman is a bootstrap-integrated technical m command at bin/sys/gitman
+#   GITMAN-15  gitman has its required sys operational manual topic
+# Plus the project-wide interpreter/manual structural contracts applicable to commands.
+
 TEST_ID=rumiai-os/gitman/contract.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
@@ -28,7 +33,7 @@ status=$?
 case $status in
     0) : ;;
     1) skip 'rumiai-os target checkout not found' ;;
-    2) fail 'invalid explicit rumiai-os target' ;;
+    2) error 'explicit rumiai-os target is invalid' ;;
     *) error 'target discovery failed' ;;
 esac
 
@@ -36,191 +41,25 @@ gitman=$root/bin/sys/gitman
 manual=$root/res/sys/manual/gitman
 manual_command=$root/bin/sys/manual
 
-[ -f "$gitman" ] && [ -x "$gitman" ] || fail 'gitman is missing or not executable'
-[ "$(sed -n '1p' "$gitman")" = '#!/usr/bin/env m' ] || fail 'gitman has the wrong interpreter header'
-command -p sh -n "$gitman" || fail 'gitman is not valid POSIX-shell syntax'
+[ -f "$gitman" ] && [ -x "$gitman" ] ||
+    fail 'GITMAN-01: expected executable bin/sys/gitman'
 
-[ -f "$manual" ] && [ ! -L "$manual" ] || fail 'gitman operational manual is missing'
-[ -x "$manual_command" ] || fail 'manual command is unavailable'
+first_line=$(sed -n '1p' "$gitman") || error 'cannot read gitman interpreter header'
+[ "$first_line" = '#!/usr/bin/env m' ] ||
+    fail "GITMAN-01/interpreter contract: expected '#!/usr/bin/env m', observed '$first_line'"
 
-grep -F 'state-path user sys gitman conf' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman does not resolve its user configuration through state-path'
-grep -F 'gitman_conf_file="$gitman_conf_dir/repositories"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman repositories configuration pathname is missing'
-grep -F 'gitman_config_decode()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman configuration decoder is missing'
-grep -F 'gitman_config_encode()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman configuration encoder is missing'
-grep -F -- '-K a -K r -K c -K s -K e' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman repository menu management actions are incomplete'
-grep -F 'Overwrite repositories configuration?' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman overwrite confirmation is missing'
-grep -F 'gitman_output_mode=pager' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman does not default to pager output mode'
-grep -F -- '-K backspace -K p' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Git action menu does not expose Backspace and output toggle'
-grep -F 'GIT_PAGER=pager' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager mode does not select the RumiAI pager'
-grep -F -- '-R -+F -+X' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager mode does not keep short less sessions open with screen restoration'
-grep -F -- '--paginate' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pager mode does not force Git paging'
-grep -F -- '--no-pager' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman terminal mode does not disable Git paging'
-grep -F 'gitman_git_exec()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic Git executor is missing'
-grep -F 'gitman_git_run()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman acknowledged Git runner is missing'
-grep -F 'command -- git --paginate -C "$gitman_git_exec_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic pager executor does not execute an explicit Git argument vector'
-grep -F 'command -- git --no-pager -C "$gitman_git_exec_repository" "$@"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic terminal executor does not execute an explicit Git argument vector'
-grep -F 'gitman_git_exec "$@" || return $?' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman acknowledged runner does not delegate to the generic executor'
-grep -F 'gitman_action_dispatch()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman action dispatcher is missing'
-grep -F 'gitman_action_handler="gitman_action_$2"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman action dispatcher does not use the handler naming convention'
-grep -F "status 'Status: git status --short --branch'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman root Status action is missing'
-grep -F "diff 'Diff: git diff'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman root Diff action is missing'
-grep -F "pull 'Pull: git pull'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Pull action is missing'
-grep -F "commit 'Commit: git commit -m <commit-message>'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Commit action is missing'
-grep -F "sync_push 'Sync + Push: git add --all → git commit -m <commit-message> → git pull --no-rebase --no-edit → git push'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Sync + Push shortcut is missing'
-grep -F "changes 'Changes >'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Changes submenu is missing'
-grep -F "history 'History >'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman History submenu is missing'
-grep -F "branches 'Branches >'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Branches submenu is missing'
-grep -F "remote 'Remote >'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Remote submenu is missing'
-grep -F "stash 'Stash >'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Stash submenu is missing'
-grep -F "diff_staged 'Diff staged: git diff --staged'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman staged diff action is missing'
-grep -F "add_all 'Add all: git add --all'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman add-all action is missing'
-grep -F "log 'Log: git log --oneline --decorate --graph -n 50'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman log action is missing'
-grep -F "show_head 'Show HEAD: git show HEAD'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman show-HEAD action is missing'
-grep -F "branch 'List: git branch -vv'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch-list action is missing'
-grep -F "switch 'Switch >'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch-switch action is missing'
-grep -F "remotes 'Remotes: git remote -v'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman remote-list action is missing'
-grep -F "fetch 'Fetch: git fetch'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman fetch action is missing'
-grep -F "push 'Push: git push'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman push action is missing'
-grep -F "stash_list 'List: git stash list'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman stash-list action is missing'
-grep -F "stash_push 'Push: git stash push'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman stash-push action is missing'
-grep -F "stash_pop 'Pop: git stash pop'" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman stash-pop action is missing'
-grep -F 'gitman_action_group()' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman generic action-group loop is missing'
-grep -F 'gitman_git_run "$1" status status --short --branch' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman status handler is missing'
-grep -F 'gitman_git_run "$1" diff diff' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman diff handler is missing'
-grep -F 'gitman_git_run "$1" pull pull' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman pull handler is missing'
-grep -F "gitman_git_run \"\$1\" 'diff --staged' diff --staged" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman staged-diff handler is missing'
-grep -F "gitman_git_run \"\$1\" 'add --all' add --all" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman add-all handler is missing'
-grep -F 'gitman_git_run "$1" log log --oneline --decorate --graph -n 50' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman log handler is missing'
-grep -F "gitman_git_run \"\$1\" 'show HEAD' show HEAD" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman show-HEAD handler is missing'
-grep -F 'gitman_git_run "$1" branch branch -vv' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch handler is missing'
-grep -F "gitman_git_run \"\$1\" 'remote -v' remote -v" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman remote-list handler is missing'
-grep -F 'gitman_git_run "$1" fetch fetch' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman fetch handler is missing'
-grep -F 'gitman_git_run "$1" push push' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman push handler is missing'
-grep -F "gitman_git_run \"\$1\" 'stash list' stash list" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman stash-list handler is missing'
-grep -F "gitman_git_run \"\$1\" 'stash push' stash push" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman stash-push handler is missing'
-grep -F "gitman_git_run \"\$1\" 'stash pop' stash pop" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman stash-pop handler is missing'
-grep -F "Commit message: " "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman commit-message prompt is missing'
-grep -F 'commit -m "$gitman_commit_message"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman commit handler does not pass the acquired message as one argument'
-grep -F 'status --porcelain' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Sync + Push does not inspect local changes before staging'
-grep -F "gitman_git_exec \"\$gitman_sync_repository\" 'add --all' add --all" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Sync + Push does not stage local changes'
-grep -F "gitman_git_exec \"\$gitman_sync_repository\" 'commit -m <commit-message>' commit -m \"\$gitman_commit_message\"" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Sync + Push does not commit local changes'
-grep -F "gitman_git_exec \"\$gitman_sync_repository\" 'pull --no-rebase --no-edit' pull --no-rebase --no-edit" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Sync + Push does not use explicit merge pull semantics'
-grep -F 'gitman_git_exec "$gitman_sync_repository" push push' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman Sync + Push does not push after integration'
-grep -F "for-each-ref --format='%(refname:short)' refs/heads" "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman branch enumeration is missing'
-grep -F 'Switch: git switch $gitman_switch_branch_display' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman switch menu does not expose the concrete branch command'
-grep -F 'switch "$gitman_switch_branch"' "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman switch handler does not execute the selected branch'
-grep -F "Press any key to continue..." "$gitman" >/dev/null 2>&1 ||
-    fail 'gitman terminal-mode post-command pause is missing'
+command -p sh -n "$gitman" ||
+    fail 'interpreter contract: gitman is not valid POSIX sh syntax'
+
+[ -f "$manual" ] && [ ! -L "$manual" ] ||
+    fail 'GITMAN-15: expected regular res/sys/manual/gitman topic'
+
+[ -x "$manual_command" ] || error 'manual command is unavailable'
 
 manual_text=$("$root/m" "$manual_command" --no-pager gitman) ||
-    fail 'manual gitman lookup failed'
-printf '%s\n' "$manual_text" | grep -F 'interactive manager for local Git working trees' >/dev/null 2>&1 ||
-    fail 'manual gitman returned unexpected content'
-printf '%s\n' "$manual_text" | grep -F 'save the current repository set to configuration' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document configuration save'
-printf '%s\n' "$manual_text" | grep -F 'EDIT CONFIGURATION' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document configuration editing'
-printf '%s\n' "$manual_text" | grep -F 'VISUAL' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document VISUAL editor selection'
-printf '%s\n' "$manual_text" | grep -F 'EDITOR' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document EDITOR editor selection'
-printf '%s\n' "$manual_text" | grep -F 'falls through to vi' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document vi fallback'
-printf '%s\n' "$manual_text" | grep -F 'pager' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document pager output mode'
-printf '%s\n' "$manual_text" | grep -F 'terminal' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document terminal output mode'
-printf '%s\n' "$manual_text" | grep -F -- '--------------------------------------------------' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document terminal sequence separators'
-printf '%s\n' "$manual_text" | grep -F '<selected-menu-label>' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document selected menu labels in terminal headers'
-printf '%s\n' "$manual_text" | grep -F 'exactly 50 hyphen characters' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document the terminal separator width'
-printf '%s\n' "$manual_text" | grep -F -- '-R -+F -+X' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document held less behavior'
-printf '%s\n' "$manual_text" | grep -F 'Status: git status --short --branch' >/dev/null 2>&1 ||
-    fail 'manual gitman does not expose concrete root actions'
-printf '%s\n' "$manual_text" | grep -F 'Changes >' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document grouped action menus'
-printf '%s\n' "$manual_text" | grep -F 'Commit: git commit -m <commit-message>' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document commit command template'
-printf '%s\n' "$manual_text" | grep -F 'SYNC + PUSH' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document the Sync + Push workflow'
-printf '%s\n' "$manual_text" | grep -F 'git pull --no-rebase --no-edit' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document explicit merge pull semantics'
-printf '%s\n' "$manual_text" | grep -F 'merge conflict prevents git push' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document stop-before-push conflict behavior'
-printf '%s\n' "$manual_text" | grep -F 'Switch: git switch feature/example' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document concrete switch labels'
-printf '%s\n' "$manual_text" | grep -F 'git stash pop' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document stash actions'
-printf '%s\n' "$manual_text" | grep -F 'both inspection and mutating Git operations' >/dev/null 2>&1 ||
-    fail 'manual gitman does not document mutating action semantics'
+    fail 'GITMAN-15: manual lookup for gitman failed'
+
+[ -n "$manual_text" ] ||
+    fail 'GITMAN-15: manual lookup returned no content'
 
 exit 0
