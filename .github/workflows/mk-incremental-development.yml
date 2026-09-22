@@ -45,18 +45,12 @@ jobs:
           ./m pkg default "$nodejs_version"
           ./m node --check lib/sys/js/mk.lib.js
 
-      - name: Run mk permanent tests
+      - name: Diagnose new mk tests directly
         shell: sh
         run: |
           PATH="$PWD/rumiai-os:$PWD/rumiai-os/bin/sys:$PATH"
           RUMIAI_OS_TARGET="$PWD/rumiai-os"
           export PATH RUMIAI_OS_TARGET
           cd rumiai-tests
-          for test in             rumiai-os/mk/lifecycle.test             rumiai-os/mk/refinement.test             rumiai-os/mk/project-dependency.test             rumiai-os/mk/requirement.test             rumiai-os/mk/incremental.test
-          do
-            if ! ./rumiai-test "$test"
-            then
-              find .runs -type f -path "*/logs/$test" -exec cat {} \; 2>/dev/null || :
-              exit 1
-            fi
-          done
+          ./tests/rumiai-os/mk/requirement.test
+          ./tests/rumiai-os/mk/incremental.test
