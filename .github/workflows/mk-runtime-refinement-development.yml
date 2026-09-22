@@ -41,6 +41,14 @@ jobs:
           ./rumiai-os/m pkg install nodejs
           ./rumiai-os/m pkg default nodejs
 
+      - name: Diagnose managed runtime entrypoints
+        shell: bash
+        run: |
+          ./rumiai-os/m pkg default nodejs
+          PATH="$(pwd)/rumiai-os/bin/sys:$PATH"
+          export PATH
+          "$(pwd)/rumiai-os/bin/sys/pkg" default nodejs
+
       - name: Run targeted mk permanent tests
         shell: bash
         run: |
