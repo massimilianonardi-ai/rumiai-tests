@@ -16,6 +16,7 @@ entry=$root/m
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-language-fallback-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe; transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
+#!/usr/bin/env m
 [ "${m_LANGUAGE_FALLBACK-}" = "en_US" ] || return 41
 [ "${m_LANG_FALLBACK_DIR-}" = "$m_ROOT/res/sys/lang/en_US" ] || return 42
 return 0

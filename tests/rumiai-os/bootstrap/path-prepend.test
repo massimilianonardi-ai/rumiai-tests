@@ -18,6 +18,7 @@ expected_path=$root/bin/sys-osarch:$root/bin/sys:$root/bin/ext-osarch:$root/bin/
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-path-prepend-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe; transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
+#!/usr/bin/env m
 [ "${PATH-}" = "$EXPECTED_PATH" ] || return 41
 return 0
 EOT
