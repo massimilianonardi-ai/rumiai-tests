@@ -139,7 +139,8 @@ versions=$(run_pkg versions electron 2> "$tmp/versions.err") || fail 'pkg versio
 printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Electron identity is absent from pkg versions output'
 
-"$root/m" electron --version > "$tmp/version.out" 2> "$tmp/version.err" || {
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" electron --version > "$tmp/version.out" 2> "$tmp/version.err" || {
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2
   fail 'Electron public command failed after privileged installation'
