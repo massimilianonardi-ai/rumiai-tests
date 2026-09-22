@@ -33,6 +33,9 @@ interactive_library=$suite_root/lib/interactive.lib
 . "$target_library" || error 'cannot source rumiai-os target helper'
 . "$interactive_library" || error 'cannot source interactive helper'
 
+TERM=xterm-256color
+export TERM
+
 rumiai_test_interactive_require
 status=$?
 case $status in
