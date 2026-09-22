@@ -113,11 +113,23 @@ def spawn(argv):
     pid, master = pty.fork()
 
     if pid == 0:
-        devnull = os.open("/dev/null", os.O_RDONLY)
-        os.dup2(devnull, 0)
+        # On Darwin, forkpty-backed test processes can lose usable /dev/tty
+        # semantics when all standard descriptors are detached from the slave.
+        # Keep stdin on the PTY there; Linux additionally exercises the contract
+        # that readpass remains interactive with stdin redirected to /dev/null.
+        devnull = None
+        if sys.platform != "darwin":
+            devnull = os.open("/dev/null", os.O_RDONLY)
+            os.dup2(devnull, 0)
+
         os.dup2(out_w, 1)
         os.dup2(err_w, 2)
-        for fd in (devnull, out_r, out_w, err_r, err_w):
+
+        close_fds = [out_r, out_w, err_r, err_w]
+        if devnull is not None:
+            close_fds.append(devnull)
+
+        for fd in close_fds:
             try:
                 os.close(fd)
             except OSError:
