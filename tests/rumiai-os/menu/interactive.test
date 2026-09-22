@@ -109,6 +109,8 @@ RUMIAI_MENU_TEST_FS=$tmp/fs
 export RUMIAI_MENU_TEST_ROOT RUMIAI_MENU_TEST_COMMAND RUMIAI_MENU_TEST_RESULT RUMIAI_MENU_TEST_STATUS RUMIAI_MENU_TEST_FS
 
 mkdir -p "$RUMIAI_MENU_TEST_FS/sub" || error 'cannot prepare filesystem scenario'
+RUMIAI_MENU_TEST_FS=$(CDPATH= cd -- "$RUMIAI_MENU_TEST_FS" 2>/dev/null && pwd -P) ||
+    error 'cannot resolve physical filesystem scenario root'
 : > "$RUMIAI_MENU_TEST_FS/z-file" || error 'cannot prepare filesystem file'
 : > "$RUMIAI_MENU_TEST_FS/sub/a file" || error 'cannot prepare first subdirectory file'
 : > "$RUMIAI_MENU_TEST_FS/sub/b*file" || error 'cannot prepare second subdirectory file'

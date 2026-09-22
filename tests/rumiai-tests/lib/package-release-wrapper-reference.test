@@ -34,6 +34,8 @@ suite_root=${rumiai_tests_group%/*}
 tmp="${TMPDIR:-/tmp}/rumiai-package-release-wrapper-reference-$$"
 umask 077
 command -p -- mkdir -p -- "$tmp/suite/lib" || error "cannot create wrapper fixture"
+expected_suite_root=$(CDPATH= cd -- "$tmp/suite" 2>/dev/null && pwd -P) ||
+  error "cannot resolve physical wrapper fixture root"
 trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
 
 cat > "$tmp/suite/lib/package-release.lib" <<'EOF_STUB'
@@ -58,7 +60,7 @@ do
 
   package_release_wrapper_stdout="$tmp/$package_release_wrapper_package.stdout"
   package_release_wrapper_stderr="$tmp/$package_release_wrapper_package.stderr"
-  RUMIAI_TEST_EXPECTED_SUITE_ROOT="$tmp/suite" "$package_release_wrapper_target" > "$package_release_wrapper_stdout" 2> "$package_release_wrapper_stderr"
+  RUMIAI_TEST_EXPECTED_SUITE_ROOT="$expected_suite_root" "$package_release_wrapper_target" > "$package_release_wrapper_stdout" 2> "$package_release_wrapper_stderr"
   package_release_wrapper_status=$?
   if [ "$package_release_wrapper_status" -ne 0 ]
   then

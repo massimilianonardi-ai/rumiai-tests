@@ -39,6 +39,7 @@ rumiai_test_package_release_supported()
 rumiai_test_package_release_gui_require()
 {
   [ "$#" -eq 1 ] || return 3
+  [ -t 0 ] || return 2
   [ -r /dev/tty ] && [ -w /dev/tty ] || return 2
 
   case "$1" in
