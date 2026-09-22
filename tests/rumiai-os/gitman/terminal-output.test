@@ -45,7 +45,6 @@ command -v git >/dev/null 2>&1 || skip 'git is unavailable'
 command -v python3 >/dev/null 2>&1 || skip 'python3 is unavailable'
 command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
 TERM=xterm-256color tput kcud1 >/dev/null 2>&1 || skip 'Down capability is unavailable'
-TERM=xterm-256color tput khome >/dev/null 2>&1 || skip 'Home capability is unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-gitman-terminal-output-$$
 umask 077
@@ -95,7 +94,6 @@ def capability(name):
 
 
 DOWN = capability("kcud1")
-HOME = capability("khome")
 
 
 class Session:
@@ -204,8 +202,6 @@ try:
     s.send(b"p")
     s.wait_for("[output: terminal]", start=mode_mark)
 
-    s.send(HOME)
-    s.pump_for(0.1)
     sync_mark = len(s.buffer)
     s.send(b"\n")
     sync_header_start, _ = wait_for_header(s, SYNC_LABEL, sync_mark)
@@ -227,8 +223,6 @@ try:
     s.send(b"x")
     s.wait_for("[output: terminal]", start=sync_pause)
 
-    s.send(HOME)
-    s.pump_for(0.1)
     s.send(DOWN)
     s.pump_for(0.1)
     status_mark = len(s.buffer)
