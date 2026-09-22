@@ -402,8 +402,8 @@ def run_explicit_action_and_error_scenario():
             bytes(s.buffer[pager_return:]),
         )
 
-        # Toggle to terminal mode. Pager must be bypassed, output must carry a
-        # repository/action header, and the explicit key pause must return.
+        # Toggle to terminal mode. Pager must be bypassed, output must carry the
+        # selected-action sequence header, and the explicit key pause must return.
         mode_mark = len(s.buffer)
         s.send(b"p")
         s.wait_for("[output: terminal]", start=mode_mark)
