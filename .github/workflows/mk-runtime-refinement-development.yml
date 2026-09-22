@@ -38,7 +38,16 @@ jobs:
       - name: Install managed mk runtime
         shell: bash
         run: |
-          ./rumiai-os/m pkg install nodejs
+          installed=0
+          for attempt in 1 2 3
+          do
+            if ./rumiai-os/m pkg install nodejs
+            then
+              installed=1
+              break
+            fi
+          done
+          [ "$installed" -eq 1 ]
           ./rumiai-os/m pkg default nodejs
 
       - name: Diagnose managed runtime entrypoints
@@ -56,5 +65,17 @@ jobs:
       - name: Run targeted mk permanent tests
         shell: bash
         run: |
+          workspace="$(pwd)"
+          RUMIAI_TEST_RUMIAI_OS_ROOT="$workspace/rumiai-os"
+          export RUMIAI_TEST_RUMIAI_OS_ROOT
           cd rumiai-tests
+          set +e
           ./rumiai-test rumiai-os/mk
+          status=$?
+          for log in .runs/*/logs/rumiai-os/mk/*.log
+          do
+            [ -f "$log" ] || continue
+            echo "===== $log ====="
+            cat "$log"
+          done
+          exit "$status"
