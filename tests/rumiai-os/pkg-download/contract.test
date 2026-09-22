@@ -72,7 +72,7 @@ cat > "$driver" <<'EOF_DRIVER'
 . "$m_LIB_DIR/sys/sh/pkg/pkg-download.lib.sh" || exit 3
 pkg_download "$@"
 EOF_DRIVER
-chmod 600 "$driver" || error 'cannot prepare pkg-download driver'
+chmod 700 "$driver" || error 'cannot prepare pkg-download driver'
 
 mirror_driver=$tmp/pkg-download-mirror-driver
 cat > "$mirror_driver" <<'EOF_MIRROR_DRIVER'
@@ -106,7 +106,7 @@ http-fetch()
 . "$m_LIB_DIR/sys/sh/pkg/pkg-download.lib.sh" || exit 3
 pkg_download "$@"
 EOF_MIRROR_DRIVER
-chmod 600 "$mirror_driver" || error 'cannot prepare mirror pkg-download driver'
+chmod 700 "$mirror_driver" || error 'cannot prepare mirror pkg-download driver'
 
 expect_status 2 arity "$root/m" "$driver"
 
