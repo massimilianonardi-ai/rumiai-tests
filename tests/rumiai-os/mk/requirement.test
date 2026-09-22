@@ -127,6 +127,7 @@ chmod 700 "$driver" || error "cannot make integration driver executable"
 range="$tmp/range"
 payload="$tmp/payload"
 mkdir "$range" "$payload" || error "cannot create provider fixture"
+printf -- '%s\n' tar.xz > "$range/format" || error "cannot define provider format"
 printf -- '%s %s\n' "$facility" 21 > "$range/facility" || error "cannot define provider facility"
 printf -- '%s\n' provider > "$payload/marker" || error "cannot create provider payload"
 "$root/m" "$driver" "$provider" 1 "$range" "$payload" > "$tmp/integrate.out" 2> "$tmp/integrate.err" || {
@@ -306,6 +307,7 @@ EOF_NODE
 range2="$tmp/range2"
 payload2="$tmp/payload2"
 mkdir "$range2" "$payload2" || error "cannot create provider v2 fixture"
+printf -- '%s\n' tar.xz > "$range2/format" || error "cannot define provider v2 format"
 printf -- '%s %s\n' "$facility" 21 > "$range2/facility" ||
   error "cannot define provider v2 facility"
 printf -- '%s\n' provider-v2 > "$payload2/marker" ||
