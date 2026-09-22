@@ -270,8 +270,7 @@ plan="$tmp/first.plan.json"
   fail "initial incremental plan failed"
 [ ! -e "$cache_project" ] && [ ! -L "$cache_project" ] ||
   fail "MK-52 --plan created persistent incremental state"
-"$root/m" node - "$plan" <<'EOF_NODE' ||
-  fail "initial incremental plan did not expose ready operation"
+"$root/m" node - "$plan" <<'EOF_NODE' || fail "initial incremental plan did not expose ready operation"
 const fs=require('node:fs');
 const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const op=plan.operations.find(value=>value.name==='compile');
@@ -290,8 +289,7 @@ after="$(trace_count)"
 plan="$tmp/hit.plan.json"
 "$command_path" --project "$project" --plan build > "$plan" ||
   fail "up-to-date plan failed"
-"$root/m" node - "$plan" <<'EOF_NODE' ||
-  fail "MK-47/MK-48 plan did not expose up-to-date"
+"$root/m" node - "$plan" <<'EOF_NODE' || fail "MK-47/MK-48 plan did not expose up-to-date"
 const fs=require('node:fs');
 const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const op=plan.operations.find(value=>value.name==='compile');
@@ -337,8 +335,7 @@ before="$(trace_count)"
 "$command_path" --project "$project" build || fail "MK-50 corrupt-cache recovery failed"
 [ "$(trace_count)" -eq "$((before + 1))" ] ||
   fail "MK-50 corrupt cache was treated as reusable success"
-"$root/m" node - "$compile_record" <<'EOF_NODE' ||
-  fail "successful miss did not replace corrupt freshness record"
+"$root/m" node - "$compile_record" <<'EOF_NODE' || fail "successful miss did not replace corrupt freshness record"
 const fs=require('node:fs');
 const value=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if(value.schema!==1 || value.operation!=='compile') process.exit(1);
@@ -450,8 +447,7 @@ copy_cache_project="$cache_root/projects/$copy_key"
 copy_plan="$tmp/copy.plan.json"
 "$command_path" --project "$copy" --plan build > "$copy_plan" ||
   fail "copied-project plan failed"
-"$root/m" node - "$copy_plan" <<'EOF_NODE' ||
-  fail "copied checkout incorrectly reused source-project freshness"
+"$root/m" node - "$copy_plan" <<'EOF_NODE' || fail "copied checkout incorrectly reused source-project freshness"
 const fs=require('node:fs');
 const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const op=plan.operations.find(value=>value.name==='compile');
