@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: 29528c50a725b6639b6b3a2149b3598c9e058cdb
+          ref: 2b8696ad2cbba822d59df07551fd6b0b1da811ee
           path: rumiai-os
 
       - name: Normalize target origin
@@ -40,7 +40,11 @@ jobs:
           RUMIAI_OS_TARGET="$PWD/rumiai-os"
           export PATH RUMIAI_OS_TARGET
           cd rumiai-tests
-          ./rumiai-test rumiai-os/pkg/dependency.test
+          if ! ./rumiai-test rumiai-os/pkg/dependency.test
+          then
+            find .runs -type f -path '*/logs/rumiai-os/pkg/dependency.test' -exec cat {} \; 2>/dev/null || :
+            exit 1
+          fi
 
       - name: Provision managed Node.js
         shell: sh
