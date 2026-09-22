@@ -128,7 +128,7 @@ fi
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-. "$m_LIB_DIR/sys/sh/pkg-integration.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
 action=$1
 shift
 case $action in
@@ -137,7 +137,7 @@ case $action in
   *) return 2;;
 esac
 EOF_DRIVER
-chmod 600 "$driver" || error 'cannot prepare integration driver'
+chmod 700 "$driver" || error 'cannot prepare integration driver'
 
 probe=$tmp/osarch
 cat > "$probe" <<'EOF_PROBE'
@@ -145,7 +145,7 @@ cat > "$probe" <<'EOF_PROBE'
 . "$m_LIB_DIR/sys/sh/osarch.lib.sh"
 printf '%s\n' "$m_OSARCH"
 EOF_PROBE
-chmod 600 "$probe" || error 'cannot prepare osarch probe'
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || error 'cannot determine current RumiAI osarch'
 
 exact=putexact$$
