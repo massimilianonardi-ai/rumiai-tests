@@ -63,7 +63,7 @@ library=$root/lib/sys/sh/pkg/pkg-download.lib.sh
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-download-contract-$$
 umask 077
-mkdir "$tmp" "$tmp/stage" || error 'cannot create temporary directories'
+mkdir "$tmp" "$tmp/stage" "$tmp/bin" || error 'cannot create temporary directories'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 stage=$tmp/stage
 
@@ -74,36 +74,49 @@ pkg_download "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare pkg-download driver'
 
+cat > "$tmp/bin/http-fetch" <<'EOF_HTTP_FETCH'
+#!/bin/sh
+[ "$#" -eq 4 ] || exit 2
+[ "$1" = -o ] || exit 2
+output=$2
+[ "$3" = -- ] || exit 2
+url=$4
+
+case "$url" in
+  https://example.invalid/transfer-fail)
+    exit 1
+    ;;
+  https://example.invalid/bad-size)
+    printf '%s' bad > "$output"
+    exit 0
+    ;;
+  https://example.invalid/good)
+    [ ! -e "$output" ] && [ ! -L "$output" ] || exit 90
+    printf '%s' good > "$output"
+    exit 0
+    ;;
+  *)
+    exit 88
+    ;;
+esac
+EOF_HTTP_FETCH
+chmod 700 "$tmp/bin/http-fetch" || error 'cannot prepare fake http-fetch'
+
 mirror_driver=$tmp/pkg-download-mirror-driver
 cat > "$mirror_driver" <<'EOF_MIRROR_DRIVER'
-http-fetch()
+readpathce()
 {
-  [ "$#" -eq 4 ] || return 2
-  [ "$1" = -o ] || return 2
-  output=$2
-  [ "$3" = -- ] || return 2
-  url=$4
-
-  case "$url" in
-    https://example.invalid/transfer-fail)
-      return 1
-      ;;
-    https://example.invalid/bad-size)
-      printf '%s' bad > "$output"
-      return 0
-      ;;
-    https://example.invalid/good)
-      [ ! -e "$output" ] && [ ! -L "$output" ] || return 90
-      printf '%s' good > "$output"
-      return 0
-      ;;
-    *)
-      return 88
-      ;;
-  esac
+  [ "$#" -eq 2 ] || return 1
+  resolved=$(CDPATH= cd -- "$2" 2>/dev/null && pwd -P) || return 1
+  eval "$1=\$resolved"
 }
 
-. "$m_LIB_DIR/sys/sh/pkg/pkg-download.lib.sh" || exit 3
+log()
+{
+  :
+}
+
+. "$PKG_DOWNLOAD_LIBRARY" || exit 3
 pkg_download "$@"
 EOF_MIRROR_DRIVER
 chmod 700 "$mirror_driver" || error 'cannot prepare mirror pkg-download driver'
@@ -216,7 +229,7 @@ url=https://example.invalid/bad-size
 url=https://example.invalid/good
 size=4
 EOF_DESCRIPTOR
-mirror_target=$("$root/m" "$mirror_driver" "$stage" < "$descriptor") ||
+mirror_target=$(PKG_DOWNLOAD_LIBRARY="$library" PATH="$tmp/bin:/usr/bin:/bin" /bin/sh "$mirror_driver" "$stage" < "$descriptor") ||
   fail 'ordered URL fallback failed'
 [ "$mirror_target" = "$stage/mirror.bin" ] || fail 'mirror fallback returned wrong target'
 [ "$(cat "$mirror_target")" = good ] || fail 'mirror fallback retained wrong candidate content'
@@ -228,7 +241,12 @@ url=https://example.invalid/transfer-fail
 url=https://example.invalid/bad-size
 size=4
 EOF_DESCRIPTOR
-expect_status 1 mirror-exhausted "$root/m" "$mirror_driver" "$stage"
+PKG_DOWNLOAD_LIBRARY="$library" PATH="$tmp/bin:/usr/bin:/bin" /bin/sh "$mirror_driver" "$stage" < "$descriptor" > "$tmp/mirror-exhausted.out" 2> "$tmp/mirror-exhausted.err"
+status=$?
+[ "$status" -eq 1 ] || {
+  cat "$tmp/mirror-exhausted.err" >&2
+  fail "mirror-exhausted returned $status instead of 1"
+}
 [ ! -e "$stage/failed.bin" ] && [ ! -L "$stage/failed.bin" ] ||
   fail 'failed URL candidates left partial output'
 
