@@ -43,6 +43,11 @@ expect_status()
   [ "$actual" -eq "$expected" ] || fail "unexpected status $actual, expected $expected: $*"
 }
 
+sha256_value()
+{
+  "$root/m" node -e 'const crypto=require("node:crypto");process.stdout.write(crypto.createHash("sha256").update(process.argv[1]).digest("hex")+"\\n")' "$1"
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
@@ -54,7 +59,9 @@ cleanup()
   then
     run_pkg default -u -- "$provider" >/dev/null 2>&1 || :
     run_pkg uninstall "$provider@1" >/dev/null 2>&1 || :
+    run_pkg uninstall "$provider@2" >/dev/null 2>&1 || :
   fi
+  [ -z "${cache_project-}" ] || rm -rf "$cache_project" 2>/dev/null || :
   if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     rmdir "$root/pkg" 2>/dev/null || :
@@ -82,6 +89,7 @@ command_path="$root/bin/sys/mk"
 [ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
 [ -x "$root/m" ] || fail "m bootstrap is missing"
 [ -x "$root/bin/sys/pkg" ] || fail "pkg command is missing"
+[ -x "$root/bin/sys/state-path" ] || fail "state-path command is missing"
 [ -f "$root/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || fail "pkg integration library is missing"
 
 PATH="$root/bin/sys:$PATH"
@@ -138,6 +146,7 @@ cat > "$project/mk.json" <<EOF_PROJECT || error "cannot write requirement projec
   "goals": {
     "docs": ["docs"],
     "build": ["compile"],
+    "incremental": ["incremental"],
     "mapped": ["mapped"],
     "impossible": ["impossible"]
   },
@@ -188,6 +197,22 @@ cat > "$project/mk.json" <<EOF_PROJECT || error "cannot write requirement projec
       "requirements": ["tool"],
       "action": {"type": "process", "command": "sh", "args": ["-c", "printf compiled > compile.marker"]}
     },
+    "incremental": {
+      "requirements": ["tool"],
+      "incremental": {
+        "inputs": {
+          "source": {"path": "src/input.txt"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'run\\n' >> incremental.trace; cp src/input.txt incremental.out"]
+      },
+      "outputs": {
+        "artifact": {"path": "incremental.out"}
+      }
+    },
     "enable-mapped": {
       "action": {
         "type": "process",
@@ -213,6 +238,11 @@ cat > "$project/mk.json" <<EOF_PROJECT || error "cannot write requirement projec
   }
 }
 EOF_PROJECT
+
+cache_root="$("$root/m" "$root/bin/sys/state-path" user sys mk cache)" ||
+  error "cannot resolve mk cache area"
+project_key="$(sha256_value "$project")" || error "cannot compute project cache key"
+cache_project="$cache_root/projects/$project_key"
 
 expect_status 1 run_pkg provider default "$facility"
 
@@ -261,6 +291,48 @@ const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const req = plan.requirements.find(value => value.name === 'tool');
 if (!req || req.state !== 'satisfied' || req.provider !== process.argv[3]) process.exit(1);
 EOF_NODE
+
+# MK-47: the concrete provider selected for a facility requirement is part of
+# incremental identity even when project inputs/action are otherwise unchanged.
+"$command_path" --project "$project" incremental ||
+  fail "initial requirement-backed incremental execution failed"
+[ "$(command -p -- awk 'END { print NR }' "$project/incremental.trace")" -eq 1 ] ||
+  fail "initial requirement-backed incremental action did not run"
+"$command_path" --project "$project" incremental ||
+  fail "unchanged requirement-backed incremental execution failed"
+[ "$(command -p -- awk 'END { print NR }' "$project/incremental.trace")" -eq 1 ] ||
+  fail "unchanged requirement provider did not produce up-to-date operation"
+
+range2="$tmp/range2"
+payload2="$tmp/payload2"
+mkdir "$range2" "$payload2" || error "cannot create provider v2 fixture"
+printf -- '%s %s\n' "$facility" 21 > "$range2/facility" ||
+  error "cannot define provider v2 facility"
+printf -- '%s\n' provider-v2 > "$payload2/marker" ||
+  error "cannot create provider v2 payload"
+"$root/m" "$driver" "$provider" 2 "$range2" "$payload2" > "$tmp/integrate-v2.out" 2> "$tmp/integrate-v2.err" || {
+  cat "$tmp/integrate-v2.err" >&2
+  error "cannot integrate synthetic requirement provider v2"
+}
+run_pkg default "$provider@2" >/dev/null 2> "$tmp/provider-v2-default.err" ||
+  error "cannot move synthetic provider package default to v2"
+
+provider_changed_plan="$tmp/provider-changed.plan.json"
+"$command_path" --project "$project" --plan incremental > "$provider_changed_plan" ||
+  fail "provider-changed incremental plan failed"
+"$root/m" node - "$provider_changed_plan" "$provider@2" <<'EOF_NODE' ||
+  fail "MK-47 provider identity change did not invalidate incremental freshness"
+const fs = require('fs');
+const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const req = plan.requirements.find(value => value.name === 'tool');
+const op = plan.operations.find(value => value.name === 'incremental');
+if (!req || req.provider !== process.argv[3]) process.exit(1);
+if (!op || op.state !== 'ready') process.exit(2);
+EOF_NODE
+"$command_path" --project "$project" incremental ||
+  fail "provider-changed incremental execution failed"
+[ "$(command -p -- awk 'END { print NR }' "$project/incremental.trace")" -eq 2 ] ||
+  fail "MK-47 provider concrete change did not rerun incremental operation"
 
 strict_plan="$tmp/strict.plan.json"
 "$command_path" --project "$project" --profile strict --plan build > "$strict_plan" ||
