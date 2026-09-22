@@ -82,7 +82,7 @@ make_stateful_definition()
 
   cat > "$range/cmd/$package" <<EOF_COMMAND
 #!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
 launcher "$package" "\$@"
 EOF_COMMAND
   chmod 600 "$range/cmd/$package" || return 1
@@ -328,7 +328,7 @@ printf '%s\n' data > "$empty_dir_range/var/data" ||
 
 cat > "$empty_dir_range/cmd/$empty_dir" <<EOF_COMMAND
 #!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg-launch.lib.sh"
+. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
 launcher "$empty_dir" "\$@"
 EOF_COMMAND
 chmod 600 "$empty_dir_range/cmd/$empty_dir" ||

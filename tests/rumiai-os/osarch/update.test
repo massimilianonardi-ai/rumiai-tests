@@ -17,8 +17,7 @@ resolve_test_dir()
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 osarch_group=${test_dir%/*}
 rumiai_os_group=${osarch_group%/*}
-tests_dir=${rumiai_os_group%/*}
-suite_root=${tests_dir%/*}
+suite_root=${rumiai_os_group%/*}
 
 target_library=$suite_root/lib/rumiai-os-target.lib
 [ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
