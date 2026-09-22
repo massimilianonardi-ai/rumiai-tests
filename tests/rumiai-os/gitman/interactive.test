@@ -452,7 +452,7 @@ def run_config_and_dedup_scenario():
         select_root_status(s)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for("## feature", start=action_mark)
+        s.wait_for("feature", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
         s.send(b"x")
@@ -483,7 +483,7 @@ def run_empty_config_fallback_scenario():
         select_root_status(s)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for("## feature", start=action_mark)
+        s.wait_for("feature", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
         s.send(b"x")
@@ -617,7 +617,7 @@ def run_edit_editor_reload_scenario():
         s.wait_for("not a directory: missing-after-edit", start=reload_mark)
 
         # Yes resets repo_main and reloads only the valid configuration entry.
-        prove_current_repository(s, "## feature")
+        prove_current_repository(s, "feature")
 
         s.send(b"\x1b")
         s.wait_exit(0)
@@ -784,7 +784,7 @@ def run_add_remove_clear_scenario():
         select_root_status(s)
         added_action_mark = len(s.buffer)
         s.send(b"\n")
-        s.wait_for("## feature", start=added_action_mark)
+        s.wait_for("feature", start=added_action_mark)
         s.wait_for("Press any key to continue...", start=added_action_mark)
         added_resume_mark = len(s.buffer)
         s.send(b"x")
