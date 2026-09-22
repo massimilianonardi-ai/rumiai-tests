@@ -1,0 +1,241 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/readpass/pty.test"
+
+fail()
+{
+  printf '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+error()
+{
+  printf '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+skip()
+{
+  printf '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in
+    */*) : ;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error "cannot resolve test directory"
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command -v python3 >/dev/null 2>&1 || skip "python3 is unavailable for PTY test support"
+
+python3 - "$root/bin/sys/readpass" "$root/m" "$root/bin/sys/readpassv" <<'PY'
+import os
+import pty
+import select
+import signal
+import sys
+import termios
+import time
+
+readpass, m_command, readpassv = sys.argv[1:4]
+
+
+def drain(fd):
+    data = bytearray()
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0)
+        if not ready:
+            break
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        data.extend(chunk)
+    return bytes(data)
+
+
+def wait_prompt(master, prompt, transcript, start, pid, deadline):
+    while time.monotonic() < deadline:
+        if prompt in transcript[start:]:
+            return transcript
+        waited, status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            raise AssertionError(("process exited before prompt", prompt, os.waitstatus_to_exitcode(status), bytes(transcript)))
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                chunk = b""
+            transcript.extend(chunk)
+    raise AssertionError(("timeout waiting for prompt", prompt, bytes(transcript)))
+
+
+def wait_echo(master, enabled, deadline):
+    while time.monotonic() < deadline:
+        attrs = termios.tcgetattr(master)
+        current = bool(attrs[3] & termios.ECHO)
+        if current == enabled:
+            return
+        time.sleep(0.01)
+    raise AssertionError(("terminal echo state did not become", enabled))
+
+
+def spawn(argv):
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+    pid, master = pty.fork()
+
+    if pid == 0:
+        devnull = os.open("/dev/null", os.O_RDONLY)
+        os.dup2(devnull, 0)
+        os.dup2(out_w, 1)
+        os.dup2(err_w, 2)
+        for fd in (devnull, out_r, out_w, err_r, err_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        os.execve(argv[0], argv, os.environ.copy())
+
+    os.close(out_w)
+    os.close(err_w)
+    return pid, master, out_r, err_r
+
+
+def finish(pid, master, out_r, err_r, deadline):
+    transcript = bytearray()
+    out = bytearray()
+    err = bytearray()
+    status = None
+
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
+        for fd in ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if fd == master:
+                transcript.extend(chunk)
+            elif fd == out_r:
+                out.extend(chunk)
+            else:
+                err.extend(chunk)
+
+        waited, wait_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = os.waitstatus_to_exitcode(wait_status)
+            break
+
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        raise AssertionError("interactive command timed out")
+
+    time.sleep(0.03)
+    transcript.extend(drain(master))
+    out.extend(drain(out_r))
+    err.extend(drain(err_r))
+
+    attrs = termios.tcgetattr(master)
+    restored = bool(attrs[3] & termios.ECHO) and bool(attrs[3] & termios.ICANON)
+
+    os.close(master)
+    os.close(out_r)
+    os.close(err_r)
+    return status, bytes(out), bytes(err), bytes(transcript), restored
+
+
+def run_dialog(argv, dialogue, timeout=5.0):
+    pid, master, out_r, err_r = spawn(argv)
+    transcript = bytearray()
+    cursor = 0
+    deadline = time.monotonic() + timeout
+
+    for prompt, response in dialogue:
+        transcript = wait_prompt(master, prompt, transcript, cursor, pid, deadline)
+        cursor = len(transcript)
+        wait_echo(master, False, deadline)
+        os.write(master, response + b"\n")
+
+    status, out, err, tail, restored = finish(pid, master, out_r, err_r, deadline)
+    transcript.extend(tail)
+    return status, out, err, bytes(transcript), restored
+
+
+secret = b"  -n\\alpha  "
+status, out, err, tty, restored = run_dialog(
+    [readpass, "Password: "],
+    [(b"Password: ", secret)],
+)
+assert status == 0, (status, out, err, tty)
+assert out == secret + b"\n", (status, out, err, tty)
+assert err == b"", (status, out, err, tty)
+assert secret not in tty, ("secret was echoed to tty", tty)
+assert restored, "readpass did not restore terminal state"
+
+pid, master, out_r, err_r = spawn([readpass, "Interrupt: "])
+transcript = bytearray()
+deadline = time.monotonic() + 5.0
+transcript = wait_prompt(master, b"Interrupt: ", transcript, 0, pid, deadline)
+wait_echo(master, False, deadline)
+os.kill(pid, signal.SIGINT)
+status, out, err, tail, restored = finish(pid, master, out_r, err_r, deadline)
+transcript.extend(tail)
+assert status == 1, (status, out, err, bytes(transcript))
+assert out == b"", (status, out, err, bytes(transcript))
+assert restored, "readpass did not restore terminal state after SIGINT"
+
+status, out, err, tty, restored = run_dialog(
+    [m_command, readpassv, "Password: ", "Repeat: ", "Mismatch"],
+    [(b"Password: ", secret), (b"Repeat: ", secret)],
+)
+assert status == 0, (status, out, err, tty)
+assert out == secret + b"\n", (status, out, err, tty)
+assert secret not in tty, ("verified secret was echoed to tty", tty)
+assert restored, "readpassv success did not leave terminal restored"
+
+first = b"first-secret"
+second = b"second-secret"
+status, out, err, tty, restored = run_dialog(
+    [m_command, readpassv, "First: ", "Second: ", "Passwords do not match."],
+    [(b"First: ", first), (b"Second: ", second)],
+)
+assert status == 3, (status, out, err, tty)
+assert out == b"", (status, out, err, tty)
+assert b"Passwords do not match." in tty, tty
+assert first not in tty and second not in tty, ("mismatch input was echoed to tty", tty)
+assert restored, "readpassv mismatch did not leave terminal restored"
+PY
+status=$?
+[ "$status" -eq 0 ] || fail "PTY behavior validation failed"
+
+exit 0
