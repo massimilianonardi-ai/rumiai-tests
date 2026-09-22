@@ -83,10 +83,10 @@ stage=$tmp/stage
 driver=$tmp/pkg-extract-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg-extract.lib.sh" || exit 3
+. "$m_LIB_DIR/sys/sh/pkg/pkg-extract.lib.sh" || exit 3
 pkg_extract "$@"
 EOF_DRIVER
-chmod 600 "$driver" || error 'cannot prepare pkg-extract driver'
+chmod 700 "$driver" || error 'cannot prepare pkg-extract driver'
 
 "$root/m" "$driver" > "$tmp/arity.out" 2> "$tmp/arity.err"
 [ "$?" -eq 2 ] || fail 'pkg_extract invalid arity did not return 2'
