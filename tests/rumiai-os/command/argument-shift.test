@@ -46,6 +46,7 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe
 observed=$tmp/observed
 cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
 printf '%s\n' "$#" "$1" "$2" > "$OBSERVED_ARGS" || return 41
 return 0
 EOF_PROBE

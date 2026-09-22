@@ -48,6 +48,7 @@ alias=$tmp/command-alias
 observed=$tmp/observed
 
 cat > "$real" <<'EOF_COMMAND'
+#!/usr/bin/env m
 printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_COMMAND_BIN" || return 41
 return 0
 EOF_COMMAND
@@ -71,6 +72,7 @@ shadowed=$path_dir/shadowed
 shadow_observed=$tmp/shadow-observed
 mkdir "$path_dir" "$cwd" "$cwd/shadowed" || error 'cannot prepare slashless command shadow fixture'
 cat > "$shadowed" <<'EOF_SHADOW'
+#!/usr/bin/env m
 printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_COMMAND_BIN" || return 42
 return 0
 EOF_SHADOW

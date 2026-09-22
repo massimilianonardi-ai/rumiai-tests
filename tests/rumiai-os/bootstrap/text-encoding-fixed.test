@@ -16,6 +16,7 @@ entry=$root/m
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-text-encoding-fixed-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe; transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
+#!/usr/bin/env m
 [ "${m_TEXT_ENCODING-}" = "UTF-8" ] || return 41
 return 0
 EOT
