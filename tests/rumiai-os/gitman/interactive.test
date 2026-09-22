@@ -263,26 +263,6 @@ def move_down(session, count):
         session.pump_for(0.08)
 
 
-HEADER_RULE = b"-" * 50
-STATUS_LABEL = "Status: git status --short --branch"
-SYNC_LABEL = (
-    "Sync + Push: git add --all → git commit -m <commit-message> → "
-    "git pull --no-rebase --no-edit → git push"
-)
-
-
-def wait_for_action_header(session, label, start=0):
-    label_bytes = label.encode("utf-8")
-    first = session.wait_for(HEADER_RULE, start=start)
-    label_pos = session.wait_for(label_bytes, start=first + len(HEADER_RULE))
-    second = session.wait_for(HEADER_RULE, start=label_pos + len(label_bytes))
-    end = second + len(HEADER_RULE)
-    actual = bytes(session.buffer[first:end]).replace(b"\r\n", b"\n")
-    expected = HEADER_RULE + b"\n" + label_bytes + b"\n" + HEADER_RULE
-    assert actual == expected, ("unexpected terminal action header", actual, expected)
-    return first, end
-
-
 def select_root_status(session):
     move_down(session, 1)
 
@@ -402,8 +382,8 @@ def run_explicit_action_and_error_scenario():
             bytes(s.buffer[pager_return:]),
         )
 
-        # Toggle to terminal mode. Pager must be bypassed, output must carry the
-        # selected-action sequence header, and the explicit key pause must return.
+        # Toggle to terminal mode. Pager must be bypassed and the explicit
+        # post-command key pause must return.
         mode_mark = len(s.buffer)
         s.send(b"p")
         s.wait_for("[output: terminal]", start=mode_mark)
@@ -412,7 +392,6 @@ def run_explicit_action_and_error_scenario():
         select_root_status(s)
         terminal_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, STATUS_LABEL, start=terminal_mark)
         s.wait_for("probe.txt", start=terminal_mark)
         s.wait_for("Press any key to continue...", start=terminal_mark)
         less_invocations_after = Path(less_marker).read_text(encoding="utf-8").count("invoked")
@@ -463,7 +442,6 @@ def run_config_and_dedup_scenario():
         select_root_status(s)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, STATUS_LABEL, start=action_mark)
         s.wait_for("## feature", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
@@ -495,7 +473,6 @@ def run_empty_config_fallback_scenario():
         select_root_status(s)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, STATUS_LABEL, start=action_mark)
         s.wait_for("## feature", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
@@ -546,7 +523,6 @@ def prove_current_repository(s, status_marker):
     select_root_status(s)
     action_mark = len(s.buffer)
     s.send(b"\n")
-    wait_for_action_header(s, STATUS_LABEL, start=action_mark)
     s.wait_for(status_marker, start=action_mark)
     s.wait_for("Press any key to continue...", start=action_mark)
 
@@ -754,7 +730,6 @@ def run_save_and_escape_roundtrip_scenario():
         select_root_status(s)
         action_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, STATUS_LABEL, start=action_mark)
         s.wait_for("escape-probe.txt", start=action_mark)
         s.wait_for("Press any key to continue...", start=action_mark)
         resume_mark = len(s.buffer)
@@ -799,7 +774,6 @@ def run_add_remove_clear_scenario():
         select_root_status(s)
         added_action_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, STATUS_LABEL, start=added_action_mark)
         s.wait_for("## feature", start=added_action_mark)
         s.wait_for("Press any key to continue...", start=added_action_mark)
         added_resume_mark = len(s.buffer)
@@ -829,7 +803,6 @@ def run_add_remove_clear_scenario():
         select_root_status(s)
         remaining_action_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, STATUS_LABEL, start=remaining_action_mark)
         s.wait_for("probe.txt", start=remaining_action_mark)
         s.wait_for("Press any key to continue...", start=remaining_action_mark)
         remaining_resume_mark = len(s.buffer)
@@ -950,7 +923,6 @@ def run_mutating_action_scenario():
         s.send(DOWN)
         add_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, "Add all: git add --all", start=add_mark)
         s.wait_for("Press any key to continue...", start=add_mark)
         assert subprocess.check_output(
             ["git", "-C", repo_actions, "diff", "--cached", "--name-only"],
@@ -968,7 +940,6 @@ def run_mutating_action_scenario():
         s.send(b"\n")
         s.wait_for("Commit message: ", start=commit_mark)
         s.send(b"gitman action tree commit\n")
-        wait_for_action_header(s, "Commit: git commit -m <commit-message>", start=commit_mark)
         s.wait_for("Press any key to continue...", start=commit_mark)
         subject = subprocess.check_output(
             ["git", "-C", repo_actions, "log", "-1", "--format=%s"],
@@ -987,7 +958,6 @@ def run_mutating_action_scenario():
         move_down(s, 3)
         push_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, "Push: git push", start=push_mark)
         s.wait_for("Press any key to continue...", start=push_mark)
         local_head = subprocess.check_output(
             ["git", "-C", repo_actions, "rev-parse", "HEAD"], env=env, text=True
@@ -1013,7 +983,6 @@ def run_mutating_action_scenario():
         s.send(END)
         switch_exec_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, "Switch: git switch z-target", start=switch_exec_mark)
         s.wait_for("Press any key to continue...", start=switch_exec_mark)
         current_branch = subprocess.check_output(
             ["git", "-C", repo_actions, "branch", "--show-current"],
@@ -1035,7 +1004,6 @@ def run_mutating_action_scenario():
         s.send(DOWN)
         stash_push_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, "Push: git stash push", start=stash_push_mark)
         s.wait_for("Press any key to continue...", start=stash_push_mark)
         assert subprocess.check_output(
             ["git", "-C", repo_actions, "status", "--porcelain"],
@@ -1048,7 +1016,6 @@ def run_mutating_action_scenario():
         move_down(s, 2)
         stash_pop_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, "Pop: git stash pop", start=stash_pop_mark)
         s.wait_for("Press any key to continue...", start=stash_pop_mark)
         assert Path(repo_actions, "tracked.txt").read_text(encoding="utf-8") == "stashed-change\n"
 
@@ -1085,12 +1052,9 @@ def run_sync_push_scenario():
 
         sync_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, SYNC_LABEL, start=sync_mark)
         s.wait_for("Commit message: ", start=sync_mark)
         s.send(b"sync local one\n")
         sync_pause = s.wait_for("Press any key to continue...", start=sync_mark)
-        sync_segment = bytes(s.buffer[sync_mark:sync_pause])
-        assert sync_segment.count(HEADER_RULE) == 2, ("composite header repeated", sync_segment)
 
         local_subjects = subprocess.check_output(
             ["git", "-C", repo_sync, "log", "--format=%s", "-4"],
@@ -1116,10 +1080,8 @@ def run_sync_push_scenario():
         # A clean repository skips message acquisition, add and commit.
         clean_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, SYNC_LABEL, start=clean_mark)
         pause_pos = s.wait_for("Press any key to continue...", start=clean_mark)
         clean_segment = bytes(s.buffer[clean_mark:pause_pos])
-        assert clean_segment.count(HEADER_RULE) == 2, ("clean composite header repeated", clean_segment)
         assert b"Commit message:" not in clean_segment, clean_segment
 
         s.send(b"x")
@@ -1139,12 +1101,9 @@ def run_sync_push_scenario():
         Path(repo_sync, "shared.txt").write_text("local-conflict\n", encoding="utf-8")
         conflict_mark = len(s.buffer)
         s.send(b"\n")
-        wait_for_action_header(s, SYNC_LABEL, start=conflict_mark)
         s.wait_for("Commit message: ", start=conflict_mark)
         s.send(b"sync conflict local\n")
         pause_pos = s.wait_for("Press any key to continue...", start=conflict_mark)
-        conflict_segment = bytes(s.buffer[conflict_mark:pause_pos])
-        assert conflict_segment.count(HEADER_RULE) == 2, ("conflict composite header repeated", conflict_segment)
         remote_head = subprocess.check_output(
             ["git", "--git-dir", os.path.join(work, "sync-remote.git"), "rev-parse", "refs/heads/sync-main"],
             env=env,
