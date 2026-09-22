@@ -48,11 +48,15 @@ cleanup()
     run_pkg default -u -- "$p" >/dev/null 2>&1 || :
   done
 
-  for concrete in     "${consumer-}@1"     "${provider_a-}@1" "${provider_a-}@2"     "${provider_b-}@1" "${provider_bad-}@1"
+  for concrete in     "${consumer-}@1"     "${provider_a-}@1" "${provider_a-}@2"     "${provider_b-}@1" "${provider_bad-}@1"     "${all_consumer-}@1"
   do
     case "$concrete" in @*) continue ;; esac
     run_pkg uninstall "$concrete" >/dev/null 2>&1 || :
   done
+  if [ -n "${platform_provider-}" ] && [ -n "${osarch-}" ]
+  then
+    run_pkg uninstall "${platform_provider}@1!${osarch}" >/dev/null 2>&1 || :
+  fi
 
   [ -z "${consumer_state-}" ] || rm -rf "$consumer_state" 2>/dev/null || :
   if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
@@ -100,7 +104,22 @@ facility=depjava$$
 provider_a=depprova$$
 provider_b=depprovb$$
 provider_bad=depbad$$
+platform_provider=depprovplatform$$
 consumer=depconsumer$$
+all_consumer=depallconsumer$$
+
+osarch_probe=$tmp/osarch
+cat > "$osarch_probe" <<'EOF_OSARCH'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_OSARCH
+chmod 700 "$osarch_probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$osarch_probe") || error 'cannot determine active RumiAI osarch'
+case "$osarch" in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64|windows-arm64|windows-x86_64) :;;
+  *) error "invalid active RumiAI osarch: $osarch";;
+esac
 
 consumer_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$consumer" conf) ||
   error 'cannot resolve consumer system conf'
@@ -267,6 +286,52 @@ run_pkg provider bind "$consumer" "$facility" "$provider_a@1" >/dev/null 2> "$tm
 expect_status 1 bound-provider-protected run_pkg uninstall "$provider_a@1"
 run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2> "$tmp/bind-final-unset.err" ||
   fail 'cannot remove final consumer binding'
+
+# PKG-74: an all-stream/generic consumer identity still resolves dependencies
+# against its applicable platform class without acquiring an osarch suffix.
+platform_range=$tmp/range-$platform_provider-1
+platform_payload=$tmp/payload-$platform_provider-1
+mkdir "$platform_range" || error 'cannot create platform-provider range'
+printf '%s %s\n' "$facility" 21 > "$platform_range/facility" ||
+  error 'cannot define platform provider facility'
+make_payload "$platform_payload" "$platform_provider-1" ||
+  error 'cannot create platform-provider payload'
+"$root/m" "$driver" integrate "$platform_provider" 1 "$platform_range" "$platform_payload" "$osarch"   > "$tmp/platform-provider.out" 2> "$tmp/platform-provider.err" || {
+  cat "$tmp/platform-provider.err" >&2
+  fail 'cannot integrate osarch-specific provider'
+}
+
+run_pkg provider default "$facility" "$platform_provider@1!$osarch"   > "$tmp/platform-default.out" 2> "$tmp/platform-default.err" || {
+  cat "$tmp/platform-default.err" >&2
+  fail 'cannot configure osarch-specific facility default'
+}
+
+all_range=$tmp/range-$all_consumer
+all_payload=$tmp/payload-$all_consumer
+mkdir "$all_range" || error 'cannot create all-consumer range'
+printf '%s\n' "$facility >=17" > "$all_range/dependency" ||
+  error 'cannot define all-consumer dependency'
+make_payload "$all_payload" "$all_consumer" ||
+  error 'cannot create all-consumer payload'
+"$root/m" "$driver" integrate "$all_consumer" 1 "$all_range" "$all_payload" "" "$osarch"   > "$tmp/all-consumer.out" 2> "$tmp/all-consumer.err" || {
+  cat "$tmp/all-consumer.err" >&2
+  fail 'platform-independent consumer did not integrate through target-platform provider'
+}
+
+[ -d "$root/pkg/$all_consumer@1" ] && [ ! -L "$root/pkg/$all_consumer@1" ] ||
+  fail 'platform-independent consumer concrete was not materialized generically'
+[ ! -e "$root/pkg/$all_consumer@1!$osarch" ] && [ ! -L "$root/pkg/$all_consumer@1!$osarch" ] ||
+  fail 'platform-independent consumer incorrectly acquired an osarch suffix'
+
+resolved=$("$root/m" "$resolver" "$root/pkg/$all_consumer@1/dependency" "$all_consumer" ""   2> "$tmp/all-resolve.err") || {
+  cat "$tmp/all-resolve.err" >&2
+  fail 'runtime dependency resolution failed for platform-independent consumer'
+}
+[ "$resolved" = "$facility$tab$platform_provider@1!$osarch" ] ||
+  fail "platform-independent consumer resolved unexpected provider: $resolved"
+
+run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/platform-default-unset.err" ||
+  fail 'cannot remove osarch-specific facility default'
 
 printf 'provider-selection=ok\n'
 printf 'late-binding=ok\n'
