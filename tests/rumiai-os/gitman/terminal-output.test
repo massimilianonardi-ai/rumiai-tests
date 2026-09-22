@@ -85,6 +85,7 @@ SYNC_LABEL = (
     "Sync + Push: git add --all → git commit -m <commit-message> → "
     "git pull --no-rebase --no-edit → git push"
 )
+SYNC_MENU_PREFIX = "Sync + Push: git add --all"
 STATUS_LABEL = "Status: git status --short --branch"
 HEADER_RULE = b"-" * 50
 
@@ -189,7 +190,10 @@ try:
 
     open_mark = len(s.buffer)
     s.send(b"\n")
-    sync_pos = s.wait_for(SYNC_LABEL, start=open_mark)
+    # Menu rendering may truncate long labels to terminal width. Ordering is
+    # therefore checked with a stable visible prefix; the full label is verified
+    # later in the terminal-mode sequence header, where it is not menu-rendered.
+    sync_pos = s.wait_for(SYNC_MENU_PREFIX, start=open_mark)
     status_pos = s.wait_for(STATUS_LABEL, start=open_mark)
     assert sync_pos < status_pos, (
         "Sync + Push is not the first root action",
