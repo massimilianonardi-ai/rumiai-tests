@@ -115,6 +115,10 @@ fi
 command -p -- mkfifo --help >/dev/null 2>&1 || command -v mkfifo >/dev/null 2>&1 ||
   skip "mkfifo is not available on this POSIX host"
 
+node_command="$("$root/m" sh -c 'command -v node')" ||
+  error "cannot resolve managed node command"
+[ -x "$node_command" ] || error "managed node command is not executable"
+
 tmp="${TMPDIR:-/tmp}/rumiai-mk-shared-artifact-maintenance-$$"
 umask 077
 mkdir "$tmp" || error "cannot create temporary directory"
@@ -210,7 +214,7 @@ mkdir -p "$publication_dir" || error "cannot create publication lease directory"
 publication_fifo="$publication_dir/test-publication"
 command -p -- mkfifo "$publication_fifo" || error "cannot create publication fifo"
 publication_marker="$tmp/publication-ready"
-"$root/m" node "$helper" "$publication_fifo" "$publication_marker" &
+"$node_command" "$helper" "$publication_fifo" "$publication_marker" &
 helper_pid=$!
 wait_marker "$publication_marker" || fail "publication helper did not become live"
 
@@ -244,7 +248,7 @@ mkdir -p "$staging" || error "cannot create staging fixture"
 printf '%s\n' partial > "$staging/value" || error "cannot populate staging fixture"
 command -p -- mkfifo "$attempt_fifo" || error "cannot create attempt fifo"
 attempt_marker="$tmp/attempt-ready"
-"$root/m" node "$helper" "$attempt_fifo" "$attempt_marker" &
+"$node_command" "$helper" "$attempt_fifo" "$attempt_marker" &
 helper_pid=$!
 wait_marker "$attempt_marker" || fail "attempt helper did not become live"
 command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output for live attempt"
