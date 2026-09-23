@@ -3,6 +3,11 @@ validation_environment_counter=0
 validation_evidence_work=
 validation_evidence_id=
 validation_audit_status=CLEAN
+validation_target_packages=
+validation_target_package_count=0
+expected_pkg_catalog_commit=
+validation_prepared_osarch=
+validation_prepared_pkg_catalog_commit=
 
 repo_require_clean() {
     repo_dir=$1
@@ -29,8 +34,12 @@ load_config() {
     validation_kind=
     validation_selections=
     expected_rumiai_os_commit=
+    validation_target_packages=
+    expected_pkg_catalog_commit=
+    validation_target_package_count=0
     kind_seen=0
     commit_seen=0
+    pkg_catalog_commit_seen=0
     selection_count=0
     tab=$(printf '\t')
 
@@ -72,6 +81,38 @@ $value"
                 expected_rumiai_os_commit=$value
                 commit_seen=1
                 ;;
+            target-package)
+                [ -n "$value" ] || fatal 'empty target-package in configuration'
+                [ -z "$extra" ] || fatal 'invalid target-package record in configuration'
+                case "
+$validation_target_packages
+" in
+                    *"
+$value
+"*) fatal "duplicate target-package in configuration: $value" ;;
+                esac
+                if [ -n "$validation_target_packages" ]; then
+                    validation_target_packages="$validation_target_packages
+$value"
+                else
+                    validation_target_packages=$value
+                fi
+                validation_target_package_count=$((validation_target_package_count + 1))
+                ;;
+            pkg-catalog-commit)
+                [ "$pkg_catalog_commit_seen" -eq 0 ] || fatal 'duplicate pkg-catalog-commit in configuration'
+                [ -n "$value" ] || fatal 'empty pkg-catalog-commit in configuration'
+                [ -z "$extra" ] || fatal 'invalid pkg-catalog-commit record in configuration'
+                case $value in
+                    *[!0-9a-f]*) fatal 'invalid pkg-catalog-commit in configuration' ;;
+                esac
+                case ${#value} in
+                    40|64) : ;;
+                    *) fatal 'invalid pkg-catalog-commit length in configuration' ;;
+                esac
+                expected_pkg_catalog_commit=$value
+                pkg_catalog_commit_seen=1
+                ;;
             *)
                 fatal "unknown configuration key: $key"
                 ;;
@@ -79,6 +120,13 @@ $value"
     done < "$config_path"
 
     [ "$commit_seen" -eq 1 ] || fatal 'configuration does not define rumiai-os-commit'
+    if [ "$validation_target_package_count" -gt 0 ]; then
+        [ "$pkg_catalog_commit_seen" -eq 1 ] ||
+            fatal 'configuration target-package requires pkg-catalog-commit'
+    else
+        [ "$pkg_catalog_commit_seen" -eq 0 ] ||
+            fatal 'configuration pkg-catalog-commit requires target-package'
+    fi
 
     if [ "$kind_seen" -eq 0 ]; then
         if [ -n "${validation_scope_name-}" ]; then
@@ -365,6 +413,72 @@ validation_environment_destroy() {
     return 0
 }
 
+validation_preparation_observe() {
+    prepared_osarch=$1
+    prepared_catalog_commit=$2
+
+    if [ -z "$validation_prepared_osarch" ]; then
+        validation_prepared_osarch=$prepared_osarch
+        validation_record_put target-osarch "$prepared_osarch" ||
+            fatal 'cannot record prepared target osarch'
+    else
+        [ "$validation_prepared_osarch" = "$prepared_osarch" ] ||
+            fatal "validation target osarch changed between disposable environments: $validation_prepared_osarch -> $prepared_osarch"
+    fi
+
+    if [ "$validation_target_package_count" -gt 0 ]; then
+        if [ -z "$validation_prepared_pkg_catalog_commit" ]; then
+            validation_prepared_pkg_catalog_commit=$prepared_catalog_commit
+            validation_record_put pkg-catalog-commit "$prepared_catalog_commit" ||
+                fatal 'cannot record prepared pkg-catalog commit'
+        else
+            [ "$validation_prepared_pkg_catalog_commit" = "$prepared_catalog_commit" ] ||
+                fatal "pkg-catalog commit changed between disposable environments: $validation_prepared_pkg_catalog_commit -> $prepared_catalog_commit"
+        fi
+    fi
+}
+
+validation_environment_prepare_target() {
+    env_root=$1
+    target_root=$env_root/target
+
+    validation_environment_run "$env_root" "$target_root/m" "$target_root/bin/sys/osarch" update >/dev/null ||
+        fatal 'cannot select host platform in disposable rumiai-os target'
+    prepared_osarch=$(validation_environment_run "$env_root" "$target_root/m" "$target_root/bin/sys/osarch") ||
+        fatal 'cannot read selected host platform from disposable rumiai-os target'
+    [ -n "$prepared_osarch" ] || fatal 'disposable rumiai-os target reported empty osarch'
+
+    prepared_catalog_commit=
+    if [ "$validation_target_package_count" -gt 0 ]; then
+        old_ifs=$IFS
+        package_ifs=$(printf '\n_')
+        package_ifs=${package_ifs%_}
+        IFS=$package_ifs
+        for validation_target_package in $validation_target_packages; do
+            IFS=$old_ifs
+            say "Preparing target package: $validation_target_package" >&2
+            validation_environment_run "$env_root" "$target_root/m" "$target_root/bin/sys/pkg" install "$validation_target_package" ||
+                fatal "cannot prepare target package in disposable rumiai-os target: $validation_target_package"
+
+            package_cache_root=$(validation_environment_run "$env_root" "$target_root/m" "$target_root/bin/sys/state-path" system sys pkg cache) ||
+                fatal 'cannot resolve disposable target package cache'
+            package_catalog_root=$package_cache_root/pkg-catalog
+            [ -d "$package_catalog_root/.git" ] ||
+                fatal 'prepared target package catalog cache is unavailable'
+            prepared_catalog_commit=$(git -C "$package_catalog_root" rev-parse --verify HEAD 2>/dev/null) ||
+                fatal 'cannot resolve prepared target pkg-catalog commit'
+            [ "$prepared_catalog_commit" = "$expected_pkg_catalog_commit" ] ||
+                fatal "prepared target pkg-catalog commit differs from validation scope: expected $expected_pkg_catalog_commit, observed $prepared_catalog_commit"
+            IFS=$package_ifs
+        done
+        IFS=$old_ifs
+        [ -n "$prepared_catalog_commit" ] ||
+            fatal 'target package preparation did not produce pkg-catalog revision evidence'
+    fi
+
+    validation_preparation_observe "$prepared_osarch" "$prepared_catalog_commit"
+}
+
 validation_cleanup() {
     cleanup_status=0
     validation_environment_destroy || cleanup_status=1
@@ -409,7 +523,9 @@ prepare_validation_environment() {
     git -C "$validation_target_root" remote set-url origin "$primary_origin" ||
         fatal 'cannot restore canonical origin URL in temporary rumiai-os clone'
     [ -z "$(git -C "$validation_target_root" status --porcelain --untracked-files=normal 2>/dev/null)" ] ||
-        fatal 'temporary rumiai-os clone is not clean after preparation'
+        fatal 'temporary rumiai-os clone is not clean after materialization'
+
+    validation_environment_prepare_target "$validation_environment_root"
 }
 
 validation_environment_run() {
@@ -456,6 +572,22 @@ validation_evidence_begin() {
     validation_record_put rumiai-os-commit "$expected_rumiai_os_commit" || fatal 'cannot write validation metadata'
     validation_record_put os "$(uname -s 2>/dev/null || printf unknown)" || fatal 'cannot write validation metadata'
     validation_record_put architecture "$(uname -m 2>/dev/null || printf unknown)" || fatal 'cannot write validation metadata'
+
+    if [ "$validation_target_package_count" -gt 0 ]; then
+        old_ifs=$IFS
+        package_ifs=$(printf '\n_')
+        package_ifs=${package_ifs%_}
+        IFS=$package_ifs
+        for validation_target_package in $validation_target_packages; do
+            IFS=$old_ifs
+            validation_record_put target-package "$validation_target_package" ||
+                fatal 'cannot write validation target-package metadata'
+            IFS=$package_ifs
+        done
+        IFS=$old_ifs
+        validation_record_put expected-pkg-catalog-commit "$expected_pkg_catalog_commit" ||
+            fatal 'cannot write expected pkg-catalog commit metadata'
+    fi
 
     if [ "$selection_count" -eq 0 ]; then
         printf '%s\n' 'tests/' > "$validation_evidence_work/selections" || fatal 'cannot write validation selections'
@@ -706,6 +838,8 @@ rumiai_validate_run() {
 
     validation_evidence_begin
     validation_audit_status=CLEAN
+    validation_prepared_osarch=
+    validation_prepared_pkg_catalog_commit=
     case $validation_isolation in
         session)
             run_validation_session_isolation "$runner"
