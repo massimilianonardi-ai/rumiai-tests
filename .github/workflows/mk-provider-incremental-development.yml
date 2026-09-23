@@ -42,9 +42,9 @@ jobs:
           attempt=1
           while ! ./m pkg install nodejs
           do
-            [ "$attempt" -lt 3 ] || exit 1
+            [ "$attempt" -lt 5 ] || exit 1
             attempt=$((attempt + 1))
-            sleep 3
+            sleep 10
           done
           nodejs_version="$(./m pkg versions nodejs | sed -n '1p')"
           [ -n "$nodejs_version" ]
