@@ -72,17 +72,33 @@ Chiavi correnti:
 
 ```text
 kind<TAB>task|health
-rumiai-os-commit<TAB><commit-esatto>
+rumiai-os-commit<TAB><commit-esatto-opzionale>
 selection<TAB><test-or-group>
 ```
 
 `selection` è ripetibile. Uno scope `task` richiede almeno una selection.
 
-Uno scope `health` senza selection rappresenta la root completa `tests/` e in modalità `session` produce una singola invocazione:
+Uno scope `health` senza selection rappresenta la root completa `tests/`. Se `rumiai-os-commit` è omesso, il launcher aggiorna il checkout prodotto primario e valida il suo HEAD committed corrente, registrando comunque l'esatto SHA nell'evidenza. Un commit esplicito resta disponibile per riproduzioni revision-specifiche.
+
+Gli scope scelgono **quali test eseguire**. Non dichiarano i prerequisiti di esecuzione dei test.
+
+I prerequisiti sono definiti separatamente sotto:
 
 ```text
-rumiai-test --validation
+validation/requirements/*.conf
 ```
+
+Ogni requirement profile usa:
+
+```text
+selection<TAB><test-or-group>
+target-package<TAB><package-spec>
+pkg-catalog-commit<TAB><commit-esatto-opzionale>
+```
+
+`selection` e `target-package` sono ripetibili. Il launcher espande sia lo scope sia le selection dei requirement profile con `rumiai-test --list`; un profile si applica quando almeno un test scoperto coincide. I package risultanti vengono uniti e deduplicati automaticamente.
+
+`pkg-catalog-commit` è opzionale. Se assente, il path reale `pkg` può usare lo snapshot corrente e il launcher registra il commit effettivamente osservato; se presente, lo snapshot osservato deve coincidere.
 
 Per compatibilità, uno scope nominato senza `kind` viene interpretato come `task`.
 
@@ -94,10 +110,16 @@ Il launcher:
 
 1. aggiorna quel checkout con `git pull --ff-only`;
 2. richiede che sia clean;
-3. verifica che `rumiai-os-commit` sia disponibile;
-4. per ogni ambiente necessario crea un **clone Git indipendente** in una root temporanea;
-5. effettua checkout detached dell'esatto commit configurato;
-6. ripristina nel clone l'origin canonica osservata sul checkout primario.
+3. usa il suo HEAD committed corrente se lo scope non dichiara un commit esplicito, altrimenti verifica il commit pin-nato;
+4. espande il set di test richiesto con `rumiai-test --list`;
+5. risolve automaticamente tutti i requirement profile che intersecano il set scoperto;
+6. per ogni ambiente necessario crea un **clone Git indipendente** in una root temporanea;
+7. effettua checkout detached dell'esatto commit risolto;
+8. seleziona la piattaforma target con il reale `osarch update`;
+9. installa attraverso il reale `pkg install` ogni target package richiesto;
+10. ripristina nel clone l'origin canonica osservata sul checkout primario.
+
+Se la preparazione di un prerequisito dichiarato fallisce, la validation fallisce come errore di preparazione: non viene trasformata in `SKIP` del test.
 
 I test di validation non vengono quindi mai eseguiti direttamente sul checkout dell'operatore e non usano un worktree Git collegato a esso.
 
@@ -144,13 +166,7 @@ In modalità:
 --isolation=test
 ```
 
-il launcher non reimplementa la discovery. Espande ogni selection con:
-
-```text
-rumiai-test --list [selection]
-```
-
-e per ciascun test-id risultante:
+il launcher non reimplementa la discovery. Riusa il set canonico già espanso con `rumiai-test --list` prima della preparazione dei requirement e, per ciascun test-id risultante:
 
 1. crea un clone target indipendente e nuove root utente;
 2. esegue quel singolo test attraverso `rumiai-test --validation -- <test-id>`;
@@ -182,9 +198,11 @@ In modalità `session` esiste un audit dell'intera vita dell'ambiente. In modali
 
 Per uno scope `task`, tutti i test richiesti devono essere `PASS`. Un `SKIP` richiesto lascia lo scope `NOT VALIDATED`.
 
-Per uno scope `health`, gli exit status restano quelli aggregati delle sessioni; gli `SKIP` rimangono visibili ma non trasformano automaticamente uno status 0 in failure.
+Lo scope `health` senza selection è la **validazione completa del prodotto**: esegue tutta la suite permanente contro il prodotto corrente e prepara automaticamente i prerequisiti dichiarati dalla suite. Serve a rilevare regressioni anche in meccanismi diversi da quello appena modificato.
 
-La full suite resta un health gate, non un prerequisito universale per ogni work unit.
+Gli `SKIP` restano visibili e possono essere corretti solo quando il test è realmente non applicabile all'host corrente. Uno `SKIP` causato da un prerequisito preparabile ma non dichiarato è un difetto della suite, non un risultato accettabile da nascondere.
+
+Gli scope task restano un'ottimizzazione per il ciclo di sviluppo; non devono essere composti manualmente dall'operatore per ottenere la copertura completa del prodotto.
 
 ## Evidenza
 
@@ -216,7 +234,7 @@ selections          selection richieste
 sessions            run-id delle sessioni elementari
 environment/        audit session-wide, in isolation=session
 environments/       audit per test, in isolation=test
-discovered-tests    presente quando --list è usato per isolation=test
+discovered-tests    set canonico dei test selezionati, sempre presente
 ```
 
 Il record viene pubblicato anch'esso sotto `validation/<validation-id>`, basato sull'esatto commit della suite, senza avanzare `main`.
