@@ -46,7 +46,21 @@ git -C "$tmp/target-seed" init -q || error 'cannot initialize target seed'
 target_branch=$(git -C "$tmp/target-seed" symbolic-ref --short HEAD) || error 'cannot determine target branch'
 printf 'src/\n' > "$tmp/target-seed/.gitignore" || error 'cannot write target gitignore'
 printf '#!/bin/sh\nexit 0\n' > "$tmp/target-seed/rumiai-os" || error 'cannot write target entrypoint'
-chmod +x "$tmp/target-seed/rumiai-os" || error 'cannot make target entrypoint executable'
+mkdir -p "$tmp/target-seed/bin/sys" || error 'cannot create target command directory'
+cat > "$tmp/target-seed/m" <<'EOT'
+#!/bin/sh
+exec "$@"
+EOT
+cat > "$tmp/target-seed/bin/sys/osarch" <<'EOT'
+#!/bin/sh
+case $#:${1-} in
+    0:) printf '%s\n' test-osarch ;;
+    1:update) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOT
+chmod +x "$tmp/target-seed/rumiai-os" "$tmp/target-seed/m" "$tmp/target-seed/bin/sys/osarch" ||
+    error 'cannot make target entrypoints executable'
 git -C "$tmp/target-seed" add . || error 'cannot stage initial target'
 commit_repo "$tmp/target-seed" initial-target || error 'cannot commit initial target'
 git -C "$tmp/target-seed" remote add origin "$tmp/target-remote.git" || error 'cannot add target remote'
@@ -87,6 +101,25 @@ printf '%s\n' 'broken implementation (' > "$tmp/suite-seed/lib/sh/rumiai-validat
 cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
 #!/bin/sh
 suite_root="$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P)" || exit 3
+
+if [ "${1-}" = --list ]; then
+    case $#:${2-}:${3-} in
+        1::)
+            printf '%s\n' root/fake.test
+            ;;
+        3:--:wrong-selection)
+            printf '%s\n' wrong/fake.test
+            ;;
+        3:--:rumiai-os/bootstrap)
+            printf '%s\n' rumiai-os/bootstrap/fake.test
+            ;;
+        *)
+            exit 3
+            ;;
+    esac
+    exit 0
+fi
+
 printf '%s\n' "$PWD" > "$FAKE_PWD" || exit 3
 printf '%s\n' "$*" > "$FAKE_ARGS" || exit 3
 
@@ -171,7 +204,7 @@ first_status=$?
 actual_suite=$(git -C "$work_suite" rev-parse HEAD) || error 'cannot read suite commit after self-update'
 [ "$actual_suite" = "$expected_suite" ] || fail 'launcher did not fast-forward rumiai-tests before the interactive menu'
 [ ! -f "$tmp/runner-args" ] || fail 'runner executed despite dirty validation working tree'
-grep -F '  0) all tests' "$tmp/first-transcript" >/dev/null || fail 'full-suite option zero missing from menu'
+grep -F '  0) full product (all tests)' "$tmp/first-transcript" >/dev/null || fail 'full-product option zero missing from menu'
 grep -F '  1) alpha' "$tmp/first-transcript" >/dev/null || fail 'updated alpha scope missing from menu'
 grep -F '  2) beta' "$tmp/first-transcript" >/dev/null || fail 'updated beta scope missing from menu'
 if grep -F ') rumiai-os-health' "$tmp/first-transcript" >/dev/null; then
