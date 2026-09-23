@@ -30,7 +30,21 @@ git -C "$target" init -q || error 'cannot initialize target repository'
 git -C "$target" config user.name RumiAI-Test || error 'cannot configure target Git name'
 git -C "$target" config user.email rumiai-test@example.invalid || error 'cannot configure target Git email'
 printf '%s\n' target > "$target/version" || error 'cannot write target marker'
-git -C "$target" add version || error 'cannot stage target marker'
+mkdir -p "$target/bin/sys" || error 'cannot create target command directory'
+cat > "$target/m" <<'EOT'
+#!/bin/sh
+exec "$@"
+EOT
+cat > "$target/bin/sys/osarch" <<'EOT'
+#!/bin/sh
+case $#:${1-} in
+    0:) printf '%s\n' test-osarch ;;
+    1:update) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOT
+chmod +x "$target/m" "$target/bin/sys/osarch" || error 'cannot make target commands executable'
+git -C "$target" add version m bin/sys/osarch || error 'cannot stage target fixture'
 git -C "$target" commit -qm target || error 'cannot commit target marker'
 expected_commit=$(git -C "$target" rev-parse HEAD) || error 'cannot resolve target commit'
 canonical_origin=https://github.com/massimilianonardi-ai/rumiai-os.git
