@@ -27,23 +27,42 @@ case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail '
 
 tmp=${TMPDIR:-/tmp}/rumiai-dmg-pkg-$$
 umask 077
-mkdir -p "$tmp/payload/usr/local/MacGPG2/bin" "$tmp/payload/usr/local/MacGPG2/lib" "$tmp/component/MacGPG2.1_Core.pkg" "$tmp/outer" "$tmp/dmgsrc" "$tmp/stage" || error 'cannot create fixture'
+mkdir -p \
+  "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/bin" \
+  "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/lib" \
+  "$tmp/payload/Library/LaunchAgents" \
+  "$tmp/raw-payload/bin" \
+  "$tmp/component/MacGPG2.1_Core.pkg" \
+  "$tmp/component/Raw.pkg" \
+  "$tmp/outer" "$tmp/dmgsrc" "$tmp/stage" || error 'cannot create fixture'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
-cat > "$tmp/payload/usr/local/MacGPG2/bin/gpg" <<'EOF_GPG'
+cat > "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/bin/gpg" <<'EOF_GPG'
 #!/bin/sh
 exit 0
 EOF_GPG
-chmod 755 "$tmp/payload/usr/local/MacGPG2/bin/gpg" || error 'cannot prepare payload command'
-printf '%s\n' fixture > "$tmp/payload/usr/local/MacGPG2/lib/runtime-marker" || error 'cannot prepare useful-root sibling'
+chmod 755 "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/bin/gpg" || error 'cannot prepare payload command'
+printf '%s\n' fixture > "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/lib/runtime-marker" || error 'cannot prepare useful-root sibling'
+printf '%s\n' installer-only > "$tmp/payload/Library/LaunchAgents/org.gpgtools.macgpg2.fix.plist" || error 'cannot prepare payload sibling'
 (
   CDPATH= cd -- "$tmp/payload" || exit 1
   find . -print | cpio -o -H odc > "$tmp/payload.cpio" 2>/dev/null
-) || error 'cannot create component cpio'
+) || error 'cannot create compressed component cpio'
 gzip -c < "$tmp/payload.cpio" > "$tmp/component/MacGPG2.1_Core.pkg/Payload" || error 'cannot compress component payload'
+
+cat > "$tmp/raw-payload/bin/raw-tool" <<'EOF_RAW'
+#!/bin/sh
+exit 0
+EOF_RAW
+chmod 755 "$tmp/raw-payload/bin/raw-tool" || error 'cannot prepare raw payload command'
+(
+  CDPATH= cd -- "$tmp/raw-payload" || exit 1
+  find . -print | cpio -o -H odc > "$tmp/component/Raw.pkg/Payload" 2>/dev/null
+) || error 'cannot create raw component payload'
+
 (
   CDPATH= cd -- "$tmp/component" || exit 1
-  xar -cf "$tmp/outer/Install.pkg" MacGPG2.1_Core.pkg
+  xar -cf "$tmp/outer/Install.pkg" MacGPG2.1_Core.pkg Raw.pkg
 ) || error 'cannot create outer flat package'
 cp "$tmp/outer/Install.pkg" "$tmp/dmgsrc/Install.pkg" || error 'cannot stage outer package'
 hdiutil create -quiet -srcfolder "$tmp/dmgsrc" "$tmp/GPG_Suite-test.dmg" || error 'cannot create DMG fixture'
@@ -56,14 +75,23 @@ pkg_extract "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
-"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.1_Core.pkg || fail 'dmg-pkg extraction failed'
-[ -x "$tmp/stage/bin/gpg" ] || fail 'MacGPG useful root was not normalized'
-[ -f "$tmp/stage/lib/runtime-marker" ] || fail 'MacGPG useful-root sibling was not preserved'
-[ ! -e "$tmp/stage/usr" ] || fail 'payload installation prefix survived normalization'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.1_Core.pkg private/tmp/org.gpgtools/MacGPG2 || fail 'dmg-pkg payload-root extraction failed'
+[ -x "$tmp/stage/bin/gpg" ] || fail 'selected payload root did not expose gpg'
+[ -f "$tmp/stage/lib/runtime-marker" ] || fail 'selected payload-root sibling was not preserved'
+[ ! -e "$tmp/stage/private" ] || fail 'payload staging prefix survived payload-root selection'
+[ ! -e "$tmp/stage/Library" ] || fail 'installer-only Payload sibling survived payload-root selection'
 
-rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage'
+rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for raw payload'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" Raw.pkg || fail 'raw dmg-pkg extraction regressed'
+[ -x "$tmp/stage/bin/raw-tool" ] || fail 'raw cpio Payload was not materialized'
+
+rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for missing component'
 if "$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" Missing.pkg >/dev/null 2>&1
 then
   fail 'missing component was accepted'
 fi
+
+rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for invalid payload root'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.1_Core.pkg ../escape >/dev/null 2>&1
+[ "$?" -eq 2 ] || fail 'invalid payload-root did not return invalid-invocation status'
 exit 0
