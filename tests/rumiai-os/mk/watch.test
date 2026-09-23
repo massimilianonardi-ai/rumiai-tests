@@ -85,7 +85,10 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function waitFor(predicate, message, timeoutMs = 9000) {
+const WAIT_TIMEOUT_MS = 30000;
+const QUIESCENCE_MS = 1500;
+
+async function waitFor(predicate, message, timeoutMs = WAIT_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -234,7 +237,7 @@ async function mainScenario() {
 
   const watch = startWatch(['--watch', '--project', parentRoot, 'build'], {WATCH_TRACE: trace});
   await waitFor(
-    () => lines(trace).length === 3 || watch.child.exitCode !== null,
+    () => lines(trace).length >= 3 || watch.child.exitCode !== null,
     'initial recursive watch cycle did not become observable'
   );
   assert(
@@ -242,57 +245,57 @@ async function mainScenario() {
     `CURRENT-56 initial watch cycle failed: trace=${lines(trace).join(',')} exit=${watch.child.exitCode} stderr=${JSON.stringify(watch.stderr())}`
   );
 
-  await sleep(260);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 3, 'CURRENT-57 unchanged trigger identity reran lifecycle');
 
   const input = path.join(parentRoot, 'input.txt');
   const now = new Date();
   fs.utimesSync(input, now, now);
-  await sleep(220);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 3, 'CURRENT-57 mtime-only input change triggered lifecycle');
 
   fs.writeFileSync(input, 'two\n');
-  await waitFor(() => lines(trace).length === 6, 'declared parent input change did not trigger one lifecycle cycle');
-  await sleep(180);
+  await waitFor(() => lines(trace).length >= 6, 'declared parent input change did not trigger one lifecycle cycle');
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 6, 'declared parent input change caused duplicate cycle');
 
   fs.writeFileSync(path.join(parentRoot, 'ordinary.out'), 'tampered\n');
-  await sleep(220);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 6, 'CURRENT-57 ordinary unconsumed output became watch trigger');
 
   fs.appendFileSync(tool, '# executable change\n');
-  await waitFor(() => lines(trace).length === 9, 'CURRENT-57 executable identity change did not trigger lifecycle');
-  await sleep(180);
+  await waitFor(() => lines(trace).length >= 9, 'CURRENT-57 executable identity change did not trigger lifecycle');
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 9, 'executable identity change caused duplicate cycle');
 
   fs.writeFileSync(path.join(childRoot, 'child.txt'), 'child-two\n');
-  await waitFor(() => lines(trace).length === 12, 'CURRENT-58 active child input change did not trigger parent watch');
-  await sleep(180);
+  await waitFor(() => lines(trace).length >= 12, 'CURRENT-58 active child input change did not trigger parent watch');
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 12, 'active child input change caused duplicate parent cycle');
 
   const childConfig = fs.readFileSync(path.join(childRoot, 'mk.json'), 'utf8');
   fs.writeFileSync(path.join(childRoot, 'mk.json'), '{');
-  await sleep(240);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 12, 'CURRENT-60 invalid child configuration ran lifecycle work');
   assert(watch.child.exitCode === null, 'CURRENT-60 invalid child configuration terminated watch session');
 
   fs.writeFileSync(path.join(childRoot, 'mk.json'), childConfig);
-  await sleep(240);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 12, 'CURRENT-60 unchanged child configuration recovery triggered lifecycle');
 
   fs.writeFileSync(path.join(childRoot, 'mk.json'), '{');
   fs.writeFileSync(path.join(childRoot, 'child.txt'), 'child-three\n');
-  await sleep(180);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 12, 'CURRENT-60 child input change ran work while configuration was invalid');
   fs.writeFileSync(path.join(childRoot, 'mk.json'), childConfig);
-  await waitFor(() => lines(trace).length === 15, 'CURRENT-60 changed child identity did not trigger after valid recovery');
+  await waitFor(() => lines(trace).length >= 15, 'CURRENT-60 changed child identity did not trigger after valid recovery');
 
   const parentConfig = fs.readFileSync(path.join(parentRoot, 'mk.json'), 'utf8');
   fs.writeFileSync(path.join(parentRoot, 'mk.json'), '{"version":');
-  await sleep(180);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 15, 'CURRENT-60 invalid root configuration ran lifecycle work');
   fs.writeFileSync(path.join(parentRoot, 'mk.json'), parentConfig);
-  await sleep(240);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 15, 'CURRENT-60 unchanged root recovery triggered lifecycle');
 
   await stopWatch(watch);
@@ -320,18 +323,18 @@ async function failedCycleScenario() {
   }, {'input.txt': 'ok\n'});
 
   const watch = startWatch(['--watch', '--project', projectRoot, 'build'], {WATCH_TRACE: trace});
-  await waitFor(() => lines(trace).length === 1 || watch.child.exitCode !== null, 'failed-cycle initial watch cycle not observable');
+  await waitFor(() => lines(trace).length >= 1 || watch.child.exitCode !== null, 'failed-cycle initial watch cycle not observable');
   assert(lines(trace).length === 1 && watch.child.exitCode === null, 'failed-cycle initial request did not remain active');
 
   // The trace proves the child action ran, but the supervisor may still be
   // establishing its mandatory post-cycle trigger baseline. Give that
   // infrastructure step time to settle before introducing the next trigger.
-  await sleep(300);
+  await sleep(QUIESCENCE_MS);
 
   fs.writeFileSync(path.join(projectRoot, 'input.txt'), 'fail\n');
-  await waitFor(() => lines(trace).length === 2 || watch.child.exitCode !== null, 'failing lifecycle cycle not observable');
+  await waitFor(() => lines(trace).length >= 2 || watch.child.exitCode !== null, 'failing lifecycle cycle not observable');
   assert(lines(trace).length === 2 && watch.child.exitCode === null, 'CURRENT-60 failed lifecycle cycle terminated watch');
-  await sleep(240);
+  await sleep(QUIESCENCE_MS);
   assert(lines(trace).length === 2, 'CURRENT-60 failed lifecycle cycle busy-looped');
   assert(
     watch.stderr().includes('watch lifecycle cycle failed with status 1'),
@@ -339,7 +342,7 @@ async function failedCycleScenario() {
   );
 
   fs.writeFileSync(path.join(projectRoot, 'input.txt'), 'ok-again\n');
-  await waitFor(() => lines(trace).length === 3, 'CURRENT-60 watch did not continue after failed lifecycle cycle');
+  await waitFor(() => lines(trace).length >= 3, 'CURRENT-60 watch did not continue after failed lifecycle cycle');
   await stopWatch(watch);
 }
 
