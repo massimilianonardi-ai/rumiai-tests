@@ -241,10 +241,12 @@ printf -- '%s\n' damaged > "$project/out/src/a.txt.out" ||
   error "cannot tamper provider output"
 before="$(trace_count)"
 "$command_path" --project "$project" build || fail "provider output repair failed"
-[ "$(trace_count)" -eq "$((before + 1))" ] ||
-  fail "MK-71 tampered provider output did not invalidate exactly one member"
-[ "$(command -p -- tail -n 1 "$trace")" = "src/a.txt" ] ||
-  fail "provider output tamper reran the wrong derived member"
+[ "$(trace_count)" -eq "$before" ] ||
+  fail "MK-80 verified provider-member artifact restoration reran derived action"
+cat "$project/src/a.txt" "$project/cfg/src/a.txt.cfg" > "$tmp/a.expected" ||
+  error "cannot create restored provider expectation"
+command -p -- cmp -s "$tmp/a.expected" "$project/out/src/a.txt.out" ||
+  fail "MK-80 provider output was not restored from verified artifact state"
 
 printf -- '%s\n' zero > "$project/src/0.txt" || error "cannot add earlier source"
 printf -- '%s\n' cfg-zero > "$project/cfg/src/0.txt.cfg" || error "cannot add earlier config"
