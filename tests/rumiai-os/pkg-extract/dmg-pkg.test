@@ -43,9 +43,9 @@ printf '%s\n' fixture > "$tmp/payload/usr/local/MacGPG2/lib/runtime-marker" || e
 gzip -c < "$tmp/payload.cpio" > "$tmp/component/MacGPG2.1_Core.pkg/Payload" || error 'cannot compress component payload'
 (
   CDPATH= cd -- "$tmp/component" || exit 1
-  xar -cf "$tmp/outer/GPG Suite.pkg" MacGPG2.1_Core.pkg
+  xar -cf "$tmp/outer/Install.pkg" MacGPG2.1_Core.pkg
 ) || error 'cannot create outer flat package'
-cp "$tmp/outer/GPG Suite.pkg" "$tmp/dmgsrc/GPG Suite.pkg" || error 'cannot stage outer package'
+cp "$tmp/outer/Install.pkg" "$tmp/dmgsrc/Install.pkg" || error 'cannot stage outer package'
 hdiutil create -quiet -srcfolder "$tmp/dmgsrc" "$tmp/GPG_Suite-test.dmg" || error 'cannot create DMG fixture'
 
 driver=$tmp/pkg-extract-driver
