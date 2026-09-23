@@ -39,7 +39,6 @@ load_config() {
     validation_target_package_count=0
     kind_seen=0
     commit_seen=0
-    pkg_catalog_commit_seen=0
     selection_count=0
     tab=$(printf '\t')
 
@@ -81,52 +80,14 @@ $value"
                 expected_rumiai_os_commit=$value
                 commit_seen=1
                 ;;
-            target-package)
-                [ -n "$value" ] || fatal 'empty target-package in configuration'
-                [ -z "$extra" ] || fatal 'invalid target-package record in configuration'
-                case "
-$validation_target_packages
-" in
-                    *"
-$value
-"*) fatal "duplicate target-package in configuration: $value" ;;
-                esac
-                if [ -n "$validation_target_packages" ]; then
-                    validation_target_packages="$validation_target_packages
-$value"
-                else
-                    validation_target_packages=$value
-                fi
-                validation_target_package_count=$((validation_target_package_count + 1))
-                ;;
-            pkg-catalog-commit)
-                [ "$pkg_catalog_commit_seen" -eq 0 ] || fatal 'duplicate pkg-catalog-commit in configuration'
-                [ -n "$value" ] || fatal 'empty pkg-catalog-commit in configuration'
-                [ -z "$extra" ] || fatal 'invalid pkg-catalog-commit record in configuration'
-                case $value in
-                    *[!0-9a-f]*) fatal 'invalid pkg-catalog-commit in configuration' ;;
-                esac
-                case ${#value} in
-                    40|64) : ;;
-                    *) fatal 'invalid pkg-catalog-commit length in configuration' ;;
-                esac
-                expected_pkg_catalog_commit=$value
-                pkg_catalog_commit_seen=1
+            target-package|pkg-catalog-commit)
+                fatal "$key belongs in validation/requirements, not in a validation scope"
                 ;;
             *)
                 fatal "unknown configuration key: $key"
                 ;;
         esac
     done < "$config_path"
-
-    [ "$commit_seen" -eq 1 ] || fatal 'configuration does not define rumiai-os-commit'
-    if [ "$validation_target_package_count" -gt 0 ]; then
-        [ "$pkg_catalog_commit_seen" -eq 1 ] ||
-            fatal 'configuration target-package requires pkg-catalog-commit'
-    else
-        [ "$pkg_catalog_commit_seen" -eq 0 ] ||
-            fatal 'configuration pkg-catalog-commit requires target-package'
-    fi
 
     if [ "$kind_seen" -eq 0 ]; then
         if [ -n "${validation_scope_name-}" ]; then
@@ -139,6 +100,154 @@ $value"
     if [ "$selection_count" -eq 0 ] && [ "$validation_kind" != health ]; then
         fatal 'task configuration does not define selection'
     fi
+}
+
+validation_requirement_add_package() {
+    package_spec=$1
+    case "
+$validation_target_packages
+" in
+        *"
+$package_spec
+"*) return 0 ;;
+    esac
+    if [ -n "$validation_target_packages" ]; then
+        validation_target_packages="$validation_target_packages
+$package_spec"
+    else
+        validation_target_packages=$package_spec
+    fi
+    validation_target_package_count=$((validation_target_package_count + 1))
+}
+
+validation_requirement_apply_catalog_commit() {
+    catalog_commit=$1
+    [ -n "$catalog_commit" ] || return 0
+
+    case $catalog_commit in
+        *[!0-9a-f]*) fatal 'invalid pkg-catalog-commit in validation requirement' ;;
+    esac
+    case ${#catalog_commit} in
+        40|64) : ;;
+        *) fatal 'invalid pkg-catalog-commit length in validation requirement' ;;
+    esac
+
+    if [ -z "$expected_pkg_catalog_commit" ]; then
+        expected_pkg_catalog_commit=$catalog_commit
+    else
+        [ "$expected_pkg_catalog_commit" = "$catalog_commit" ] ||
+            fatal "conflicting pkg-catalog commits in active validation requirements: $expected_pkg_catalog_commit vs $catalog_commit"
+    fi
+}
+
+validation_requirement_profile_apply() {
+    profile_path=$1
+    runner=$2
+    discovered_tests=$3
+
+    profile_selections=
+    profile_packages=
+    profile_catalog_commit=
+    profile_selection_count=0
+    profile_package_count=0
+    profile_catalog_seen=0
+    tab=$(printf '\t')
+
+    while IFS="$tab" read -r key value extra || [ -n "$key$value$extra" ]; do
+        case $key in
+            ''|'#'*) continue ;;
+            selection)
+                [ -n "$value" ] || fatal "empty selection in validation requirement: $profile_path"
+                [ -z "$extra" ] || fatal "invalid selection record in validation requirement: $profile_path"
+                if [ -n "$profile_selections" ]; then
+                    profile_selections="$profile_selections
+$value"
+                else
+                    profile_selections=$value
+                fi
+                profile_selection_count=$((profile_selection_count + 1))
+                ;;
+            target-package)
+                [ -n "$value" ] || fatal "empty target-package in validation requirement: $profile_path"
+                [ -z "$extra" ] || fatal "invalid target-package record in validation requirement: $profile_path"
+                if [ -n "$profile_packages" ]; then
+                    profile_packages="$profile_packages
+$value"
+                else
+                    profile_packages=$value
+                fi
+                profile_package_count=$((profile_package_count + 1))
+                ;;
+            pkg-catalog-commit)
+                [ "$profile_catalog_seen" -eq 0 ] || fatal "duplicate pkg-catalog-commit in validation requirement: $profile_path"
+                [ -n "$value" ] || fatal "empty pkg-catalog-commit in validation requirement: $profile_path"
+                [ -z "$extra" ] || fatal "invalid pkg-catalog-commit record in validation requirement: $profile_path"
+                profile_catalog_commit=$value
+                profile_catalog_seen=1
+                ;;
+            *)
+                fatal "unknown validation requirement key in $profile_path: $key"
+                ;;
+        esac
+    done < "$profile_path"
+
+    [ "$profile_selection_count" -gt 0 ] ||
+        fatal "validation requirement does not define selection: $profile_path"
+    [ "$profile_package_count" -gt 0 ] ||
+        fatal "validation requirement does not define target-package: $profile_path"
+
+    profile_matches=0
+    profile_probe="$validation_evidence_work/.requirement-probe-$$"
+    old_ifs=$IFS
+    selection_ifs=$(printf '\n_')
+    selection_ifs=${selection_ifs%_}
+    IFS=$selection_ifs
+    for profile_selection in $profile_selections; do
+        IFS=$old_ifs
+        : > "$profile_probe" || fatal 'cannot create validation requirement discovery probe'
+        "$runner" --list -- "$profile_selection" > "$profile_probe" ||
+            fatal "cannot expand validation requirement selection: $profile_selection"
+        if grep -F -x -f "$profile_probe" "$discovered_tests" >/dev/null 2>&1; then
+            profile_matches=1
+            IFS=$selection_ifs
+            break
+        fi
+        IFS=$selection_ifs
+    done
+    IFS=$old_ifs
+    rm -f "$profile_probe" || fatal 'cannot remove validation requirement discovery probe'
+
+    [ "$profile_matches" -eq 1 ] || return 0
+
+    old_ifs=$IFS
+    package_ifs=$(printf '\n_')
+    package_ifs=${package_ifs%_}
+    IFS=$package_ifs
+    for profile_package in $profile_packages; do
+        IFS=$old_ifs
+        validation_requirement_add_package "$profile_package"
+        IFS=$package_ifs
+    done
+    IFS=$old_ifs
+
+    validation_requirement_apply_catalog_commit "$profile_catalog_commit"
+}
+
+validation_requirements_resolve() {
+    runner=$1
+    discovered_tests=$2
+    requirements_dir=$suite_root/validation/requirements
+
+    validation_target_packages=
+    validation_target_package_count=0
+    expected_pkg_catalog_commit=
+
+    [ -d "$requirements_dir" ] || return 0
+
+    for profile_path in "$requirements_dir"/*.conf; do
+        [ -f "$profile_path" ] || continue
+        validation_requirement_profile_apply "$profile_path" "$runner" "$discovered_tests"
+    done
 }
 
 latest_completed_session() {
@@ -467,8 +576,10 @@ validation_environment_prepare_target() {
                 fatal 'prepared target package catalog cache is unavailable'
             prepared_catalog_commit=$(git -C "$package_catalog_root" rev-parse --verify HEAD 2>/dev/null) ||
                 fatal 'cannot resolve prepared target pkg-catalog commit'
-            [ "$prepared_catalog_commit" = "$expected_pkg_catalog_commit" ] ||
-                fatal "prepared target pkg-catalog commit differs from validation scope: expected $expected_pkg_catalog_commit, observed $prepared_catalog_commit"
+            if [ -n "$expected_pkg_catalog_commit" ]; then
+                [ "$prepared_catalog_commit" = "$expected_pkg_catalog_commit" ] ||
+                    fatal "prepared target pkg-catalog commit differs from validation requirement: expected $expected_pkg_catalog_commit, observed $prepared_catalog_commit"
+            fi
             IFS=$package_ifs
         done
         IFS=$old_ifs
@@ -573,28 +684,34 @@ validation_evidence_begin() {
     validation_record_put os "$(uname -s 2>/dev/null || printf unknown)" || fatal 'cannot write validation metadata'
     validation_record_put architecture "$(uname -m 2>/dev/null || printf unknown)" || fatal 'cannot write validation metadata'
 
-    if [ "$validation_target_package_count" -gt 0 ]; then
-        old_ifs=$IFS
-        package_ifs=$(printf '\n_')
-        package_ifs=${package_ifs%_}
-        IFS=$package_ifs
-        for validation_target_package in $validation_target_packages; do
-            IFS=$old_ifs
-            validation_record_put target-package "$validation_target_package" ||
-                fatal 'cannot write validation target-package metadata'
-            IFS=$package_ifs
-        done
-        IFS=$old_ifs
-        validation_record_put expected-pkg-catalog-commit "$expected_pkg_catalog_commit" ||
-            fatal 'cannot write expected pkg-catalog commit metadata'
-    fi
-
     if [ "$selection_count" -eq 0 ]; then
         printf '%s\n' 'tests/' > "$validation_evidence_work/selections" || fatal 'cannot write validation selections'
     else
         printf '%s\n' "$validation_selections" > "$validation_evidence_work/selections" || fatal 'cannot write validation selections'
     fi
 }
+
+validation_evidence_record_requirements() {
+    [ "$validation_target_package_count" -gt 0 ] || return 0
+
+    old_ifs=$IFS
+    package_ifs=$(printf '\n_')
+    package_ifs=${package_ifs%_}
+    IFS=$package_ifs
+    for validation_target_package in $validation_target_packages; do
+        IFS=$old_ifs
+        validation_record_put target-package "$validation_target_package" ||
+            fatal 'cannot write validation target-package metadata'
+        IFS=$package_ifs
+    done
+    IFS=$old_ifs
+
+    if [ -n "$expected_pkg_catalog_commit" ]; then
+        validation_record_put expected-pkg-catalog-commit "$expected_pkg_catalog_commit" ||
+            fatal 'cannot write expected pkg-catalog commit metadata'
+    fi
+}
+
 
 validation_audit_begin() {
     env_root=$1
@@ -748,7 +865,6 @@ run_validation_session_isolation() {
 run_validation_test_isolation() {
     runner=$1
     discovered=$validation_evidence_work/discovered-tests
-    validation_discover_tests "$runner" "$discovered" || fatal 'cannot expand validation selections with rumiai-test --list'
     [ -s "$discovered" ] || fatal 'validation discovery returned no tests'
 
     aggregate_status=0
@@ -823,8 +939,13 @@ rumiai_validate_run() {
 
     repo_pull_ff_only "$primary_target_root" 'rumiai-os'
     repo_require_clean "$primary_target_root" 'rumiai-os'
-    git -C "$primary_target_root" cat-file -e "$expected_rumiai_os_commit^{commit}" 2>/dev/null ||
-        fatal "configured rumiai-os commit is unavailable after update: $expected_rumiai_os_commit"
+    if [ -z "$expected_rumiai_os_commit" ]; then
+        expected_rumiai_os_commit=$(git -C "$primary_target_root" rev-parse HEAD 2>/dev/null) ||
+            fatal 'cannot resolve current rumiai-os HEAD after update'
+    else
+        git -C "$primary_target_root" cat-file -e "$expected_rumiai_os_commit^{commit}" 2>/dev/null ||
+            fatal "configured rumiai-os commit is unavailable after update: $expected_rumiai_os_commit"
+    fi
 
     runner=$suite_root/rumiai-test
     [ -x "$runner" ] || fatal 'rumiai-test is not executable'
@@ -837,6 +958,13 @@ rumiai_validate_run() {
     say "Isolation:    $validation_isolation"
 
     validation_evidence_begin
+    discovered=$validation_evidence_work/discovered-tests
+    validation_discover_tests "$runner" "$discovered" ||
+        fatal 'cannot expand validation selections with rumiai-test --list'
+    [ -s "$discovered" ] || fatal 'validation discovery returned no tests'
+    validation_requirements_resolve "$runner" "$discovered"
+    validation_evidence_record_requirements
+
     validation_audit_status=CLEAN
     validation_prepared_osarch=
     validation_prepared_pkg_catalog_commit=
