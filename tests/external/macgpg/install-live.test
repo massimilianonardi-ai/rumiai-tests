@@ -107,7 +107,8 @@ PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
 grep -F 'gpg (GnuPG' "$tmp/version.out" >/dev/null 2>&1 ||
   fail 'gpg --version did not identify GnuPG/MacGPG'
 
-gnupg_home=$tmp/gnupg
+gnupg_home=${TMPDIR:-/tmp}/gpg-$
+[ ! -e "$gnupg_home" ] && [ ! -L "$gnupg_home" ] || error 'isolated GNUPGHOME already exists'
 mkdir "$gnupg_home" || error 'cannot create isolated GNUPGHOME'
 chmod 700 "$gnupg_home" || error 'cannot protect isolated GNUPGHOME'
 validation_uid='RumiAI MacGPG Validation <validation@example.invalid>'
