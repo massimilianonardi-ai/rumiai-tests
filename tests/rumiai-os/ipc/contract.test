@@ -16,6 +16,11 @@ resolve_test_dir()
 
 cleanup()
 {
+    if [ -n "${open_pid-}" ]
+    then
+        kill "$open_pid" 2>/dev/null || :
+        wait "$open_pid" 2>/dev/null || :
+    fi
     if [ -n "${cancel_pid-}" ]
     then
         kill "$cancel_pid" 2>/dev/null || :
@@ -126,6 +131,29 @@ esac
 ipc_destroy "$channel" || fail 'ipc_destroy rejected a fresh channel'
 [ ! -d "$channel" ] || fail 'ipc_destroy left the fresh channel directory'
 ipc_destroy "$channel" || fail 'ipc_destroy was not idempotent for an absent valid channel'
+
+channel=$(ipc_create "$tmp") || fail 'ipc_create failed for interrupted rendezvous cleanup'
+
+(
+    ipc_open "$channel" a 3 4 || exit 31
+) &
+open_pid=$!
+
+# Open only endpoint a's first FIFO direction. When this returns, endpoint a
+# has begun its rendezvous and remains blocked opening b-to-a for reading.
+exec 7<"$channel/a-to-b" ||
+    error 'cannot advance endpoint a to a half-open rendezvous'
+exec 7<&-
+
+ipc_cancel "$open_pid" ||
+    fail 'ipc_cancel rejected the half-open endpoint child'
+open_pid=
+
+ipc_destroy "$channel" ||
+    fail 'ipc_destroy rejected a channel after all interrupted openers ended'
+[ ! -d "$channel" ] ||
+    fail 'ipc_destroy left a channel after interrupted rendezvous cleanup'
+channel=
 
 arbitrary_dir=$tmp/arbitrary
 mkdir "$arbitrary_dir" || error 'cannot create arbitrary directory fixture'
