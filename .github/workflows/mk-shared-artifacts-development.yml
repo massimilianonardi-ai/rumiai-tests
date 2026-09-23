@@ -1,0 +1,63 @@
+name: mk shared artifacts development
+
+on:
+  push:
+    paths:
+      - '.github/workflows/mk-shared-artifacts-development.yml'
+  workflow_dispatch:
+
+jobs:
+  mk-shared-artifacts:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout tests
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 096bdcd9e701f328509925433dac14f1453ecfc3
+          path: rumiai-tests
+
+      - name: Checkout target
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: c3c51e6f070c774c103eeb7f71c759e3ebfda4ec
+          path: rumiai-os
+
+      - name: Normalize target origin
+        shell: sh
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Provision managed Node.js
+        shell: sh
+        run: |
+          PATH="$PWD/rumiai-os:$PWD/rumiai-os/bin/sys:$PATH"
+          export PATH
+          cd rumiai-os
+          ./m pkg install nodejs
+          nodejs_version="$(./m pkg versions nodejs | sed -n '1p')"
+          [ -n "$nodejs_version" ]
+          ./m pkg default "$nodejs_version"
+
+      - name: Run mk shared artifact scope
+        shell: sh
+        run: |
+          PATH="$PWD/rumiai-os:$PWD/rumiai-os/bin/sys:$PATH"
+          RUMIAI_OS_TARGET="$PWD/rumiai-os"
+          export PATH RUMIAI_OS_TARGET
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/mk/lifecycle.test
+          ./rumiai-test rumiai-os/mk/refinement.test
+          ./rumiai-test rumiai-os/mk/project-dependency.test
+          ./rumiai-test rumiai-os/mk/requirement.test
+          ./rumiai-test rumiai-os/mk/incremental.test
+          ./rumiai-test rumiai-os/mk/inputs.test
+          ./rumiai-test rumiai-os/mk/provider-incremental.test
+          ./rumiai-test rumiai-os/mk/watch.test
+          ./rumiai-test rumiai-os/mk/artifact-restoration.test
+          ./rumiai-test rumiai-os/mk/shared-artifact-concurrency.test
