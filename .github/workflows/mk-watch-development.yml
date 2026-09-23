@@ -44,15 +44,11 @@ jobs:
           [ -n "$nodejs_version" ]
           ./m pkg default "$nodejs_version"
 
-      - name: Run mk watch test with diagnostics
+      - name: Run mk watch test directly
         shell: sh
         run: |
           PATH="$PWD/rumiai-os:$PWD/rumiai-os/bin/sys:$PATH"
           RUMIAI_OS_TARGET="$PWD/rumiai-os"
           export PATH RUMIAI_OS_TARGET
           cd rumiai-tests
-          if ! ./rumiai-test rumiai-os/mk/watch.test
-          then
-            find .runs -type f -path '*/logs/rumiai-os/mk/watch.test' -exec cat {} \; 2>/dev/null || :
-            exit 1
-          fi
+          ./tests/rumiai-os/mk/watch.test
