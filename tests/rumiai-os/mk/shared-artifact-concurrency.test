@@ -266,10 +266,11 @@ function assertNoAttemptTemps(root) {
 
     const refreshed = currentSelected(sharedRoot, before);
     assert(refreshed.current !== selected.current, 'corrupt selected candidate was replaced in place');
-    assert(fs.existsSync(selected.candidatePath), 'refresh removed previously committed candidate');
     assert(fs.readFileSync(refreshed.payload, 'utf8') === 'SHARED-RACE\n', 'recovery candidate payload is wrong');
-    assert(fs.readdirSync(path.join(refreshed.root, 'candidates')).length >= 2,
-      'recovery candidate was not published immutably beside corrupt candidate');
+    assert(!fs.existsSync(selected.candidatePath),
+      'MK-86 structural hygiene did not reclaim the previously selected candidate after selector advance');
+    assert(fs.readdirSync(path.join(refreshed.root, 'candidates')).length === 1,
+      'MK-86 structural hygiene did not converge the touched fingerprint to its selected candidate');
     assertNoAttemptTemps(refreshed.root);
 
     const reader = writeProject(fixtureRoot, 'reader-after-refresh', config, 'SHARED-RACE\n');
