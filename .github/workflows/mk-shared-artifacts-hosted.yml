@@ -37,6 +37,11 @@ jobs:
           fetch-depth: 0
           path: rumiai-os
 
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
       - name: Provision managed Node.js
         shell: bash
         run: |
