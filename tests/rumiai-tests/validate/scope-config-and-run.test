@@ -48,7 +48,21 @@ git -C "$tmp/target-seed" init -q || error 'cannot initialize target seed'
 target_branch=$(git -C "$tmp/target-seed" symbolic-ref --short HEAD) || error 'cannot determine target branch'
 printf 'src/\n' > "$tmp/target-seed/.gitignore" || error 'cannot write target gitignore'
 printf 'old\n' > "$tmp/target-seed/version" || error 'cannot write old target marker'
-git -C "$tmp/target-seed" add .gitignore version || error 'cannot stage old target'
+mkdir -p "$tmp/target-seed/bin/sys" || error 'cannot create target command directory'
+cat > "$tmp/target-seed/m" <<'EOT'
+#!/bin/sh
+exec "$@"
+EOT
+cat > "$tmp/target-seed/bin/sys/osarch" <<'EOT'
+#!/bin/sh
+case $#:${1-} in
+    0:) printf '%s\n' test-osarch ;;
+    1:update) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOT
+chmod +x "$tmp/target-seed/m" "$tmp/target-seed/bin/sys/osarch" || error 'cannot make target commands executable'
+git -C "$tmp/target-seed" add .gitignore version m bin/sys/osarch || error 'cannot stage old target'
 commit_repo "$tmp/target-seed" old-target || error 'cannot commit old target'
 old_target=$(git -C "$tmp/target-seed" rev-parse HEAD) || error 'cannot read old target commit'
 git -C "$tmp/target-seed" remote add origin "$tmp/target-remote.git" || error 'cannot add target remote'
@@ -82,7 +96,7 @@ chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher execut
 : > "$tmp/suite-seed/sessions/.gitkeep" || error 'cannot create sessions marker'
 printf 'pass\n' > "$tmp/suite-seed/fake-mode" || error 'cannot create fake mode'
 printf 'kind\ttask\nrumiai-os-commit\t%s\nselection\tone\nselection\ttwo\n' "$old_target" > "$tmp/suite-seed/validation/demo.conf" || error 'cannot create named task scope'
-printf 'kind\thealth\nrumiai-os-commit\t%s\n' "$old_target" > "$tmp/suite-seed/validation/health.conf" || error 'cannot create root health scope'
+printf 'kind\thealth\n' > "$tmp/suite-seed/validation/health.conf" || error 'cannot create root health scope'
 printf 'kind\ttask\nrumiai-os-commit\t%s\n' "$old_target" > "$tmp/suite-seed/validation/bad-task.conf" || error 'cannot create invalid task scope fixture'
 
 cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
@@ -212,13 +226,14 @@ worktree_count=$(git -C "$tmp/work/rumiai-os" worktree list --porcelain | grep -
 [ "$worktree_count" -eq 1 ] || fail 'temporary worktree remained after non-validating task scope'
 
 # A health scope without selection means one root-suite validation session.
-RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" health > "$tmp/health-transcript" 2>&1
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$new_target" "$work_suite/rumiai-validate" health > "$tmp/health-transcript" 2>&1
 health_status="$?"
 if [ "$health_status" -ne 0 ]; then
     cat "$tmp/health-transcript" >&2
     fail "root health scope returned $health_status"
 fi
 grep -F 'Scope:        health (health)' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope was not reported'
+grep -F "rumiai-os:    $new_target" "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope did not resolve current product HEAD'
 grep -F 'Selection:    tests/ (full suite)' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope did not invoke the full suite'
 grep -F 'Health result: SUCCESS' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope was not reported successful'
 
