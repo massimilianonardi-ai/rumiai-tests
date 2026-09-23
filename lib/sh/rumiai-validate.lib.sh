@@ -868,11 +868,25 @@ run_validation_selection() {
     say 'Starting validation...'
 
     session_before=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
-    if [ -n "$selection" ]; then
-        validation_environment_run "$env_root" "$runner" --validation -- "$selection"
-    else
-        validation_environment_run "$env_root" "$runner" --validation
+
+    set -- "$runner" --validation
+    if [ -n "$validation_runner_exclusions" ]; then
+        old_ifs=$IFS
+        exclusion_ifs=$(printf '\n_')
+        exclusion_ifs=${exclusion_ifs%_}
+        IFS=$exclusion_ifs
+        for validation_exclusion in $validation_runner_exclusions; do
+            IFS=$old_ifs
+            set -- "$@" --exclude "$validation_exclusion"
+            IFS=$exclusion_ifs
+        done
+        IFS=$old_ifs
     fi
+    if [ -n "$selection" ]; then
+        set -- "$@" -- "$selection"
+    fi
+
+    validation_environment_run "$env_root" "$@"
     runner_status=$?
     session_after=$(latest_completed_session "$suite_root/sessions" 2>/dev/null || printf '')
 
@@ -898,6 +912,151 @@ run_validation_selection() {
     fi
 
     return "$scope_status"
+}
+
+run_validation_group_environment() {
+    runner=$1
+    group_name=$2
+    tests_file=$3
+    use_root_selection=$4
+
+    prepare_validation_environment "$primary_target_root" "$expected_rumiai_os_commit"
+    audit_dir="$validation_evidence_work/environments/$group_name"
+    validation_audit_begin "$validation_environment_root" "$audit_dir" ||
+        fatal "cannot capture initial validation environment metadata for group: $group_name"
+
+    group_status=0
+    if [ "$use_root_selection" -eq 1 ]; then
+        run_validation_selection '' "$runner" "$validation_environment_root"
+        group_status=$?
+    else
+        while IFS= read -r test_id; do
+            [ -n "$test_id" ] || continue
+            run_validation_selection "$test_id" "$runner" "$validation_environment_root"
+            test_status=$?
+            group_status=$(merge_scope_status "$group_status" "$test_status")
+            [ "$group_status" -ne 3 ] || break
+        done < "$tests_file"
+    fi
+
+    validation_audit_end "$validation_environment_root" "$audit_dir" "validation environment $group_name"
+    audit_status=$?
+    [ "$audit_status" -ne 2 ] ||
+        fatal "cannot capture final validation environment metadata for group: $group_name"
+    validation_environment_destroy ||
+        fatal "cannot remove validation environment for group: $group_name"
+
+    return "$group_status"
+}
+
+run_validation_session_isolation() {
+    runner=$1
+    discovered="$validation_evidence_work/discovered-tests"
+
+    if [ "$validation_requirement_profile_count" -eq 0 ]; then
+        validation_runner_exclusions=
+        prepare_validation_environment "$primary_target_root" "$expected_rumiai_os_commit"
+        audit_dir=$validation_evidence_work/environment
+        validation_audit_begin "$validation_environment_root" "$audit_dir" ||
+            fatal 'cannot capture initial validation environment metadata'
+
+        aggregate_status=0
+        if [ "$selection_count" -eq 0 ]; then
+            run_validation_selection '' "$runner" "$validation_environment_root"
+            aggregate_status=$?
+        else
+            old_ifs=$IFS
+            selection_ifs=$(printf '\n_')
+            selection_ifs=${selection_ifs%_}
+            IFS=$selection_ifs
+            for validation_selection in $validation_selections; do
+                IFS=$old_ifs
+                run_validation_selection "$validation_selection" "$runner" "$validation_environment_root"
+                selection_status=$?
+                aggregate_status=$(merge_scope_status "$aggregate_status" "$selection_status")
+                [ "$aggregate_status" -ne 3 ] || break
+                IFS=$selection_ifs
+            done
+            IFS=$old_ifs
+        fi
+
+        validation_audit_end "$validation_environment_root" "$audit_dir" 'validation environment'
+        audit_status=$?
+        [ "$audit_status" -ne 2 ] || fatal 'cannot capture final validation environment metadata'
+        validation_environment_destroy || fatal 'cannot remove temporary validation environment'
+        return "$aggregate_status"
+    fi
+
+    baseline_tests="$validation_evidence_work/requirement-groups/baseline-tests"
+    awk 'NR == FNR { claimed[$0] = 1; next } !($0 in claimed)' "$validation_requirement_claimed_tests" "$discovered" > "$baseline_tests" ||
+        fatal 'cannot construct validation baseline test group'
+
+    aggregate_status=0
+    if [ -s "$baseline_tests" ]; then
+        validation_requirement_clear_active
+        validation_runner_exclusions=$(cat "$validation_requirement_claimed_tests")
+        if [ "$selection_count" -eq 0 ]; then
+            run_validation_group_environment "$runner" baseline "$baseline_tests" 1
+        else
+            run_validation_group_environment "$runner" baseline "$baseline_tests" 0
+        fi
+        baseline_status=$?
+        aggregate_status=$(merge_scope_status "$aggregate_status" "$baseline_status")
+    fi
+
+    validation_runner_exclusions=
+    i=1
+    while [ "$i" -le "$validation_requirement_profile_count" ]; do
+        eval "profile_path=\${validation_requirement_profile_${i}_path}"
+        eval "profile_tests=\${validation_requirement_profile_${i}_tests}"
+        validation_requirement_profile_activate "$profile_path"
+
+        profile_name=$(printf 'requirement-%03d' "$i")
+        run_validation_group_environment "$runner" "$profile_name" "$profile_tests" 0
+        profile_status=$?
+        aggregate_status=$(merge_scope_status "$aggregate_status" "$profile_status")
+        [ "$aggregate_status" -ne 3 ] || break
+        i=$((i + 1))
+    done
+
+    validation_target_packages=$validation_resolved_target_packages
+    validation_target_package_count=$validation_resolved_target_package_count
+    expected_pkg_catalog_commit=$validation_resolved_expected_pkg_catalog_commit
+    validation_runner_exclusions=
+    return "$aggregate_status"
+}
+
+run_validation_test_isolation() {
+    runner=$1
+    discovered=$validation_evidence_work/discovered-tests
+    [ -s "$discovered" ] || fatal 'validation discovery returned no tests'
+
+    validation_runner_exclusions=
+    aggregate_status=0
+    while IFS= read -r test_id; do
+        [ -n "$test_id" ] || continue
+        validation_requirement_activate_for_test "$test_id"
+        prepare_validation_environment "$primary_target_root" "$expected_rumiai_os_commit"
+        audit_dir=$validation_evidence_work/environments/$test_id
+        validation_audit_begin "$validation_environment_root" "$audit_dir" ||
+            fatal "cannot capture initial environment metadata for: $test_id"
+
+        run_validation_selection "$test_id" "$runner" "$validation_environment_root"
+        test_status=$?
+
+        validation_audit_end "$validation_environment_root" "$audit_dir" "validation environment $test_id"
+        audit_status=$?
+        [ "$audit_status" -ne 2 ] || fatal "cannot capture final environment metadata for: $test_id"
+        validation_environment_destroy || fatal "cannot remove validation environment for: $test_id"
+
+        aggregate_status=$(merge_scope_status "$aggregate_status" "$test_status")
+        [ "$aggregate_status" -ne 3 ] || break
+    done < "$discovered"
+
+    validation_target_packages=$validation_resolved_target_packages
+    validation_target_package_count=$validation_resolved_target_package_count
+    expected_pkg_catalog_commit=$validation_resolved_expected_pkg_catalog_commit
+    return "$aggregate_status"
 }
 
 validation_discover_tests() {
