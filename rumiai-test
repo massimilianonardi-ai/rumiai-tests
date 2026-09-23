@@ -70,6 +70,7 @@ snapshot_root_count=0
 snapshot_option_seen=0
 selection=
 selection_set=0
+exclude_count=0
 parse_options=1
 
 while [ "$#" -gt 0 ]; do
@@ -83,6 +84,14 @@ while [ "$#" -gt 0 ]; do
             --validation)
                 validation=1
                 shift
+                continue
+                ;;
+            --exclude)
+                [ "$#" -ge 2 ] || fatal '--exclude requires a selection'
+                exclude_count=$((exclude_count + 1))
+                exclude_value=$2
+                eval "exclude_${exclude_count}=\$exclude_value"
+                shift 2
                 continue
                 ;;
             --snapshot=metadata|--snapshot=hash)
@@ -166,6 +175,56 @@ fi
 
 [ -e "$selection_path" ] || fatal 'selection does not exist'
 
+i=1
+while [ "$i" -le "$exclude_count" ]; do
+    eval "exclude=\${exclude_${i}}"
+    [ -n "$exclude" ] || fatal 'empty exclusion is not valid'
+    [ "$exclude" != '.' ] || fatal "exclusion '.' is not valid"
+    case $exclude in
+        /*) fatal 'exclusion must be relative to tests/' ;;
+    esac
+    while [ "${exclude%/}" != "$exclude" ]; do
+        exclude=${exclude%/}
+    done
+    [ -n "$exclude" ] || fatal 'exclusion must be relative to tests/'
+    if printf '%s\n' "$exclude" | grep -Eq '(^|/)\.'; then
+        fatal 'exclusion cannot contain hidden or dot path components'
+    fi
+    case $exclude in
+        *'//'*) fatal 'exclusion cannot contain empty path components' ;;
+    esac
+
+    exclude_path=$tests_root/$exclude
+    [ -e "$exclude_path" ] || fatal "exclusion does not exist: $exclude"
+    [ ! -L "$exclude_path" ] 2>/dev/null || fatal "exclusion cannot be a symbolic link: $exclude"
+
+    exclude_parent=${exclude_path%/*}
+    exclude_base=${exclude_path##*/}
+    [ -n "$exclude_parent" ] || exclude_parent=/
+    exclude_parent_canon=$(canonical_dir "$exclude_parent") ||
+        fatal "cannot canonicalize exclusion parent: $exclude"
+    exclude_canon=$exclude_parent_canon/$exclude_base
+    case $exclude_canon in
+        "$tests_root"|"$tests_root"/*) : ;;
+        *) fatal "exclusion resolves outside tests/: $exclude" ;;
+    esac
+
+    if [ -f "$exclude_path" ]; then
+        case ${exclude_path##*/} in
+            *.test) : ;;
+            *) fatal "excluded file is not a *.test: $exclude" ;;
+        esac
+    elif [ -d "$exclude_path" ]; then
+        exclude_first_test=$(find "$exclude_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print 2>/dev/null | LC_ALL=C sort | sed -n '1p')
+        [ -n "$exclude_first_test" ] || fatal "excluded group contains no tests: $exclude"
+    else
+        fatal "exclusion is neither a regular test file nor a group directory: $exclude"
+    fi
+
+    eval "exclude_${i}=\$exclude"
+    i=$((i + 1))
+done
+
 # A selected path must remain under tests/ even when realpath(1) is unavailable.
 # Canonicalizing its parent resolves every intermediate symlink; the selected
 # entry itself is separately forbidden from being a symlink.
@@ -202,31 +261,59 @@ fi
 discover_tests_to_file() {
     discover_output=$1
     discover_work=$2
+    discover_primary=$discover_work/primary-tests
+    discover_excluded=$discover_work/excluded-tests
 
     if [ "$selection_kind" = test ]; then
-        printf '%s\n' "$selection" > "$discover_output" || return 1
+        printf '%s\n' "$selection" > "$discover_primary" || return 1
+    else
+        discover_find_paths=$discover_work/find-paths
+        discover_find_error=$discover_work/find-error
+        discover_ids=$discover_work/test-ids
+
+        find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print > "$discover_find_paths" 2> "$discover_find_error"
+        discover_status=$?
+        [ "$discover_status" -eq 0 ] || return 1
+        [ ! -s "$discover_find_error" ] || return 1
+
+        : > "$discover_ids" || return 1
+        while IFS= read -r discover_path; do
+            discover_id=${discover_path#"$tests_root"/}
+            printf '%s\n' "$discover_id" >> "$discover_ids" || return 1
+        done < "$discover_find_paths"
+
+        LC_ALL=C sort "$discover_ids" > "$discover_primary" || return 1
+    fi
+
+    if [ "$exclude_count" -eq 0 ]; then
+        cat "$discover_primary" > "$discover_output" || return 1
+        [ -s "$discover_output" ] || return 1
         return 0
     fi
 
-    discover_find_paths=$discover_work/find-paths
-    discover_find_error=$discover_work/find-error
-    discover_ids=$discover_work/test-ids
+    : > "$discover_excluded" || return 1
+    i=1
+    while [ "$i" -le "$exclude_count" ]; do
+        eval "exclude=\${exclude_${i}}"
+        exclude_path=$tests_root/$exclude
+        if [ -f "$exclude_path" ]; then
+            printf '%s\n' "$exclude" >> "$discover_excluded" || return 1
+        else
+            find "$exclude_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print 2>/dev/null |
+                while IFS= read -r exclude_test_path; do
+                    exclude_test_id=${exclude_test_path#"$tests_root"/}
+                    printf '%s\n' "$exclude_test_id"
+                done >> "$discover_excluded" || return 1
+        fi
+        i=$((i + 1))
+    done
 
-    find "$selection_path" \( -name '.*' -prune \) -o -type f -name '*.test' -print > "$discover_find_paths" 2> "$discover_find_error"
-    discover_status=$?
-    [ "$discover_status" -eq 0 ] || return 1
-    [ ! -s "$discover_find_error" ] || return 1
-
-    : > "$discover_ids" || return 1
-    while IFS= read -r discover_path; do
-        discover_id=${discover_path#"$tests_root"/}
-        printf '%s\n' "$discover_id" >> "$discover_ids" || return 1
-    done < "$discover_find_paths"
-
-    LC_ALL=C sort "$discover_ids" > "$discover_output" || return 1
+    LC_ALL=C sort -u "$discover_excluded" -o "$discover_excluded" || return 1
+    awk 'NR == FNR { excluded[$0] = 1; next } !($0 in excluded)' "$discover_excluded" "$discover_primary" > "$discover_output" ||
+        return 1
+    [ -s "$discover_output" ] || return 1
     return 0
 }
-
 if [ "$list_mode" -eq 1 ]; then
     list_work=${TMPDIR:-/tmp}/rumiai-test-list-$$
     [ ! -e "$list_work" ] || fatal 'temporary discovery path already exists'
@@ -365,6 +452,14 @@ if [ "$selection_set" -eq 1 ]; then
 else
     session_put selection 'tests/'
 fi
+session_put exclude-count "$exclude_count"
+i=1
+while [ "$i" -le "$exclude_count" ]; do
+    eval "exclude=\${exclude_${i}}"
+    exclude_id=$(printf 'exclude-%03d' "$i")
+    session_put "$exclude_id" "$exclude"
+    i=$((i + 1))
+done
 session_put os "$uname_s"
 session_put os-version "$(os_version)"
 session_put architecture "$(uname -m 2>/dev/null || printf '%s' unknown)"
