@@ -323,6 +323,11 @@ async function failedCycleScenario() {
   await waitFor(() => lines(trace).length === 1 || watch.child.exitCode !== null, 'failed-cycle initial watch cycle not observable');
   assert(lines(trace).length === 1 && watch.child.exitCode === null, 'failed-cycle initial request did not remain active');
 
+  // The trace proves the child action ran, but the supervisor may still be
+  // establishing its mandatory post-cycle trigger baseline. Give that
+  // infrastructure step time to settle before introducing the next trigger.
+  await sleep(300);
+
   fs.writeFileSync(path.join(projectRoot, 'input.txt'), 'fail\n');
   await waitFor(() => lines(trace).length === 2 || watch.child.exitCode !== null, 'failing lifecycle cycle not observable');
   assert(lines(trace).length === 2 && watch.child.exitCode === null, 'CURRENT-60 failed lifecycle cycle terminated watch');
