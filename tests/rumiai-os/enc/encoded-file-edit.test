@@ -71,6 +71,9 @@ enc_library=$root/lib/sys/sh/enc.lib.sh
 [ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
     fail 'enc.lib.sh is missing or is not a regular library file'
 
+( set -o pipefail ) 2>/dev/null ||
+    skip 'the current POSIX shell does not provide the required pipefail option'
+
 . "$core_library" || error 'cannot source core.lib.sh'
 . "$enc_library" || error 'cannot source enc.lib.sh'
 
