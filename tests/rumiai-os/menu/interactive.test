@@ -783,13 +783,17 @@ def pump_until(needle, timeout=3.0):
             else:
                 err.extend(chunk)
         if needle in ui:
-            return
-    raise AssertionError(("timed out waiting for UI", needle, bytes(ui), bytes(out), bytes(err)))
+            return True
+    return False
 
 
-pump_until(fs_root.encode())
+if not pump_until(b"> sub"):
+    print(("initial root-view synchronization timed out", bytes(ui), bytes(out), bytes(err)), file=sys.stderr)
+    sys.exit(3)
 os.write(master, b"\n")
-pump_until((fs_root + "/sub").encode())
+if not pump_until(b"> .."):
+    print(("child-view synchronization timed out", bytes(ui), bytes(out), bytes(err)), file=sys.stderr)
+    sys.exit(3)
 
 # Discard the child-view transcript so a later root match cannot be satisfied by
 # the root prefix contained in the child path.
@@ -799,7 +803,12 @@ kbs = subprocess.check_output(
     env={**os.environ, "TERM": "xterm-256color"},
 )
 os.write(master, kbs)
-pump_until(b"> sub")
+assert pump_until(b"> sub"), (
+    "Backspace parent navigation did not repaint the root selection",
+    bytes(ui),
+    bytes(out),
+    bytes(err),
+)
 os.write(master, b"x")
 
 status = None
@@ -854,7 +863,11 @@ with open(result_path, "wb") as result_file:
     result_file.write(out)
 PY_PARENT
 status=$?
-[ "$status" -eq 0 ] || fail 'default Backspace parent-navigation validation failed'
+case $status in
+    0) : ;;
+    3) error 'default Backspace parent-navigation driver synchronization failed' ;;
+    *) fail 'default Backspace parent-navigation validation failed' ;;
+esac
 decode_result fs-parent-default
 [ "$RESULT_COUNT" -eq 2 ] || fail 'fs-parent-default returned wrong argument count'
 [ "$RESULT_1" = x ] || fail "fs-parent-default key is '$RESULT_1'"
