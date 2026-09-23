@@ -96,7 +96,7 @@ target-package<TAB><package-spec>
 pkg-catalog-commit<TAB><commit-esatto-opzionale>
 ```
 
-`selection` e `target-package` sono ripetibili. Il launcher espande sia lo scope sia le selection dei requirement profile con `rumiai-test --list`; un profile si applica quando almeno un test scoperto coincide. I package risultanti vengono uniti e deduplicati automaticamente.
+`selection` e `target-package` sono ripetibili. Il launcher espande sia lo scope sia le selection dei requirement profile con `rumiai-test --list`; un profile si applica quando almeno un test scoperto coincide. Per gli scope task i package dei profile applicabili vengono uniti e deduplicati automaticamente. Nella full product validation, invece, i requirement profile attivi devono selezionare insiemi di test disgiunti: la baseline viene eseguita senza quei test e ogni profile viene eseguito in un clone disposable separato con i soli package dichiarati da quel profile. In questo modo un prerequisito non altera le precondizioni di test appartenenti a un altro gruppo.
 
 `pkg-catalog-commit` è opzionale. Se assente, il path reale `pkg` può usare lo snapshot corrente e il launcher registra il commit effettivamente osservato; se presente, lo snapshot osservato deve coincidere.
 
@@ -113,11 +113,12 @@ Il launcher:
 3. usa il suo HEAD committed corrente se lo scope non dichiara un commit esplicito, altrimenti verifica il commit pin-nato;
 4. espande il set di test richiesto con `rumiai-test --list`;
 5. risolve automaticamente tutti i requirement profile che intersecano il set scoperto;
-6. per ogni ambiente necessario crea un **clone Git indipendente** in una root temporanea;
-7. effettua checkout detached dell'esatto commit risolto;
-8. seleziona la piattaforma target con il reale `osarch update`;
-9. installa attraverso il reale `pkg install` ogni target package richiesto;
-10. ripristina nel clone l'origin canonica osservata sul checkout primario.
+6. nella full product validation costruisce una baseline che esclude i test reclamati dai requirement profile e un gruppo separato per ciascun profile attivo;
+7. per ogni gruppo crea un **clone Git indipendente** in una root temporanea;
+8. effettua checkout detached dell'esatto commit risolto;
+9. seleziona la piattaforma target con il reale `osarch update`;
+10. installa attraverso il reale `pkg install` soltanto i target package richiesti da quel gruppo;
+11. ripristina nel clone l'origin canonica osservata sul checkout primario.
 
 Se la preparazione di un prerequisito dichiarato fallisce, la validation fallisce come errore di preparazione: non viene trasformata in `SKIP` del test.
 
@@ -235,6 +236,7 @@ sessions            run-id delle sessioni elementari
 environment/        audit session-wide, in isolation=session
 environments/       audit per test, in isolation=test
 discovered-tests    set canonico dei test selezionati, sempre presente
+requirement-groups/  profili attivi, test reclamati e baseline calcolata quando applicabile
 ```
 
 Il record viene pubblicato anch'esso sotto `validation/<validation-id>`, basato sull'esatto commit della suite, senza avanzare `main`.
