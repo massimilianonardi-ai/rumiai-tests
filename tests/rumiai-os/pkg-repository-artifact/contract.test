@@ -57,6 +57,9 @@ case "$url" in
   https://checks.example/v1/demo-v1.zip.sha512)
     printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA  demo-v1.zip'
     ;;
+  https://checks.example/v1/demo-v1.zip.sha512-only)
+    printf '%s\n' 'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE'
+    ;;
   https://checks.example/v1/SHA256SUMS)
     printf '%s\n' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB  other.zip'
     printf '%s\n' 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC  demo-v1.zip'
@@ -80,6 +83,17 @@ expected="demo-v1.zip${tab}https://downloads.example/v1/demo-v1.zip"
 metadata="$(pkg_repository_artifact_metadata_resolve "$repository/metadata" sha512 v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "checksum-sidecar resolution failed"
 expected="777${tab}sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 [ "$metadata" = "$expected" ] || fail "checksum-sidecar output incorrect"
+
+printf '%s\n' digest-only > "$repository/metadata/record-format"
+printf '%s\n' 'https://checks.example/{version}/{name}.sha512-only' > "$repository/metadata/url-template"
+metadata="$(pkg_repository_artifact_metadata_resolve "$repository/metadata" sha512 v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "digest-only checksum-sidecar resolution failed"
+expected="777${tab}sha512:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+[ "$metadata" = "$expected" ] || fail "digest-only checksum-sidecar output incorrect"
+direct="$(pkg_repository_artifact_metadata_checksum_sidecar 'https://checks.example/v1/demo-v1.zip.sha512-only' digest-only sha512 demo-v1.zip 'https://downloads.example/v1/demo-v1.zip')" || fail "direct checksum-sidecar mechanism resolution failed"
+[ "$direct" = "$expected" ] || fail "direct checksum-sidecar mechanism output differs"
+
+printf '%s\n' unknown-format > "$repository/metadata/record-format"
+if pkg_repository_artifact_overrides_validate "$repository" >/dev/null 2>&1; then fail "unknown checksum-sidecar record format was accepted"; fi
 
 rm "$repository/metadata/record-format"
 printf '%s\n' checksum-manifest > "$repository/metadata/type"
