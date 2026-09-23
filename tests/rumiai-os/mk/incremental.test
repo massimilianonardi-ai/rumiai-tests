@@ -364,17 +364,28 @@ EOF_NODE
 command -p -- cmp -s "$project/src/input.txt" "$project/out/artifact" ||
   fail "corrupt freshness recovery did not leave verified declared output"
 
-# Effective action definition/profile identity invalidates the record.
+# Effective action definition/profile identity invalidates current freshness.
+# Returning to an earlier effective fingerprint may now restore its separately
+# verified shared-local artifact instead of rerunning that earlier action.
 before="$(trace_count)"
 "$command_path" --project "$project" --profile alt build || fail "profile action build failed"
 [ "$(trace_count)" -eq "$((before + 1))" ] ||
   fail "operation definition/profile change did not invalidate freshness"
 [ "$(command -p -- tail -n 1 "$trace")" = compile-alt ] ||
   fail "profile action did not execute"
-before="$(trace_count)"
-"$command_path" --project "$project" build || fail "base action rebuild failed"
-[ "$(trace_count)" -eq "$((before + 1))" ] ||
-  fail "return to base action did not invalidate profile freshness"
+plan="$tmp/return-base.plan.json"
+"$command_path" --project "$project" --plan build > "$plan" ||
+  fail "return-to-base plan failed"
+"$root/m" node - "$plan" <<'EOF_NODE' ||
+  fail "return to base action incorrectly reused profile freshness"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='compile');
+if(!op || op.state!=='ready') process.exit(1);
+EOF_NODE
+"$command_path" --project "$project" build || fail "base action recovery failed"
+command -p -- cmp -s "$project/src/input.txt" "$project/out/artifact" ||
+  fail "return to base action did not establish correct declared output"
 
 # MK-48: output observation may use verified up-to-date producer evidence.
 before="$(trace_count)"
