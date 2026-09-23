@@ -341,17 +341,28 @@ before="$(trace_count)"
 command -p -- cmp -s "$project/src/input.txt" "$project/out/artifact" ||
   fail "output-invalidated execution did not restore artifact"
 
-# Corrupt non-authoritative cache is a miss, never a false success/fatal error.
+# Corrupt project-scoped freshness metadata is never a false up-to-date
+# result or fatal error. Execution may now repair the checkout either by ordinary
+# action execution or by a separately verified shared-local artifact restore.
 printf -- '%s\n' '{broken' > "$compile_record" || error "cannot corrupt freshness record"
-before="$(trace_count)"
+plan="$tmp/corrupt-freshness.plan.json"
+"$command_path" --project "$project" --plan build > "$plan" ||
+  fail "MK-50 corrupt-cache plan failed"
+"$root/m" node - "$plan" <<'EOF_NODE' ||
+  fail "MK-50 corrupt freshness metadata produced false up-to-date evidence"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='compile');
+if(!op || op.state!=='ready') process.exit(1);
+EOF_NODE
 "$command_path" --project "$project" build || fail "MK-50 corrupt-cache recovery failed"
-[ "$(trace_count)" -eq "$((before + 1))" ] ||
-  fail "MK-50 corrupt cache was treated as reusable success"
-"$root/m" node - "$compile_record" <<'EOF_NODE' || fail "successful miss did not replace corrupt freshness record"
+"$root/m" node - "$compile_record" <<'EOF_NODE' || fail "successful recovery did not replace corrupt freshness record"
 const fs=require('node:fs');
 const value=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-if(value.schema!==1 || value.operation!=='compile') process.exit(1);
+if(value.schema!==1 || value.operation!=='compile' || typeof value.fingerprint!=='string') process.exit(1);
 EOF_NODE
+command -p -- cmp -s "$project/src/input.txt" "$project/out/artifact" ||
+  fail "corrupt freshness recovery did not leave verified declared output"
 
 # Effective action definition/profile identity invalidates the record.
 before="$(trace_count)"
