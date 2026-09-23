@@ -137,6 +137,11 @@ mkdir "$fake_channel" || error 'cannot create empty valid-looking channel fixtur
 expect_status 1 'ipc_destroy empty valid-looking directory guard' ipc_destroy "$fake_channel"
 [ -d "$fake_channel" ] || fail 'ipc_destroy removed an empty non-channel directory'
 
+regular_channel=$tmp/ipc.126.33333333333333333333333333333333
+printf '%s\n' fixture > "$regular_channel" || error 'cannot create regular-file channel fixture'
+expect_status 1 'ipc_destroy regular-file channel guard' ipc_destroy "$regular_channel"
+[ -f "$regular_channel" ] || fail 'ipc_destroy removed a regular file at a channel-like path'
+
 symlink_target=$tmp/symlink-target
 mkdir "$symlink_target" || error 'cannot create symlink target fixture'
 symlink_channel=$tmp/ipc.124.11111111111111111111111111111111
