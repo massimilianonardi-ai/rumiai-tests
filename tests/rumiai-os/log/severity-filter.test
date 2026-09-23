@@ -48,6 +48,7 @@ cat > "$probe" <<'EOT'
 log info test message marker info-filtered
 log error test message marker error-visible
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 
 m_LOG_LEVEL=warn "$entry" "$probe" >"$stdout" 2>"$stderr" || {
     status=$?

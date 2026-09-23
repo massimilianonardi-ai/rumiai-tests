@@ -52,7 +52,7 @@ cat > "$real" <<'EOF_COMMAND'
 printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_COMMAND_BIN" || return 41
 return 0
 EOF_COMMAND
-chmod 600 "$real" || error 'cannot prepare command body'
+chmod 700 "$real" || error 'cannot prepare command body'
 ln -s "$real" "$alias" || error 'cannot create command symlink'
 expected=$(command -p realpath -- "$real" 2>/dev/null) || error 'cannot canonicalize expected command'
 

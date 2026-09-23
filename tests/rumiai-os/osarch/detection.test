@@ -153,6 +153,7 @@ cat > "$probe" <<'EOF'
 printf -- '%s|%s|%s\n' "$m_OSARCH_OS" "$m_OSARCH_ARCH" "$m_OSARCH"
 command -p -- sh -c 'printf -- "%s|%s|%s\n" "$m_OSARCH_OS" "$m_OSARCH_ARCH" "$m_OSARCH"'
 EOF
+chmod 700 "$probe" || error "cannot make osarch probe executable"
 
 output="$("$root/m" "$probe")" || fail "osarch.lib.sh could not be sourced through the m runtime"
 expected_line="${expected_os}|${expected_arch}|${expected_osarch}"

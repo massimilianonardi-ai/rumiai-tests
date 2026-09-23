@@ -45,7 +45,7 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 probe=$tmp/probe
 printf '%s\n' '#!/usr/bin/env m' 'return 37' > "$probe" || error 'cannot create command body'
-chmod 600 "$probe" || error 'cannot prepare command body'
+chmod 700 "$probe" || error 'cannot prepare command body'
 
 "$root/m" "$probe" > "$tmp/stdout" 2> "$tmp/stderr"
 status=$?

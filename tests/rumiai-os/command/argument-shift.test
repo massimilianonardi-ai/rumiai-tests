@@ -50,7 +50,7 @@ cat > "$probe" <<'EOF_PROBE'
 printf '%s\n' "$#" "$1" "$2" > "$OBSERVED_ARGS" || return 41
 return 0
 EOF_PROBE
-chmod 600 "$probe" || error 'cannot prepare command body'
+chmod 700 "$probe" || error 'cannot prepare command body'
 
 OBSERVED_ARGS=$observed
 export OBSERVED_ARGS

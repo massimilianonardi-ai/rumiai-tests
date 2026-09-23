@@ -48,6 +48,7 @@ cat > "$probe" <<'EOT'
 field_value='a b\c"d'
 log warn test message value "$field_value"
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 
 m_LOG_LEVEL=trace "$entry" "$probe" >"$stdout" 2>"$stderr" || {
     status=$?
