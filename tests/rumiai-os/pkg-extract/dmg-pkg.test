@@ -14,7 +14,7 @@ resolve_test_dir()
 }
 
 [ "$(uname -s 2>/dev/null)" = Darwin ] || skip 'dmg-pkg materialization is macOS-specific'
-for tool in hdiutil xar cpio
+for tool in hdiutil xar cpio gzip
 do
   command -v "$tool" >/dev/null 2>&1 || skip "$tool is unavailable"
 done
@@ -27,7 +27,7 @@ case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail '
 
 tmp=${TMPDIR:-/tmp}/rumiai-dmg-pkg-$$
 umask 077
-mkdir -p "$tmp/payload/usr/local/MacGPG2/bin" "$tmp/payload/usr/local/MacGPG2/lib" "$tmp/component/MacGPG2.pkg" "$tmp/outer" "$tmp/dmgsrc" "$tmp/stage" || error 'cannot create fixture'
+mkdir -p "$tmp/payload/usr/local/MacGPG2/bin" "$tmp/payload/usr/local/MacGPG2/lib" "$tmp/component/MacGPG2.1_Core.pkg" "$tmp/outer" "$tmp/dmgsrc" "$tmp/stage" || error 'cannot create fixture'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 cat > "$tmp/payload/usr/local/MacGPG2/bin/gpg" <<'EOF_GPG'
@@ -38,11 +38,12 @@ chmod 755 "$tmp/payload/usr/local/MacGPG2/bin/gpg" || error 'cannot prepare payl
 printf '%s\n' fixture > "$tmp/payload/usr/local/MacGPG2/lib/runtime-marker" || error 'cannot prepare useful-root sibling'
 (
   CDPATH= cd -- "$tmp/payload" || exit 1
-  find . -print | cpio -o -H odc > "$tmp/component/MacGPG2.pkg/Payload" 2>/dev/null
-) || error 'cannot create component payload'
+  find . -print | cpio -o -H odc > "$tmp/payload.cpio" 2>/dev/null
+) || error 'cannot create component cpio'
+gzip -c < "$tmp/payload.cpio" > "$tmp/component/MacGPG2.1_Core.pkg/Payload" || error 'cannot compress component payload'
 (
   CDPATH= cd -- "$tmp/component" || exit 1
-  xar -cf "$tmp/outer/GPG Suite.pkg" MacGPG2.pkg
+  xar -cf "$tmp/outer/GPG Suite.pkg" MacGPG2.1_Core.pkg
 ) || error 'cannot create outer flat package'
 cp "$tmp/outer/GPG Suite.pkg" "$tmp/dmgsrc/GPG Suite.pkg" || error 'cannot stage outer package'
 hdiutil create -quiet -srcfolder "$tmp/dmgsrc" "$tmp/GPG_Suite-test.dmg" || error 'cannot create DMG fixture'
@@ -55,7 +56,7 @@ pkg_extract "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
-"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.pkg || fail 'dmg-pkg extraction failed'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.1_Core.pkg || fail 'dmg-pkg extraction failed'
 [ -x "$tmp/stage/bin/gpg" ] || fail 'MacGPG useful root was not normalized'
 [ -f "$tmp/stage/lib/runtime-marker" ] || fail 'MacGPG useful-root sibling was not preserved'
 [ ! -e "$tmp/stage/usr" ] || fail 'payload installation prefix survived normalization'
