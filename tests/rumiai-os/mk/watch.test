@@ -1,0 +1,391 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/mk/watch.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command_path="$root/bin/sys/mk"
+[ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
+[ -x "$root/m" ] || fail "m bootstrap is missing"
+
+PATH="$root:$root/bin/sys:$PATH"
+export PATH
+
+if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+then
+  skip "managed nodejs runtime is not installed/default in the supplied target"
+fi
+
+"$root/m" node - "$root" <<'EOF_NODE'
+'use strict';
+
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+class ContractFailure extends Error {}
+class InfrastructureError extends Error {}
+
+function assert(condition, message) {
+  if (!condition) throw new ContractFailure(message);
+}
+
+function infra(condition, message) {
+  if (!condition) throw new InfrastructureError(message);
+}
+
+function run(command, args, options = {}) {
+  const result = childProcess.spawnSync(command, args, {encoding: 'utf8', ...options});
+  if (result.error) throw new InfrastructureError(`cannot execute ${command}: ${result.error.message}`);
+  return result;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitFor(predicate, message, timeoutMs = 9000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await sleep(25);
+  }
+  throw new InfrastructureError(message);
+}
+
+function lines(file) {
+  if (!fs.existsSync(file)) return [];
+  const value = fs.readFileSync(file, 'utf8').trim();
+  return value === '' ? [] : value.split('\n');
+}
+
+function writeExecutable(file, content) {
+  fs.writeFileSync(file, content);
+  fs.chmodSync(file, 0o700);
+}
+
+function writeProject(root, config, files = {}) {
+  fs.mkdirSync(root, {recursive: true});
+  fs.writeFileSync(path.join(root, 'mk.json'), JSON.stringify(config, null, 2) + '\n');
+  for (const [relative, value] of Object.entries(files)) {
+    const file = path.join(root, relative);
+    fs.mkdirSync(path.dirname(file), {recursive: true});
+    fs.writeFileSync(file, value);
+  }
+}
+
+const targetRoot = fs.realpathSync(process.argv[2]);
+const mk = path.join(targetRoot, 'bin', 'sys', 'mk');
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rumiai-mk-watch-'));
+let active = null;
+
+function baseEnv(extra = {}) {
+  return {
+    ...process.env,
+    PATH: `${targetRoot}${path.delimiter}${path.join(targetRoot, 'bin', 'sys')}${path.delimiter}${process.env.PATH || ''}`,
+    ...extra
+  };
+}
+
+function runMk(args, extra = {}) {
+  return run(mk, args, {env: baseEnv(extra)});
+}
+
+function startWatch(args, extra = {}) {
+  const child = childProcess.spawn(mk, args, {
+    env: baseEnv(extra),
+    stdio: ['ignore', 'ignore', 'pipe']
+  });
+  active = child;
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.once('error', error => { stderr += `spawn-error:${error.message}\n`; });
+  return {child, stderr: () => stderr};
+}
+
+async function stopWatch(watch, expected = 143) {
+  infra(watch.child.exitCode === null, 'watch session already exited before requested termination');
+  watch.child.kill('SIGTERM');
+  const status = await Promise.race([
+    new Promise((resolve, reject) => {
+      watch.child.once('error', reject);
+      watch.child.once('exit', (code, signal) => resolve({code, signal}));
+    }),
+    sleep(5000).then(() => { throw new InfrastructureError('watch session did not terminate after SIGTERM'); })
+  ]);
+  if (active === watch.child) active = null;
+  assert(
+    status.signal === null && status.code === expected,
+    `CURRENT-62 watch termination status mismatch: ${JSON.stringify(status)} stderr=${JSON.stringify(watch.stderr())}`
+  );
+}
+
+async function cliScenario() {
+  const v1 = path.join(root, 'v1');
+  writeProject(v1, {
+    version: 1,
+    goals: {build: ['build']},
+    operations: {
+      build: {action: {type: 'process', command: 'sh', args: ['-c', 'true']}}
+    }
+  });
+
+  let result = runMk(['--watch', '--plan', '--project', v1, 'build']);
+  assert(result.status === 2, `CURRENT-56 --watch --plan status=${result.status}`);
+
+  result = runMk(['--watch', '--goals', '--project', v1]);
+  assert(result.status === 2, `CURRENT-56 --watch --goals status=${result.status}`);
+
+  result = runMk(['--watch', '--show-goal', 'build', '--project', v1]);
+  assert(result.status === 2, `CURRENT-56 --watch --show-goal status=${result.status}`);
+
+  result = runMk(['--watch', '--interval-ms', '10', '--project', v1, 'build']);
+  assert(result.status === 2, `CURRENT-61 public polling option unexpectedly accepted: ${result.status}`);
+
+  result = runMk(['--watch', '--project', v1, 'build']);
+  assert(
+    result.status === 1,
+    `CURRENT-56 version-1 watch was not rejected: status=${result.status} stderr=${JSON.stringify(result.stderr)}`
+  );
+}
+
+async function mainScenario() {
+  const trace = path.join(root, 'main-trace');
+  const childRoot = path.join(root, 'child');
+  const parentRoot = path.join(root, 'parent');
+
+  writeProject(childRoot, {
+    version: 2,
+    goals: {build: ['child-build']},
+    operations: {
+      'child-build': {
+        inputs: {source: {path: 'child.txt'}},
+        action: {type: 'process', command: 'sh', args: ['-c', 'printf "child\\n" >> "$WATCH_TRACE"']}
+      }
+    }
+  }, {'child.txt': 'child-one\n'});
+
+  writeProject(parentRoot, {
+    version: 2,
+    goals: {build: ['build', 'ordinary']},
+    dependencies: {
+      child: {project: '../child', goals: {build: ['build']}}
+    },
+    operations: {
+      build: {
+        inputs: {source: {path: 'input.txt'}},
+        action: {type: 'process', command: './tool.sh'},
+        outputs: {artifact: {path: 'build.out'}}
+      },
+      ordinary: {
+        action: {
+          type: 'process',
+          command: 'sh',
+          args: ['-c', 'printf "ordinary\\n" >> "$WATCH_TRACE"; printf ordinary > ordinary.out']
+        },
+        outputs: {artifact: {path: 'ordinary.out'}}
+      }
+    }
+  }, {'input.txt': 'one\n'});
+
+  const tool = path.join(parentRoot, 'tool.sh');
+  writeExecutable(tool, '#!/bin/sh\nprintf "parent\\n" >> "$WATCH_TRACE"\ncp input.txt build.out\n');
+
+  const watch = startWatch(['--watch', '--project', parentRoot, 'build'], {WATCH_TRACE: trace});
+  await waitFor(
+    () => lines(trace).length === 3 || watch.child.exitCode !== null,
+    'initial recursive watch cycle did not become observable'
+  );
+  assert(
+    lines(trace).length === 3 && watch.child.exitCode === null,
+    `CURRENT-56 initial watch cycle failed: trace=${lines(trace).join(',')} exit=${watch.child.exitCode} stderr=${JSON.stringify(watch.stderr())}`
+  );
+
+  await sleep(260);
+  assert(lines(trace).length === 3, 'CURRENT-57 unchanged trigger identity reran lifecycle');
+
+  const input = path.join(parentRoot, 'input.txt');
+  const now = new Date();
+  fs.utimesSync(input, now, now);
+  await sleep(220);
+  assert(lines(trace).length === 3, 'CURRENT-57 mtime-only input change triggered lifecycle');
+
+  fs.writeFileSync(input, 'two\n');
+  await waitFor(() => lines(trace).length === 6, 'declared parent input change did not trigger one lifecycle cycle');
+  await sleep(180);
+  assert(lines(trace).length === 6, 'declared parent input change caused duplicate cycle');
+
+  fs.writeFileSync(path.join(parentRoot, 'ordinary.out'), 'tampered\n');
+  await sleep(220);
+  assert(lines(trace).length === 6, 'CURRENT-57 ordinary unconsumed output became watch trigger');
+
+  fs.appendFileSync(tool, '# executable change\n');
+  await waitFor(() => lines(trace).length === 9, 'CURRENT-57 executable identity change did not trigger lifecycle');
+  await sleep(180);
+  assert(lines(trace).length === 9, 'executable identity change caused duplicate cycle');
+
+  fs.writeFileSync(path.join(childRoot, 'child.txt'), 'child-two\n');
+  await waitFor(() => lines(trace).length === 12, 'CURRENT-58 active child input change did not trigger parent watch');
+  await sleep(180);
+  assert(lines(trace).length === 12, 'active child input change caused duplicate parent cycle');
+
+  const childConfig = fs.readFileSync(path.join(childRoot, 'mk.json'), 'utf8');
+  fs.writeFileSync(path.join(childRoot, 'mk.json'), '{');
+  await sleep(240);
+  assert(lines(trace).length === 12, 'CURRENT-60 invalid child configuration ran lifecycle work');
+  assert(watch.child.exitCode === null, 'CURRENT-60 invalid child configuration terminated watch session');
+
+  fs.writeFileSync(path.join(childRoot, 'mk.json'), childConfig);
+  await sleep(240);
+  assert(lines(trace).length === 12, 'CURRENT-60 unchanged child configuration recovery triggered lifecycle');
+
+  fs.writeFileSync(path.join(childRoot, 'mk.json'), '{');
+  fs.writeFileSync(path.join(childRoot, 'child.txt'), 'child-three\n');
+  await sleep(180);
+  assert(lines(trace).length === 12, 'CURRENT-60 child input change ran work while configuration was invalid');
+  fs.writeFileSync(path.join(childRoot, 'mk.json'), childConfig);
+  await waitFor(() => lines(trace).length === 15, 'CURRENT-60 changed child identity did not trigger after valid recovery');
+
+  const parentConfig = fs.readFileSync(path.join(parentRoot, 'mk.json'), 'utf8');
+  fs.writeFileSync(path.join(parentRoot, 'mk.json'), '{"version":');
+  await sleep(180);
+  assert(lines(trace).length === 15, 'CURRENT-60 invalid root configuration ran lifecycle work');
+  fs.writeFileSync(path.join(parentRoot, 'mk.json'), parentConfig);
+  await sleep(240);
+  assert(lines(trace).length === 15, 'CURRENT-60 unchanged root recovery triggered lifecycle');
+
+  await stopWatch(watch);
+  assert(watch.stderr().includes('temporarily unavailable'), 'CURRENT-60 temporary configuration diagnostic missing');
+  assert(watch.stderr().includes('valid again'), 'CURRENT-60 configuration recovery diagnostic missing');
+}
+
+async function failedCycleScenario() {
+  const projectRoot = path.join(root, 'failure');
+  const trace = path.join(root, 'failure-trace');
+
+  writeProject(projectRoot, {
+    version: 2,
+    goals: {build: ['run']},
+    operations: {
+      run: {
+        inputs: {source: {path: 'input.txt'}},
+        action: {
+          type: 'process',
+          command: 'sh',
+          args: ['-c', 'printf "run\\n" >> "$WATCH_TRACE"; [ "$(cat input.txt)" != fail ]']
+        }
+      }
+    }
+  }, {'input.txt': 'ok\n'});
+
+  const watch = startWatch(['--watch', '--project', projectRoot, 'build'], {WATCH_TRACE: trace});
+  await waitFor(() => lines(trace).length === 1 || watch.child.exitCode !== null, 'failed-cycle initial watch cycle not observable');
+  assert(lines(trace).length === 1 && watch.child.exitCode === null, 'failed-cycle initial request did not remain active');
+
+  fs.writeFileSync(path.join(projectRoot, 'input.txt'), 'fail\n');
+  await waitFor(() => lines(trace).length === 2 || watch.child.exitCode !== null, 'failing lifecycle cycle not observable');
+  assert(lines(trace).length === 2 && watch.child.exitCode === null, 'CURRENT-60 failed lifecycle cycle terminated watch');
+  await sleep(240);
+  assert(lines(trace).length === 2, 'CURRENT-60 failed lifecycle cycle busy-looped');
+  assert(
+    watch.stderr().includes('watch lifecycle cycle failed with status 1'),
+    'CURRENT-60 failed lifecycle cycle diagnostic missing'
+  );
+
+  fs.writeFileSync(path.join(projectRoot, 'input.txt'), 'ok-again\n');
+  await waitFor(() => lines(trace).length === 3, 'CURRENT-60 watch did not continue after failed lifecycle cycle');
+  await stopWatch(watch);
+}
+
+async function signalScenario() {
+  const projectRoot = path.join(root, 'signal');
+  const started = path.join(root, 'signal-started');
+
+  writeProject(projectRoot, {
+    version: 2,
+    goals: {build: ['run']},
+    operations: {
+      run: {
+        action: {
+          type: 'process',
+          command: 'sh',
+          args: ['-c', 'printf started > "$WATCH_STARTED"; while :; do sleep 1; done']
+        }
+      }
+    }
+  });
+
+  const watch = startWatch(['--watch', '--project', projectRoot, 'build'], {WATCH_STARTED: started});
+  await waitFor(
+    () => fs.existsSync(started) || watch.child.exitCode !== null,
+    'active lifecycle child did not start for signal scenario'
+  );
+  assert(fs.existsSync(started) && watch.child.exitCode === null, 'signal scenario lifecycle child failed before SIGTERM');
+
+  await stopWatch(watch);
+}
+
+(async () => {
+  try {
+    await cliScenario();
+    await mainScenario();
+    await failedCycleScenario();
+    await signalScenario();
+    process.stdout.write('watch-baseline=ok\n');
+  } finally {
+    if (active !== null && active.exitCode === null) {
+      try { active.kill('SIGTERM'); } catch (error) {}
+    }
+    fs.rmSync(root, {recursive: true, force: true});
+  }
+})().catch(error => {
+  if (error instanceof ContractFailure) {
+    process.stderr.write(`FAIL watch contract: ${error.message}\n`);
+    process.exitCode = 1;
+  } else {
+    process.stderr.write(`ERROR watch test infrastructure: ${error && error.message ? error.message : error}\n`);
+    process.exitCode = 3;
+  }
+});
+EOF_NODE
