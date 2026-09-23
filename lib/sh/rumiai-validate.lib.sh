@@ -6,6 +6,12 @@ validation_audit_status=CLEAN
 validation_target_packages=
 validation_target_package_count=0
 expected_pkg_catalog_commit=
+validation_requirement_profile_count=0
+validation_requirement_claimed_tests=
+validation_resolved_target_packages=
+validation_resolved_target_package_count=0
+validation_resolved_expected_pkg_catalog_commit=
+validation_runner_exclusions=
 validation_prepared_osarch=
 validation_prepared_pkg_catalog_commit=
 
@@ -140,10 +146,8 @@ validation_requirement_apply_catalog_commit() {
     fi
 }
 
-validation_requirement_profile_apply() {
+validation_requirement_profile_load() {
     profile_path=$1
-    runner=$2
-    discovered_tests=$3
 
     profile_selections=
     profile_packages=
@@ -195,29 +199,66 @@ $value"
         fatal "validation requirement does not define selection: $profile_path"
     [ "$profile_package_count" -gt 0 ] ||
         fatal "validation requirement does not define target-package: $profile_path"
+}
 
-    profile_matches=0
-    profile_probe="$validation_evidence_work/.requirement-probe-$$"
+validation_requirement_profile_apply() {
+    profile_path=$1
+    runner=$2
+    discovered_tests=$3
+
+    validation_requirement_profile_load "$profile_path"
+
+    profile_work="$validation_evidence_work/.requirement-profile-$$"
+    profile_all="$profile_work.all"
+    profile_matched="$profile_work.matched"
+    : > "$profile_all" || fatal 'cannot create validation requirement discovery file'
+
     old_ifs=$IFS
     selection_ifs=$(printf '\n_')
     selection_ifs=${selection_ifs%_}
     IFS=$selection_ifs
     for profile_selection in $profile_selections; do
         IFS=$old_ifs
-        : > "$profile_probe" || fatal 'cannot create validation requirement discovery probe'
-        "$runner" --list -- "$profile_selection" > "$profile_probe" ||
+        "$runner" --list -- "$profile_selection" >> "$profile_all" ||
             fatal "cannot expand validation requirement selection: $profile_selection"
-        if grep -F -x -f "$profile_probe" "$discovered_tests" >/dev/null 2>&1; then
-            profile_matches=1
-            IFS=$selection_ifs
-            break
-        fi
         IFS=$selection_ifs
     done
     IFS=$old_ifs
-    rm -f "$profile_probe" || fatal 'cannot remove validation requirement discovery probe'
 
-    [ "$profile_matches" -eq 1 ] || return 0
+    LC_ALL=C sort -u "$profile_all" -o "$profile_all" ||
+        fatal 'cannot normalize validation requirement discovery'
+
+    awk 'NR == FNR { selected[$0] = 1; next } ($0 in selected)' "$discovered_tests" "$profile_all" > "$profile_matched" ||
+        fatal 'cannot intersect validation requirement with selected tests'
+    rm -f "$profile_all" || fatal 'cannot remove validation requirement discovery file'
+
+    if [ ! -s "$profile_matched" ]; then
+        rm -f "$profile_matched" || fatal 'cannot remove inactive validation requirement match'
+        return 0
+    fi
+
+    if [ -n "$validation_requirement_claimed_tests" ] && [ -s "$validation_requirement_claimed_tests" ]; then
+        if grep -F -x -f "$profile_matched" "$validation_requirement_claimed_tests" >/dev/null 2>&1; then
+            fatal "overlapping validation requirement profiles include the same selected test: $profile_path"
+        fi
+    fi
+
+    validation_requirement_profile_count=$((validation_requirement_profile_count + 1))
+    profile_index=$(printf '%03d' "$validation_requirement_profile_count")
+    profile_dir="$validation_evidence_work/requirement-groups/$profile_index"
+    mkdir -p "$profile_dir" || fatal 'cannot create validation requirement group evidence'
+    mv "$profile_matched" "$profile_dir/tests" ||
+        fatal 'cannot persist validation requirement group tests'
+    printf '%s\n' "$profile_path" > "$profile_dir/profile" ||
+        fatal 'cannot persist validation requirement group identity'
+
+    eval "validation_requirement_profile_${validation_requirement_profile_count}_path=\$profile_path"
+    eval "validation_requirement_profile_${validation_requirement_profile_count}_tests=\$profile_dir/tests"
+
+    cat "$profile_dir/tests" >> "$validation_requirement_claimed_tests" ||
+        fatal 'cannot accumulate validation requirement group tests'
+    LC_ALL=C sort -u "$validation_requirement_claimed_tests" -o "$validation_requirement_claimed_tests" ||
+        fatal 'cannot normalize claimed validation requirement tests'
 
     old_ifs=$IFS
     package_ifs=$(printf '\n_')
@@ -233,6 +274,48 @@ $value"
     validation_requirement_apply_catalog_commit "$profile_catalog_commit"
 }
 
+validation_requirement_clear_active() {
+    validation_target_packages=
+    validation_target_package_count=0
+    expected_pkg_catalog_commit=
+}
+
+validation_requirement_profile_activate() {
+    profile_path=$1
+    validation_requirement_clear_active
+    validation_requirement_profile_load "$profile_path"
+
+    old_ifs=$IFS
+    package_ifs=$(printf '\n_')
+    package_ifs=${package_ifs%_}
+    IFS=$package_ifs
+    for profile_package in $profile_packages; do
+        IFS=$old_ifs
+        validation_requirement_add_package "$profile_package"
+        IFS=$package_ifs
+    done
+    IFS=$old_ifs
+
+    validation_requirement_apply_catalog_commit "$profile_catalog_commit"
+}
+
+validation_requirement_activate_for_test() {
+    test_id=$1
+    i=1
+    while [ "$i" -le "$validation_requirement_profile_count" ]; do
+        eval "profile_tests=\${validation_requirement_profile_${i}_tests}"
+        if grep -F -x "$test_id" "$profile_tests" >/dev/null 2>&1; then
+            eval "profile_path=\${validation_requirement_profile_${i}_path}"
+            validation_requirement_profile_activate "$profile_path"
+            return 0
+        fi
+        i=$((i + 1))
+    done
+
+    validation_requirement_clear_active
+    return 0
+}
+
 validation_requirements_resolve() {
     runner=$1
     discovered_tests=$2
@@ -241,13 +324,23 @@ validation_requirements_resolve() {
     validation_target_packages=
     validation_target_package_count=0
     expected_pkg_catalog_commit=
+    validation_requirement_profile_count=0
+    validation_requirement_claimed_tests="$validation_evidence_work/requirement-groups/claimed-tests"
+    mkdir -p "$validation_evidence_work/requirement-groups" ||
+        fatal 'cannot create validation requirement group directory'
+    : > "$validation_requirement_claimed_tests" ||
+        fatal 'cannot initialize claimed validation requirement tests'
 
-    [ -d "$requirements_dir" ] || return 0
+    if [ -d "$requirements_dir" ]; then
+        for profile_path in "$requirements_dir"/*.conf; do
+            [ -f "$profile_path" ] || continue
+            validation_requirement_profile_apply "$profile_path" "$runner" "$discovered_tests"
+        done
+    fi
 
-    for profile_path in "$requirements_dir"/*.conf; do
-        [ -f "$profile_path" ] || continue
-        validation_requirement_profile_apply "$profile_path" "$runner" "$discovered_tests"
-    done
+    validation_resolved_target_packages=$validation_target_packages
+    validation_resolved_target_package_count=$validation_target_package_count
+    validation_resolved_expected_pkg_catalog_commit=$expected_pkg_catalog_commit
 }
 
 latest_completed_session() {
