@@ -1,0 +1,198 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/ipc/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    if [ -n "${cancel_pid-}" ]
+    then
+        kill "$cancel_pid" 2>/dev/null || :
+        wait "$cancel_pid" 2>/dev/null || :
+    fi
+    if [ -n "${peer_pid-}" ]
+    then
+        kill "$peer_pid" 2>/dev/null || :
+        wait "$peer_pid" 2>/dev/null || :
+    fi
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+expect_status()
+{
+    expected=$1
+    description=$2
+    shift 2
+
+    "$@"
+    status=$?
+    [ "$status" -eq "$expected" ] ||
+        fail "$description returned $status instead of $expected"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+ipc_library=$root/lib/sys/sh/ipc.lib.sh
+ipc_manual=$root/res/sys/manual/ipc.lib.sh
+
+[ -f "$ipc_library" ] && [ ! -L "$ipc_library" ] ||
+    fail 'ipc.lib.sh is missing or is not a regular library file'
+[ ! -x "$ipc_library" ] || fail 'ipc.lib.sh is executable'
+
+IFS= read -r first_line < "$ipc_library" || error 'cannot read ipc.lib.sh'
+case "$first_line" in
+    '#!'*) fail 'ipc.lib.sh has a shebang' ;;
+esac
+
+command -p sh -n "$ipc_library" || fail 'ipc.lib.sh is not valid host POSIX-sh syntax'
+
+[ -f "$ipc_manual" ] && [ ! -L "$ipc_manual" ] ||
+    fail 'ipc.lib.sh operational manual is missing'
+
+for public_function in \
+    ipc_create ipc_open ipc_write ipc_read ipc_close ipc_sync ipc_cancel ipc_destroy
+do
+    grep -F "$public_function" "$ipc_manual" >/dev/null 2>&1 ||
+        fail "ipc manual omits public function $public_function"
+done
+
+if grep -E '(^|[^[:alnum:]_])_ipc_[[:alnum:]_]*' "$ipc_manual" >/dev/null 2>&1
+then
+    fail 'ipc manual exposes an internal function identifier'
+fi
+
+command -v openssl >/dev/null 2>&1 ||
+    skip 'openssl required by rand.lib.sh is unavailable'
+
+m_LIB_DIR=$root/lib
+. "$ipc_library" || error 'cannot source ipc.lib.sh'
+
+tmp=${TMPDIR:-/tmp}/rumiai-ipc-contract-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+channel=$(ipc_create "$tmp") || fail 'ipc_create failed'
+[ -d "$channel" ] && [ ! -L "$channel" ] || fail 'ipc_create did not create a real channel directory'
+[ -p "$channel/a-to-b" ] && [ ! -L "$channel/a-to-b" ] ||
+    fail 'ipc_create did not create a real a-to-b FIFO'
+[ -p "$channel/b-to-a" ] && [ ! -L "$channel/b-to-a" ] ||
+    fail 'ipc_create did not create a real b-to-a FIFO'
+
+channel_name=${channel##*/}
+case "$channel_name" in
+    ipc.*.*) : ;;
+    *) fail "ipc_create returned invalid channel identity: $channel_name" ;;
+esac
+channel_rest=${channel_name#ipc.}
+channel_pid=${channel_rest%%.*}
+channel_token=${channel_rest#*.}
+case "$channel_pid" in
+    ''|0*|*[!0123456789]*) fail "ipc_create returned invalid pid component: $channel_pid" ;;
+esac
+[ "${#channel_token}" -eq 32 ] ||
+    fail 'ipc_create token is not 32 hexadecimal characters'
+[ "$channel_token" = "${channel_token%%[!0123456789abcdef]*}" ] ||
+    fail 'ipc_create token is not lowercase hexadecimal'
+
+ipc_destroy "$channel" || fail 'ipc_destroy rejected a fresh channel'
+[ ! -d "$channel" ] || fail 'ipc_destroy left the fresh channel directory'
+ipc_destroy "$channel" || fail 'ipc_destroy was not idempotent for an absent valid channel'
+
+arbitrary_dir=$tmp/arbitrary
+mkdir "$arbitrary_dir" || error 'cannot create arbitrary directory fixture'
+expect_status 1 'ipc_destroy arbitrary path guard' ipc_destroy "$arbitrary_dir"
+[ -d "$arbitrary_dir" ] || fail 'ipc_destroy removed an arbitrary directory'
+
+fake_channel=$tmp/ipc.123.00000000000000000000000000000000
+mkdir "$fake_channel" || error 'cannot create empty valid-looking channel fixture'
+expect_status 1 'ipc_destroy empty valid-looking directory guard' ipc_destroy "$fake_channel"
+[ -d "$fake_channel" ] || fail 'ipc_destroy removed an empty non-channel directory'
+
+symlink_target=$tmp/symlink-target
+mkdir "$symlink_target" || error 'cannot create symlink target fixture'
+symlink_channel=$tmp/ipc.124.11111111111111111111111111111111
+ln -s "$symlink_target" "$symlink_channel" || error 'cannot create channel symlink fixture'
+expect_status 1 'ipc_destroy channel symlink guard' ipc_destroy "$symlink_channel"
+[ -d "$symlink_target" ] || fail 'ipc_destroy affected a symlink target'
+
+channel=$(ipc_create "$tmp") || fail 'ipc_create failed for open symlink guard'
+alias_channel=$tmp/ipc.125.22222222222222222222222222222222
+ln -s "$channel" "$alias_channel" || error 'cannot create open symlink fixture'
+expect_status 1 'ipc_open channel symlink guard' ipc_open "$alias_channel" a 3 4
+ipc_destroy "$channel" || fail 'cannot destroy channel after symlink-open guard'
+channel=
+
+channel=$(ipc_create "$tmp") || fail 'ipc_create failed for duplex exchange'
+
+(
+    ipc_open "$channel" b 5 6 || exit 21
+    request=$(ipc_read 5) || exit 22
+    [ "$request" = 'request' ] || exit 23
+    ipc_write 6 'reply' || exit 24
+    ipc_close 5 6 || exit 25
+) &
+peer_pid=$!
+
+ipc_open "$channel" a 3 4 || fail 'endpoint a failed to open against endpoint b'
+[ ! -d "$channel" ] || fail 'opened channel path was not removed'
+
+ipc_write 4 'bad
+record'
+status=$?
+[ "$status" -eq 1 ] || fail "ipc_write accepted embedded newline data with status $status"
+
+ipc_write 4 'request' || fail 'ipc_write failed for request record'
+reply=$(ipc_read 3) || fail 'ipc_read failed for reply record'
+[ "$reply" = 'reply' ] || fail "unexpected duplex reply: $reply"
+ipc_close 3 4 || fail 'ipc_close failed for endpoint a'
+
+ipc_sync "$peer_pid"
+status=$?
+peer_pid=
+[ "$status" -eq 0 ] || fail "endpoint b failed with status $status"
+channel=
+
+for invalid_pid in 0 00 01 -1 x 1x
+do
+    expect_status 1 "ipc_sync invalid pid $invalid_pid" ipc_sync "$invalid_pid"
+    expect_status 1 "ipc_cancel invalid pid $invalid_pid" ipc_cancel "$invalid_pid"
+done
+
+expect_status 2 'ipc_sync arity' ipc_sync
+expect_status 2 'ipc_cancel arity' ipc_cancel
+
+sleep 30 &
+cancel_pid=$!
+ipc_cancel "$cancel_pid" || fail 'ipc_cancel rejected a valid asynchronous child pid'
+cancel_pid=
+
+exit 0
