@@ -56,10 +56,6 @@ chmod +x "$runner" || error 'cannot make fake discovery runner executable'
 cat > "$tmp/suite/validation/requirements/mk.conf" <<'EOT'
 selection	rumiai-os/mk
 target-package	nodejs@v26.10.0
-EOT
-
-cat > "$tmp/suite/validation/requirements/mk-pin.conf" <<'EOT'
-selection	rumiai-os/mk/watch.test
 target-package	nodejs@v26.10.0
 pkg-catalog-commit	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOT
@@ -85,6 +81,10 @@ validation_requirements_resolve "$runner" "$selected"
     fail "unexpected resolved target packages: $validation_target_packages"
 [ "$expected_pkg_catalog_commit" = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ] ||
     fail "unexpected resolved pkg-catalog pin: $expected_pkg_catalog_commit"
+[ "$validation_requirement_profile_count" -eq 1 ] ||
+    fail "expected one active requirement profile, got $validation_requirement_profile_count"
+[ "$(cat "$validation_requirement_claimed_tests")" = "$(printf '%s\n' rumiai-os/mk/lifecycle.test rumiai-os/mk/watch.test)" ] ||
+    fail 'active requirement profile did not claim the selected mk tests exactly once'
 
 printf '%s\n' rumiai-os/other/contract.test > "$selected" ||
     error 'cannot replace selected-test fixture'
