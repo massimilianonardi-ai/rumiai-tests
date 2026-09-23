@@ -1,0 +1,64 @@
+name: mk-formal-validation-hosted
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/mk-formal-validation-hosted.yml
+      - lib/sh/rumiai-validate.lib.sh
+      - validation/mk-shared-artifacts.conf
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout rumiai-tests
+        uses: actions/checkout@v4
+        with:
+          path: rumiai-tests
+          fetch-depth: 0
+
+      - name: Checkout rumiai-os
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          path: rumiai-os
+          fetch-depth: 0
+
+      - name: Normalize repositories
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name rumiai-validation
+          git -C rumiai-tests config user.email rumiai-validation@example.invalid
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Run formal validation
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate mk-shared-artifacts
+
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mk-formal-validation-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            rumiai-tests/sessions/
+            rumiai-tests/validations/
+          if-no-files-found: ignore
