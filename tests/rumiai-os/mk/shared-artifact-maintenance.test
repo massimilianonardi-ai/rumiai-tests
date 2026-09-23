@@ -156,23 +156,25 @@ else
   : > "$shared_before" || error "cannot create shared snapshot"
 fi
 
-project_key="$(sha256_value "$project")" || error "cannot compute project key"
-operation_key="$(sha256_value build)" || error "cannot compute operation key"
-cache_project="$cache_root/projects/$project_key"
-command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
+cache_project=
 
 "$command_path" --project "$project" build || fail "initial build failed"
 [ "$(trace_count "$project/trace")" -eq 1 ] || fail "initial action did not execute once"
 
-record="$cache_project/operations/$operation_key.json"
-[ -f "$record" ] || error "freshness record missing"
-fingerprint="$("$root/m" node - "$record" <<'EOF_NODE'
-const fs=require('node:fs');
-const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-if(typeof v.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(v.fingerprint)) process.exit(1);
-process.stdout.write(v.fingerprint+'\n');
-EOF_NODE
-)" || error "cannot read fingerprint"
+fingerprint=
+fingerprint_count=0
+for shared_entry in "$shared_root"/*
+do
+  [ -d "$shared_entry" ] || continue
+  shared_name=${shared_entry##*/}
+  if ! command -p -- grep -F -x -- "$shared_name" "$shared_before" >/dev/null 2>&1
+  then
+    fingerprint=$shared_name
+    fingerprint_count=$((fingerprint_count + 1))
+  fi
+done
+[ "$fingerprint_count" -eq 1 ] ||
+  error "expected exactly one new shared-artifact fingerprint, observed $fingerprint_count"
 
 artifact_root="$shared_root/$fingerprint"
 [ -d "$artifact_root" ] || error "artifact root missing"
