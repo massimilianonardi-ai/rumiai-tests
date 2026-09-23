@@ -249,7 +249,8 @@ validation_requirement_profile_apply() {
     mkdir -p "$profile_dir" || fatal 'cannot create validation requirement group evidence'
     mv "$profile_matched" "$profile_dir/tests" ||
         fatal 'cannot persist validation requirement group tests'
-    printf '%s\n' "$profile_path" > "$profile_dir/profile" ||
+    profile_reference=${profile_path#"$suite_root"/}
+    printf '%s\n' "$profile_reference" > "$profile_dir/profile" ||
         fatal 'cannot persist validation requirement group identity'
 
     eval "validation_requirement_profile_${validation_requirement_profile_count}_path=\$profile_path"
@@ -785,6 +786,16 @@ validation_evidence_begin() {
 }
 
 validation_evidence_record_requirements() {
+    i=1
+    while [ "$i" -le "$validation_requirement_profile_count" ]; do
+        eval "profile_path=\${validation_requirement_profile_${i}_path}"
+        profile_reference=${profile_path#"$suite_root"/}
+        profile_id=$(printf 'requirement-profile-%03d' "$i")
+        validation_record_put "$profile_id" "$profile_reference" ||
+            fatal 'cannot write validation requirement profile metadata'
+        i=$((i + 1))
+    done
+
     [ "$validation_target_package_count" -gt 0 ] || return 0
 
     old_ifs=$IFS
