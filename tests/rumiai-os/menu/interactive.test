@@ -46,7 +46,7 @@ run_scenario()
 
     rumiai_test_interactive_run "$dialogue" "$output" "$wrapper" || {
         cat "$output" >&2 2>/dev/null || :
-        fail "interactive driver failed for $scenario"
+        error "interactive driver failed for $scenario"
     }
 
     [ -s "$RUMIAI_MENU_TEST_STATUS" ] || fail "scenario $scenario did not record status"
