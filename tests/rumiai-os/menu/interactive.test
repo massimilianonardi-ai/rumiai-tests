@@ -706,7 +706,7 @@ dialogue=$tmp/fs-browse.dialogue
 fs_second_response="${down} ${down} x"
 printf '%s\t%s\n' \
     '> [ ] sub' '' \
-    '> [ ] a file' "$fs_second_response" > "$dialogue" || error 'cannot create fs-browse dialogue'
+    '> [ ] ..' "$fs_second_response" > "$dialogue" || error 'cannot create fs-browse dialogue'
 run_scenario fs-browse "$dialogue" "$tmp/fs-browse.output"
 [ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-browse status is $SCENARIO_STATUS"
 decode_result fs-browse
@@ -865,7 +865,7 @@ decode_result fs-parent-default
 dialogue=$tmp/fs-parent-custom.dialogue
 printf '%s\t%s\n' \
     '> sub' '' \
-    '> a file' 'zx' > "$dialogue" ||
+    '> ..' 'zx' > "$dialogue" ||
     error 'cannot create fs-parent-custom dialogue'
 run_scenario fs-parent-custom "$dialogue" "$tmp/fs-parent-custom.output"
 [ "$SCENARIO_STATUS" -eq 0 ] || fail "fs-parent-custom status is $SCENARIO_STATUS"
