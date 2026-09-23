@@ -48,6 +48,13 @@ jobs:
         run: |
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
 
+      - name: Provision managed Node.js
+        shell: bash
+        run: |
+          cd rumiai-os
+          ./m ./bin/sys/pkg install nodejs
+          ./m ./bin/sys/pkg default nodejs
+
       - name: Configure validation evidence author
         shell: bash
         run: |
