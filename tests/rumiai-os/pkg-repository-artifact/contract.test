@@ -79,6 +79,8 @@ download="$(pkg_repository_artifact_download_resolve "$repository/download" v1)"
 tab="$(printf '\t')"
 expected="demo-v1.zip${tab}https://downloads.example/v1/demo-v1.zip"
 [ "$download" = "$expected" ] || fail "template-url output incorrect"
+direct_download="$(pkg_repository_artifact_download_template_url 'demo-{version}.zip' 'https://downloads.example/{version}/{name}' v1)" || fail "direct template-url mechanism resolution failed"
+[ "$direct_download" = "$expected" ] || fail "direct template-url mechanism output differs"
 
 metadata="$(pkg_repository_artifact_metadata_resolve "$repository/metadata" sha512 v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "checksum-sidecar resolution failed"
 expected="777${tab}sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
