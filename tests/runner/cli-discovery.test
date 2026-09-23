@@ -69,6 +69,14 @@ actual_list=$(cat "$tmp_base/list-output")
 [ ! -e "$suite/.runs" ] || fail '--list created development run evidence'
 [ ! -e "$suite/sessions/.rumiai-test-list" ] || fail '--list created validation evidence'
 
+"$suite/rumiai-test" --list --exclude group/b.test group > "$tmp_base/list-excluded-output" 2>&1
+[ "$?" -eq 0 ] || fail '--list with exclusion did not succeed'
+[ "$(cat "$tmp_base/list-excluded-output")" = 'group/a.test' ] ||
+    fail '--exclude did not remove the requested test from canonical discovery'
+
+"$suite/rumiai-test" --list --exclude group group > "$tmp_base/list-all-excluded-output" 2>&1
+[ "$?" -eq 3 ] || fail 'excluding the complete selected set was not rejected'
+
 "$suite/rumiai-test" --list group/a.test > "$tmp_base/list-single-output" 2>&1
 [ "$?" -eq 0 ] || fail '--list single test did not succeed'
 [ "$(cat "$tmp_base/list-single-output")" = 'group/a.test' ] || fail '--list single test returned the wrong id'
