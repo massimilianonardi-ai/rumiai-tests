@@ -61,6 +61,9 @@ case "$url" in
     printf '%s\n' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB  other.zip'
     printf '%s\n' 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC  demo-v1.zip'
     ;;
+  'https://sourceforge.net/projects/demo/rss?path=/Demo/v1/')
+    printf '%s\n' '<rss><channel><item><media:content url="https://sourceforge.net/projects/demo/files/Demo/v1/demo-v1.zip/download" filesize="888"><media:hash algo="md5">DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD</media:hash></media:content></item></channel></rss>'
+    ;;
   *) exit 88;;
 esac
 EOF_HTTP
@@ -69,12 +72,12 @@ PATH="$tmp/bin:/usr/bin:/bin"; export PATH
 . "$library" || error "cannot source artifact override library"
 
 pkg_repository_artifact_overrides_validate "$repository" || fail "valid override schema rejected"
-download="$(pkg_repository_artifact_download_override "$repository" v1)" || fail "template-url resolution failed"
+download="$(pkg_repository_artifact_download_resolve "$repository/download" v1)" || fail "template-url resolution failed"
 tab="$(printf '\t')"
 expected="demo-v1.zip${tab}https://downloads.example/v1/demo-v1.zip"
 [ "$download" = "$expected" ] || fail "template-url output incorrect"
 
-metadata="$(pkg_repository_artifact_metadata_override "$repository" "$range" v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "checksum-sidecar resolution failed"
+metadata="$(pkg_repository_artifact_metadata_resolve "$repository/metadata" sha512 v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "checksum-sidecar resolution failed"
 expected="777${tab}sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 [ "$metadata" = "$expected" ] || fail "checksum-sidecar output incorrect"
 
@@ -82,7 +85,7 @@ rm "$repository/metadata/record-format"
 printf '%s\n' checksum-manifest > "$repository/metadata/type"
 printf '%s\n' 'https://checks.example/{version}/SHA256SUMS' > "$repository/metadata/url-template"
 printf '%s\n' sha256 > "$range/digest_type"
-metadata="$(pkg_repository_artifact_metadata_override "$repository" "$range" v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "checksum-manifest resolution failed"
+metadata="$(pkg_repository_artifact_metadata_resolve "$repository/metadata" sha256 v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip)" || fail "checksum-manifest resolution failed"
 expected="777${tab}sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 [ "$metadata" = "$expected" ] || fail "checksum-manifest output incorrect"
 
@@ -94,7 +97,21 @@ printf '%s\n' unexpected > "$repository/download/extra"
 if pkg_repository_artifact_overrides_validate "$repository" >/dev/null 2>&1; then fail "unknown download override field was accepted"; fi
 rm "$repository/download/extra"
 
-rm "$range/digest_type"
-if pkg_repository_artifact_metadata_override "$repository" "$range" v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip >/dev/null 2>&1; then fail "metadata override accepted missing digest_type"; fi
+if pkg_repository_artifact_metadata_resolve "$repository/metadata" sha1 v1 demo-v1.zip https://downloads.example/v1/demo-v1.zip >/dev/null 2>&1
+then
+  fail "unsupported digest algorithm was accepted"
+fi
+
+sourceforge_metadata="$tmp/sourceforge-metadata"
+mkdir "$sourceforge_metadata" || error "cannot create SourceForge metadata fixture"
+printf '%s\n' sourceforge-rss > "$sourceforge_metadata/type"
+printf '%s\n' demo > "$sourceforge_metadata/project"
+printf '%s\n' '/Demo/{version}/' > "$sourceforge_metadata/path-template"
+sourceforge_url='https://sourceforge.net/projects/demo/files/Demo/v1/demo-v1.zip/download'
+metadata="$(pkg_repository_artifact_metadata_resolve "$sourceforge_metadata" md5 v1 demo-v1.zip "$sourceforge_url")" || fail "sourceforge-rss metadata resolution failed"
+expected="888${tab}md5:dddddddddddddddddddddddddddddddd"
+[ "$metadata" = "$expected" ] || fail "sourceforge-rss output incorrect"
+direct="$(pkg_repository_artifact_metadata_sourceforge_rss demo '/Demo/{version}/' md5 v1 demo-v1.zip "$sourceforge_url")" || fail "direct SourceForge mechanism resolution failed"
+[ "$direct" = "$expected" ] || fail "direct SourceForge mechanism output differs"
 
 exit 0
