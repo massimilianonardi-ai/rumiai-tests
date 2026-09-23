@@ -140,7 +140,10 @@ cat > "$driver" <<'EOF_DRIVER'
 action=$1
 shift
 case $action in
-  integrate) pkg_integrate "$@";;
+  integrate)
+    [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
+    pkg_integrate "$@"
+    ;;
   deintegrate) pkg_deintegrate "$@";;
   *) return 2;;
 esac
