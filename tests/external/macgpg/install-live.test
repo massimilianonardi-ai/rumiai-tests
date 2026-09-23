@@ -63,7 +63,7 @@ chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
 [ "$osarch" = macos-arm64 ] || skip "MacGPG install validation is macos-arm64-only; target is $osarch"
 
-for tool in hdiutil xar cpio
+for tool in hdiutil xar cpio gzip
 do
   command -v "$tool" >/dev/null 2>&1 || skip "$tool is unavailable"
 done
@@ -99,8 +99,36 @@ PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
   cat "$tmp/version.err" >&2
   fail 'gpg --version failed after MacGPG installation'
 }
-grep -F 'gpg (GnuPG)' "$tmp/version.out" >/dev/null 2>&1 ||
-  fail 'gpg --version did not identify GnuPG'
+grep -F 'gpg (GnuPG' "$tmp/version.out" >/dev/null 2>&1 ||
+  fail 'gpg --version did not identify GnuPG/MacGPG'
+
+gnupg_home=$tmp/gnupg
+mkdir "$gnupg_home" || error 'cannot create isolated GNUPGHOME'
+chmod 700 "$gnupg_home" || error 'cannot protect isolated GNUPGHOME'
+validation_uid='RumiAI MacGPG Validation <validation@example.invalid>'
+
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg \
+    --batch \
+    --pinentry-mode loopback \
+    --passphrase '' \
+    --quick-generate-key "$validation_uid" rsa2048 sign 0 \
+    > "$tmp/keygen.out" 2> "$tmp/keygen.err" || {
+  cat "$tmp/keygen.out" >&2
+  cat "$tmp/keygen.err" >&2
+  fail 'gpg could not create a key through its runtime helper path'
+}
+
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg --batch --with-colons --list-secret-keys "$validation_uid" \
+  > "$tmp/secret-keys.out" 2> "$tmp/secret-keys.err" || {
+  cat "$tmp/secret-keys.err" >&2
+  fail 'gpg could not read the generated secret key'
+}
+grep '^sec:' "$tmp/secret-keys.out" >/dev/null 2>&1 ||
+  fail 'generated secret key was not observable'
 
 printf 'installed=%s\n' "$identity"
 printf 'public-command=ok\n'
