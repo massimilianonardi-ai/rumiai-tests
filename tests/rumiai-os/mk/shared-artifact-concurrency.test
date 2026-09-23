@@ -1,0 +1,307 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/mk/shared-artifact-concurrency.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command_path="$root/bin/sys/mk"
+[ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
+[ -x "$root/bin/sys/state-path" ] || fail "state-path command is missing"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+then
+  skip "managed nodejs runtime is not installed/default in the supplied target"
+fi
+
+tmp="${TMPDIR:-/tmp}/rumiai-mk-shared-artifact-concurrency-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+tmp="$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P)" ||
+  error "cannot canonicalize temporary directory"
+
+cache_root="$("$root/m" "$root/bin/sys/state-path" user sys mk cache)" ||
+  error "cannot resolve mk cache area"
+driver="$tmp/driver.js"
+
+cat > "$driver" <<'EOF_NODE' || error "cannot write shared-artifact concurrency driver"
+'use strict';
+
+const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function assert(condition, message) {
+  if (!condition) fail(message);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitFor(predicate, message, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await sleep(20);
+  }
+  fail(message);
+}
+
+function spawnMk(command, project) {
+  return childProcess.spawn(command, ['--project', project, 'build'], {
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+}
+
+function collect(child) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('exit', (status, signal) => resolve({status, signal, stdout, stderr}));
+  });
+}
+
+function key(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function projectCache(cacheRoot, project) {
+  return path.join(cacheRoot, 'projects', key(fs.realpathSync(project)));
+}
+
+function traceCount(project) {
+  const file = path.join(project, 'trace');
+  if (!fs.existsSync(file)) return 0;
+  return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).length;
+}
+
+function writeProject(root, name, config, source) {
+  const project = path.join(root, name);
+  fs.mkdirSync(path.join(project, 'src'), {recursive: true});
+  fs.writeFileSync(path.join(project, 'src', 'input.txt'), source);
+  fs.writeFileSync(path.join(project, 'mk.json'), JSON.stringify(config, null, 2) + '\n');
+  return project;
+}
+
+function currentSelected(sharedRoot, before) {
+  const names = fs.existsSync(sharedRoot) ? fs.readdirSync(sharedRoot) : [];
+  const created = names.filter(name => /^[a-f0-9]{64}$/.test(name) && !before.has(name));
+  assert(created.length === 1, `expected exactly one new fingerprint namespace, found ${created.length}`);
+  const root = path.join(sharedRoot, created[0]);
+  const current = fs.readFileSync(path.join(root, 'current'), 'utf8').trim();
+  assert(/^[a-f0-9]{64}(?:-[a-z0-9-]+)?$/.test(current), 'invalid current candidate id');
+  const candidatePath = path.join(root, 'candidates', current);
+  assert(fs.existsSync(candidatePath), 'selected candidate directory is missing');
+  const manifest = JSON.parse(fs.readFileSync(path.join(candidatePath, 'manifest.json'), 'utf8'));
+  const payloadNames = fs.readdirSync(path.join(candidatePath, 'payload'));
+  assert(payloadNames.length === 1, 'unexpected selected payload shape');
+  return {
+    root,
+    current,
+    candidatePath,
+    manifest,
+    payload: path.join(candidatePath, 'payload', payloadNames[0])
+  };
+}
+
+function assertNoAttemptTemps(root) {
+  const names = fs.readdirSync(root);
+  assert(!names.some(name => name.startsWith('.staging-') || name.startsWith('.current-')),
+    `shared artifact attempt temp leaked: ${names.join(',')}`);
+}
+
+(async () => {
+  const command = process.argv[2];
+  const cacheRoot = process.argv[3];
+  const fixtureRoot = process.argv[4];
+  const sharedRoot = path.join(cacheRoot, 'shared-artifacts');
+  const before = new Set(fs.existsSync(sharedRoot) ? fs.readdirSync(sharedRoot) : []);
+  const projectCaches = new Set();
+
+  try {
+    const barrier = path.join(fixtureRoot, 'release');
+    const commandBody = `touch action-ready; while [ ! -f "${barrier}" ]; do sleep 0.02; done; mkdir -p out; cp src/input.txt out/artifact; chmod 755 out/artifact; printf 'run\\n' >> trace`;
+    const config = {
+      version: 2,
+      goals: {build: ['build']},
+      operations: {
+        build: {
+          inputs: {source: {path: 'src/input.txt'}},
+          incremental: {},
+          outputs: {artifact: {path: 'out/artifact'}},
+          action: {type: 'process', command: 'sh', args: ['-c', commandBody]}
+        }
+      }
+    };
+
+    const a = writeProject(fixtureRoot, 'writer-a', config, 'SHARED-RACE\n');
+    const b = writeProject(fixtureRoot, 'writer-b', config, 'SHARED-RACE\n');
+    for (const project of [a, b]) {
+      const cache = projectCache(cacheRoot, project);
+      projectCaches.add(cache);
+      fs.rmSync(cache, {recursive: true, force: true});
+    }
+
+    const childA = spawnMk(command, a);
+    const childB = spawnMk(command, b);
+    const resultA = collect(childA);
+    const resultB = collect(childB);
+
+    await waitFor(
+      () => fs.existsSync(path.join(a, 'action-ready')) && fs.existsSync(path.join(b, 'action-ready')),
+      'concurrent publishers did not both reach the action barrier'
+    );
+    fs.writeFileSync(barrier, 'release\n');
+
+    const [ra, rb] = await Promise.all([resultA, resultB]);
+    assert(ra.status === 0 && ra.signal === null, `writer A failed: ${ra.stderr}`);
+    assert(rb.status === 0 && rb.signal === null, `writer B failed: ${rb.stderr}`);
+    assert(traceCount(a) === 1 && traceCount(b) === 1, 'both equivalent publishers did not execute once');
+
+    const selected = currentSelected(sharedRoot, before);
+    assert(fs.readFileSync(selected.payload, 'utf8') === 'SHARED-RACE\n', 'selected candidate payload is incomplete');
+    assert(fs.readdirSync(path.join(selected.root, 'candidates')).length === 1,
+      'equivalent concurrent publishers did not converge on one candidate');
+    assertNoAttemptTemps(selected.root);
+
+    for (const project of [a, b]) {
+      assert(fs.existsSync(projectCache(cacheRoot, project)), 'publisher freshness metadata is not project scoped');
+    }
+
+    const r1 = writeProject(fixtureRoot, 'restore-a', config, 'SHARED-RACE\n');
+    const r2 = writeProject(fixtureRoot, 'restore-b', config, 'SHARED-RACE\n');
+    for (const project of [r1, r2]) {
+      const cache = projectCache(cacheRoot, project);
+      projectCaches.add(cache);
+      fs.rmSync(cache, {recursive: true, force: true});
+    }
+
+    const restoreA = collect(spawnMk(command, r1));
+    const restoreB = collect(spawnMk(command, r2));
+    const [rr1, rr2] = await Promise.all([restoreA, restoreB]);
+    assert(rr1.status === 0 && rr2.status === 0, `concurrent restore failed: ${rr1.stderr} ${rr2.stderr}`);
+    assert(traceCount(r1) === 0 && traceCount(r2) === 0, 'concurrent restore executed project action');
+    assert(fs.readFileSync(path.join(r1, 'out', 'artifact'), 'utf8') === 'SHARED-RACE\n', 'restore A bytes are wrong');
+    assert(fs.readFileSync(path.join(r2, 'out', 'artifact'), 'utf8') === 'SHARED-RACE\n', 'restore B bytes are wrong');
+    assert(fs.existsSync(projectCache(cacheRoot, r1)) && fs.existsSync(projectCache(cacheRoot, r2)),
+      'receiving checkout freshness metadata was not established locally');
+
+    const afterRestores = currentSelected(sharedRoot, before);
+    assert(afterRestores.current === selected.current, 'restore mutated shared selector');
+    assert(fs.readdirSync(path.join(afterRestores.root, 'candidates')).length === 1,
+      'restore mutated shared candidate set');
+
+    fs.writeFileSync(selected.payload, 'CORRUPT\n');
+
+    const refresh = writeProject(fixtureRoot, 'refresh', config, 'SHARED-RACE\n');
+    const refreshCache = projectCache(cacheRoot, refresh);
+    projectCaches.add(refreshCache);
+    fs.rmSync(refreshCache, {recursive: true, force: true});
+
+    const refreshResult = childProcess.spawnSync(command, ['--project', refresh, 'build'], {
+      env: process.env,
+      encoding: 'utf8'
+    });
+    assert(refreshResult.status === 0, `corrupt shared candidate refresh failed: ${refreshResult.stderr}`);
+    assert(traceCount(refresh) === 1, 'corrupt candidate did not cause conservative execution');
+
+    const refreshed = currentSelected(sharedRoot, before);
+    assert(refreshed.current !== selected.current, 'corrupt selected candidate was replaced in place');
+    assert(fs.existsSync(selected.candidatePath), 'refresh removed previously committed candidate');
+    assert(fs.readFileSync(refreshed.payload, 'utf8') === 'SHARED-RACE\n', 'recovery candidate payload is wrong');
+    assert(fs.readdirSync(path.join(refreshed.root, 'candidates')).length >= 2,
+      'recovery candidate was not published immutably beside corrupt candidate');
+    assertNoAttemptTemps(refreshed.root);
+
+    const reader = writeProject(fixtureRoot, 'reader-after-refresh', config, 'SHARED-RACE\n');
+    const readerCache = projectCache(cacheRoot, reader);
+    projectCaches.add(readerCache);
+    fs.rmSync(readerCache, {recursive: true, force: true});
+    const readerResult = childProcess.spawnSync(command, ['--project', reader, 'build'], {
+      env: process.env,
+      encoding: 'utf8'
+    });
+    assert(readerResult.status === 0, `post-refresh shared restore failed: ${readerResult.stderr}`);
+    assert(traceCount(reader) === 0, 'post-refresh reader executed instead of restoring');
+    assert(fs.readFileSync(path.join(reader, 'out', 'artifact'), 'utf8') === 'SHARED-RACE\n',
+      'post-refresh restored bytes are wrong');
+    assert(fs.existsSync(readerCache), 'post-refresh reader freshness metadata is not project scoped');
+
+    process.stdout.write('PASS shared local artifact concurrency\n');
+  } finally {
+    for (const cache of projectCaches) fs.rmSync(cache, {recursive: true, force: true});
+    if (fs.existsSync(sharedRoot)) {
+      for (const name of fs.readdirSync(sharedRoot)) {
+        if (!before.has(name)) fs.rmSync(path.join(sharedRoot, name), {recursive: true, force: true});
+      }
+    }
+  }
+})().catch(error => {
+  process.stderr.write(`FAIL shared local artifact concurrency: ${error.message}\n`);
+  process.exitCode = 1;
+});
+EOF_NODE
+
+"$root/m" node "$driver" "$command_path" "$cache_root" "$tmp" ||
+  fail "MK-81/MK-82/MK-83/MK-84 shared artifact concurrency regression failed"
+
+exit 0
