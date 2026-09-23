@@ -143,22 +143,13 @@ esac
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare integration driver'
 
-probe=$tmp/osarch
-cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
-printf '%s\n' "$m_OSARCH"
-EOF_PROBE
-chmod 700 "$probe" || error 'cannot prepare osarch probe'
-osarch=$("$root/m" "$probe") || error 'cannot determine current RumiAI osarch'
-
 exact=putexact$$
 current=putcurrent$$
 ambiguous=putamb$$
 stateful=putstate$$
 prevalidated=putpre$$
 cleanup_names="$exact $current $ambiguous $stateful $prevalidated"
-cleanup_specs="$exact@1 $exact@2 $current@1!$osarch $current@2!$osarch $ambiguous@1 $ambiguous@2 $stateful@1 $prevalidated@1"
+cleanup_specs="$exact@1 $exact@2 $current@1 $current@2 $ambiguous@1 $ambiguous@2 $stateful@1 $prevalidated@1"
 
 expect_status 2 no-operand run_pkg uninstall
 expect_status 2 invalid-name run_pkg uninstall Bad
@@ -177,26 +168,26 @@ versions=$(run_pkg versions "$exact" 2> "$tmp/exact-versions.err") ||
 [ "$versions" = "$exact@2" ] ||
   fail "exact-version uninstall changed the wrong versions: $versions"
 
-integrate "$current" 1 "$osarch" > "$tmp/current-1.out" 2> "$tmp/current-1.err" ||
-  fail 'cannot integrate target current version 1'
-integrate "$current" 2 "$osarch" > "$tmp/current-2.out" 2> "$tmp/current-2.err" ||
-  fail 'cannot integrate target current version 2'
+integrate "$current" 1 > "$tmp/current-1.out" 2> "$tmp/current-1.err" ||
+  fail 'cannot integrate current version 1'
+integrate "$current" 2 > "$tmp/current-2.out" 2> "$tmp/current-2.err" ||
+  fail 'cannot integrate current version 2'
 
-run_pkg default "$current@2!$osarch" > "$tmp/select-current.out" 2> "$tmp/select-current.err" || {
+run_pkg default "$current@2" > "$tmp/select-current.out" 2> "$tmp/select-current.err" || {
   cat "$tmp/select-current.err" >&2
-  fail 'cannot select target current version 2'
+  error 'cannot establish current version for uninstall scenario'
 }
 
 run_pkg uninstall "$current" > "$tmp/remove-current.out" 2> "$tmp/remove-current.err" || {
   cat "$tmp/remove-current.err" >&2
   fail 'unversioned current uninstall failed'
 }
-versions=$(run_pkg versions "$current!$osarch" 2> "$tmp/current-versions.err") ||
-  fail 'remaining target package version is not queryable'
-[ "$versions" = "$current@1!$osarch" ] ||
+versions=$(run_pkg versions "$current" 2> "$tmp/current-versions.err") ||
+  fail 'remaining package version is not queryable'
+[ "$versions" = "$current@1" ] ||
   fail "unversioned uninstall did not remove only the current version: $versions"
 
-if run_pkg default "$current!$osarch" > "$tmp/current-default.out" 2> "$tmp/current-default.err"
+if run_pkg default "$current" > "$tmp/current-default.out" 2> "$tmp/current-default.err"
 then
   fail 'uninstall of current package left a selected default'
 else
