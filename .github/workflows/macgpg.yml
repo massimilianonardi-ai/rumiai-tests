@@ -1,0 +1,70 @@
+name: macgpg
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/macgpg.yml
+      - rumiai-validate
+      - lib/sh/rumiai-validate.lib.sh
+      - lib/rumiai-os-target.lib
+      - tests/external/macgpg/**
+      - tests/rumiai-os/pkg-extract/dmg-pkg.test
+      - tests/rumiai-os/pkg-integration/contract.test
+      - tests/rumiai-os/pkg-repository-gpgtools/**
+      - validation/macgpg.conf
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  formal-validation:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout current test suite
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run formal MacGPG validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate macgpg
+
+      - name: Upload recoverable local evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: macgpg-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true
