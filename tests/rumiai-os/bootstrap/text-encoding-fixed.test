@@ -20,6 +20,7 @@ cat > "$probe" <<'EOT'
 [ "${m_TEXT_ENCODING-}" = "UTF-8" ] || return 41
 return 0
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 (LC_ALL=C; LANG=C; export LC_ALL LANG; "$entry" "$probe") >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "fixed text encoding probe returned $status"; }
 [ ! -s "$transcript" ] || { cat "$transcript" >&2; fail 'fixed text encoding probe produced unexpected output'; }
 exit 0

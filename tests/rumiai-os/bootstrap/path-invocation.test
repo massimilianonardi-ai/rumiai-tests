@@ -25,6 +25,7 @@ cat > "$probe" <<'EOT'
 printf '%s\n%s\n' "$m_ROOT" "$m_BOOTSTRAP_BIN" > "$PROBE_RESULT" || return 43
 return 0
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 EXPECTED_ROOT=$root EXPECTED_BIN=$entry PROBE_RESULT=$result; export EXPECTED_ROOT EXPECTED_BIN PROBE_RESULT
 PATH=$root/bin/sys${PATH:+:$PATH}; export PATH
 m "$probe" >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "PATH invocation returned $status"; }

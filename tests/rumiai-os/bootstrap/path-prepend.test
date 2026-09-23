@@ -22,6 +22,7 @@ cat > "$probe" <<'EOT'
 [ "${PATH-}" = "$EXPECTED_PATH" ] || return 41
 return 0
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 EXPECTED_PATH=$expected_path; export EXPECTED_PATH
 (unset LC_ALL LC_MESSAGES; LANG=C; PATH=$input_path; export LANG PATH; "$entry" "$probe") >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "PATH prepend probe returned $status"; }
 [ ! -s "$transcript" ] || { cat "$transcript" >&2; fail 'PATH prepend probe produced unexpected output'; }

@@ -23,6 +23,7 @@ cat > "$probe" <<'EOT'
 printf '%s\n%s\n' "$m_ROOT" "$m_BOOTSTRAP_BIN" > "$PROBE_RESULT" || return 43
 return 0
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 EXPECTED_ROOT=$root EXPECTED_BIN=$entry PROBE_RESULT=$result; export EXPECTED_ROOT EXPECTED_BIN PROBE_RESULT
 "$alias_path" "$probe" >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "symlink invocation returned $status"; }
 expected=$(printf '%s\n%s' "$root" "$entry"); actual=$(cat "$result") || error 'cannot read probe result'; [ "$actual" = "$expected" ] || fail 'symlink invocation did not resolve to the physical m entrypoint'

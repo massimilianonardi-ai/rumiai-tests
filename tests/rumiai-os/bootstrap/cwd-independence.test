@@ -24,6 +24,7 @@ actual_cwd=$(pwd -P) || return 43
 printf '%s\n' "$actual_cwd" > "$PROBE_RESULT" || return 45
 return 0
 EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
 EXPECTED_ROOT=$root EXPECTED_BIN=$entry EXPECTED_CWD=$cwd PROBE_RESULT=$result; export EXPECTED_ROOT EXPECTED_BIN EXPECTED_CWD PROBE_RESULT
 (CDPATH= cd -- "$cwd" || exit 70; "$entry" "$probe") >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "m bootstrap changed or depended on CWD; status $status"; }
 actual=$(cat "$result") || error 'cannot read probe result'; [ "$actual" = "$cwd" ] || fail 'command observed a different current working directory'
