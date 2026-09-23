@@ -1,0 +1,75 @@
+#!/bin/sh
+
+TEST_ID="rumiai-tests/lib/package-release-wrapper-reference.test"
+
+fail()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 1
+}
+
+error()
+{
+  printf -- '%s: %s\n' "$TEST_ID" "$*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  package_release_wrapper_self=$0
+  case "$package_release_wrapper_self" in
+    */*) :;;
+    *) package_release_wrapper_self=$(command -v "$package_release_wrapper_self" 2>/dev/null) || return 1;;
+  esac
+  package_release_wrapper_self_dir=${package_release_wrapper_self%/*}
+  [ "$package_release_wrapper_self_dir" != "$package_release_wrapper_self" ] || package_release_wrapper_self_dir=.
+  CDPATH= cd -- "$package_release_wrapper_self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error "cannot resolve test directory"
+lib_group=${test_dir%/*}
+rumiai_tests_group=${lib_group%/*}
+suite_root=${rumiai_tests_group%/*}
+
+tmp="${TMPDIR:-/tmp}/rumiai-package-release-wrapper-reference-$$"
+umask 077
+command -p -- mkdir -p -- "$tmp/suite/lib" || error "cannot create wrapper fixture"
+expected_suite_root=$(CDPATH= cd -- "$tmp/suite" 2>/dev/null && pwd -P) ||
+  error "cannot resolve physical wrapper fixture root"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+cat > "$tmp/suite/lib/package-release.lib" <<'EOF_STUB'
+rumiai_test_package_release_run()
+{
+  [ "$#" -eq 1 ] || return 97
+  [ "$1" = "${RUMIAI_TEST_EXPECTED_SUITE_ROOT-}" ] || return 98
+  printf -- '%s\n' "$TEST_ID"
+  return 0
+}
+EOF_STUB
+
+for package_release_wrapper_package in chrome chromium jq micromamba nodejs pulsar
+do
+  package_release_wrapper_dir="$tmp/suite/tests/external/$package_release_wrapper_package"
+  command -p -- mkdir -p -- "$package_release_wrapper_dir" || error "cannot create wrapper directory for $package_release_wrapper_package"
+  package_release_wrapper_source="$suite_root/tests/external/$package_release_wrapper_package/release-live.test"
+  package_release_wrapper_target="$package_release_wrapper_dir/release-live.test"
+  [ -f "$package_release_wrapper_source" ] || fail "release wrapper missing for $package_release_wrapper_package"
+  command -p -- cp "$package_release_wrapper_source" "$package_release_wrapper_target" || error "cannot copy wrapper for $package_release_wrapper_package"
+  command -p -- chmod 700 "$package_release_wrapper_target" || error "cannot make wrapper executable for $package_release_wrapper_package"
+
+  package_release_wrapper_stdout="$tmp/$package_release_wrapper_package.stdout"
+  package_release_wrapper_stderr="$tmp/$package_release_wrapper_package.stderr"
+  RUMIAI_TEST_EXPECTED_SUITE_ROOT="$expected_suite_root" "$package_release_wrapper_target" > "$package_release_wrapper_stdout" 2> "$package_release_wrapper_stderr"
+  package_release_wrapper_status=$?
+  if [ "$package_release_wrapper_status" -ne 0 ]
+  then
+    command -p -- cat "$package_release_wrapper_stderr" >&2
+    fail "$package_release_wrapper_package wrapper failed self-discovery with status $package_release_wrapper_status"
+  fi
+
+  IFS= read -r package_release_wrapper_observed < "$package_release_wrapper_stdout" || fail "$package_release_wrapper_package wrapper produced no marker"
+  [ "$package_release_wrapper_observed" = "external/$package_release_wrapper_package/release-live.test" ] || fail "$package_release_wrapper_package wrapper resolved the wrong suite root"
+done
+
+exit 0

@@ -1,0 +1,137 @@
+name: package-provider-facility-bridge
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/package-provider-facility-bridge.yml
+      - rumiai-validate
+      - lib/sh/rumiai-validate.lib.sh
+      - lib/rumiai-os-target.lib
+      - tests/external/temurin/**
+      - tests/external/graalvm/**
+      - tests/external/netbeans/**
+      - tests/external/keycloak/**
+      - tests/external/maven/**
+      - tests/rumiai-os/pkg/**
+      - tests/rumiai-os/pkg-integration/**
+      - tests/rumiai-os/pkg-launch/**
+      - tests/rumiai-os/pkg-download/**
+      - tests/rumiai-os/pkg-repository-github/**
+      - tests/rumiai-os/pkg-repository-graalvm/**
+      - tests/rumiai-os/srv/**
+      - validation/package-provider-facility.conf
+      - validation/package-provider-facility-final.conf
+      - validation/package-provider-facility-graalvm.conf
+      - validation/srv.conf
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  formal-validation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout current test suite
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run formal provider/facility validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate package-provider-facility-final
+
+      - name: Upload recoverable local evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-provider-facility-formal-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+  graalvm-coexistence:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current test suite
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run formal GraalVM coexistence validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate package-provider-facility-graalvm
+
+      - name: Upload recoverable local evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-provider-facility-graalvm-formal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true

@@ -1,0 +1,113 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/enc/gpg-roundtrip.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    if [ -n "${gpg_home-}" ] && command -v gpgconf >/dev/null 2>&1
+    then
+        GNUPGHOME=$gpg_home gpgconf --kill gpg-agent >/dev/null 2>&1 || :
+    fi
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+command -v gpg >/dev/null 2>&1 || skip 'gpg is unavailable'
+gpg_options=$(command gpg --no-options --dump-options 2>/dev/null) ||
+    skip 'gpg option discovery failed'
+if ! printf '%s\n' "$gpg_options" | grep -qx -e '--use-ocb-sym' &&
+   ! printf '%s\n' "$gpg_options" | grep -qx -e '--force-ocb'
+then
+    skip 'gpg lacks symmetric OCB encryption support'
+fi
+unset gpg_options
+
+enc_library=$root/lib/sys/sh/enc.lib.sh
+[ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
+    fail 'enc.lib.sh is missing or is not a regular library file'
+. "$enc_library" || error 'cannot source enc.lib.sh'
+
+tmp=${TMPDIR:-/tmp}/rumiai-enc-gpg-roundtrip-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+gpg_home=$tmp/gnupg
+mkdir -m 700 "$gpg_home" || error 'cannot create temporary GnuPG home'
+GNUPGHOME=$gpg_home
+export GNUPGHOME
+
+printf '%b' 'binary\000payload\377end\nsecond-line\n' > "$tmp/plain" ||
+    error 'cannot create binary payload'
+
+pass=' leading $() \\ * ? [ ] " quote '"'"' trailing '
+m_ENC_PASS=$pass
+encode < "$tmp/plain" > "$tmp/cipher" ||
+    fail 'real GnuPG OCB encryption failed'
+[ -s "$tmp/cipher" ] || fail 'real GnuPG encryption produced no ciphertext'
+
+m_ENC_PASS=$pass
+decode < "$tmp/cipher" > "$tmp/roundtrip" ||
+    fail 'real GnuPG OCB decryption failed'
+cmp -s "$tmp/plain" "$tmp/roundtrip" ||
+    fail 'real GnuPG round trip changed payload bytes'
+
+m_ENC_PASS='wrong-passphrase'
+if decode < "$tmp/cipher" > "$tmp/wrong" 2>/dev/null
+then
+    fail 'decode accepted an incorrect passphrase'
+fi
+
+m_ENC_PASS='line-one
+line-two'
+if encode < "$tmp/plain" > "$tmp/newline" 2>/dev/null
+then
+    fail 'encode accepted a supplied passphrase containing newline'
+fi
+
+if encode invalid-argument >/dev/null 2>&1
+then
+    fail 'encode accepted invalid arguments'
+else
+    status=$?
+    [ "$status" -eq 2 ] || fail "encode invalid-argument status was $status instead of 2"
+fi
+
+if decode invalid-argument >/dev/null 2>&1
+then
+    fail 'decode accepted invalid arguments'
+else
+    status=$?
+    [ "$status" -eq 2 ] || fail "decode invalid-argument status was $status instead of 2"
+fi
+
+unset m_ENC_PASS pass
+exit 0

@@ -1,0 +1,69 @@
+name: rumiai-os-health
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/rumiai-os-health.yml
+      - validation/rumiai-os-health.conf
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  formal-validation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout current test suite
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run full RumiAI OS health validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate rumiai-os-health
+
+      - name: Upload recoverable local evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: rumiai-os-health-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true

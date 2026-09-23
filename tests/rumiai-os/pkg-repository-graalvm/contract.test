@@ -1,0 +1,212 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-repository-graalvm/contract.test"
+fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
+  self_dir="${self%/*}"; [ "$self_dir" != "$self" ] || self_dir="."
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+group_dir="${test_dir%/*}"; rumiai_os_group="${group_dir%/*}"; suite_root="${rumiai_os_group%/*}"
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source target discovery"
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
+case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
+
+library="$root/lib/sys/sh/pkg/repository/pkg-repository-graalvm.lib.sh"
+[ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "GraalVM repository adapter is missing or has invalid mode"
+command -p -- sh -n "$library" >/dev/null 2>&1 || fail "GraalVM repository adapter is not POSIX-shell syntax valid"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-graalvm-contract-$$"
+umask 077
+mkdir "$tmp" "$tmp/repository" "$tmp/range" "$tmp/bin" || error "cannot create fixture directories"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+repository_dir="$tmp/repository"
+range_dir="$tmp/range"
+
+write_valid_repository()
+{
+  rm -rf "$repository_dir"
+  mkdir "$repository_dir" || error "cannot recreate repository descriptor"
+  printf -- '%s\n' graalvm > "$repository_dir/type"
+  printf -- '%s\n' graalvm > "$repository_dir/owner"
+  printf -- '%s\n' graalvm-ce-builds > "$repository_dir/repository"
+}
+write_valid_range()
+{
+  rm -rf "$range_dir"
+  mkdir "$range_dir" || error "cannot recreate range descriptor"
+  printf -- '%s\n' '^graalvm-community-jdk-25[A-Za-z0-9._+~-]*_linux-x64_bin\.tar\.gz$' > "$range_dir/archive_regex"
+  printf -- '%s\n' sha256 > "$range_dir/digest_type"
+}
+
+GRAALVM_HTTP_LOG="$tmp/http.log"
+export GRAALVM_HTTP_LOG
+
+cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
+#!/bin/sh
+for url do :; done
+[ -z "${GRAALVM_HTTP_LOG-}" ] || printf '%s\n' "$url" >> "$GRAALVM_HTTP_LOG"
+case "$url" in
+  'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/latest')
+    case "${GRAALVM_LATEST_MODE-ok}" in
+      ok)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z"}'
+        ;;
+      foreign)
+        printf '%s\n' '{"tag_name":"graal-26.0.0","draft":false,"prerelease":false,"created_at":"2026-09-01T00:00:00Z","published_at":"2026-09-01T00:01:00Z"}'
+        ;;
+      malformed)
+        printf '%s\n' '{"tag_name":25,"draft":false,"prerelease":false,"created_at":"2026-09-01T00:00:00Z","published_at":"2026-09-01T00:01:00Z"}'
+        ;;
+      *) exit 87;;
+    esac
+    ;;
+
+  'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=100&page=1')
+    case "${GRAALVM_LIST_MODE-ok}" in
+      ok)
+        printf '%s\n' '[{"tag_name":"graal-26.0.0","draft":false,"prerelease":false,"created_at":"2026-09-01T00:00:00Z","published_at":"2026-09-01T00:01:00Z"},{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z"},{"tag_name":"graal-25.2.4","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-07-28T11:36:51Z"},{"tag_name":"graal-25.9.9","draft":true,"prerelease":false,"created_at":"2026-09-02T00:00:00Z","published_at":"2026-09-02T00:01:00Z"},{"tag_name":"graal-25.8.8","draft":false,"prerelease":true,"created_at":"2026-09-03T00:00:00Z","published_at":"2026-09-03T00:01:00Z"},{"tag_name":"graal-25.1.3","draft":false,"prerelease":false,"created_at":"2026-03-01T00:00:00Z","published_at":"2026-04-01T00:00:00Z"}]'
+        ;;
+      duplicate)
+        printf '%s\n' '[{"tag_name":"graal-25.2.4","draft":false,"prerelease":false,"created_at":"2026-06-01T00:00:00Z","published_at":"2026-07-01T00:00:00Z"},{"tag_name":"graal-25.2.4","draft":false,"prerelease":false,"created_at":"2026-06-02T00:00:00Z","published_at":"2026-07-02T00:00:00Z"}]'
+        ;;
+      foreign)
+        printf '%s\n' '[{"tag_name":"graal-26.0.0","draft":false,"prerelease":false,"created_at":"2026-09-01T00:00:00Z","published_at":"2026-09-01T00:01:00Z"}]'
+        ;;
+      malformed)
+        printf '%s\n' '[{"tag_name":25,"draft":false,"prerelease":false,"created_at":"2026-06-01T00:00:00Z","published_at":"2026-07-01T00:00:00Z"}]'
+        ;;
+      forbidden)
+        exit 86
+        ;;
+      *)
+        exit 85
+        ;;
+    esac
+    ;;
+  'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/tags/graal-25.1.3')
+    printf '%s\n' '{"tag_name":"graal-25.1.3","draft":false,"prerelease":false,"created_at":"2026-03-01T00:00:00Z","published_at":"2026-04-01T00:00:00Z","assets":[]}'
+    ;;
+  'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/tags/graal-25.2.4')
+    printf '%s\n' '{"tag_name":"graal-25.2.4","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-07-28T11:36:51Z","assets":[]}'
+    ;;
+  'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/tags/graal-25.3.4.1')
+    case "${GRAALVM_RELEASE_MODE-ok}" in
+      ok)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z","assets":[{"name":"graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz","state":"uploaded","size":351842204,"digest":"sha256:B2BC38D0C4141426EB44D0EEFA3CC172C96FAF92727D703B61541699128B6FC7","browser_download_url":"https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.3.4.1/graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz"},{"name":"graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz.sha256","state":"uploaded","size":64,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://example.invalid/sidecar"},{"name":"graalvm-community-jdk-25i3-25.0.4.1_linux-aarch64_bin.tar.gz","state":"uploaded","size":326402344,"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","browser_download_url":"https://example.invalid/arm64"}]}'
+        ;;
+      duplicate)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z","assets":[{"name":"graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz","state":"uploaded","size":1,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://example.invalid/a"},{"name":"graalvm-community-jdk-25i4-25.0.5_linux-x64_bin.tar.gz","state":"uploaded","size":2,"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","browser_download_url":"https://example.invalid/b"}]}'
+        ;;
+      bad-state)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z","assets":[{"name":"graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz","state":"new","size":351842204,"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://example.invalid/a"}]}'
+        ;;
+      bad-digest)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z","assets":[{"name":"graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz","state":"uploaded","size":351842204,"digest":"sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","browser_download_url":"https://example.invalid/a"}]}'
+        ;;
+      draft)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.1","draft":true,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z","assets":[]}'
+        ;;
+      wrong-tag)
+        printf '%s\n' '{"tag_name":"graal-25.3.4.2","draft":false,"prerelease":false,"created_at":"2026-06-30T17:34:09Z","published_at":"2026-08-25T15:15:02Z","assets":[]}'
+        ;;
+    esac
+    ;;
+  *) exit 88;;
+esac
+EOF_HTTP
+chmod 700 "$tmp/bin/http-fetch" || error "cannot make fake http-fetch executable"
+
+PATH="$tmp/bin:/usr/bin:/bin"; export PATH
+m_LIB_DIR="$root/lib"; export m_LIB_DIR
+GRAALVM_LIST_MODE=ok; export GRAALVM_LIST_MODE
+GRAALVM_LATEST_MODE=ok; export GRAALVM_LATEST_MODE
+GRAALVM_RELEASE_MODE=ok; export GRAALVM_RELEASE_MODE
+. "$library" || error "cannot source GraalVM repository adapter"
+
+write_valid_repository
+expected_versions='25.1.3
+25.2.4
+25.3.4.1'
+[ "$(pkg_repository_list_versions "$repository_dir")" = "$expected_versions" ] || fail "list_versions did not filter and order GraalVM 25 releases"
+
+: > "$GRAALVM_HTTP_LOG" || error "cannot reset HTTP log"
+GRAALVM_LIST_MODE=forbidden; export GRAALVM_LIST_MODE
+[ "$(pkg_repository_resolve_version "$repository_dir")" = '25.3.4.1' ] || fail "latest fast-path resolution failed"
+[ "$(cat "$GRAALVM_HTTP_LOG")" = 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/latest' ] ||
+  fail "latest fast path made unexpected GitHub API requests"
+
+: > "$GRAALVM_HTTP_LOG" || error "cannot reset HTTP log"
+GRAALVM_LATEST_MODE=foreign; export GRAALVM_LATEST_MODE
+GRAALVM_LIST_MODE=ok; export GRAALVM_LIST_MODE
+[ "$(pkg_repository_resolve_version "$repository_dir")" = '25.3.4.1' ] || fail "foreign latest release did not fall back to supported GraalVM 25 listing"
+grep -Fx 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases/latest' "$GRAALVM_HTTP_LOG" >/dev/null 2>&1 ||
+  fail "foreign latest fallback did not query releases/latest"
+grep -Fx 'https://api.github.com/repos/graalvm/graalvm-ce-builds/releases?per_page=100&page=1' "$GRAALVM_HTTP_LOG" >/dev/null 2>&1 ||
+  fail "foreign latest fallback did not query the release listing"
+GRAALVM_LATEST_MODE=ok; export GRAALVM_LATEST_MODE
+
+[ "$(pkg_repository_resolve_version "$repository_dir" '25.2.4')" = '25.2.4' ] || fail "exact resolution failed"
+[ "$(pkg_repository_compare_versions "$repository_dir" '25.1.3' '25.2.4')" = -1 ] || fail "forward compare_versions is incorrect"
+[ "$(pkg_repository_compare_versions "$repository_dir" '25.2.4' '25.1.3')" = 1 ] || fail "reverse compare_versions is incorrect"
+: > "$GRAALVM_HTTP_LOG" || error "cannot reset HTTP log"
+[ "$(pkg_repository_compare_versions "$repository_dir" '25.2.4' '25.2.4')" = 0 ] || fail "equal compare_versions is incorrect"
+[ ! -s "$GRAALVM_HTTP_LOG" ] || fail "equal compare_versions performed an unnecessary GitHub API request"
+
+for field_value in 'type other' 'owner other' 'repository other'
+do
+  set -- $field_value
+  write_valid_repository
+  printf -- '%s\n' "$2" > "$repository_dir/$1"
+  if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "invalid $1 was accepted"; fi
+done
+write_valid_repository
+printf -- '%s\n' unexpected > "$repository_dir/extra"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "unknown repository field was accepted"; fi
+write_valid_repository
+printf -- '%s' graalvm > "$repository_dir/type"
+if pkg_repository_resolve_version "$repository_dir" >/dev/null 2>&1; then fail "unterminated repository scalar was accepted"; fi
+
+write_valid_repository
+for invalid_version in 'graal-25.3.4.1' '25' '24.0.2' '25.3.4.1-ea'
+do
+  if pkg_repository_resolve_version "$repository_dir" "$invalid_version" >/dev/null 2>&1; then fail "invalid RumiAI version $invalid_version was accepted"; fi
+done
+GRAALVM_LIST_MODE=duplicate; export GRAALVM_LIST_MODE
+if pkg_repository_list_versions "$repository_dir" >/dev/null 2>&1; then fail "duplicate upstream GraalVM release was accepted"; fi
+GRAALVM_LIST_MODE=foreign; export GRAALVM_LIST_MODE
+[ -z "$(pkg_repository_list_versions "$repository_dir")" ] || fail "foreign GraalVM major was exposed"
+GRAALVM_LIST_MODE=malformed; export GRAALVM_LIST_MODE
+if pkg_repository_list_versions "$repository_dir" >/dev/null 2>&1; then fail "malformed tag_name was accepted"; fi
+GRAALVM_LIST_MODE=ok; export GRAALVM_LIST_MODE
+
+write_valid_range
+out="$(pkg_repository_resolve_artifact "$repository_dir" "$range_dir" '25.3.4.1')" || fail "valid artifact resolution failed"
+expected_descriptor='name=graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz
+url=https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.3.4.1/graalvm-community-jdk-25i3-25.0.4.1_linux-x64_bin.tar.gz
+size=351842204
+digest=sha256:b2bc38d0c4141426eb44d0eefa3cc172c96faf92727d703b61541699128b6fc7'
+[ "$out" = "$expected_descriptor" ] || fail "artifact descriptor is incorrect"
+
+for mode in duplicate bad-state bad-digest draft wrong-tag
+do
+  GRAALVM_RELEASE_MODE="$mode"; export GRAALVM_RELEASE_MODE
+  if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" '25.3.4.1' >/dev/null 2>&1; then fail "$mode release response was accepted"; fi
+done
+GRAALVM_RELEASE_MODE=ok; export GRAALVM_RELEASE_MODE
+printf -- '%s\n' sha512 > "$range_dir/digest_type"
+if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" '25.3.4.1' >/dev/null 2>&1; then fail "non-SHA-256 range was accepted"; fi
+write_valid_range
+printf -- '%s\n' '.*' > "$range_dir/digest_regex"
+if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" '25.3.4.1' >/dev/null 2>&1; then fail "digest_regex was accepted"; fi
+write_valid_range
+printf -- '%s\n' '^other\.tar\.gz$' > "$range_dir/archive_regex"
+if pkg_repository_resolve_artifact "$repository_dir" "$range_dir" '25.3.4.1' >/dev/null 2>&1; then fail "non-matching archive_regex was accepted"; fi
+
+exit 0

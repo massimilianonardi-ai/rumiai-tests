@@ -1,0 +1,114 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/manual/paging.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${topic_path-}" ] || rm -f "$topic_path" 2>/dev/null || :
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+manual_group=${test_dir%/*}
+tests_dir=${manual_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+interactive_library=$suite_root/lib/interactive.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+[ -f "$interactive_library" ] || error 'interactive helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+. "$interactive_library" || error 'cannot source interactive helper'
+
+TERM=xterm-256color
+export TERM
+
+rumiai_test_interactive_require
+status=$?
+case $status in
+    0) : ;;
+    2) skip 'supported interactive TTY driver is unavailable' ;;
+    *) error 'interactive TTY driver detection failed' ;;
+esac
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+manual=$root/bin/sys/manual
+[ -x "$manual" ] || fail 'manual command is missing or not executable'
+[ -x "$root/bin/sys/pager" ] || fail 'pager command is missing or not executable'
+manual_dir=$root/res/sys/manual
+[ -d "$manual_dir" ] && [ ! -L "$manual_dir" ] || fail 'sys manual tree is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-manual-paging-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+topic=manualpaging$$
+topic_path=$manual_dir/$topic
+[ ! -e "$topic_path" ] && [ ! -L "$topic_path" ] || error 'temporary manual topic already exists'
+: > "$topic_path" || error 'cannot create long manual topic'
+i=1
+while [ "$i" -le 200 ]
+do
+    printf 'manual paging %s line %03d\n' "$topic" "$i" >> "$topic_path" || error 'cannot populate long manual topic'
+    i=$((i + 1))
+done
+
+runner=$tmp/run-manual
+cat > "$runner" <<'EOF_RUNNER'
+#!/bin/sh
+exec "$RUMIAI_MANUAL_ROOT/m" "$RUMIAI_MANUAL_ROOT/bin/sys/manual" "$RUMIAI_MANUAL_TOPIC"
+EOF_RUNNER
+chmod 700 "$runner" || error 'cannot make paging runner executable'
+RUMIAI_MANUAL_ROOT=$root
+RUMIAI_MANUAL_TOPIC=$topic
+export RUMIAI_MANUAL_ROOT RUMIAI_MANUAL_TOPIC
+PATH=$root/bin/sys:$PATH
+export PATH
+
+case "$RUMIAI_TEST_INTERACTIVE_SYSTEM" in
+    Linux)
+        RUMIAI_MANUAL_RUNNER=$runner
+        export RUMIAI_MANUAL_RUNNER
+        interactive_command='exec "$RUMIAI_MANUAL_RUNNER"'
+        ;;
+    Darwin)
+        interactive_command=$runner
+        ;;
+esac
+
+dialogue=$tmp/dialogue
+printf 'manual paging %s line 001\tq\n' "$topic" > "$dialogue" || error 'cannot create pager dialogue'
+transcript=$tmp/transcript
+rumiai_test_interactive_run "$dialogue" "$transcript" "$interactive_command" || {
+    cat "$transcript" >&2 2>/dev/null
+    fail 'interactive manual presentation failed'
+}
+
+grep -F "manual paging $topic line 001" "$transcript" >/dev/null 2>&1 ||
+    fail 'pager transcript lacks initial topic content'
+if grep -F "manual paging $topic line 200" "$transcript" >/dev/null 2>&1; then
+    fail 'terminal presentation ignored interactive pager exit'
+fi
+
+exit 0

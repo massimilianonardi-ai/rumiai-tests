@@ -1,0 +1,268 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/mk/lifecycle.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "unexpected status $actual, expected $expected: $*"
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library="$suite_root/lib/rumiai-os-target.lib"
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) printf -- '%s\n' "$TEST_ID: rumiai-os target checkout not found" >&2; exit 2 ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command_path="$root/bin/sys/mk"
+engine_path="$root/lib/sys/js/mk.lib.js"
+manual_path="$root/res/sys/manual/mk"
+engine_manual_path="$root/res/sys/manual/mk.lib.js"
+
+[ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
+[ "$(sed -n '1p' "$command_path")" = '#!/usr/bin/env m' ] || fail "mk command entry has wrong shebang"
+[ -f "$engine_path" ] && [ ! -L "$engine_path" ] && [ ! -x "$engine_path" ] || fail "mk JavaScript engine mode/type is invalid"
+[ -f "$manual_path" ] || fail "mk manual is missing"
+[ -f "$engine_manual_path" ] || fail "mk JavaScript library manual is missing"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+then
+  skip "managed nodejs runtime is not installed/default in the supplied target"
+fi
+
+tmp="${TMPDIR:-/tmp}/rumiai-mk-lifecycle-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+tmp="$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P)" || error "cannot canonicalize temporary directory"
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+project="$tmp/project"
+mkdir -p "$project/nested/dir" || error "cannot create project fixture"
+
+cat > "$project/mk.json" <<'EOF_PROJECT' || error "cannot write project configuration"
+{
+  "version": 1,
+  "environment": {
+    "MODE": "base"
+  },
+  "goals": {
+    "build": ["package"],
+    "check": ["test"],
+    "combo": ["package", "test"],
+    "fail": ["fail"]
+  },
+  "operations": {
+    "prepare": {
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'prepare:%s\\n' \"$MODE\" >> order.log"]
+      }
+    },
+    "compile": {
+      "prerequisites": ["prepare"],
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'compile:%s:%s\\n' \"$MODE\" \"$STEP\" >> order.log"],
+        "env": {
+          "STEP": "compile"
+        }
+      }
+    },
+    "package": {
+      "prerequisites": ["compile"],
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'package:%s\\n' \"$MODE\" >> order.log"]
+      }
+    },
+    "test": {
+      "prerequisites": ["prepare"],
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'test:%s\\n' \"$MODE\" >> order.log"]
+      }
+    },
+    "fail": {
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "exit 7"]
+      }
+    }
+  },
+  "profiles": {
+    "release": {
+      "environment": {
+        "MODE": "release"
+      },
+      "goals": {
+        "release": ["package"]
+      }
+    }
+  }
+}
+EOF_PROJECT
+
+goals_output="$tmp/goals"
+(
+  CDPATH= cd -- "$project/nested/dir" &&
+  "$command_path" --goals
+) > "$goals_output" || fail "--goals failed through project discovery"
+
+cat > "$tmp/goals.expected" <<'EOF_GOALS'
+build
+check
+combo
+fail
+EOF_GOALS
+command -p -- cmp -s "$tmp/goals.expected" "$goals_output" || fail "--goals output is not deterministic/correct"
+
+plan_output="$tmp/plan"
+(
+  CDPATH= cd -- "$project/nested/dir" &&
+  "$command_path" --plan build check
+) > "$plan_output" || fail "--plan failed through project discovery"
+
+cat > "$tmp/plan.expected" <<'EOF_PLAN'
+prepare
+compile
+package
+test
+EOF_PLAN
+command -p -- cmp -s "$tmp/plan.expected" "$plan_output" || fail "multiple-goal prerequisite plan is incorrect"
+[ ! -e "$project/order.log" ] || fail "--plan executed project actions"
+
+show_output="$tmp/show"
+"$command_path" --project "$project" --show-goal build > "$show_output" || fail "--show-goal failed"
+command -p -- grep -F '"goal": "build"' "$show_output" >/dev/null || fail "--show-goal omitted goal identity"
+command -p -- grep -F '"roots": [' "$show_output" >/dev/null || fail "--show-goal omitted roots"
+command -p -- grep -F '"operations": [' "$show_output" >/dev/null || fail "--show-goal omitted operation plan"
+
+(
+  CDPATH= cd -- "$project/nested/dir" &&
+  "$command_path" build check
+) || fail "goal execution failed through project discovery"
+
+cat > "$tmp/order.expected" <<'EOF_ORDER'
+prepare:base
+compile:base:compile
+package:base
+test:base
+EOF_ORDER
+command -p -- cmp -s "$tmp/order.expected" "$project/order.log" || fail "operation execution/prerequisite order or environment is incorrect"
+
+command -p -- rm -f "$project/order.log" || error "cannot reset execution output"
+"$command_path" --project "$project" --profile release build || fail "profile execution failed"
+
+cat > "$tmp/release.expected" <<'EOF_RELEASE'
+prepare:release
+compile:release:compile
+package:release
+EOF_RELEASE
+command -p -- cmp -s "$tmp/release.expected" "$project/order.log" || fail "profile environment overlay is incorrect"
+
+"$command_path" --project "$project" --profile release --goals > "$tmp/release-goals" || fail "profile goal introspection failed"
+cat > "$tmp/release-goals.expected" <<'EOF_RELEASE_GOALS'
+build
+check
+combo
+fail
+release
+EOF_RELEASE_GOALS
+command -p -- cmp -s "$tmp/release-goals.expected" "$tmp/release-goals" || fail "profile goal overlay is incorrect"
+
+expect_status 2 "$command_path"
+expect_status 2 "$command_path" --unknown
+expect_status 2 "$command_path" --project
+expect_status 2 "$command_path" --profile
+expect_status 2 "$command_path" --show-goal
+expect_status 1 "$command_path" --project "$project" unknown-goal
+expect_status 1 "$command_path" --project "$project" --profile unknown build
+expect_status 1 "$command_path" --project "$project" fail
+expect_status 0 "$command_path" --project "$project" --plan fail
+
+cycle="$tmp/cycle"
+mkdir "$cycle" || error "cannot create cycle project"
+cat > "$cycle/mk.json" <<'EOF_CYCLE' || error "cannot write cycle configuration"
+{
+  "version": 1,
+  "goals": {
+    "cycle": ["a"]
+  },
+  "operations": {
+    "a": {
+      "prerequisites": ["b"]
+    },
+    "b": {
+      "prerequisites": ["a"]
+    }
+  }
+}
+EOF_CYCLE
+expect_status 1 "$command_path" --project "$cycle" --plan cycle
+
+invalid="$tmp/invalid"
+mkdir "$invalid" || error "cannot create invalid project"
+printf -- '%s\n' '{ invalid json' > "$invalid/mk.json" || error "cannot write invalid JSON fixture"
+expect_status 1 "$command_path" --project "$invalid" build
+
+unknown_member="$tmp/unknown-member"
+mkdir "$unknown_member" || error "cannot create unknown-member project"
+cat > "$unknown_member/mk.json" <<'EOF_UNKNOWN' || error "cannot write unknown-member configuration"
+{
+  "version": 1,
+  "unknown": true
+}
+EOF_UNKNOWN
+expect_status 1 "$command_path" --project "$unknown_member" build
+
+exit 0

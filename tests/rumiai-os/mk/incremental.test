@@ -1,0 +1,510 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/mk/incremental.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "unexpected status $actual, expected $expected: $*"
+}
+
+trace_count()
+{
+  if [ -f "$trace" ]
+  then
+    command -p -- awk 'END { print NR }' "$trace"
+  else
+    printf -- '0\n'
+  fi
+}
+
+sha256_value()
+{
+  "$root/m" node -e 'const crypto=require("node:crypto");process.stdout.write(crypto.createHash("sha256").update(process.argv[1]).digest("hex")+"\n")' "$1"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ -n "${cache_project-}" ]
+  then
+    command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
+  fi
+  if [ -n "${copy_cache_project-}" ]
+  then
+    command -p -- rm -rf -- "$copy_cache_project" 2>/dev/null || :
+  fi
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command_path="$root/bin/sys/mk"
+[ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
+[ -x "$root/bin/sys/state-path" ] || fail "state-path command is missing"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+then
+  skip "managed nodejs runtime is not installed/default in the supplied target"
+fi
+
+tmp="${TMPDIR:-/tmp}/rumiai-mk-incremental-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+tmp="$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P)" || error "cannot canonicalize temporary directory"
+
+project="$tmp/project"
+mkdir -p "$project/src" || error "cannot create project fixture"
+printf -- '%s\n' alpha > "$project/src/input.txt" || error "cannot create source input"
+printf -- '%s\n' one > "$project/seed.txt" || error "cannot create generator seed"
+trace="$project/trace"
+TRACE_FILE="$trace"
+export TRACE_FILE
+
+cat > "$project/tool.sh" <<'EOF_TOOL' || error "cannot write executable fixture"
+#!/bin/sh
+printf -- 'tool\n' >> "$TRACE_FILE"
+mkdir -p out
+cp src/input.txt out/tool-artifact
+EOF_TOOL
+chmod 700 "$project/tool.sh" || error "cannot make executable fixture executable"
+
+cat > "$project/mk.json" <<'EOF_PROJECT' || error "cannot write incremental project"
+{
+  "version": 2,
+  "goals": {
+    "build": ["compile"],
+    "observe-output": ["output-observer"],
+    "observe-result": ["result-observer"],
+    "consume": ["consume"],
+    "generated": ["bundle"],
+    "tool": ["tool-build"]
+  },
+  "collections": {
+    "generated": {
+      "type": "files",
+      "root": "generated",
+      "after": ["generate"]
+    }
+  },
+  "operations": {
+    "compile": {
+      "incremental": {
+        "inputs": {
+          "source": {"path": "src/input.txt"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "mkdir -p out; printf 'compile\\n' >> \"$TRACE_FILE\"; cp src/input.txt out/artifact"]
+      },
+      "outputs": {
+        "artifact": {"path": "out/artifact"}
+      }
+    },
+    "output-observer": {
+      "when": {
+        "op": "truthy",
+        "value": {"output": {"operation": "compile", "name": "artifact", "property": "exists"}}
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'observe-output\\n' >> \"$TRACE_FILE\""]
+      }
+    },
+    "result-observer": {
+      "when": {
+        "op": "eq",
+        "left": {"result": {"operation": "compile", "field": "status"}},
+        "right": 0
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'observe-result\\n' >> \"$TRACE_FILE\""]
+      }
+    },
+    "consume": {
+      "incremental": {
+        "inputs": {
+          "artifact": {"output": {"operation": "compile", "name": "artifact"}}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "mkdir -p out; printf 'consume\\n' >> \"$TRACE_FILE\"; cp out/artifact out/consumed"]
+      },
+      "outputs": {
+        "consumed": {"path": "out/consumed"}
+      }
+    },
+    "generate": {
+      "incremental": {
+        "inputs": {
+          "seed": {"path": "seed.txt"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "mkdir -p generated; printf 'generate\\n' >> \"$TRACE_FILE\"; cp seed.txt generated/item.txt"]
+      },
+      "outputs": {
+        "tree": {"path": "generated"}
+      }
+    },
+    "bundle": {
+      "incremental": {
+        "inputs": {
+          "generated": {"collection": "generated"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'bundle\\n' >> \"$TRACE_FILE\"; cat generated/item.txt > bundle.txt"]
+      },
+      "outputs": {
+        "artifact": {"path": "bundle.txt"}
+      }
+    },
+    "tool-build": {
+      "incremental": {
+        "inputs": {
+          "source": {"path": "src/input.txt"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "./tool.sh"
+      },
+      "outputs": {
+        "artifact": {"path": "out/tool-artifact"}
+      }
+    }
+  },
+  "profiles": {
+    "alt": {
+      "operations": {
+        "compile": {
+          "incremental": {
+            "inputs": {
+              "source": {"path": "src/input.txt"}
+            }
+          },
+          "action": {
+            "type": "process",
+            "command": "sh",
+            "args": ["-c", "mkdir -p out; printf 'compile-alt\\n' >> \"$TRACE_FILE\"; cp src/input.txt out/artifact"]
+          },
+          "outputs": {
+            "artifact": {"path": "out/artifact"}
+          }
+        }
+      }
+    }
+  }
+}
+EOF_PROJECT
+
+cache_root="$("$root/m" "$root/bin/sys/state-path" user sys mk cache)" ||
+  error "cannot resolve mk cache area"
+project_key="$(sha256_value "$project")" || error "cannot compute project cache key"
+cache_project="$cache_root/projects/$project_key"
+compile_key="$(sha256_value compile)" || error "cannot compute compile cache key"
+compile_record="$cache_project/operations/$compile_key.json"
+
+# MK-52: planning may inspect freshness but does not create persistent cache state.
+plan="$tmp/first.plan.json"
+"$command_path" --project "$project" --plan build > "$plan" ||
+  fail "initial incremental plan failed"
+[ ! -e "$cache_project" ] && [ ! -L "$cache_project" ] ||
+  fail "MK-52 --plan created persistent incremental state"
+"$root/m" node - "$plan" <<'EOF_NODE' || fail "initial incremental plan did not expose ready operation"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='compile');
+if(!op || op.state!=='ready') process.exit(1);
+EOF_NODE
+
+export MK_INCREMENTAL_TEST_ENV=one
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "initial incremental execution failed"
+after="$(trace_count)"
+[ "$after" -eq "$((before + 1))" ] || fail "MK-44 initial execution did not run exactly once"
+[ "$(command -p -- tail -n 1 "$trace")" = compile ] || fail "initial compile trace is wrong"
+[ -f "$compile_record" ] || fail "MK-51 successful execution did not create freshness metadata"
+
+# Unchanged work becomes up-to-date and plan exposes the state.
+plan="$tmp/hit.plan.json"
+"$command_path" --project "$project" --plan build > "$plan" ||
+  fail "up-to-date plan failed"
+"$root/m" node - "$plan" <<'EOF_NODE' || fail "MK-47/MK-48 plan did not expose up-to-date"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='compile');
+if(!op || op.state!=='up-to-date') process.exit(1);
+EOF_NODE
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "up-to-date execution failed"
+[ "$(trace_count)" -eq "$before" ] || fail "MK-47 unchanged operation executed instead of reusing freshness"
+
+# MK-45: mtime alone is not freshness identity.
+touch "$project/src/input.txt" || error "cannot touch source input"
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "mtime-only build failed"
+[ "$(trace_count)" -eq "$before" ] || fail "MK-45 mtime-only change invalidated content freshness"
+
+# Effective environment participates in the fingerprint.
+MK_INCREMENTAL_TEST_ENV=two
+export MK_INCREMENTAL_TEST_ENV
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "environment-invalidated build failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "environment change did not invalidate incremental operation"
+
+# Input content invalidates.
+printf -- '%s\n' beta > "$project/src/input.txt" || error "cannot change source input"
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "input-invalidated build failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "MK-45 input content change did not invalidate operation"
+
+# Current declared outputs must still match the successful record.
+printf -- '%s\n' tampered > "$project/out/artifact" || error "cannot tamper declared output"
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "output-invalidated build failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "MK-47 output modification did not invalidate operation"
+command -p -- cmp -s "$project/src/input.txt" "$project/out/artifact" ||
+  fail "output-invalidated execution did not restore artifact"
+
+# Corrupt non-authoritative cache is a miss, never a false success/fatal error.
+printf -- '%s\n' '{broken' > "$compile_record" || error "cannot corrupt freshness record"
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "MK-50 corrupt-cache recovery failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "MK-50 corrupt cache was treated as reusable success"
+"$root/m" node - "$compile_record" <<'EOF_NODE' || fail "successful miss did not replace corrupt freshness record"
+const fs=require('node:fs');
+const value=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(value.schema!==1 || value.operation!=='compile') process.exit(1);
+EOF_NODE
+
+# Effective action definition/profile identity invalidates the record.
+before="$(trace_count)"
+"$command_path" --project "$project" --profile alt build || fail "profile action build failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "operation definition/profile change did not invalidate freshness"
+[ "$(command -p -- tail -n 1 "$trace")" = compile-alt ] ||
+  fail "profile action did not execute"
+before="$(trace_count)"
+"$command_path" --project "$project" build || fail "base action rebuild failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "return to base action did not invalidate profile freshness"
+
+# MK-48: output observation may use verified up-to-date producer evidence.
+before="$(trace_count)"
+"$command_path" --project "$project" observe-output ||
+  fail "up-to-date output observation failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "output observation reran producer or omitted observer"
+[ "$(command -p -- tail -n 1 "$trace")" = observe-output ] ||
+  fail "output observer did not execute"
+
+# MK-49: result observation cannot synthesize an exit result; producer must execute.
+before="$(trace_count)"
+"$command_path" --project "$project" observe-result ||
+  fail "result-observation execution failed"
+[ "$(trace_count)" -eq "$((before + 2))" ] ||
+  fail "MK-49 result observation did not execute producer plus observer"
+last_two="$tmp/last-two"
+command -p -- tail -n 2 "$trace" > "$last_two" || error "cannot read result-observer trace"
+cat > "$tmp/last-two.expected" <<'EOF_LAST_TWO'
+compile
+observe-result
+EOF_LAST_TWO
+command -p -- cmp -s "$tmp/last-two.expected" "$last_two" ||
+  fail "MK-49 result observer trace is incorrect"
+
+# MK-46: named output input is a data dependency without duplicate prerequisite.
+before="$(trace_count)"
+"$command_path" --project "$project" consume || fail "output-input consumer execution failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "output data dependency reran up-to-date producer or omitted consumer"
+[ "$(command -p -- tail -n 1 "$trace")" = consume ] ||
+  fail "output-input consumer did not execute"
+before="$(trace_count)"
+"$command_path" --project "$project" consume || fail "unchanged output-input request failed"
+[ "$(trace_count)" -eq "$before" ] ||
+  fail "unchanged producer/consumer graph did not become up-to-date"
+
+printf -- '%s\n' gamma > "$project/src/input.txt" || error "cannot change source for data-dependency test"
+before="$(trace_count)"
+"$command_path" --project "$project" consume || fail "changed output-input request failed"
+[ "$(trace_count)" -eq "$((before + 2))" ] ||
+  fail "changed producer output did not propagate to incremental consumer"
+command -p -- cmp -s "$project/out/artifact" "$project/out/consumed" ||
+  fail "consumer output does not match producer artifact"
+
+# MK-48: an up-to-date producer satisfies collection.after.
+before="$(trace_count)"
+"$command_path" --project "$project" generated || fail "initial generated pipeline failed"
+[ "$(trace_count)" -eq "$((before + 2))" ] ||
+  fail "initial generator/bundle pipeline did not execute both operations"
+before="$(trace_count)"
+"$command_path" --project "$project" generated || fail "unchanged generated pipeline failed"
+[ "$(trace_count)" -eq "$before" ] ||
+  fail "up-to-date generator did not satisfy collection after barrier"
+
+# Repairing a tampered producer output to the same downstream content need not rerun consumer.
+printf -- '%s\n' damaged > "$project/generated/item.txt" || error "cannot tamper generated output"
+before="$(trace_count)"
+"$command_path" --project "$project" generated || fail "generated-output repair failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "producer repair reran downstream operation despite identical restored input"
+[ "$(command -p -- tail -n 1 "$trace")" = generate ] ||
+  fail "generator did not perform output repair"
+
+printf -- '%s\n' two > "$project/seed.txt" || error "cannot change generator seed"
+before="$(trace_count)"
+"$command_path" --project "$project" generated || fail "changed generated pipeline failed"
+[ "$(trace_count)" -eq "$((before + 2))" ] ||
+  fail "changed generated content did not rerun downstream bundle"
+command -p -- cmp -s "$project/seed.txt" "$project/bundle.txt" ||
+  fail "bundle did not consume changed generated content"
+
+# Resolved executable identity participates in freshness.
+before="$(trace_count)"
+"$command_path" --project "$project" tool || fail "initial executable-identity build failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "initial executable-identity operation did not run"
+before="$(trace_count)"
+"$command_path" --project "$project" tool || fail "unchanged executable-identity build failed"
+[ "$(trace_count)" -eq "$before" ] ||
+  fail "unchanged executable identity did not reuse freshness"
+printf -- '%s\n' '# identity change' >> "$project/tool.sh" || error "cannot modify executable fixture"
+before="$(trace_count)"
+"$command_path" --project "$project" tool || fail "changed executable-identity build failed"
+[ "$(trace_count)" -eq "$((before + 1))" ] ||
+  fail "executable content change did not invalidate freshness"
+
+# Canonical project identity prevents accidental reuse after copying a checkout.
+copy="$tmp/copied-project"
+command -p -- cp -R -- "$project" "$copy" || error "cannot copy project fixture"
+copy_key="$(sha256_value "$copy")" || error "cannot compute copied project cache key"
+copy_cache_project="$cache_root/projects/$copy_key"
+copy_plan="$tmp/copy.plan.json"
+"$command_path" --project "$copy" --plan build > "$copy_plan" ||
+  fail "copied-project plan failed"
+"$root/m" node - "$copy_plan" <<'EOF_NODE' || fail "copied checkout incorrectly reused source-project freshness"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='compile');
+if(!op || op.state!=='ready') process.exit(1);
+EOF_NODE
+[ ! -e "$copy_cache_project" ] && [ ! -L "$copy_cache_project" ] ||
+  fail "copied-project plan created persistent freshness state"
+
+# Incremental side-effect-only operation without declared output is invalid.
+invalid="$tmp/invalid"
+mkdir "$invalid" || error "cannot create invalid project"
+cat > "$invalid/mk.json" <<'EOF_INVALID' || error "cannot write invalid incremental project"
+{
+  "version": 2,
+  "goals": {"run": ["side-effect"]},
+  "operations": {
+    "side-effect": {
+      "incremental": {"inputs": {}},
+      "action": {"type": "process", "command": "sh", "args": ["-c", "exit 0"]}
+    }
+  }
+}
+EOF_INVALID
+expect_status 1 "$command_path" --project "$invalid" --plan run
+
+# Failed actions never create reusable freshness state.
+failed="$tmp/failed"
+mkdir -p "$failed/src" || error "cannot create failed project"
+printf -- '%s\n' source > "$failed/src/input" || error "cannot create failed input"
+FAIL_TRACE="$failed/trace"
+export FAIL_TRACE
+cat > "$failed/mk.json" <<'EOF_FAILED' || error "cannot write failed incremental project"
+{
+  "version": 2,
+  "goals": {"build": ["build"]},
+  "operations": {
+    "build": {
+      "incremental": {
+        "inputs": {
+          "source": {"path": "src/input"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "mkdir -p out; printf 'run\\n' >> \"$FAIL_TRACE\"; printf artifact > out/artifact; exit 7"]
+      },
+      "outputs": {
+        "artifact": {"path": "out/artifact"}
+      }
+    }
+  }
+}
+EOF_FAILED
+expect_status 1 "$command_path" --project "$failed" build
+expect_status 1 "$command_path" --project "$failed" build
+[ "$(command -p -- awk 'END { print NR }' "$FAIL_TRACE")" -eq 2 ] ||
+  fail "MK-50 failed execution became reusable freshness state"
+
+exit 0

@@ -1,0 +1,279 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg-launch/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ -n "${consumer-}" ] && [ -n "${facility-}" ]
+  then
+    run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2>&1 || :
+  fi
+  [ -z "${facility-}" ] || run_pkg provider default -u -- "$facility" >/dev/null 2>&1 || :
+
+  for p in "${consumer-}" "${provider_a-}" "${provider_b-}"
+  do
+    [ -n "$p" ] || continue
+    run_pkg default -u -- "$p" >/dev/null 2>&1 || :
+  done
+
+  if [ -n "${root-}" ] && [ -n "${integration_driver-}" ]
+  then
+    for concrete in "${consumer-}@1" "${provider_a-}@1" "${provider_b-}@1"
+    do
+      case "$concrete" in @*) continue ;; esac
+      if [ -d "$root/pkg/$concrete" ] && [ ! -L "$root/pkg/$concrete" ]
+      then
+        pkg=${concrete%@*}
+        version=${concrete#*@}
+        "$root/m" "$integration_driver" deintegrate "$pkg" "$version" >/dev/null 2>&1 || :
+      fi
+    done
+  fi
+
+  [ -z "${consumer_system_state-}" ] || rm -rf "$consumer_system_state" 2>/dev/null || :
+  [ -z "${consumer_user_state-}" ] || rm -rf "$consumer_user_state" 2>/dev/null || :
+  if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    rmdir "$root/pkg" 2>/dev/null || :
+  fi
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+[ -f "$root/lib/sys/sh/pkg/pkg-launch.lib.sh" ] || fail 'pkg-launch library is missing'
+[ -f "$root/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || fail 'pkg-integration library is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-launch-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+pkg_store_created=0
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  mkdir "$root/pkg" || error 'cannot create package store for synthetic package test'
+  pkg_store_created=1
+fi
+[ -d "$root/pkg" ] && [ ! -L "$root/pkg" ] || fail 'package store is not a real directory'
+
+facility=launchjava$$
+provider_a=launchprova$$
+provider_b=launchprovb$$
+consumer=launchconsumer$$
+
+integration_driver=$tmp/integration-driver
+cat > "$integration_driver" <<'EOF_DRIVER'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+action=$1
+shift
+case $action in
+  integrate)
+    [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
+    pkg_integrate "$@"
+    ;;
+  deintegrate) pkg_deintegrate "$@" ;;
+  *) exit 2 ;;
+esac
+EOF_DRIVER
+chmod 700 "$integration_driver" || error 'cannot prepare integration driver'
+
+make_provider()
+{
+  pkg=$1
+  marker=$2
+  range=$tmp/range-$pkg
+  payload=$tmp/payload-$pkg
+
+  mkdir -p "$range/facility-cmd/$facility" "$range/facility-env" "$payload/bin" || return 1
+  printf '%s 1\n' "$facility" > "$range/facility" || return 1
+  printf '%s\n' bin/fcmd > "$range/facility-cmd/$facility/fcmd" || return 1
+
+  tab=$(printf '\t')
+  {
+    printf 'ORDER%s%s\n' "$tab" "literal provider-$marker"
+    printf 'PROVIDER_HOME%s%s\n' "$tab" root
+    printf 'PROVIDER_MARKER%s%s\n' "$tab" "literal $marker"
+  } > "$range/facility-env/$facility" || return 1
+
+  cat > "$payload/bin/fcmd" <<EOF_FCMD
+#!/bin/sh
+printf '%s\\n' 'provider-command=$marker'
+EOF_FCMD
+  chmod 700 "$payload/bin/fcmd" || return 1
+
+  "$root/m" "$integration_driver" integrate "$pkg" 1 "$range" "$payload" || return 1
+  run_pkg default "$pkg@1" >/dev/null
+}
+
+make_provider "$provider_a" a > "$tmp/prova.out" 2> "$tmp/prova.err" || {
+  cat "$tmp/prova.err" >&2
+  fail 'cannot integrate provider A'
+}
+make_provider "$provider_b" b > "$tmp/provb.out" 2> "$tmp/provb.err" || {
+  cat "$tmp/provb.err" >&2
+  fail 'cannot integrate provider B'
+}
+
+run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/provider-default.err" ||
+  fail 'cannot set provider A as facility default'
+
+range=$tmp/range-$consumer
+payload=$tmp/payload-$consumer
+mkdir -p "$range/cmd" "$range/link" "$payload/bin" || error 'cannot create consumer fixture'
+
+cat > "$range/cmd/$consumer" <<EOF_COMMAND
+#!/usr/bin/env m
+. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+launcher "$consumer" "\$@"
+EOF_COMMAND
+chmod 600 "$range/cmd/$consumer" || error 'cannot prepare consumer command'
+printf '%s\n' bin/upstream > "$range/link/$consumer" || error 'cannot prepare consumer link'
+printf '%s\n' "$facility =1" > "$range/dependency" || error 'cannot prepare consumer dependency'
+cat > "$range/env" <<'EOF_PACKAGE_ENV'
+ORDER=package
+PACKAGE_ENV=package
+export ORDER PACKAGE_ENV
+EOF_PACKAGE_ENV
+chmod 600 "$range/env" || error 'cannot prepare consumer package environment'
+
+cat > "$payload/bin/upstream" <<'EOF_UPSTREAM'
+#!/bin/sh
+facility_command=$(fcmd) || exit 91
+printf '%s\n' "$facility_command"
+printf 'provider-marker=%s\n' "$PROVIDER_MARKER"
+printf 'provider-home=%s\n' "$PROVIDER_HOME"
+printf 'order=%s\n' "$ORDER"
+printf 'package=%s\n' "$PACKAGE_ENV"
+printf 'user=%s\n' "$USER_ENV"
+printf 'arg1=%s\n' "$1"
+exit 37
+EOF_UPSTREAM
+chmod 700 "$payload/bin/upstream" || error 'cannot prepare consumer upstream executable'
+
+"$root/m" "$integration_driver" integrate "$consumer" 1 "$range" "$payload"   > "$tmp/consumer-integrate.out" 2> "$tmp/consumer-integrate.err" || {
+    cat "$tmp/consumer-integrate.err" >&2
+    fail 'cannot integrate consumer through facility default'
+  }
+run_pkg default "$consumer@1" >/dev/null 2> "$tmp/consumer-default.err" ||
+  fail 'cannot select consumer package default'
+
+user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg "$consumer" conf) ||
+  error 'cannot resolve consumer user conf'
+user_home=$("$root/m" "$root/bin/sys/state-path" user pkg "$consumer" home) ||
+  error 'cannot resolve consumer user home'
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg "$consumer" conf) ||
+  error 'cannot resolve consumer system conf'
+consumer_user_state=${user_conf%/conf}
+consumer_system_state=${system_conf%/conf}
+
+mkdir -p "$user_conf/.m" || error 'cannot create consumer user config'
+cat > "$user_conf/.m/env" <<'EOF_USER_ENV'
+ORDER="$ORDER-user"
+USER_ENV=$ORDER
+export ORDER USER_ENV
+EOF_USER_ENV
+
+public_dir=$root/bin/ext
+PATH="$public_dir:$root/bin/sys:$PATH"
+export PATH
+
+run_consumer()
+{
+  label=$1
+  expected=$2
+  output=$tmp/$label.out
+  err=$tmp/$label.err
+
+  "$consumer" "arg-$label" > "$output" 2> "$err"
+  status=$?
+  [ "$status" -eq 37 ] || {
+    cat "$err" >&2
+    fail "$label launcher status is $status instead of 37"
+  }
+
+  grep -Fx "provider-command=$expected" "$output" >/dev/null 2>&1 ||
+    fail "$label did not execute the selected provider command"
+  grep -Fx "provider-marker=$expected" "$output" >/dev/null 2>&1 ||
+    fail "$label did not apply selected provider environment"
+  grep -Fx "order=provider-$expected-user" "$output" >/dev/null 2>&1 ||
+    fail "$label runtime precedence is not package -> provider -> user"
+  grep -Fx 'package=package' "$output" >/dev/null 2>&1 ||
+    fail "$label package environment was not applied"
+  grep -Fx "user=provider-$expected-user" "$output" >/dev/null 2>&1 ||
+    fail "$label user environment was not applied last"
+  grep -Fx "arg1=arg-$label" "$output" >/dev/null 2>&1 ||
+    fail "$label did not preserve caller arguments"
+
+  case "$expected" in
+    a) expected_home="$root/pkg/$provider_a@1/root" ;;
+    b) expected_home="$root/pkg/$provider_b@1/root" ;;
+    *) error 'invalid expected provider marker' ;;
+  esac
+  grep -Fx "provider-home=$expected_home" "$output" >/dev/null 2>&1 ||
+    fail "$label provider root projection is wrong"
+}
+
+# Unbound consumer inherits facility default A.
+run_consumer inherited-a a
+
+# Binding changes provider at runtime without reinstalling consumer.
+run_pkg provider bind "$consumer" "$facility" "$provider_b" >/dev/null 2> "$tmp/bind-b.err" ||
+  fail 'cannot bind consumer to provider B'
+run_consumer bound-b b
+
+# Removing binding restores inheritance.
+run_pkg provider bind -u -- "$consumer" "$facility" >/dev/null 2> "$tmp/bind-unset.err" ||
+  fail 'cannot remove consumer binding'
+run_consumer inherited-a-again a
+
+# Changing facility default is observed by the same installed consumer.
+run_pkg provider default "$facility" "$provider_b" >/dev/null 2> "$tmp/default-b.err" ||
+  fail 'cannot change facility default to provider B'
+run_consumer inherited-b b
+
+[ -d "$user_home" ] && [ ! -L "$user_home" ] ||
+  fail 'launcher did not materialize consumer HOME'
+[ ! -e "$root/pkg/$consumer@1/binding" ] && [ ! -L "$root/pkg/$consumer@1/binding" ] ||
+  fail 'consumer package store contains an install-time provider binding'
+
+printf 'runtime-rebind=ok\n'
+printf 'provider-projection=ok\n'
+printf 'projection-precedence=ok\n'
+exit 0

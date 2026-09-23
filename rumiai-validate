@@ -1,0 +1,325 @@
+#!/bin/sh
+
+LAUNCHER_STATUS_ERROR=3
+LAUNCHER_HOLD_ON_EXIT=0
+FULL_SUITE_SCOPE_NAME="rumiai-os-health"
+validation_scope_name=
+validation_isolation=session
+
+say() {
+    printf '%s\n' "$*"
+}
+
+say_error() {
+    printf 'rumiai-validate: %s\n' "$*" >&2
+}
+
+fatal() {
+    say_error "$*"
+    exit "$LAUNCHER_STATUS_ERROR"
+}
+
+launcher_detect_hold_on_exit() {
+    LAUNCHER_HOLD_ON_EXIT=0
+
+    [ -t 0 ] && [ -t 1 ] || return 0
+
+    command -v uname >/dev/null 2>&1 || return 0
+    [ "$(uname -s 2>/dev/null)" = Linux ] || return 0
+
+    command -v ps >/dev/null 2>&1 || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+
+    parent_pid_value=$(ps -o ppid= -p "$$" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $parent_pid_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    parent_pid=$1
+
+    parent_command_value=$(ps -o comm= -p "$parent_pid" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $parent_command_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    parent_command=$1
+
+    shell_path=${SHELL-}
+    shell_name=${shell_path##*/}
+    [ -n "$shell_name" ] && [ "$parent_command" = "$shell_name" ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+
+    parent_pgid_value=$(ps -o pgid= -p "$parent_pid" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $parent_pgid_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    parent_pgid=$1
+
+    self_pgid_value=$(ps -o pgid= -p "$$" 2>/dev/null) || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    set -- $self_pgid_value
+    [ "$#" -eq 1 ] || {
+        LAUNCHER_HOLD_ON_EXIT=1
+        return 0
+    }
+    self_pgid=$1
+
+    [ "$parent_pgid" != "$self_pgid" ] || LAUNCHER_HOLD_ON_EXIT=1
+}
+
+launcher_finish() {
+    status=$1
+    trap - 0
+
+    if command -v validation_cleanup >/dev/null 2>&1; then
+        if ! validation_cleanup; then
+            say_error 'validation cleanup failed'
+            status=$LAUNCHER_STATUS_ERROR
+        fi
+    fi
+
+    if [ "$LAUNCHER_HOLD_ON_EXIT" -eq 1 ]; then
+        printf '\nPress Enter to close...'
+        IFS= read -r _ || :
+        printf '\n'
+    fi
+
+    exit "$status"
+}
+
+resolve_self() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *)
+            self=$(command -v "$self" 2>/dev/null) || return 1
+            ;;
+    esac
+
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$self" 2>/dev/null
+        return $?
+    fi
+
+    case $self in
+        */*) self_dir=${self%/*}; self_base=${self##*/} ;;
+        *) self_dir=.; self_base=$self ;;
+    esac
+    [ -n "$self_dir" ] || self_dir=/
+    self_dir=$(CDPATH= cd "$self_dir" 2>/dev/null && pwd -P) || return 1
+    printf '%s/%s\n' "$self_dir" "$self_base"
+}
+
+canonical_dir() {
+    path=$1
+    if command -v realpath >/dev/null 2>&1; then
+        resolved=$(realpath "$path" 2>/dev/null) || return 1
+        [ -d "$resolved" ] || return 1
+        printf '%s\n' "$resolved"
+        return 0
+    fi
+    (CDPATH= cd "$path" 2>/dev/null && pwd -P)
+}
+
+launcher_configure_git_safe_directories() {
+    suite_dir=$1
+
+    GIT_CONFIG_COUNT=1
+    GIT_CONFIG_KEY_0=safe.directory
+    GIT_CONFIG_VALUE_0=$suite_dir
+    unset GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
+
+    case $suite_dir in
+        */src/rumiai-tests)
+            product_dir=${suite_dir%/src/rumiai-tests}
+            if [ -e "$product_dir/.git" ]; then
+                GIT_CONFIG_COUNT=2
+                GIT_CONFIG_KEY_1=safe.directory
+                GIT_CONFIG_VALUE_1=$product_dir
+                export GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1
+            fi
+            ;;
+    esac
+
+    export GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+}
+
+repo_require_no_tracked_changes() {
+    repo_dir=$1
+    label=$2
+    status=$(git -C "$repo_dir" status --porcelain --untracked-files=no 2>/dev/null) ||
+        fatal "cannot inspect $label tracked working tree"
+    if [ -n "$status" ]; then
+        say_error "$label has tracked working-tree changes; refusing automatic pull"
+        printf '%s\n' "$status" >&2
+        exit "$LAUNCHER_STATUS_ERROR"
+    fi
+}
+
+validate_scope_name() {
+    value=$1
+    case $value in
+        ''|[.-]*|*[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+    return 0
+}
+
+validation_scope_names() {
+    validation_dir=$suite_root/validation
+    [ -d "$validation_dir" ] || return 1
+
+    scope_names_unsorted=
+    for scope_path in "$validation_dir"/*.conf; do
+        [ -f "$scope_path" ] || continue
+        scope_file=${scope_path##*/}
+        scope_name=${scope_file%.conf}
+        validate_scope_name "$scope_name" || {
+            say_error "invalid validation scope filename: $scope_file"
+            return 1
+        }
+        if [ -n "$scope_names_unsorted" ]; then
+            scope_names_unsorted="$scope_names_unsorted
+$scope_name"
+        else
+            scope_names_unsorted=$scope_name
+        fi
+    done
+    [ -n "$scope_names_unsorted" ] || return 1
+    printf '%s\n' "$scope_names_unsorted" | LC_ALL=C sort
+}
+
+choose_validation_scope() {
+    scope_names=$(validation_scope_names) || fatal 'cannot discover validation scopes'
+    [ -n "$scope_names" ] || fatal 'no validation scopes are available'
+    [ -f "$suite_root/validation/$FULL_SUITE_SCOPE_NAME.conf" ] ||
+        fatal "full-suite health scope is unavailable: $FULL_SUITE_SCOPE_NAME"
+
+    say 'Available validation scopes:'
+    printf '  0) all tests\n'
+    scope_number=1
+    for scope_name in $scope_names; do
+        [ "$scope_name" = "$FULL_SUITE_SCOPE_NAME" ] && continue
+        printf '  %d) %s\n' "$scope_number" "$scope_name"
+        scope_number=$((scope_number + 1))
+    done
+
+    while :; do
+        printf 'Select validation scope: '
+        IFS= read -r choice || fatal 'validation scope selection aborted'
+        case $choice in
+            ''|*[!0-9]*)
+                say_error 'enter the number of an available validation scope'
+                continue
+                ;;
+        esac
+
+        if [ "$choice" = 0 ]; then
+            validation_scope_name=$FULL_SUITE_SCOPE_NAME
+            return 0
+        fi
+
+        selected_scope=
+        scope_number=1
+        for scope_name in $scope_names; do
+            [ "$scope_name" = "$FULL_SUITE_SCOPE_NAME" ] && continue
+            if [ "$choice" = "$scope_number" ]; then
+                selected_scope=$scope_name
+                break
+            fi
+            scope_number=$((scope_number + 1))
+        done
+
+        if [ -n "$selected_scope" ]; then
+            validation_scope_name=$selected_scope
+            return 0
+        fi
+        say_error 'enter the number of an available validation scope'
+    done
+}
+
+main() {
+    while [ "$#" -gt 0 ]; do
+        case $1 in
+            --isolation=session|--isolation=test)
+                validation_isolation=${1#--isolation=}
+                ;;
+            --isolation=*)
+                fatal "invalid isolation mode: ${1#--isolation=}"
+                ;;
+            -*)
+                fatal "unknown option: $1"
+                ;;
+            *)
+                [ -z "$validation_scope_name" ] || fatal 'only one validation scope is allowed'
+                validate_scope_name "$1" || fatal 'invalid validation scope name'
+                validation_scope_name=$1
+                ;;
+        esac
+        shift
+    done
+
+    command -v git >/dev/null 2>&1 || fatal 'git is required'
+
+    self_path=$(resolve_self) || fatal 'cannot resolve launcher pathname'
+    suite_root=${self_path%/*}
+    [ -n "$suite_root" ] || suite_root=/
+    suite_root=$(canonical_dir "$suite_root") || fatal 'cannot resolve rumiai-tests root'
+    launcher_configure_git_safe_directories "$suite_root"
+
+    git_top=$(git -C "$suite_root" rev-parse --show-toplevel) ||
+        fatal 'launcher must be inside a rumiai-tests Git working tree'
+    git_top=$(canonical_dir "$git_top") || fatal 'cannot canonicalize rumiai-tests Git root'
+    [ "$git_top" = "$suite_root" ] || fatal 'launcher must be located in the rumiai-tests repository root'
+
+    cd "$suite_root" || fatal 'cannot enter rumiai-tests repository root'
+
+    repo_require_no_tracked_changes "$suite_root" 'rumiai-tests'
+    suite_head_before=$(git rev-parse HEAD 2>/dev/null) || fatal 'cannot read rumiai-tests HEAD'
+
+    say 'Updating rumiai-tests...'
+    git pull --ff-only || fatal 'cannot update rumiai-tests with fast-forward only'
+
+    suite_head_after=$(git rev-parse HEAD 2>/dev/null) || fatal 'cannot read updated rumiai-tests HEAD'
+    if [ "$suite_head_before" != "$suite_head_after" ]; then
+        say 'rumiai-tests updated; restarting current launcher...'
+        if [ -n "$validation_scope_name" ]; then
+            exec "$suite_root/rumiai-validate" "--isolation=$validation_isolation" "$validation_scope_name"
+        else
+            exec "$suite_root/rumiai-validate" "--isolation=$validation_isolation"
+        fi
+        fatal 'cannot restart updated launcher'
+    fi
+
+    if [ -z "$validation_scope_name" ]; then
+        choose_validation_scope
+    fi
+
+    implementation=$suite_root/lib/sh/rumiai-validate.lib.sh
+    [ -r "$implementation" ] || fatal "validation launcher implementation not found: $implementation"
+    . "$implementation"
+
+    rumiai_validate_run
+}
+
+launcher_detect_hold_on_exit
+trap 'launcher_finish "$?"' 0
+main "$@"

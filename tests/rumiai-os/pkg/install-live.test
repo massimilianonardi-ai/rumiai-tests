@@ -1,0 +1,226 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ "${jq_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall jq >/dev/null 2>&1 || :
+  fi
+
+  [ -z "${system_pkg_state-}" ] || rm -rf "$system_pkg_state" 2>/dev/null || :
+  [ -z "${user_pkg_state-}" ] || rm -rf "$user_pkg_state" 2>/dev/null || :
+
+  if [ "${public_dir_created-0}" -eq 1 ] && [ -n "${public_dir-}" ]
+  then
+    rmdir "$public_dir" 2>/dev/null || :
+  fi
+  if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    rmdir "$root/pkg" 2>/dev/null || :
+  fi
+
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+command -v git >/dev/null 2>&1 || skip 'git is unavailable'
+[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing or not executable'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing or not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-install-live-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+runtime_probe=$tmp/runtime-probe
+cat > "$runtime_probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$runtime_probe" || error 'cannot prepare runtime probe'
+osarch=$("$root/m" "$runtime_probe") || fail 'cannot resolve RumiAI osarch'
+case $osarch in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64|windows-arm64|windows-x86_64) :;;
+  *) skip "jq package is not declared for $osarch";;
+esac
+
+system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg jq conf) ||
+  error 'cannot resolve jq system state'
+user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg jq conf) ||
+  error 'cannot resolve jq user state'
+system_pkg_state=${system_conf%/conf}
+user_pkg_state=${user_conf%/conf}
+
+if [ -e "$system_pkg_state" ] || [ -L "$system_pkg_state" ] ||
+   [ -e "$user_pkg_state" ] || [ -L "$user_pkg_state" ]
+then
+  skip 'jq package state already exists in the supplied target'
+fi
+
+run_pkg versions jq > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'jq is already installed in the supplied target';;
+  1) :;;
+  *)
+    cat "$tmp/preexisting.err" >&2
+    fail "cannot determine whether jq is already installed: status $status"
+    ;;
+esac
+
+pkg_store_created=0
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  pkg_store_created=1
+fi
+
+public_dir=$root/bin/ext-$osarch
+public_dir_created=0
+if [ ! -e "$public_dir" ] && [ ! -L "$public_dir" ]
+then
+  public_dir_created=1
+fi
+
+invalid_err=$tmp/invalid-only.err
+run_pkg install 'bad@@version' > "$tmp/invalid-only.out" 2> "$invalid_err"
+invalid_status=$?
+[ "$invalid_status" -eq 1 ] || {
+  cat "$invalid_err" >&2
+  fail "invalid-only install returned $invalid_status instead of 1"
+}
+[ -s "$invalid_err" ] ||
+  fail 'invalid-only install produced no error diagnostic'
+grep -F 'bad@@version' "$invalid_err" >/dev/null 2>&1 ||
+  fail 'invalid-only diagnostic did not identify the invalid operand'
+if [ "$pkg_store_created" -eq 1 ]
+then
+  [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ] ||
+    fail 'invalid-only install created the package store'
+fi
+
+printf '%s\n' "$TEST_ID: live install of current catalog-selected jq for $osarch" >&2
+run_pkg install jq > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.err" >&2
+  fail 'pkg install jq failed'
+}
+jq_installed=1
+
+identity=$(run_pkg default jq 2> "$tmp/default.err") || {
+  cat "$tmp/default.err" >&2
+  fail 'pkg install jq did not establish a queryable current default'
+}
+[ -n "$identity" ] || fail 'pkg default jq returned an empty identity'
+
+versions=$(run_pkg versions jq 2> "$tmp/versions.err") || {
+  cat "$tmp/versions.err" >&2
+  fail 'pkg versions jq failed after installation'
+}
+printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
+  fail 'current jq identity is absent from pkg versions output'
+
+jq_version=$(
+  PATH="$public_dir:$root/bin/sys:$PATH"
+  export PATH
+  jq --version
+) || fail 'installed jq is not executable through its public command binding'
+[ -n "$jq_version" ] || fail 'jq --version produced no output'
+
+already_err=$tmp/already-installed.err
+run_pkg install jq > "$tmp/already-installed.out" 2> "$already_err"
+already_status=$?
+[ "$already_status" -eq 1 ] || {
+  cat "$already_err" >&2
+  fail "already-installed jq returned $already_status instead of 1"
+}
+[ -s "$already_err" ] ||
+  fail 'already-installed jq produced no error diagnostic'
+grep -F "$identity" "$already_err" >/dev/null 2>&1 ||
+  fail 'already-installed diagnostic did not identify the affected concrete'
+
+run_pkg uninstall jq > "$tmp/uninstall.out" 2> "$tmp/uninstall.err" || {
+  cat "$tmp/uninstall.err" >&2
+  fail 'pkg uninstall jq failed before mixed-operand scenario'
+}
+jq_installed=0
+
+if run_pkg versions jq > "$tmp/post-uninstall.out" 2> "$tmp/post-uninstall.err"
+then
+  fail 'jq remains installed after pkg uninstall'
+else
+  [ "$?" -eq 1 ] || fail 'pkg versions jq returned unexpected status after uninstall'
+fi
+
+mixed_err=$tmp/mixed.err
+run_pkg install 'bad@@version' jq > "$tmp/mixed.out" 2> "$mixed_err"
+mixed_status=$?
+[ "$mixed_status" -eq 1 ] || {
+  cat "$mixed_err" >&2
+  fail "mixed install returned $mixed_status instead of 1"
+}
+[ -s "$mixed_err" ] ||
+  fail 'mixed install produced no error diagnostic for the failed operand'
+grep -F 'bad@@version' "$mixed_err" >/dev/null 2>&1 ||
+  fail 'mixed install diagnostic did not identify the invalid operand'
+
+identity_after=$(run_pkg default jq 2> "$tmp/mixed-default.err") || {
+  cat "$tmp/mixed-default.err" >&2
+  fail 'mixed install did not install the valid jq operand'
+}
+jq_installed=1
+[ -n "$identity_after" ] || fail 'mixed install produced an empty jq identity'
+
+jq_version_after=$(
+  PATH="$public_dir:$root/bin/sys:$PATH"
+  export PATH
+  jq --version
+) || fail 'mixed install did not leave jq executable'
+[ -n "$jq_version_after" ] || fail 'mixed install jq --version produced no output'
+
+printf 'installed=%s\n' "$identity_after"
+printf 'jq=%s\n' "$jq_version_after"
+printf 'osarch=%s\n' "$osarch"
+
+exit 0

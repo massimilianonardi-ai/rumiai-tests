@@ -1,0 +1,124 @@
+#!/bin/sh
+
+TEST_ID=external/graalvm/temurin-coexistence-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${graalvm_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall graalvm >/dev/null 2>&1 || :
+  fi
+  if [ "${temurin_installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall temurin >/dev/null 2>&1 || :
+  fi
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-java-provider-coexistence-live-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+[ "$osarch" = linux-x86_64 ] || skip "provider coexistence validation is linux-x86_64-only; target is $osarch"
+
+for package in temurin graalvm
+do
+  run_pkg versions "$package" > "$tmp/$package-preexisting.out" 2> "$tmp/$package-preexisting.err"
+  status=$?
+  case $status in
+    0) skip "$package is already installed in the supplied target";;
+    1) :;;
+    *)
+      cat "$tmp/$package-preexisting.err" >&2
+      fail "cannot determine pre-existing $package installation state (status $status)"
+      ;;
+  esac
+done
+
+run_pkg install temurin > "$tmp/temurin-install.out" 2> "$tmp/temurin-install.err" || {
+  cat "$tmp/temurin-install.out" >&2
+  cat "$tmp/temurin-install.err" >&2
+  fail 'pkg install temurin failed'
+}
+temurin_installed=1
+
+run_pkg install graalvm > "$tmp/graalvm-install.out" 2> "$tmp/graalvm-install.err" || {
+  cat "$tmp/graalvm-install.out" >&2
+  cat "$tmp/graalvm-install.err" >&2
+  fail 'pkg install graalvm failed while Temurin already provides java 25'
+}
+graalvm_installed=1
+
+temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
+  cat "$tmp/temurin-default.err" >&2
+  fail 'Temurin current package default is not queryable'
+}
+graalvm_identity=$(run_pkg default graalvm 2> "$tmp/graalvm-default.err") || {
+  cat "$tmp/graalvm-default.err" >&2
+  fail 'GraalVM current package default is not queryable'
+}
+[ -n "$temurin_identity" ] || fail 'Temurin identity is empty'
+[ -n "$graalvm_identity" ] || fail 'GraalVM identity is empty'
+
+run_pkg versions temurin > "$tmp/temurin-versions.out" 2> "$tmp/temurin-versions.err" ||
+  fail 'pkg versions temurin failed after GraalVM installation'
+run_pkg versions graalvm > "$tmp/graalvm-versions.out" 2> "$tmp/graalvm-versions.err" ||
+  fail 'pkg versions graalvm failed after Temurin installation'
+
+grep -Fx "$temurin_identity" "$tmp/temurin-versions.out" >/dev/null 2>&1 ||
+  fail 'Temurin identity disappeared after installing another java 25 provider'
+grep -Fx "$graalvm_identity" "$tmp/graalvm-versions.out" >/dev/null 2>&1 ||
+  fail 'GraalVM identity is absent after coexistence installation'
+
+printf 'temurin=%s\n' "$temurin_identity"
+printf 'graalvm=%s\n' "$graalvm_identity"
+printf 'same-facility-coexistence=ok\n'
+
+exit 0

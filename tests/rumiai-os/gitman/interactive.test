@@ -1,0 +1,1175 @@
+#!/bin/sh
+
+# Protected current properties are exercised behaviorally across the scenarios
+# below (repository/configuration workflow, pager/terminal behavior, action tree,
+# mutating actions, branch switching and Sync + Push semantics). Driver/PTY
+# synchronization is infrastructure and must never be reported as product FAIL.
+
+TEST_ID=rumiai-os/gitman/interactive.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    if [ -n "${state_current-}" ] && [ -L "$state_current" ]
+    then
+        rm -f "$state_current" 2>/dev/null || :
+    fi
+    if [ "${state_user_created-0}" -eq 1 ] && [ -n "${state_user_dir-}" ]
+    then
+        rmdir "$state_user_dir" 2>/dev/null || :
+    fi
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+gitman_group=${test_dir%/*}
+rumiai_os_group=${gitman_group%/*}
+suite_root=${rumiai_os_group%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+gitman=$root/bin/sys/gitman
+state_path=$root/bin/sys/state-path
+[ -x "$gitman" ] || fail 'gitman command is unavailable'
+[ -x "$state_path" ] || fail 'state-path command is unavailable'
+
+command -v git >/dev/null 2>&1 || skip 'git is unavailable'
+command -v python3 >/dev/null 2>&1 || skip 'python3 is unavailable'
+command -v tput >/dev/null 2>&1 || skip 'tput is unavailable'
+TERM=xterm-256color tput cols >/dev/null 2>&1 || skip 'xterm-256color terminfo entry is unavailable'
+TERM=xterm-256color tput kcud1 >/dev/null 2>&1 || skip 'Down capability is unavailable'
+TERM=xterm-256color tput kend >/dev/null 2>&1 || skip 'End capability is unavailable'
+TERM=xterm-256color tput kbs >/dev/null 2>&1 || skip 'Backspace capability is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-gitman-interactive-$$
+umask 077
+mkdir -p "$tmp/bin" || error 'cannot create temporary directory'
+
+work=$tmp/work
+repo_main="$work/a repo"
+repo_link="$work/z worktree"
+repo_bare="$work/m bare.git"
+mkdir -p "$repo_main/sub" || error 'cannot prepare main repository directory'
+
+git init -q "$repo_main" || error 'cannot initialize main Git repository'
+git -C "$repo_main" config user.name 'RumiAI Test' || error 'cannot configure Git test name'
+git -C "$repo_main" config user.email 'rumiai-test@example.invalid' || error 'cannot configure Git test email'
+printf '%s\n' tracked > "$repo_main/tracked.txt" || error 'cannot create tracked fixture'
+git -C "$repo_main" add tracked.txt || error 'cannot stage tracked fixture'
+git -C "$repo_main" commit -q -m initial || error 'cannot commit tracked fixture'
+git -C "$repo_main" branch feature || error 'cannot create feature branch'
+git -C "$repo_main" worktree add -q "$repo_link" feature || error 'cannot create linked worktree'
+mkdir -p "$repo_link/subdir" || error 'cannot create linked worktree subdirectory'
+printf '%s\n' probe > "$repo_main/probe.txt" || error 'cannot create untracked status fixture'
+git init -q --bare "$repo_bare" || error 'cannot initialize bare Git repository'
+
+repo_escape=$(printf '%s\n%s' "$work/line" 'literal\n\back')
+git init -q "$repo_escape" || error 'cannot initialize escaped-path Git repository'
+git -C "$repo_escape" config user.name 'RumiAI Test' || error 'cannot configure escaped-path Git test name'
+git -C "$repo_escape" config user.email 'rumiai-test@example.invalid' || error 'cannot configure escaped-path Git test email'
+printf '%s\n' escaped > "$repo_escape/tracked.txt" || error 'cannot create escaped-path tracked fixture'
+git -C "$repo_escape" add tracked.txt || error 'cannot stage escaped-path tracked fixture'
+git -C "$repo_escape" commit -q -m initial || error 'cannot commit escaped-path fixture'
+printf '%s\n' escape-probe > "$repo_escape/escape-probe.txt" || error 'cannot create escaped-path status probe'
+
+repo_actions="$work/actions"
+repo_actions_remote="$work/actions-remote.git"
+git init -q "$repo_actions" || error 'cannot initialize action Git repository'
+git -C "$repo_actions" config user.name 'RumiAI Test' || error 'cannot configure action Git test name'
+git -C "$repo_actions" config user.email 'rumiai-test@example.invalid' || error 'cannot configure action Git test email'
+git -C "$repo_actions" branch -m a-current || error 'cannot name action Git initial branch'
+printf '%s\n' base > "$repo_actions/tracked.txt" || error 'cannot create action tracked fixture'
+git -C "$repo_actions" add tracked.txt || error 'cannot stage action fixture'
+git -C "$repo_actions" commit -q -m initial || error 'cannot commit action fixture'
+git -C "$repo_actions" branch z-target || error 'cannot create action target branch'
+git init -q --bare "$repo_actions_remote" || error 'cannot initialize action remote'
+git -C "$repo_actions" remote add origin "$repo_actions_remote" || error 'cannot add action remote'
+git -C "$repo_actions" push -q -u origin HEAD || error 'cannot seed action remote'
+printf '%s\n' action-change > "$repo_actions/action.txt" || error 'cannot create action untracked fixture'
+
+repo_sync="$work/sync"
+repo_sync_remote="$work/sync-remote.git"
+repo_sync_peer="$work/sync-peer"
+git init -q "$repo_sync" || error 'cannot initialize sync Git repository'
+git -C "$repo_sync" config user.name 'RumiAI Test' || error 'cannot configure sync Git test name'
+git -C "$repo_sync" config user.email 'rumiai-test@example.invalid' || error 'cannot configure sync Git test email'
+git -C "$repo_sync" branch -m sync-main || error 'cannot name sync Git branch'
+printf '%s\n' base > "$repo_sync/shared.txt" || error 'cannot create sync tracked fixture'
+git -C "$repo_sync" add shared.txt || error 'cannot stage sync fixture'
+git -C "$repo_sync" commit -q -m initial || error 'cannot commit sync fixture'
+git init -q --bare "$repo_sync_remote" || error 'cannot initialize sync remote'
+git -C "$repo_sync" remote add origin "$repo_sync_remote" || error 'cannot add sync remote'
+git -C "$repo_sync" push -q -u origin sync-main || error 'cannot seed sync remote'
+git clone -q -b sync-main "$repo_sync_remote" "$repo_sync_peer" || error 'cannot clone sync peer'
+git -C "$repo_sync_peer" config user.name 'RumiAI Peer' || error 'cannot configure sync peer name'
+git -C "$repo_sync_peer" config user.email 'rumiai-peer@example.invalid' || error 'cannot configure sync peer email'
+
+state_user_dir=$root/state/user
+state_current=$state_user_dir/current
+state_user_created=0
+
+if [ -e "$state_current" ] || [ -L "$state_current" ]
+then
+    skip 'target already has explicit user/current state binding'
+fi
+
+if [ ! -d "$state_user_dir" ]
+then
+    mkdir "$state_user_dir" || error 'cannot create temporary target user-state selector directory'
+    state_user_created=1
+fi
+
+user_state=$tmp/user-state
+mkdir -p "$user_state" || error 'cannot create temporary user state'
+ln -s "$user_state" "$state_current" || error 'cannot install temporary user-state binding'
+
+conf_dir=$("$root/m" "$state_path" user sys gitman conf) || error 'cannot resolve gitman configuration area'
+mkdir -p "$conf_dir" || error 'cannot create gitman configuration area'
+conf_file=$conf_dir/repositories
+
+pager_probe=$tmp/pager-probe
+pager_marker=$tmp/user-pager-invoked
+less_marker=$tmp/less-invoked
+less_env=$tmp/less-env
+fake_less=$tmp/bin/less
+
+cat > "$pager_probe" <<'EOF_PAGER'
+#!/bin/sh
+: > "$RUMIAI_GITMAN_PAGER_MARKER"
+exit 99
+EOF_PAGER
+chmod +x "$pager_probe" || error 'cannot make pager probe executable'
+
+cat > "$fake_less" <<'EOF_LESS'
+#!/bin/sh
+printf 'invoked\n' >> "$RUMIAI_GITMAN_LESS_MARKER"
+printf 'LESS=%s\n' "${LESS-}" > "$RUMIAI_GITMAN_LESS_ENV"
+
+if [ "$#" -eq 0 ]
+then
+    command -p cat
+else
+    command -p cat "$@"
+fi
+EOF_LESS
+chmod +x "$fake_less" || error 'cannot make fake less executable'
+
+visual_editor=$tmp/bin/visual-editor
+editor_editor=$tmp/bin/editor-editor
+visual_marker=$tmp/visual-editor.marker
+editor_marker=$tmp/editor-editor.marker
+vi_marker=$tmp/vi-editor.marker
+
+cat > "$visual_editor" <<'EOF_VISUAL'
+#!/bin/sh
+printf '%s\n' 'VISUAL_EDITOR_RUNNING'
+: > "$RUMIAI_GITMAN_VISUAL_MARKER"
+status=${RUMIAI_GITMAN_EDITOR_EXIT:-0}
+[ "$status" -eq 0 ] || exit "$status"
+if [ "${RUMIAI_GITMAN_EDITOR_WRITE-}" = yes ]
+then
+    printf '%s' "${RUMIAI_GITMAN_EDITOR_CONTENT-}" > "$1"
+fi
+exit 0
+EOF_VISUAL
+chmod +x "$visual_editor" || error 'cannot make VISUAL editor fixture executable'
+
+cat > "$editor_editor" <<'EOF_EDITOR'
+#!/bin/sh
+printf '%s\n' 'EDITOR_EDITOR_RUNNING'
+: > "$RUMIAI_GITMAN_EDITOR_MARKER"
+status=${RUMIAI_GITMAN_EDITOR_EXIT:-0}
+[ "$status" -eq 0 ] || exit "$status"
+if [ "${RUMIAI_GITMAN_EDITOR_WRITE-}" = yes ]
+then
+    printf '%s' "${RUMIAI_GITMAN_EDITOR_CONTENT-}" > "$1"
+fi
+exit 0
+EOF_EDITOR
+chmod +x "$editor_editor" || error 'cannot make EDITOR editor fixture executable'
+
+cat > "$tmp/bin/vi" <<'EOF_VI'
+#!/bin/sh
+printf '%s\n' 'VI_EDITOR_RUNNING'
+: > "$RUMIAI_GITMAN_VI_MARKER"
+status=${RUMIAI_GITMAN_EDITOR_EXIT:-0}
+[ "$status" -eq 0 ] || exit "$status"
+if [ "${RUMIAI_GITMAN_EDITOR_WRITE-}" = yes ]
+then
+    printf '%s' "${RUMIAI_GITMAN_EDITOR_CONTENT-}" > "$1"
+fi
+exit 0
+EOF_VI
+chmod +x "$tmp/bin/vi" || error 'cannot make vi editor fixture executable'
+
+export TERM=xterm-256color
+
+python3 - "$root/m" "$gitman" "$work" "$repo_main" "$repo_link" "$repo_bare" "$repo_escape" "$conf_file" "$pager_probe" "$pager_marker" "$tmp/bin" "$less_marker" "$less_env" "$visual_editor" "$editor_editor" "$visual_marker" "$editor_marker" "$vi_marker" "$repo_actions" "$repo_sync" "$repo_sync_peer" <<'PY_GITMAN'
+import os
+import pty
+import select
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+m_command, gitman_command, work, repo_main, repo_link, repo_bare, repo_escape, conf_file, pager_probe, pager_marker, fake_bin, less_marker, less_env, visual_editor, editor_editor, visual_marker, editor_marker, vi_marker, repo_actions, repo_sync, repo_sync_peer = sys.argv[1:22]
+
+env = os.environ.copy()
+env["TERM"] = "xterm-256color"
+env["PATH"] = fake_bin + os.pathsep + env["PATH"]
+env["GIT_PAGER"] = pager_probe
+env["PAGER"] = pager_probe
+env["LESS"] = "-S"
+env["RUMIAI_GITMAN_PAGER_MARKER"] = pager_marker
+env["RUMIAI_GITMAN_LESS_MARKER"] = less_marker
+env["RUMIAI_GITMAN_LESS_ENV"] = less_env
+
+repo_main_real = os.path.realpath(repo_main)
+repo_link_real = os.path.realpath(repo_link)
+
+
+class HarnessError(Exception):
+    pass
+
+
+def capability(name):
+    return subprocess.check_output(["tput", name], env=env)
+
+DOWN = capability("kcud1")
+END = capability("kend")
+BACKSPACE = capability("kbs")
+try:
+    RMCUP = capability("rmcup")
+except subprocess.CalledProcessError:
+    RMCUP = b""
+
+def move_down(session, count):
+    for _ in range(count):
+        session.send(DOWN)
+        session.pump_for(0.08)
+
+
+def select_root_status(session):
+    move_down(session, 1)
+
+
+class Session:
+    def __init__(self, args, cwd, extra_env=None, unset_env=()):
+        self.buffer = bytearray()
+        self.pid, self.master = pty.fork()
+        self.exited = False
+        self.status = None
+        if self.pid == 0:
+            child_env = env.copy()
+            if extra_env:
+                child_env.update(extra_env)
+            for name in unset_env:
+                child_env.pop(name, None)
+            os.chdir(cwd)
+            argv = [m_command, gitman_command, *args]
+            os.execve(m_command, argv, child_env)
+
+    def pump(self, timeout=0.05):
+        if self.exited:
+            return
+        ready, _, _ = select.select([self.master], [], [], timeout)
+        if ready:
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                chunk = b""
+            if chunk:
+                self.buffer.extend(chunk)
+        waited, wait_status = os.waitpid(self.pid, os.WNOHANG)
+        if waited == self.pid:
+            self.exited = True
+            self.status = os.waitstatus_to_exitcode(wait_status)
+
+    def pump_for(self, duration):
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline and not self.exited:
+            self.pump(min(0.05, max(0.0, deadline - time.monotonic())))
+
+    def wait_for(self, needle, start=0, timeout=5.0):
+        if isinstance(needle, str):
+            needle = needle.encode()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            pos = self.buffer.find(needle, start)
+            if pos >= 0:
+                return pos
+            if self.exited:
+                break
+            self.pump(0.05)
+        raise HarnessError(("missing output", needle, bytes(self.buffer[start:])))
+
+    def send(self, data):
+        if isinstance(data, str):
+            data = data.encode()
+        os.write(self.master, data)
+
+    def wait_exit(self, expected=0, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and not self.exited:
+            self.pump(0.05)
+        if not self.exited:
+            os.kill(self.pid, 9)
+            os.waitpid(self.pid, 0)
+            self.exited = True
+            raise HarnessError(("session did not exit", bytes(self.buffer)))
+        assert self.status == expected, (self.status, bytes(self.buffer))
+        os.close(self.master)
+
+    def abort(self):
+        if not self.exited:
+            os.kill(self.pid, 9)
+            os.waitpid(self.pid, 0)
+            self.exited = True
+        try:
+            os.close(self.master)
+        except OSError:
+            pass
+
+
+def run_explicit_action_and_error_scenario():
+    s = Session(["a repo/sub", "missing dir", "m bare.git"], work)
+    try:
+        s.wait_for("Git repositories")
+        combined = b"not a directory: missing dir; bare Git repository is not supported: m bare.git"
+        s.wait_for(combined)
+
+        mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("[output: pager]", start=mark)
+        s.wait_for("Status: git status --short --branch", start=mark)
+
+        # Default pager mode must override caller Git pager selection, force
+        # even Status through RumiAI pager, preserve caller LESS options, and
+        # return directly to the action menu without a second key prompt.
+        for path in (pager_marker, less_marker, less_env):
+            try:
+                Path(path).unlink()
+            except FileNotFoundError:
+                pass
+
+        select_root_status(s)
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        pager_return = s.wait_for("[output: pager]", start=action_mark)
+        segment = bytes(s.buffer[action_mark:pager_return])
+        assert Path(less_marker).exists(), ("RumiAI pager did not select less", segment)
+        assert not Path(pager_marker).exists(), ("caller Git pager was not overridden", segment)
+        less_value = Path(less_env).read_text(encoding="utf-8")
+        assert "LESS=-S -R -+F -+X" in less_value, less_value
+        assert b"probe.txt" in segment, segment
+        assert b"Press any key to continue..." not in segment, segment
+        assert combined not in bytes(s.buffer[pager_return:]), (
+            "successful pager action did not clear previous bottom-footer error",
+            bytes(s.buffer[pager_return:]),
+        )
+
+        # Toggle to terminal mode. Pager must be bypassed and the explicit
+        # post-command key pause must return.
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+        less_invocations_before = Path(less_marker).read_text(encoding="utf-8").count("invoked")
+
+        select_root_status(s)
+        terminal_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("probe.txt", start=terminal_mark)
+        s.wait_for("Press any key to continue...", start=terminal_mark)
+        less_invocations_after = Path(less_marker).read_text(encoding="utf-8").count("invoked")
+        assert less_invocations_after == less_invocations_before, (
+            "terminal mode unexpectedly invoked pager",
+            bytes(s.buffer[terminal_mark:]),
+        )
+
+        resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("[output: terminal]", start=resume_mark)
+
+        # Mode is session state and survives returning to/opening repositories.
+        back_mark = len(s.buffer)
+        s.send(BACKSPACE)
+        s.wait_for("Git repositories", start=back_mark)
+        reopen_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("[output: terminal]", start=reopen_mark)
+
+        final_back_mark = len(s.buffer)
+        s.send(BACKSPACE)
+        s.wait_for("Git repositories", start=final_back_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+def run_config_and_dedup_scenario():
+    Path(conf_file).write_text("a repo/sub\na repo\nz worktree\n", encoding="utf-8")
+
+    s = Session([], work)
+    try:
+        s.wait_for("Git repositories")
+
+        # If the root/subdirectory candidates were not deduplicated, one Down
+        # would select the duplicate main worktree rather than the linked one.
+        s.send(DOWN)
+        s.pump_for(0.15)
+        mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("[output: pager]", start=mark)
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+
+        select_root_status(s)
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("feature", start=action_mark)
+        s.wait_for("Press any key to continue...", start=action_mark)
+        resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=resume_mark)
+
+        back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=back_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_empty_config_fallback_scenario():
+    Path(conf_file).write_text("\n\n", encoding="utf-8")
+
+    s = Session([], os.path.join(repo_link, "subdir"))
+    try:
+        s.wait_for("Git repositories")
+        open_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("[output: pager]", start=open_mark)
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+        select_root_status(s)
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("feature", start=action_mark)
+        s.wait_for("Press any key to continue...", start=action_mark)
+        resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=resume_mark)
+        back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=back_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def config_encode(path):
+    return path.replace("\\", "\\\\").replace("\n", "\\n")
+
+
+def clear_editor_markers():
+    for path in (visual_marker, editor_marker, vi_marker):
+        try:
+            Path(path).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def editor_env(content="", exit_status="0"):
+    return {
+        "RUMIAI_GITMAN_EDITOR_WRITE": "yes",
+        "RUMIAI_GITMAN_EDITOR_CONTENT": content,
+        "RUMIAI_GITMAN_EDITOR_EXIT": exit_status,
+        "RUMIAI_GITMAN_VISUAL_MARKER": visual_marker,
+        "RUMIAI_GITMAN_EDITOR_MARKER": editor_marker,
+        "RUMIAI_GITMAN_VI_MARKER": vi_marker,
+    }
+
+
+def prove_current_repository(s, status_marker):
+    open_mark = len(s.buffer)
+    s.send(b"\n")
+    s.wait_for("[output: pager]", start=open_mark)
+
+    mode_mark = len(s.buffer)
+    s.send(b"p")
+    s.wait_for("[output: terminal]", start=mode_mark)
+
+    select_root_status(s)
+    action_mark = len(s.buffer)
+    s.send(b"\n")
+    s.wait_for(status_marker, start=action_mark)
+    s.wait_for("Press any key to continue...", start=action_mark)
+
+    resume_mark = len(s.buffer)
+    s.send(b"x")
+    s.wait_for("[output: terminal]", start=resume_mark)
+
+    back_mark = len(s.buffer)
+    s.send(BACKSPACE)
+    s.wait_for("Git repositories", start=back_mark)
+
+
+def run_edit_visual_no_reload_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text("legacy\n", encoding="utf-8")
+    expected = config_encode(os.path.realpath(repo_link)) + "\n"
+
+    session_env = editor_env(expected)
+    session_env["VISUAL"] = visual_editor
+    session_env["EDITOR"] = editor_editor
+
+    s = Session([repo_main], work, extra_env=session_env)
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        editor_pos = s.wait_for("VISUAL_EDITOR_RUNNING", start=edit_mark)
+        if RMCUP:
+            assert RMCUP in bytes(s.buffer[edit_mark:editor_pos]), (
+                "editor started before repository menu restored terminal state",
+                bytes(s.buffer[edit_mark:editor_pos]),
+            )
+        s.wait_for("Reset repositories and reload configuration?", start=edit_mark)
+
+        assert Path(visual_marker).exists(), "VISUAL editor was not selected"
+        assert not Path(editor_marker).exists(), "EDITOR was selected despite VISUAL"
+        assert not Path(vi_marker).exists(), "vi was selected despite VISUAL"
+        assert Path(conf_file).read_text(encoding="utf-8") == expected
+
+        no_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=no_mark)
+
+        # Default No keeps the existing in-memory repository set even though
+        # the edited configuration now names the linked worktree.
+        prove_current_repository(s, "probe.txt")
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_edit_editor_reload_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text(config_encode(os.path.realpath(repo_main)) + "\n", encoding="utf-8")
+
+    edited = config_encode(os.path.realpath(repo_link)) + "\nmissing-after-edit\n"
+    session_env = editor_env(edited)
+    session_env["EDITOR"] = editor_editor
+
+    s = Session([repo_main], work, extra_env=session_env, unset_env=("VISUAL",))
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        s.wait_for("EDITOR_EDITOR_RUNNING", start=edit_mark)
+        s.wait_for("Reset repositories and reload configuration?", start=edit_mark)
+
+        assert Path(editor_marker).exists(), "EDITOR fallback was not selected"
+        assert not Path(visual_marker).exists(), "VISUAL editor unexpectedly ran"
+        assert not Path(vi_marker).exists(), "vi unexpectedly ran before EDITOR"
+
+        s.send(DOWN)
+        s.pump_for(0.15)
+        reload_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=reload_mark)
+        s.wait_for("not a directory: missing-after-edit", start=reload_mark)
+
+        # Yes resets repo_main and reloads only the valid configuration entry.
+        prove_current_repository(s, "feature")
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_edit_vi_empty_reload_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text(config_encode(os.path.realpath(repo_main)) + "\n", encoding="utf-8")
+
+    session_env = editor_env("")
+    s = Session([repo_main], work, extra_env=session_env, unset_env=("VISUAL", "EDITOR"))
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        s.wait_for("VI_EDITOR_RUNNING", start=edit_mark)
+        s.wait_for("Reset repositories and reload configuration?", start=edit_mark)
+        assert Path(vi_marker).exists(), "vi fallback was not selected"
+
+        s.send(DOWN)
+        s.pump_for(0.15)
+        reload_mark = len(s.buffer)
+        s.send(b"\n")
+
+        # Explicit reload of an empty file must not apply the startup "." fallback.
+        s.wait_for("Select Git repositories", start=reload_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_edit_failure_preserves_state_scenario():
+    clear_editor_markers()
+    Path(conf_file).write_text(config_encode(os.path.realpath(repo_link)) + "\n", encoding="utf-8")
+
+    session_env = editor_env("", exit_status="7")
+    session_env["VISUAL"] = visual_editor
+
+    s = Session([repo_main], work, extra_env=session_env)
+    try:
+        s.wait_for("Git repositories")
+
+        edit_mark = len(s.buffer)
+        s.send(b"e")
+        s.wait_for("VISUAL_EDITOR_RUNNING", start=edit_mark)
+        return_mark = len(s.buffer)
+        s.wait_for("Git repositories", start=return_mark)
+        s.wait_for("configuration editor exited with status 7", start=return_mark)
+
+        # Failed editor exit does not offer reload and leaves repo_main current.
+        prove_current_repository(s, "probe.txt")
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_save_and_escape_roundtrip_scenario():
+    Path(conf_file).write_text("legacy\n", encoding="utf-8")
+
+    expected = config_encode(os.path.realpath(repo_escape)) + "\n"
+
+    s = Session([repo_escape], work)
+    try:
+        s.wait_for("Git repositories")
+
+        confirm_mark = len(s.buffer)
+        s.send(b"s")
+        s.wait_for("Overwrite repositories configuration?", start=confirm_mark)
+        assert Path(conf_file).read_text(encoding="utf-8") == "legacy\n", (
+            "configuration changed before overwrite confirmation",
+            Path(conf_file).read_bytes(),
+        )
+
+        no_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=no_mark)
+        assert Path(conf_file).read_text(encoding="utf-8") == "legacy\n", (
+            "default No confirmation overwrote configuration",
+            Path(conf_file).read_bytes(),
+        )
+
+        confirm_mark = len(s.buffer)
+        s.send(b"s")
+        s.wait_for("Overwrite repositories configuration?", start=confirm_mark)
+        s.send(DOWN)
+        s.pump_for(0.15)
+        save_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=save_mark)
+        assert Path(conf_file).read_text(encoding="utf-8") == expected, (
+            "saved configuration did not encode newline/backslash path correctly",
+            expected,
+            Path(conf_file).read_text(encoding="utf-8"),
+        )
+
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+    s = Session([], work)
+    try:
+        s.wait_for("Git repositories")
+        open_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("[output: pager]", start=open_mark)
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+        select_root_status(s)
+        action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("escape-probe.txt", start=action_mark)
+        s.wait_for("Press any key to continue...", start=action_mark)
+        resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=resume_mark)
+        back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=back_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_add_remove_clear_scenario():
+    s = Session([repo_main], work)
+    try:
+        s.wait_for("Git repositories")
+
+        add_mark = len(s.buffer)
+        s.send(b"a")
+        s.wait_for("Add Git repositories", start=add_mark)
+        s.send(END)
+        s.pump_for(0.15)
+        s.send(b" ")
+        s.pump_for(0.1)
+        return_mark = len(s.buffer)
+        s.send(b"\t")
+        s.wait_for("Git repositories", start=return_mark)
+
+        # Prove that the add operation installed the linked worktree without
+        # relying on its possibly truncated repository-menu label.
+        s.send(DOWN)
+        s.pump_for(0.15)
+        open_added_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("[output: pager]", start=open_added_mark)
+        added_mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=added_mode_mark)
+        select_root_status(s)
+        added_action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("feature", start=added_action_mark)
+        s.wait_for("Press any key to continue...", start=added_action_mark)
+        added_resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=added_resume_mark)
+        added_back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=added_back_mark)
+
+        remove_mark = len(s.buffer)
+        s.send(b"r")
+        s.wait_for("Remove Git repositories", start=remove_mark)
+        s.send(DOWN)
+        s.pump_for(0.15)
+        s.send(b" ")
+        s.pump_for(0.1)
+        post_remove_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Git repositories", start=post_remove_mark)
+
+        # With only repo_main left, Down cannot select another repository.
+        s.send(DOWN)
+        s.pump_for(0.15)
+        open_remaining_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Status", start=open_remaining_mark)
+        select_root_status(s)
+        remaining_action_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("probe.txt", start=remaining_action_mark)
+        s.wait_for("Press any key to continue...", start=remaining_action_mark)
+        remaining_resume_mark = len(s.buffer)
+        s.send(b"x")
+        s.wait_for("Status", start=remaining_resume_mark)
+        remaining_back_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=remaining_back_mark)
+
+        clear_mark = len(s.buffer)
+        s.send(b"c")
+        s.wait_for("Select Git repositories", start=clear_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_zero_repository_acquisition_scenario():
+    s = Session(["missing dir"], work)
+    try:
+        s.wait_for("Select Git repositories")
+        s.wait_for("not a directory: missing dir")
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_action_tree_navigation_scenario():
+    s = Session([repo_actions], work)
+    try:
+        s.wait_for("Git repositories")
+        open_mark = len(s.buffer)
+        s.send(b"\n")
+        sync_pos = s.wait_for("Sync + Push: git add --all", start=open_mark)
+        status_pos = s.wait_for("Status: git status --short --branch", start=open_mark)
+        assert sync_pos < status_pos, ("Sync + Push is not the first root action", bytes(s.buffer[open_mark:]))
+        s.wait_for("Diff: git diff", start=open_mark)
+        s.wait_for("Pull: git pull", start=open_mark)
+        s.wait_for("Commit: git commit -m <commit-message>", start=open_mark)
+        s.wait_for("Changes >", start=open_mark)
+        s.wait_for("History >", start=open_mark)
+        s.wait_for("Branches >", start=open_mark)
+        s.wait_for("Remote >", start=open_mark)
+        s.wait_for("Stash >", start=open_mark)
+
+        move_down(s, 5)
+        changes_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Diff staged: git diff --staged", start=changes_mark)
+        s.wait_for("Add all: git add --all", start=changes_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=changes_mark)
+
+        move_down(s, 6)
+        history_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Log: git log --oneline --decorate --graph -n 50", start=history_mark)
+        s.wait_for("Show HEAD: git show HEAD", start=history_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=history_mark)
+
+        move_down(s, 7)
+        branches_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("List: git branch -vv", start=branches_mark)
+        s.wait_for("Switch >", start=branches_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=branches_mark)
+
+        move_down(s, 8)
+        remote_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Remotes: git remote -v", start=remote_mark)
+        s.wait_for("Fetch: git fetch", start=remote_mark)
+        s.wait_for("Pull: git pull", start=remote_mark)
+        s.wait_for("Push: git push", start=remote_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=remote_mark)
+
+        s.send(END)
+        stash_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("List: git stash list", start=stash_mark)
+        s.wait_for("Push: git stash push", start=stash_mark)
+        s.wait_for("Pop: git stash pop", start=stash_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=stash_mark)
+
+        repo_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=repo_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_mutating_action_scenario():
+    s = Session([repo_actions], work)
+    try:
+        s.wait_for("Git repositories")
+        s.send(b"\n")
+        s.wait_for("Status: git status --short --branch")
+
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+
+        move_down(s, 5)
+        changes_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Add all: git add --all", start=changes_mark)
+        s.send(DOWN)
+        add_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Press any key to continue...", start=add_mark)
+        assert subprocess.check_output(
+            ["git", "-C", repo_actions, "diff", "--cached", "--name-only"],
+            env=env,
+            text=True,
+        ).strip() == "action.txt"
+
+        s.send(b"x")
+        s.wait_for("Diff staged: git diff --staged", start=add_mark)
+        s.send(b"\x1b")
+        s.wait_for("Commit: git commit -m <commit-message>", start=add_mark)
+
+        move_down(s, 4)
+        commit_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Commit message: ", start=commit_mark)
+        s.send(b"gitman action tree commit\n")
+        s.wait_for("Press any key to continue...", start=commit_mark)
+        subject = subprocess.check_output(
+            ["git", "-C", repo_actions, "log", "-1", "--format=%s"],
+            env=env,
+            text=True,
+        ).strip()
+        assert subject == "gitman action tree commit", subject
+
+        s.send(b"x")
+        s.wait_for("Status: git status --short --branch", start=commit_mark)
+
+        move_down(s, 8)
+        remote_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Push: git push", start=remote_mark)
+        move_down(s, 3)
+        push_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Press any key to continue...", start=push_mark)
+        local_head = subprocess.check_output(
+            ["git", "-C", repo_actions, "rev-parse", "HEAD"], env=env, text=True
+        ).strip()
+        upstream_head = subprocess.check_output(
+            ["git", "-C", repo_actions, "rev-parse", "@{u}"], env=env, text=True
+        ).strip()
+        assert local_head == upstream_head, (local_head, upstream_head)
+
+        s.send(b"x")
+        s.wait_for("Remotes: git remote -v", start=push_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=push_mark)
+
+        move_down(s, 7)
+        branches_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Switch >", start=branches_mark)
+        s.send(DOWN)
+        switch_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Switch: git switch z-target", start=switch_mark)
+        s.send(END)
+        switch_exec_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Press any key to continue...", start=switch_exec_mark)
+        current_branch = subprocess.check_output(
+            ["git", "-C", repo_actions, "branch", "--show-current"],
+            env=env,
+            text=True,
+        ).strip()
+        assert current_branch == "z-target", current_branch
+
+        s.send(b"x")
+        s.wait_for("List: git branch -vv", start=switch_exec_mark)
+        Path(repo_actions, "tracked.txt").write_text("stashed-change\n", encoding="utf-8")
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=switch_exec_mark)
+
+        s.send(END)
+        stash_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Push: git stash push", start=stash_mark)
+        s.send(DOWN)
+        stash_push_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Press any key to continue...", start=stash_push_mark)
+        assert subprocess.check_output(
+            ["git", "-C", repo_actions, "status", "--porcelain"],
+            env=env,
+            text=True,
+        ).strip() == ""
+
+        s.send(b"x")
+        s.wait_for("List: git stash list", start=stash_push_mark)
+        move_down(s, 2)
+        stash_pop_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Press any key to continue...", start=stash_pop_mark)
+        assert Path(repo_actions, "tracked.txt").read_text(encoding="utf-8") == "stashed-change\n"
+
+        s.send(b"x")
+        s.wait_for("List: git stash list", start=stash_pop_mark)
+        s.send(b"\x1b")
+        s.wait_for("Status: git status --short --branch", start=stash_pop_mark)
+        repo_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=repo_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+def run_sync_push_scenario():
+    # Prepare a remote commit that diverges from an unpublished local change.
+    Path(repo_sync_peer, "remote.txt").write_text("remote-one\n", encoding="utf-8")
+    subprocess.check_call(["git", "-C", repo_sync_peer, "add", "--all"], env=env)
+    subprocess.check_call(["git", "-C", repo_sync_peer, "commit", "-q", "-m", "remote one"], env=env)
+    subprocess.check_call(["git", "-C", repo_sync_peer, "push", "-q"], env=env)
+    Path(repo_sync, "local.txt").write_text("local-one\n", encoding="utf-8")
+
+    s = Session([repo_sync], work)
+    try:
+        s.wait_for("Git repositories")
+        s.send(b"\n")
+        s.wait_for("Sync + Push: git add --all")
+        mode_mark = len(s.buffer)
+        s.send(b"p")
+        s.wait_for("[output: terminal]", start=mode_mark)
+
+        sync_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Commit message: ", start=sync_mark)
+        s.send(b"sync local one\n")
+        sync_pause = s.wait_for("Press any key to continue...", start=sync_mark)
+
+        local_subjects = subprocess.check_output(
+            ["git", "-C", repo_sync, "log", "--format=%s", "-4"],
+            env=env,
+            text=True,
+        )
+        assert "sync local one" in local_subjects, local_subjects
+        assert "remote one" in local_subjects, local_subjects
+        local_head = subprocess.check_output(
+            ["git", "-C", repo_sync, "rev-parse", "HEAD"], env=env, text=True
+        ).strip()
+        upstream_head = subprocess.check_output(
+            ["git", "-C", repo_sync, "rev-parse", "@{u}"], env=env, text=True
+        ).strip()
+        assert local_head == upstream_head, (local_head, upstream_head)
+        assert subprocess.check_output(
+            ["git", "-C", repo_sync, "status", "--porcelain"], env=env, text=True
+        ).strip() == ""
+
+        s.send(b"x")
+        s.wait_for("Sync + Push: git add --all", start=sync_mark)
+
+        # A clean repository skips message acquisition, add and commit.
+        clean_mark = len(s.buffer)
+        s.send(b"\n")
+        pause_pos = s.wait_for("Press any key to continue...", start=clean_mark)
+        clean_segment = bytes(s.buffer[clean_mark:pause_pos])
+        assert b"Commit message:" not in clean_segment, clean_segment
+
+        s.send(b"x")
+        s.wait_for("Sync + Push: git add --all", start=pause_pos)
+
+        # Create a real conflicting divergence. Pull must fail and push must not
+        # even be attempted.
+        subprocess.check_call(["git", "-C", repo_sync_peer, "pull", "-q", "--ff-only"], env=env)
+        Path(repo_sync_peer, "shared.txt").write_text("remote-conflict\n", encoding="utf-8")
+        subprocess.check_call(["git", "-C", repo_sync_peer, "add", "--all"], env=env)
+        subprocess.check_call(["git", "-C", repo_sync_peer, "commit", "-q", "-m", "remote conflict"], env=env)
+        subprocess.check_call(["git", "-C", repo_sync_peer, "push", "-q"], env=env)
+        peer_head = subprocess.check_output(
+            ["git", "-C", repo_sync_peer, "rev-parse", "HEAD"], env=env, text=True
+        ).strip()
+
+        Path(repo_sync, "shared.txt").write_text("local-conflict\n", encoding="utf-8")
+        conflict_mark = len(s.buffer)
+        s.send(b"\n")
+        s.wait_for("Commit message: ", start=conflict_mark)
+        s.send(b"sync conflict local\n")
+        pause_pos = s.wait_for("Press any key to continue...", start=conflict_mark)
+        remote_head = subprocess.check_output(
+            ["git", "--git-dir", os.path.join(work, "sync-remote.git"), "rev-parse", "refs/heads/sync-main"],
+            env=env,
+            text=True,
+        ).strip()
+        assert remote_head == peer_head, (remote_head, peer_head)
+
+        s.send(b"x")
+        s.wait_for("git pull --no-rebase --no-edit failed", start=pause_pos)
+        repo_mark = len(s.buffer)
+        s.send(b"\x1b")
+        s.wait_for("Git repositories", start=repo_mark)
+        s.send(b"\x1b")
+        s.wait_exit(0)
+    except Exception:
+        s.abort()
+        raise
+
+
+try:
+    run_action_tree_navigation_scenario()
+    run_mutating_action_scenario()
+    run_sync_push_scenario()
+
+    run_explicit_action_and_error_scenario()
+    run_config_and_dedup_scenario()
+    run_empty_config_fallback_scenario()
+    run_edit_visual_no_reload_scenario()
+    run_edit_editor_reload_scenario()
+    run_edit_vi_empty_reload_scenario()
+    run_edit_failure_preserves_state_scenario()
+    run_save_and_escape_roundtrip_scenario()
+    run_add_remove_clear_scenario()
+    run_zero_repository_acquisition_scenario()
+except AssertionError as exc:
+    print(f"CONTRACT FAIL: {exc}", file=sys.stderr)
+    sys.exit(10)
+except Exception as exc:
+    print(f"TEST ERROR: {exc}", file=sys.stderr)
+    sys.exit(11)
+else:
+    sys.exit(0)
+PY_GITMAN
+status=$?
+
+case $status in
+    0)
+        exit 0
+        ;;
+    10)
+        exit 1
+        ;;
+    11)
+        exit 3
+        ;;
+    *)
+        error "interactive driver exited with unexpected status $status"
+        ;;
+esac

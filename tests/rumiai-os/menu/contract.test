@@ -1,0 +1,130 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/menu/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_status()
+{
+    "$@" >/dev/null 2>&1
+    RUN_STATUS=$?
+}
+
+expect_status()
+{
+    expected=$1
+    shift
+    run_status "$@"
+    [ "$RUN_STATUS" -eq "$expected" ] || fail "expected status $expected, got $RUN_STATUS from $*"
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+menu_group=${test_dir%/*}
+rumiai_os_group=${menu_group%/*}
+suite_root=${rumiai_os_group%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+menu=$root/bin/sys/menu
+menu_lib=$root/lib/sys/sh/menu.lib.sh
+menu_manual=$root/res/sys/manual/menu
+menu_lib_manual=$root/res/sys/manual/menu.lib.sh
+
+[ -f "$menu" ] && [ -x "$menu" ] || fail 'bin/sys/menu is missing or not executable'
+[ "$(sed -n '1p' "$menu")" = '#!/usr/bin/env m' ] || fail 'menu has the wrong interpreter header'
+[ -f "$menu_lib" ] && [ ! -x "$menu_lib" ] || fail 'menu.lib.sh is missing or executable'
+case $(sed -n '1p' "$menu_lib") in '#!'*) fail 'menu.lib.sh must not have a shebang' ;; esac
+[ -f "$menu_manual" ] && [ ! -L "$menu_manual" ] || fail 'menu operational manual is missing'
+[ -f "$menu_lib_manual" ] && [ ! -L "$menu_lib_manual" ] || fail 'menu.lib.sh operational manual is missing'
+
+expect_status 2 "$root/m" "$menu"
+expect_status 2 "$root/m" "$menu" -P tab -d "$root"
+expect_status 2 "$root/m" "$menu" -M -K space -- item
+expect_status 2 "$root/m" "$menu" -S x -K x -- item
+expect_status 2 "$root/m" "$menu" -n -- item
+expect_status 2 "$root/m" "$menu" -P x -- item
+expect_status 2 "$root/m" "$menu" -S enter -- item
+expect_status 2 "$root/m" "$menu" -d "$root" -K backspace
+expect_status 2 "$root/m" "$menu" -d "$root" -K x -P x
+expect_status 2 "$root/m" "$menu" -d "$root" -K x -P enter
+expect_status 2 "$root/m" "$menu" -S tab -d "$root"
+expect_status 2 "$root/m" "$menu" -M -P tab -d "$root"
+
+tmp=${TMPDIR:-/tmp}/rumiai-menu-contract-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+api_probe=$tmp/api-probe
+cat > "$api_probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/menu.lib.sh" || exit 10
+for function_name in \
+    menu_reset \
+    menu_key_clear \
+    menu_key_add \
+    menu_multiselect_enable \
+    menu_multiselect_disable \
+    menu_toggle_key_set \
+    menu_run_provider \
+    menu_array_provider
+do
+    command -v "$function_name" >/dev/null 2>&1 || exit 11
+done
+array menu_result_values size result_size || exit 12
+[ "$result_size" -eq 0 ] || exit 13
+
+# Single selection is the default, so Space is initially available as an action.
+menu_key_add ' ' || exit 14
+menu_multiselect_enable >/dev/null 2>&1 && exit 15
+[ "$?" -eq 2 ] || exit 16
+
+menu_key_clear || exit 17
+menu_multiselect_enable || exit 18
+menu_key_add ' ' >/dev/null 2>&1 && exit 19
+[ "$?" -eq 2 ] || exit 20
+
+menu_multiselect_disable || exit 21
+menu_key_add ' ' || exit 22
+menu_key_clear || exit 23
+
+menu_toggle_key_set tab || exit 24
+menu_multiselect_enable || exit 25
+menu_key_add tab >/dev/null 2>&1 && exit 26
+[ "$?" -eq 2 ] || exit 27
+menu_multiselect_disable || exit 28
+
+menu_key_add x || exit 29
+menu_key_add x >/dev/null 2>&1 && exit 30
+[ "$?" -eq 2 ] || exit 31
+exit 0
+EOF_PROBE
+chmod +x "$api_probe" || error 'cannot make library API probe executable'
+expect_status 0 "$root/m" "$api_probe"
+
+exit 0

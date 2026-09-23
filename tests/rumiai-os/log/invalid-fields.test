@@ -1,0 +1,56 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/log/invalid-fields.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+entry=$root/m
+[ -x "$entry" ] || fail 'm entrypoint is not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-log-invalid-fields-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+probe=$tmp/probe
+stdout=$tmp/stdout
+stderr=$tmp/stderr
+
+cat > "$probe" <<'EOT'
+log warn test message field-only
+EOT
+
+m_LOG_LEVEL=trace "$entry" "$probe" >"$stdout" 2>"$stderr"
+status=$?
+[ "$status" -ne 0 ] || fail 'odd field/value arguments were accepted'
+[ ! -s "$stdout" ] || fail 'invalid fields produced unexpected stdout'
+[ -s "$stderr" ] || fail 'invalid field/value parity produced no diagnostic'
+
+exit 0

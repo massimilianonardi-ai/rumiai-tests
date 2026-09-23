@@ -1,0 +1,237 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/validate/scope-config-and-run.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir() {
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd "$self_dir" 2>/dev/null && pwd -P
+}
+
+commit_repo() {
+    repo=$1
+    message=$2
+    git -C "$repo" -c user.name=RumiAI-Test -c user.email=rumiai-test@example.invalid commit -q -m "$message"
+}
+
+command -v git >/dev/null 2>&1 || skip 'git is required'
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+suite_root=${test_dir%/*}
+suite_root=${suite_root%/*}
+suite_root=${suite_root%/*}
+
+for required in rumiai-validate lib/sh/rumiai-validate.lib.sh lib/sh/filesystem-snapshot.lib.sh lib/rumiai-os-target.lib
+do
+    [ -f "$suite_root/$required" ] || error "cannot locate $required"
+done
+
+tmp=${TMPDIR:-/tmp}/rumiai-validate-scope-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+# Build a target repository with an older revision to validate and a newer primary HEAD.
+mkdir "$tmp/target-remote.git" || error 'cannot create target remote directory'
+git -C "$tmp/target-remote.git" init --bare -q || error 'cannot initialize target remote'
+mkdir "$tmp/target-seed" || error 'cannot create target seed'
+git -C "$tmp/target-seed" init -q || error 'cannot initialize target seed'
+target_branch=$(git -C "$tmp/target-seed" symbolic-ref --short HEAD) || error 'cannot determine target branch'
+printf 'src/\n' > "$tmp/target-seed/.gitignore" || error 'cannot write target gitignore'
+printf 'old\n' > "$tmp/target-seed/version" || error 'cannot write old target marker'
+git -C "$tmp/target-seed" add .gitignore version || error 'cannot stage old target'
+commit_repo "$tmp/target-seed" old-target || error 'cannot commit old target'
+old_target=$(git -C "$tmp/target-seed" rev-parse HEAD) || error 'cannot read old target commit'
+git -C "$tmp/target-seed" remote add origin "$tmp/target-remote.git" || error 'cannot add target remote'
+git -C "$tmp/target-seed" push -q -u origin "$target_branch" || error 'cannot push old target'
+git -C "$tmp/target-remote.git" symbolic-ref HEAD "refs/heads/$target_branch" || error 'cannot set target remote HEAD'
+printf 'new\n' > "$tmp/target-seed/version" || error 'cannot write new target marker'
+git -C "$tmp/target-seed" add version || error 'cannot stage new target'
+commit_repo "$tmp/target-seed" new-target || error 'cannot commit new target'
+git -C "$tmp/target-seed" push -q origin "$target_branch" || error 'cannot push new target'
+new_target=$(git -C "$tmp/target-seed" rev-parse HEAD) || error 'cannot read new target commit'
+
+mkdir "$tmp/work" || error 'cannot create work directory'
+git clone -q "$tmp/target-remote.git" "$tmp/work/rumiai-os" || error 'cannot clone target'
+git -C "$tmp/work/rumiai-os" remote rename origin local || error 'cannot rename target local remote'
+git -C "$tmp/work/rumiai-os" remote add origin https://github.com/massimilianonardi-ai/rumiai-os.git || error 'cannot configure canonical target origin'
+git -C "$tmp/work/rumiai-os" config "branch.$target_branch.remote" local || error 'cannot configure target tracking remote'
+git -C "$tmp/work/rumiai-os" config "branch.$target_branch.merge" "refs/heads/$target_branch" || error 'cannot configure target tracking branch'
+
+# Build a suite repository containing the launcher under test and a deterministic fake runner.
+mkdir "$tmp/suite-remote.git" || error 'cannot create suite remote directory'
+git -C "$tmp/suite-remote.git" init --bare -q || error 'cannot initialize suite remote'
+mkdir "$tmp/suite-seed" || error 'cannot create suite seed'
+git -C "$tmp/suite-seed" init -q || error 'cannot initialize suite seed'
+suite_branch=$(git -C "$tmp/suite-seed" symbolic-ref --short HEAD) || error 'cannot determine suite branch'
+mkdir -p "$tmp/suite-seed/lib/sh" "$tmp/suite-seed/sessions" "$tmp/suite-seed/validation" || error 'cannot create suite directories'
+cp "$suite_root/rumiai-validate" "$tmp/suite-seed/rumiai-validate" || error 'cannot copy launcher'
+cp "$suite_root/lib/sh/rumiai-validate.lib.sh" "$tmp/suite-seed/lib/sh/rumiai-validate.lib.sh" || error 'cannot copy launcher library'
+cp "$suite_root/lib/sh/filesystem-snapshot.lib.sh" "$tmp/suite-seed/lib/sh/filesystem-snapshot.lib.sh" || error 'cannot copy filesystem snapshot library'
+cp "$suite_root/lib/rumiai-os-target.lib" "$tmp/suite-seed/lib/rumiai-os-target.lib" || error 'cannot copy target discovery library'
+chmod +x "$tmp/suite-seed/rumiai-validate" || error 'cannot make launcher executable'
+: > "$tmp/suite-seed/sessions/.gitkeep" || error 'cannot create sessions marker'
+printf 'pass\n' > "$tmp/suite-seed/fake-mode" || error 'cannot create fake mode'
+printf 'kind\ttask\nrumiai-os-commit\t%s\nselection\tone\nselection\ttwo\n' "$old_target" > "$tmp/suite-seed/validation/demo.conf" || error 'cannot create named task scope'
+printf 'kind\thealth\nrumiai-os-commit\t%s\n' "$old_target" > "$tmp/suite-seed/validation/health.conf" || error 'cannot create root health scope'
+printf 'kind\ttask\nrumiai-os-commit\t%s\n' "$old_target" > "$tmp/suite-seed/validation/bad-task.conf" || error 'cannot create invalid task scope fixture'
+
+cat > "$tmp/suite-seed/rumiai-test" <<'EOT'
+#!/bin/sh
+if [ "${1-}" = --list ]; then
+    case $#:${2-}:${3-} in
+        1::)
+            printf '%s\n' root/a.test root/b.test
+            ;;
+        3:--:one)
+            printf '%s\n' one/a.test
+            ;;
+        3:--:two)
+            printf '%s\n' two/b.test
+            ;;
+        *)
+            exit 3
+            ;;
+    esac
+    exit 0
+fi
+case $#:$1:${2-} in
+    1:--validation:)
+        selection="tests/"
+        ;;
+    3:--validation:--)
+        selection="$3"
+        ;;
+    *)
+        exit 3
+        ;;
+esac
+suite_root="$(CDPATH= cd "${0%/*}" 2>/dev/null && pwd -P)" || exit 3
+observed_target="$(git -C "$RUMIAI_TEST_RUMIAI_OS_ROOT" rev-parse HEAD 2>/dev/null)" || exit 3
+[ "$observed_target" = "$FAKE_EXPECTED_TARGET" ] || exit 1
+printf '%s\n' "$RUMIAI_TEST_RUMIAI_OS_ROOT" >> "$FAKE_SCOPE_STATE/targets" || exit 3
+counter_file="$FAKE_SCOPE_STATE/counter"
+counter="0"
+[ ! -f "$counter_file" ] || counter="$(cat "$counter_file")" || exit 3
+counter="$((counter + 1))"
+printf '%s\n' "$counter" > "$counter_file" || exit 3
+run_id="$(printf 'scope-%04d' "$counter")"
+session_dir="$suite_root/sessions/$run_id"
+mkdir -p "$session_dir/logs" || exit 3
+suite_commit="$(git -C "$suite_root" rev-parse HEAD)" || exit 3
+mode="$(cat "$suite_root/fake-mode")" || exit 3
+result="PASS"
+termination="0"
+if [ "$mode" = skip-two ] && [ "$selection" = two ]; then
+    result="SKIP"
+    termination="2"
+fi
+{
+    printf 'type\tvalidation\n'
+    printf 'start\t2026-09-15T00:00:00+0000\n'
+    printf 'end\t2026-09-15T00:00:01+0000\n'
+    printf 'selection\t%s\n' "$selection"
+    printf 'rumiai-tests-commit\t%s\n' "$suite_commit"
+    printf 'runner-exit-status\t0\n'
+} > "$session_dir/session" || exit 3
+printf '%s\tfake.test\t%s\n' "$result" "$termination" > "$session_dir/results" || exit 3
+: > "$session_dir/logs/fake.log" || exit 3
+exit 0
+EOT
+chmod +x "$tmp/suite-seed/rumiai-test" || error 'cannot make fake runner executable'
+
+git -C "$tmp/suite-seed" add . || error 'cannot stage suite'
+commit_repo "$tmp/suite-seed" initial-suite || error 'cannot commit suite'
+git -C "$tmp/suite-seed" remote add origin "$tmp/suite-remote.git" || error 'cannot add suite remote'
+git -C "$tmp/suite-seed" push -q -u origin "$suite_branch" || error 'cannot push suite'
+git -C "$tmp/suite-remote.git" symbolic-ref HEAD "refs/heads/$suite_branch" || error 'cannot set suite remote HEAD'
+
+mkdir -p "$tmp/work/rumiai-os/src" || error 'cannot create target src directory'
+git clone -q "$tmp/suite-remote.git" "$tmp/work/rumiai-os/src/rumiai-tests" || error 'cannot clone suite worktree'
+work_suite="$tmp/work/rumiai-os/src/rumiai-tests"
+git -C "$work_suite" config user.name RumiAI-Test || error 'cannot configure suite test identity'
+git -C "$work_suite" config user.email rumiai-test@example.invalid || error 'cannot configure suite test email'
+mkdir "$tmp/fake-state" || error 'cannot create fake runner state'
+
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" demo > "$tmp/pass-transcript" 2>&1
+pass_status=$?
+if [ "$pass_status" -ne 0 ]; then
+    cat "$tmp/pass-transcript" >&2
+    fail "PASS/PASS task scope returned $pass_status"
+fi
+grep -F 'Scope result: VALIDATED' "$tmp/pass-transcript" >/dev/null 2>&1 || fail 'PASS/PASS task scope was not reported VALIDATED'
+[ "$(git -C "$tmp/work/rumiai-os" rev-parse HEAD)" = "$new_target" ] || fail 'primary target checkout was not advanced independently of scoped revision'
+worktree_count=$(git -C "$tmp/work/rumiai-os" worktree list --porcelain | grep -c '^worktree ') || error 'cannot inspect target worktrees'
+[ "$worktree_count" -eq 1 ] || fail 'validation unexpectedly attached another Git worktree'
+session_target_one=$(sed -n '1p' "$tmp/fake-state/targets") || error 'cannot read first session target'
+session_target_two=$(sed -n '2p' "$tmp/fake-state/targets") || error 'cannot read second session target'
+[ -n "$session_target_one" ] && [ "$session_target_one" = "$session_target_two" ] ||
+    fail 'session isolation did not reuse one environment across selections'
+[ "$session_target_one" != "$tmp/work/rumiai-os" ] || fail 'session isolation executed the primary checkout directly'
+[ ! -e "$session_target_one" ] || fail 'session validation environment survived completion'
+
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" --isolation=test demo > "$tmp/per-test-transcript" 2>&1
+per_test_status=$?
+if [ "$per_test_status" -ne 0 ]; then
+    cat "$tmp/per-test-transcript" >&2
+    fail "per-test isolation scope returned $per_test_status"
+fi
+grep -F 'Isolation:    test' "$tmp/per-test-transcript" >/dev/null 2>&1 || fail 'per-test isolation was not reported'
+per_test_target_one=$(sed -n '3p' "$tmp/fake-state/targets") || error 'cannot read first per-test target'
+per_test_target_two=$(sed -n '4p' "$tmp/fake-state/targets") || error 'cannot read second per-test target'
+[ -n "$per_test_target_one" ] && [ -n "$per_test_target_two" ] || fail 'per-test target observations are missing'
+[ "$per_test_target_one" != "$per_test_target_two" ] || fail 'per-test isolation reused one target clone'
+[ "$per_test_target_one" != "$tmp/work/rumiai-os" ] && [ "$per_test_target_two" != "$tmp/work/rumiai-os" ] ||
+    fail 'per-test isolation executed the primary checkout directly'
+[ ! -e "$per_test_target_one" ] && [ ! -e "$per_test_target_two" ] || fail 'per-test validation environment survived completion'
+
+# Advance only the suite fixture so the launcher must self-update and preserve the scope argument.
+printf 'skip-two\n' > "$tmp/suite-seed/fake-mode" || error 'cannot change fake mode'
+git -C "$tmp/suite-seed" add fake-mode || error 'cannot stage fake mode'
+commit_repo "$tmp/suite-seed" skip-second-selection || error 'cannot commit fake mode'
+git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push fake mode update'
+
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" demo > "$tmp/skip-transcript" 2>&1
+skip_status=$?
+[ "$skip_status" -eq 1 ] || {
+    cat "$tmp/skip-transcript" >&2
+    fail "PASS/SKIP task scope returned $skip_status instead of 1"
+}
+grep -F 'Task scope contains SKIP: selection is not positively validated.' "$tmp/skip-transcript" >/dev/null 2>&1 || fail 'required SKIP was not identified'
+grep -F 'Scope result: NOT VALIDATED' "$tmp/skip-transcript" >/dev/null 2>&1 || fail 'PASS/SKIP task scope was not reported NOT VALIDATED'
+worktree_count=$(git -C "$tmp/work/rumiai-os" worktree list --porcelain | grep -c '^worktree ') || error 'cannot inspect final target worktrees'
+[ "$worktree_count" -eq 1 ] || fail 'temporary worktree remained after non-validating task scope'
+
+# A health scope without selection means one root-suite validation session.
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" health > "$tmp/health-transcript" 2>&1
+health_status="$?"
+if [ "$health_status" -ne 0 ]; then
+    cat "$tmp/health-transcript" >&2
+    fail "root health scope returned $health_status"
+fi
+grep -F 'Scope:        health (health)' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope was not reported'
+grep -F 'Selection:    tests/ (full suite)' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope did not invoke the full suite'
+grep -F 'Health result: SUCCESS' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope was not reported successful'
+
+# A task scope still requires at least one explicit selection.
+counter_before="$(cat "$tmp/fake-state/counter")" || error 'cannot read fake runner counter before invalid task scope'
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" bad-task > "$tmp/bad-task-transcript" 2>&1
+bad_task_status="$?"
+[ "$bad_task_status" -eq 3 ] || {
+    cat "$tmp/bad-task-transcript" >&2
+    fail "task scope without selection returned $bad_task_status instead of 3"
+}
+grep -F 'task configuration does not define selection' "$tmp/bad-task-transcript" >/dev/null 2>&1 || fail 'missing-selection task error was not reported'
+counter_after="$(cat "$tmp/fake-state/counter")" || error 'cannot read fake runner counter after invalid task scope'
+[ "$counter_after" = "$counter_before" ] || fail 'runner executed for an invalid task scope without selection'
+
+exit 0

@@ -1,0 +1,143 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pager/delegation.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+pager_group=${test_dir%/*}
+rumiai_os_group=${pager_group%/*}
+suite_root=${rumiai_os_group%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+pager=$root/bin/sys/pager
+[ -x "$pager" ] || fail 'pager command is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pager-delegation-$$
+umask 077
+mkdir -p "$tmp/prefer" "$tmp/fallback" || error 'cannot create backend fixtures'
+
+cat > "$tmp/prefer/less" <<'EOF_LESS'
+#!/bin/sh
+printf '%s\n' less > "$RUMIAI_PAGER_BACKEND"
+printf '%s\n' "$#" > "$RUMIAI_PAGER_ARGS"
+for arg
+do
+    printf '%s\n' "$arg" >> "$RUMIAI_PAGER_ARGS"
+done
+{
+    printf 'LESS=%s\n' "${LESS-}"
+    printf 'LESSOPEN=%s\n' "${LESSOPEN-}"
+    printf 'LESSCLOSE=%s\n' "${LESSCLOSE-}"
+} > "$RUMIAI_PAGER_ENV"
+if [ "$#" -eq 0 ]
+then
+    IFS= read -r line || :
+    printf '%s\n' "$line" > "$RUMIAI_PAGER_STDIN"
+fi
+exit "${RUMIAI_PAGER_STATUS:-0}"
+EOF_LESS
+
+cat > "$tmp/prefer/more" <<'EOF_MORE_PREFER'
+#!/bin/sh
+printf '%s\n' more > "$RUMIAI_PAGER_BACKEND"
+exit 91
+EOF_MORE_PREFER
+
+cat > "$tmp/fallback/more" <<'EOF_MORE'
+#!/bin/sh
+printf '%s\n' more > "$RUMIAI_PAGER_BACKEND"
+printf '%s\n' "$#" > "$RUMIAI_PAGER_ARGS"
+for arg
+do
+    printf '%s\n' "$arg" >> "$RUMIAI_PAGER_ARGS"
+done
+exit "${RUMIAI_PAGER_STATUS:-0}"
+EOF_MORE
+
+chmod +x "$tmp/prefer/less" "$tmp/prefer/more" "$tmp/fallback/more" ||
+    error 'cannot make backend fixtures executable'
+
+backend=$tmp/backend
+args=$tmp/args
+env_file=$tmp/env
+stdin_file=$tmp/stdin
+missing_operand="$tmp/missing file"
+
+PATH="$tmp/prefer:$PATH" \
+LESS='FRX' \
+LESSOPEN='open-policy' \
+LESSCLOSE='close-policy' \
+RUMIAI_PAGER_BACKEND="$backend" \
+RUMIAI_PAGER_ARGS="$args" \
+RUMIAI_PAGER_ENV="$env_file" \
+RUMIAI_PAGER_STDIN="$stdin_file" \
+RUMIAI_PAGER_STATUS=37 \
+"$pager" "$missing_operand" >/dev/null 2>&1
+status=$?
+[ "$status" -eq 37 ] || fail "pager did not propagate less status: $status"
+[ "$(cat "$backend")" = less ] || fail 'pager did not prefer available less'
+[ "$(sed -n '1p' "$args")" -eq 1 ] || fail 'pager did not forward exactly one file operand'
+[ "$(sed -n '2p' "$args")" = "$missing_operand" ] ||
+    fail 'pager rewrote or prevalidated the file operand'
+grep -F 'LESS=FRX' "$env_file" >/dev/null 2>&1 || fail 'pager did not preserve LESS'
+grep -F 'LESSOPEN=open-policy' "$env_file" >/dev/null 2>&1 || fail 'pager did not preserve LESSOPEN'
+grep -F 'LESSCLOSE=close-policy' "$env_file" >/dev/null 2>&1 || fail 'pager did not preserve LESSCLOSE'
+
+: > "$backend"
+: > "$args"
+printf '%s\n' 'stdin payload' |
+    PATH="$tmp/prefer:$PATH" \
+    RUMIAI_PAGER_BACKEND="$backend" \
+    RUMIAI_PAGER_ARGS="$args" \
+    RUMIAI_PAGER_ENV="$env_file" \
+    RUMIAI_PAGER_STDIN="$stdin_file" \
+    RUMIAI_PAGER_STATUS=0 \
+    "$pager" >/dev/null 2>&1 ||
+    fail 'pager stdin delegation through less failed'
+[ "$(cat "$backend")" = less ] || fail 'pager did not use less for stdin'
+[ "$(sed -n '1p' "$args")" -eq 0 ] || fail 'pager added arguments to stdin mode'
+[ "$(cat "$stdin_file")" = 'stdin payload' ] || fail 'pager did not preserve stdin'
+
+: > "$backend"
+: > "$args"
+PATH="$tmp/fallback" \
+RUMIAI_PAGER_BACKEND="$backend" \
+RUMIAI_PAGER_ARGS="$args" \
+RUMIAI_PAGER_STATUS=23 \
+"$pager" "$missing_operand" >/dev/null 2>&1
+status=$?
+[ "$status" -eq 23 ] || fail "pager did not propagate more status: $status"
+[ "$(cat "$backend")" = more ] || fail 'pager did not fall back to more when less was unavailable'
+[ "$(sed -n '2p' "$args")" = "$missing_operand" ] ||
+    fail 'pager changed file operand during more fallback'
+
+exit 0

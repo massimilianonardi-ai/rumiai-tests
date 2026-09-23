@@ -1,0 +1,28 @@
+#!/bin/sh
+
+TEST_ID="external/micromamba/release-live.test"
+RUMIAI_TEST_PACKAGE_RELEASE_PACKAGE="micromamba"
+RUMIAI_TEST_PACKAGE_RELEASE_COMMANDS="micromamba"
+RUMIAI_TEST_PACKAGE_RELEASE_TARGETS="linux-arm64 linux-x86_64 macos-arm64 macos-x86_64 windows-arm64 windows-x86_64"
+RUMIAI_TEST_PACKAGE_RELEASE_MODE="cli"
+
+resolve_test_dir()
+{
+  rumiai_test_package_release_self=$0
+  case "$rumiai_test_package_release_self" in
+    */*) :;;
+    *) rumiai_test_package_release_self=$(command -v "$rumiai_test_package_release_self" 2>/dev/null) || return 1;;
+  esac
+  rumiai_test_package_release_self_dir=${rumiai_test_package_release_self%/*}
+  [ "$rumiai_test_package_release_self_dir" != "$rumiai_test_package_release_self" ] || rumiai_test_package_release_self_dir=.
+  CDPATH= cd -- "$rumiai_test_package_release_self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || { printf -- "%s: cannot resolve test directory\n" "$TEST_ID" >&2; exit 3; }
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/package-release.lib" || { printf -- "%s: cannot load package release helper\n" "$TEST_ID" >&2; exit 3; }
+
+rumiai_test_package_release_run "$suite_root"
+exit $?

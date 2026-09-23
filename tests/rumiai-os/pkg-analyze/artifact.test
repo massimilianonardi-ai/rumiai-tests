@@ -1,0 +1,62 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/pkg-analyze/artifact.test"
+
+fail() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self="$0"
+  case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
+  self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+suite_root=${test_dir%/tests/rumiai-os/pkg-analyze}
+target_library="$suite_root/lib/rumiai-os-target.lib"
+[ -f "$target_library" ] || error "rumiai-os target helper is unavailable"
+. "$target_library" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
+
+command_file="$root/bin/sys/pkg-analyze"
+[ -x "$command_file" ] || fail "pkg-analyze is missing or not executable"
+
+tmp="${TMPDIR:-/tmp}/rumiai-pkg-analyze-artifact-$$"
+umask 077
+command -p -- mkdir -- "$tmp" || error "cannot create fixture"
+trap 'command -p -- rm -rf -- "$tmp"' 0 HUP INT TERM
+
+artifact="$tmp/demo.AppImage"
+cat > "$artifact" <<'EOF_ARTIFACT'
+#!/bin/sh
+exit 0
+EOF_ARTIFACT
+command -p -- chmod 700 "$artifact" || error "cannot make artifact executable"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+printf -- '\n' | "$command_file" appimage "$artifact" > "$tmp/report" 2> "$tmp/diagnostic"
+status=$?
+[ "$status" -eq 0 ] || fail "artifact analysis returned status $status"
+
+command -p -- grep -F 'source' "$tmp/report" | command -p -- grep -F 'artifact' >/dev/null || fail "artifact source was not reported"
+command -p -- grep -F 'format' "$tmp/report" | command -p -- grep -F 'appimage' >/dev/null || fail "artifact format was not reported"
+command -p -- grep -F 'useful-root' "$tmp/report" | command -p -- grep -F '.' >/dev/null || fail "normalized useful root was not reported"
+if command -p -- grep -F 'suggested-useful-root' "$tmp/report" >/dev/null
+then
+  fail "superseded useful-root suggestion is still reported"
+fi
+if command -p -- grep -F 'selected-useful-root' "$tmp/report" >/dev/null
+then
+  fail "superseded useful-root selection is still reported"
+fi
+command -p -- grep -F 'executable' "$tmp/report" | command -p -- grep -F 'demo.AppImage' >/dev/null || fail "materialized AppImage candidate was not reported"
+
+exit 0

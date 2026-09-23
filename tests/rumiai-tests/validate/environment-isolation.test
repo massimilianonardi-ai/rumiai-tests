@@ -1,0 +1,89 @@
+#!/bin/sh
+
+TEST_ID=rumiai-tests/validate/environment-isolation.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+command -v git >/dev/null 2>&1 || skip 'git is required'
+
+test_dir=${0%/*}
+[ "$test_dir" != "$0" ] || test_dir=.
+test_dir=$(CDPATH= cd "$test_dir" 2>/dev/null && pwd -P) || error 'cannot resolve test directory'
+suite_root=${test_dir%/*}
+suite_root=${suite_root%/*}
+suite_root=${suite_root%/*}
+validator_lib=$suite_root/lib/sh/rumiai-validate.lib.sh
+snapshot_lib=$suite_root/lib/sh/filesystem-snapshot.lib.sh
+[ -r "$validator_lib" ] || error 'cannot locate validator library'
+[ -r "$snapshot_lib" ] || error 'cannot locate filesystem snapshot library'
+
+tmp=${TMPDIR:-/tmp}/rumiai-validate-environment-test-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+target=$tmp/rumiai-os
+mkdir "$target" || error 'cannot create target repository'
+git -C "$target" init -q || error 'cannot initialize target repository'
+git -C "$target" config user.name RumiAI-Test || error 'cannot configure target Git name'
+git -C "$target" config user.email rumiai-test@example.invalid || error 'cannot configure target Git email'
+printf '%s\n' target > "$target/version" || error 'cannot write target marker'
+git -C "$target" add version || error 'cannot stage target marker'
+git -C "$target" commit -qm target || error 'cannot commit target marker'
+expected_commit=$(git -C "$target" rev-parse HEAD) || error 'cannot resolve target commit'
+canonical_origin=https://github.com/massimilianonardi-ai/rumiai-os.git
+git -C "$target" remote add origin "$canonical_origin" || error 'cannot configure target origin'
+
+LAUNCHER_STATUS_ERROR=3
+say() { :; }
+say_error() { printf '%s\n' "$*" >&2; }
+fatal() { say_error "$*"; exit "$LAUNCHER_STATUS_ERROR"; }
+validation_environment_root=
+validation_environment_counter=0
+validation_evidence_work=
+validation_evidence_id=
+validation_audit_status=CLEAN
+
+. "$validator_lib"
+. "$snapshot_lib"
+
+original_home=${HOME-}
+original_tmpdir=${TMPDIR-}
+prepare_validation_environment "$target" "$expected_commit"
+env_one=$validation_environment_root
+[ -d "$env_one" ] || fail 'validation environment was not created'
+[ "$validation_target_root" != "$target" ] || fail 'validation reused the source target checkout'
+[ "$(git -C "$validation_target_root" rev-parse HEAD)" = "$expected_commit" ] || fail 'temporary target is not at the requested commit'
+[ "$(git -C "$validation_target_root" config --get remote.origin.url)" = "$canonical_origin" ] || fail 'temporary target did not retain canonical origin identity'
+
+observed=$tmp/observed-environment
+validation_environment_run "$env_one" sh -c 'printf "%s\n%s\n%s\n%s\n%s\n" "$HOME" "$TMPDIR" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$RUMIAI_TEST_RUMIAI_OS_ROOT"' > "$observed" || fail 'isolated child command failed'
+[ "$(sed -n '1p' "$observed")" = "$env_one/home" ] || fail 'HOME was not isolated'
+[ "$(sed -n '2p' "$observed")" = "$env_one/tmp" ] || fail 'TMPDIR was not isolated'
+[ "$(sed -n '3p' "$observed")" = "$env_one/home/.config" ] || fail 'XDG_CONFIG_HOME was not isolated'
+[ "$(sed -n '4p' "$observed")" = "$env_one/home/.local/state" ] || fail 'XDG_STATE_HOME was not isolated'
+[ "$(sed -n '5p' "$observed")" = "$env_one/target" ] || fail 'target override did not point to the isolated clone'
+[ "${HOME-}" = "$original_home" ] || fail 'child HOME leaked into the validator process'
+[ "${TMPDIR-}" = "$original_tmpdir" ] || fail 'child TMPDIR leaked into the validator process'
+
+audit=$tmp/audit
+validation_audit_begin "$env_one" "$audit" || error 'cannot capture baseline metadata'
+printf '%s\n' changed > "$env_one/home/changed-file" || error 'cannot mutate isolated environment'
+validation_audit_end "$env_one" "$audit" 'environment test'
+audit_status=$?
+[ "$audit_status" -eq 1 ] || fail "changed environment returned audit status $audit_status instead of 1"
+[ "$validation_audit_status" = CHANGED ] || fail 'changed environment did not update aggregate audit status'
+[ -s "$audit/diff" ] || fail 'changed environment did not produce metadata diff evidence'
+
+validation_environment_destroy || error 'cannot destroy first validation environment'
+[ ! -e "$env_one" ] || fail 'first validation environment survived cleanup'
+
+prepare_validation_environment "$target" "$expected_commit"
+env_two=$validation_environment_root
+[ "$env_two" != "$env_one" ] || fail 'subsequent validation environment reused the same pathname'
+validation_environment_destroy || error 'cannot destroy second validation environment'
+[ ! -e "$env_two" ] || fail 'second validation environment survived cleanup'
+
+exit 0

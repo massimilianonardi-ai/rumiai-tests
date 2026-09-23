@@ -1,0 +1,105 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/enc/octal.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+enc_library=$root/lib/sys/sh/enc.lib.sh
+[ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
+    fail 'enc.lib.sh is missing or is not a regular library file'
+. "$enc_library" || error 'cannot source enc.lib.sh'
+
+tmp=${TMPDIR:-/tmp}/rumiai-enc-octal-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+printf 'ABC xyz\n' > "$tmp/plain" || error 'cannot create text fixture'
+a2o < "$tmp/plain" > "$tmp/plain.octal" || fail 'a2o failed for text input'
+o2a < "$tmp/plain.octal" > "$tmp/plain.roundtrip" || fail 'o2a rejected a2o output'
+cmp -s "$tmp/plain" "$tmp/plain.roundtrip" || fail 'text round trip changed bytes'
+
+dd if=/dev/zero of="$tmp/repeated" bs=64 count=1 2>/dev/null ||
+    error 'cannot create repeated-byte fixture'
+a2o < "$tmp/repeated" > "$tmp/repeated.octal" ||
+    fail 'a2o failed for repeated-byte input'
+if grep -F '*' "$tmp/repeated.octal" >/dev/null 2>&1
+then
+    fail 'a2o compressed repeated octal lines instead of emitting every octet'
+fi
+o2a < "$tmp/repeated.octal" > "$tmp/repeated.roundtrip" ||
+    fail 'o2a rejected repeated-byte a2o output'
+cmp -s "$tmp/repeated" "$tmp/repeated.roundtrip" ||
+    fail 'repeated-byte round trip changed bytes'
+
+printf '101\t102\n103 104\n' | o2a > "$tmp/whitespace" ||
+    fail 'o2a rejected POSIX-whitespace-separated octets'
+printf 'ABCD' > "$tmp/whitespace.expected" || error 'cannot create whitespace expectation'
+cmp -s "$tmp/whitespace.expected" "$tmp/whitespace" ||
+    fail 'o2a decoded whitespace-separated octets incorrectly'
+
+o2a 101 102 103 > "$tmp/args" || fail 'o2a rejected separate octet arguments'
+printf 'ABC' > "$tmp/args.expected" || error 'cannot create argument expectation'
+cmp -s "$tmp/args.expected" "$tmp/args" ||
+    fail 'o2a decoded separate octet arguments incorrectly'
+
+(
+    IFS=,
+    o2a 101 102 103 > "$tmp/nondefault-ifs"
+) || fail 'o2a depended on caller IFS while joining arguments'
+cmp -s "$tmp/args.expected" "$tmp/nondefault-ifs" ||
+    fail 'o2a decoded arguments incorrectly with non-default caller IFS'
+
+a2o A B | o2a > "$tmp/a2o-args" || fail 'a2o argument output was not decodable'
+printf 'AB' > "$tmp/a2o-args.expected" || error 'cannot create a2o argument expectation'
+cmp -s "$tmp/a2o-args.expected" "$tmp/a2o-args" ||
+    fail 'a2o did not concatenate arguments before encoding'
+
+for bad in 400 777 8 09 -1 1x 0000
+do
+    : > "$tmp/bad.out" || error 'cannot reset invalid-output fixture'
+    if printf '101 %s 102\n' "$bad" | o2a > "$tmp/bad.out"
+    then
+        fail "o2a accepted invalid octet: $bad"
+    fi
+    [ ! -s "$tmp/bad.out" ] ||
+        fail "o2a emitted partial output before rejecting invalid octet: $bad"
+done
+
+: | a2o | o2a > "$tmp/empty" || fail 'empty round trip failed'
+[ ! -s "$tmp/empty" ] || fail 'empty round trip produced output'
+
+exit 0

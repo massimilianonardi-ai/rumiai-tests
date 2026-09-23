@@ -1,0 +1,75 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/log/severity-filter.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+entry=$root/m
+[ -x "$entry" ] || fail 'm entrypoint is not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-log-severity-filter-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+probe=$tmp/probe
+stdout=$tmp/stdout
+stderr=$tmp/stderr
+
+cat > "$probe" <<'EOT'
+#!/usr/bin/env m
+log info test message marker info-filtered
+log error test message marker error-visible
+EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
+
+m_LOG_LEVEL=warn "$entry" "$probe" >"$stdout" 2>"$stderr" || {
+    status=$?
+    cat "$stderr" >&2
+    fail "severity filter probe returned $status"
+}
+
+[ ! -s "$stdout" ] || fail 'severity filter produced unexpected stdout'
+lines=$(wc -l < "$stderr") || error 'cannot count log lines'
+[ "$lines" -eq 1 ] || {
+    cat "$stderr" >&2
+    fail "severity filter produced $lines lines instead of 1"
+}
+grep -F 'error-visible' "$stderr" >/dev/null 2>&1 || {
+    cat "$stderr" >&2
+    fail 'enabled error event was not emitted'
+}
+if grep -F 'info-filtered' "$stderr" >/dev/null 2>&1
+then
+    cat "$stderr" >&2
+    fail 'disabled info event was emitted'
+fi
+
+exit 0

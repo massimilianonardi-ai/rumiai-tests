@@ -1,0 +1,105 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/shell/argument-forwarding.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) :;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+shell_group=${test_dir%/*}
+rumiai_os_group=${shell_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm target runtime is not executable'
+[ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
+
+tmp="${TMPDIR:-/tmp}/rumiai-shell-forwarding-$$"
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+ext_marker="$tmp/ext.loaded"
+ext="$tmp/ext"
+cat > "$ext" <<'EOT'
+printf '%s\n' loaded > "$TEST_EXT_MARKER"
+EOT
+
+fake="$tmp/unsupported-shell"
+cat > "$fake" <<'EOT'
+#!/bin/sh
+{
+  printf '%s\n' "$#"
+  while [ "$#" -gt 0 ]
+  do
+    printf '%s\n' "$1"
+    shift
+  done
+} > "$TEST_RECORD"
+exit 0
+EOT
+chmod 700 "$fake" || error 'cannot make unsupported shell executable'
+
+TEST_RECORD="$tmp/args.record"
+TEST_EXT_MARKER="$ext_marker"
+SHELL="$fake"
+m_SHELL_EXT="$ext"
+TERM=dumb
+export TEST_RECORD TEST_EXT_MARKER SHELL m_SHELL_EXT TERM
+
+"$root/m" "$root/bin/sys/shell" \
+  'alpha' \
+  'two words' \
+  '' \
+  '-x' \
+  '--' \
+  '*' \
+  'a=b' \
+  >"$tmp/stdout" 2>"$tmp/stderr"
+status="$?"
+
+[ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "unsupported shell returned $status"; }
+[ ! -e "$ext_marker" ] || fail 'unsupported shell unexpectedly loaded m_SHELL_EXT'
+
+cat > "$tmp/expected" <<'EOT'
+7
+alpha
+two words
+
+-x
+--
+*
+a=b
+EOT
+
+cmp "$tmp/expected" "$TEST_RECORD" >/dev/null 2>&1 || {
+  cat "$TEST_RECORD" >&2
+  fail 'shell arguments were not forwarded exactly'
+}
+
+exit 0

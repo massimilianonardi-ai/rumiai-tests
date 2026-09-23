@@ -1,0 +1,79 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/shell/env-literal.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) :;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+shell_group=${test_dir%/*}
+rumiai_os_group=${shell_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm target runtime is not executable'
+[ -x "$root/bin/sys/shell" ] || fail 'shell target command is not executable'
+tmp="${TMPDIR:-/tmp}/rumiai-shell-env-literal-$$"; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+sh_path="$(command -v sh 2>/dev/null)" || skip 'sh is unavailable on this host'
+[ -n "${HOME-}" ] || skip 'HOME is unavailable in the supplied environment'
+[ -d "$HOME" ] && [ ! -L "$HOME" ] && [ -w "$HOME" ] ||
+  skip 'HOME is not a writable real directory in the supplied environment'
+
+work="$tmp/work"
+mkdir "$work" || error 'cannot create test work directory'
+marker="$tmp/user-env.loaded"
+user_env_name=.rumiai-test-env-literal-$
+user_env_path=$HOME/$user_env_name
+[ ! -e "$user_env_path" ] && [ ! -L "$user_env_path" ] ||
+  error 'literal ENV probe pathname already exists'
+cat > "$user_env_path" <<'EOT'
+printf '%s\n' loaded > "$TEST_ENV_MARKER"
+EOT
+trap 'rm -f "$user_env_path" 2>/dev/null || :; rm -rf "$tmp"' 0 HUP INT TERM
+
+(
+  cd "$work" || exit 90
+  unset ZDOTDIR
+  SHELL="$sh_path"
+  ENV="\$HOME/$user_env_name"
+  TEST_ENV_MARKER="$marker"
+  m_SHELL_EXT=
+  TERM=dumb
+  export SHELL ENV TEST_ENV_MARKER m_SHELL_EXT TERM
+  "$root/m" "$root/bin/sys/shell" -i -c '
+    [ ! -e "$TEST_ENV_MARKER" ] || exit 41
+    [ "${m_SHELL_ENV+x}" != "x" ] || exit 42
+    command -v shell >/dev/null 2>&1 || exit 43
+    exit 0
+  '
+) >"$tmp/stdout" 2>"$tmp/stderr"
+status="$?"
+[ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "literal ENV startup returned $status"; }
+[ ! -e "$marker" ] || fail 'm reinterpreted the literal ENV value'
+exit 0

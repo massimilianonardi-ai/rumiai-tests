@@ -1,0 +1,192 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg-extract/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+reset_stage()
+{
+  rm -rf "$stage" || return 1
+  mkdir "$stage"
+}
+
+make_tar()
+{
+  source_dir=$1
+  archive=$2
+  (
+    CDPATH= cd -- "$source_dir" || exit 1
+    TAR_OPTIONS= command -p -- tar -cf "$archive" .
+  )
+}
+
+run_extract()
+{
+  artifact=$1
+  format=$2
+  "$root/m" "$driver" "$artifact" "$format" "$stage"
+}
+
+make_tar_case()
+{
+  source_dir=$1
+  label=$2
+  archive=$tmp/$label.tar
+  make_tar "$source_dir" "$archive" || error "cannot create $label archive"
+  reset_stage || error "cannot reset stage for $label"
+  run_extract "$archive" tar > "$tmp/$label.out" 2> "$tmp/$label.err" || {
+    cat "$tmp/$label.err" >&2
+    fail "$label extraction failed"
+  }
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
+[ -x "$root/bin/sys/extract" ] || fail 'extract command is missing or not executable'
+library=$root/lib/sys/sh/pkg/pkg-extract.lib.sh
+[ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] ||
+  fail 'pkg-extract library is missing or has invalid mode'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-extract-contract-$$
+umask 077
+mkdir "$tmp" "$tmp/stage" || error 'cannot create temporary directories'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+stage=$tmp/stage
+
+driver=$tmp/pkg-extract-driver
+cat > "$driver" <<'EOF_DRIVER'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/pkg/pkg-extract.lib.sh" || exit 3
+pkg_extract "$@"
+EOF_DRIVER
+chmod 700 "$driver" || error 'cannot prepare pkg-extract driver'
+
+"$root/m" "$driver" > "$tmp/arity.out" 2> "$tmp/arity.err"
+[ "$?" -eq 2 ] || fail 'pkg_extract invalid arity did not return 2'
+
+flat=$tmp/flat
+mkdir "$flat" || error 'cannot create flat source'
+printf '%s\n' one > "$flat/one"
+printf '%s\n' two > "$flat/two"
+make_tar_case "$flat" flat
+[ -f "$stage/one" ] && [ -f "$stage/two" ] || fail 'flat useful root was not preserved'
+
+wrapper=$tmp/wrapper
+mkdir -p "$wrapper/release/lib" || error 'cannot create wrapper source'
+printf '%s\n' program > "$wrapper/release/program"
+make_tar_case "$wrapper" wrapper
+[ -f "$stage/program" ] && [ -d "$stage/lib" ] || fail 'single wrapper was not normalized'
+[ ! -e "$stage/release" ] && [ ! -L "$stage/release" ] || fail 'single wrapper survived normalization'
+
+deep=$tmp/deep
+mkdir -p "$deep/product/26.2.0/root/bin" "$deep/product/26.2.0/root/lib" || error 'cannot create deep source'
+printf '%s\n' program > "$deep/product/26.2.0/root/bin/program"
+make_tar_case "$deep" deep
+[ -f "$stage/bin/program" ] && [ -d "$stage/lib" ] || fail 'deep wrapper was not normalized to useful root'
+[ ! -e "$stage/product" ] || fail 'deep wrapper survived normalization'
+
+app=$tmp/app
+mkdir -p "$app/Electron.app/Contents/MacOS" "$app/Electron.app/Contents/Resources" || error 'cannot create app source'
+printf '%s\n' plist > "$app/Electron.app/Contents/Info.plist"
+printf '%s\n' executable > "$app/Electron.app/Contents/MacOS/Electron"
+make_tar_case "$app" app
+[ -d "$stage/Electron.app" ] && [ ! -L "$stage/Electron.app" ] || fail 'macOS application bundle was not preserved'
+[ -f "$stage/Electron.app/Contents/Info.plist" ] || fail 'macOS application bundle metadata is missing'
+
+app_wrapper=$tmp/app-wrapper
+mkdir -p "$app_wrapper/release/Electron.app/Contents/MacOS" || error 'cannot create wrapped app source'
+printf '%s\n' plist > "$app_wrapper/release/Electron.app/Contents/Info.plist"
+printf '%s\n' executable > "$app_wrapper/release/Electron.app/Contents/MacOS/Electron"
+make_tar_case "$app_wrapper" app-wrapper
+[ -d "$stage/Electron.app" ] || fail 'wrapped application bundle was not lifted'
+[ ! -e "$stage/release" ] || fail 'wrapper outside application bundle survived'
+
+incomplete=$tmp/incomplete
+mkdir -p "$incomplete/Broken.app/Contents/MacOS" "$incomplete/Broken.app/Contents/Resources" || error 'cannot create incomplete app source'
+printf '%s\n' executable > "$incomplete/Broken.app/Contents/MacOS/Broken"
+make_tar_case "$incomplete" incomplete
+[ ! -e "$stage/Broken.app" ] || fail 'incomplete .app was treated as an application-bundle boundary'
+[ -d "$stage/MacOS" ] && [ -d "$stage/Resources" ] || fail 'normal wrapper discovery did not continue through incomplete .app'
+
+hidden=$tmp/hidden
+mkdir "$hidden" "$hidden/wrapper" || error 'cannot create hidden-entry source'
+printf '%s\n' payload > "$hidden/wrapper/program"
+printf '%s\n' marker > "$hidden/.marker"
+make_tar_case "$hidden" hidden
+[ -f "$stage/.marker" ] && [ -d "$stage/wrapper" ] || fail 'hidden entry was ignored during structural discovery'
+
+reset_stage || error 'cannot reset stage for AppImage'
+appimage=$tmp/malicious.AppImage
+marker=$tmp/appimage-executed
+cat > "$appimage" <<EOF_APPIMAGE
+#!/bin/sh
+printf '%s\\n' executed > "$marker"
+EOF_APPIMAGE
+chmod 755 "$appimage" || error 'cannot prepare AppImage input'
+run_extract "$appimage" appimage > "$tmp/appimage.out" 2> "$tmp/appimage.err" || fail 'opaque AppImage materialization failed'
+[ ! -e "$marker" ] || fail 'AppImage was executed during materialization'
+[ -f "$stage/malicious.AppImage" ] && [ -x "$stage/malicious.AppImage" ] || fail 'AppImage was not copied opaquely with mode preserved'
+
+reset_stage || error 'cannot reset stage for executable'
+executable=$tmp/tool
+cat > "$executable" <<'EOF_EXECUTABLE'
+#!/bin/sh
+exit 0
+EOF_EXECUTABLE
+chmod 600 "$executable" || error 'cannot prepare executable input'
+run_extract "$executable" executable > "$tmp/executable.out" 2> "$tmp/executable.err" || fail 'executable materialization failed'
+[ -f "$stage/tool" ] && [ -x "$stage/tool" ] || fail 'executable artifact was not materialized as executable'
+[ ! -x "$executable" ] || fail 'input executable mode was modified'
+
+invalid=$tmp/invalid.tar
+printf '%s\n' not-a-tar > "$invalid"
+reset_stage || error 'cannot reset stage for invalid archive'
+if run_extract "$invalid" tar > "$tmp/invalid.out" 2> "$tmp/invalid.err"; then
+  fail 'invalid tar archive was accepted'
+else
+  [ "$?" -eq 1 ] || fail 'invalid tar archive did not return 1'
+fi
+
+flat_archive=$tmp/nonempty.tar
+make_tar "$flat" "$flat_archive" || error 'cannot create non-empty-stage archive'
+reset_stage || error 'cannot reset non-empty stage'
+printf '%s\n' occupied > "$stage/existing"
+if run_extract "$flat_archive" tar > "$tmp/nonempty.out" 2> "$tmp/nonempty.err"; then
+  fail 'non-empty staging directory was accepted'
+fi
+
+reset_stage || error 'cannot reset stage for unsupported format'
+if run_extract "$flat_archive" unsupported > "$tmp/unsupported.out" 2> "$tmp/unsupported.err"; then
+  fail 'unsupported format was accepted'
+else
+  [ "$?" -eq 2 ] || fail 'unsupported format did not return 2'
+fi
+
+exit 0

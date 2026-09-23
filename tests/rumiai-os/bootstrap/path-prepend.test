@@ -1,0 +1,29 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/bootstrap/path-prepend.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
+validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
+find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
+resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+start=${test_dir%/*}; start=${start%/*}; start=${start%/*}; start=${start%/*}
+root=$(find_root "$start"); status=$?; case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail 'invalid explicit rumiai-os target';; *) error 'target discovery failed';; esac
+entry=$root/m
+input_path=/usr/bin:/bin
+expected_path=$root/bin/sys-osarch:$root/bin/sys:$root/bin/ext-osarch:$root/bin/ext:$input_path
+tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-path-prepend-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
+probe=$tmp/probe; transcript=$tmp/transcript
+cat > "$probe" <<'EOT'
+#!/usr/bin/env m
+[ "${PATH-}" = "$EXPECTED_PATH" ] || return 41
+return 0
+EOT
+chmod 700 "$probe" || error 'cannot make probe executable'
+EXPECTED_PATH=$expected_path; export EXPECTED_PATH
+(unset LC_ALL LC_MESSAGES; LANG=C; PATH=$input_path; export LANG PATH; "$entry" "$probe") >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "PATH prepend probe returned $status"; }
+[ ! -s "$transcript" ] || { cat "$transcript" >&2; fail 'PATH prepend probe produced unexpected output'; }
+exit 0

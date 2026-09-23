@@ -1,0 +1,65 @@
+#!/bin/sh
+
+# Protected current properties:
+#   GITMAN-01  gitman is a bootstrap-integrated technical m command at bin/sys/gitman
+#   GITMAN-15  gitman has its required sys operational manual topic
+# Plus the project-wide interpreter/manual structural contracts applicable to commands.
+
+TEST_ID=rumiai-os/gitman/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+gitman_group=${test_dir%/*}
+rumiai_os_group=${gitman_group%/*}
+suite_root=${rumiai_os_group%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) error 'explicit rumiai-os target is invalid' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+gitman=$root/bin/sys/gitman
+manual=$root/res/sys/manual/gitman
+manual_command=$root/bin/sys/manual
+
+[ -f "$gitman" ] && [ -x "$gitman" ] ||
+    fail 'GITMAN-01: expected executable bin/sys/gitman'
+
+first_line=$(sed -n '1p' "$gitman") || error 'cannot read gitman interpreter header'
+[ "$first_line" = '#!/usr/bin/env m' ] ||
+    fail "GITMAN-01/interpreter contract: expected '#!/usr/bin/env m', observed '$first_line'"
+
+command -p sh -n "$gitman" ||
+    fail 'interpreter contract: gitman is not valid POSIX sh syntax'
+
+[ -f "$manual" ] && [ ! -L "$manual" ] ||
+    fail 'GITMAN-15: expected regular res/sys/manual/gitman topic'
+
+[ -x "$manual_command" ] || error 'manual command is unavailable'
+
+manual_text=$("$root/m" "$manual_command" --no-pager gitman) ||
+    fail 'GITMAN-15: manual lookup for gitman failed'
+
+[ -n "$manual_text" ] ||
+    fail 'GITMAN-15: manual lookup returned no content'
+
+exit 0
