@@ -1,0 +1,273 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/mk/inputs.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+expect_status()
+{
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "unexpected status $actual, expected $expected: $*"
+}
+
+trace_count()
+{
+  if [ -f "$trace" ]
+  then
+    command -p -- awk 'END { print NR }' "$trace"
+  else
+    printf -- '0\n'
+  fi
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  [ -z "${cache_project-}" ] || command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command_path="$root/bin/sys/mk"
+[ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
+[ -x "$root/bin/sys/state-path" ] || fail "state-path command is missing"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+then
+  skip "managed nodejs runtime is not installed/default in the supplied target"
+fi
+
+tmp="${TMPDIR:-/tmp}/rumiai-mk-inputs-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+tmp="$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P)" || error "cannot canonicalize temporary directory"
+
+project="$tmp/project"
+mkdir -p "$project/src" || error "cannot create project fixture"
+printf -- '%s\n' alpha > "$project/src/input.txt" || error "cannot create source"
+printf -- '%s\n' opaque > "$project/opaque.txt" || error "cannot create ordinary input"
+trace="$project/trace"
+TRACE_FILE="$trace"
+export TRACE_FILE
+
+cat > "$project/mk.json" <<'EOF_PROJECT' || error "cannot write input project"
+{
+  "version": 2,
+  "goals": {
+    "ordinary": ["ordinary"],
+    "data": ["consume"],
+    "collection": ["scan"],
+    "incremental": ["new-incremental"],
+    "legacy": ["legacy-incremental"]
+  },
+  "collections": {
+    "sources": {
+      "type": "files",
+      "root": "src"
+    }
+  },
+  "operations": {
+    "ordinary": {
+      "inputs": {
+        "source": {"path": "opaque.txt"}
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'ordinary\n' >> \"$TRACE_FILE\""]
+      }
+    },
+    "produce": {
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'artifact\n' > produced; printf 'produce\n' >> \"$TRACE_FILE\""]
+      },
+      "outputs": {
+        "artifact": {"path": "produced"}
+      }
+    },
+    "consume": {
+      "inputs": {
+        "artifact": {"output": {"operation": "produce", "name": "artifact"}}
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "cp produced consumed; printf 'consume\n' >> \"$TRACE_FILE\""]
+      }
+    },
+    "scan": {
+      "inputs": {
+        "sources": {"collection": "sources"}
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "printf 'scan\n' >> \"$TRACE_FILE\""]
+      }
+    },
+    "new-incremental": {
+      "inputs": {
+        "source": {"path": "src/input.txt"}
+      },
+      "incremental": {},
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "cp src/input.txt new.out; printf 'new-incremental\n' >> \"$TRACE_FILE\""]
+      },
+      "outputs": {
+        "artifact": {"path": "new.out"}
+      }
+    },
+    "legacy-incremental": {
+      "incremental": {
+        "inputs": {
+          "source": {"path": "src/input.txt"}
+        }
+      },
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "cp src/input.txt legacy.out; printf 'legacy-incremental\n' >> \"$TRACE_FILE\""]
+      },
+      "outputs": {
+        "artifact": {"path": "legacy.out"}
+      }
+    }
+  }
+}
+EOF_PROJECT
+
+cache_root="$("$root/m" "$root/bin/sys/state-path" user sys mk cache)" ||
+  error "cannot resolve mk cache area"
+project_key="$("$root/m" node -e 'const c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(process.argv[1]).digest("hex")+"\n")' "$project")" ||
+  error "cannot compute project cache key"
+cache_project="$cache_root/projects/$project_key"
+command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
+
+plan="$tmp/ordinary.plan.json"
+"$command_path" --project "$project" --plan ordinary > "$plan" ||
+  fail "MK-55 ordinary input plan failed"
+"$root/m" node - "$plan" <<'EOF_NODE' || fail "MK-55 ordinary input was not exposed/ready"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='ordinary');
+if(!op || op.state!=='ready') process.exit(1);
+if(!op.inputs || op.inputs.source.type!=='path' || op.inputs.source.path!=='opaque.txt') process.exit(2);
+EOF_NODE
+
+before="$(trace_count)"
+"$command_path" --project "$project" ordinary || fail "ordinary input execution failed"
+"$command_path" --project "$project" ordinary || fail "second ordinary input execution failed"
+[ "$(trace_count)" -eq "$((before + 2))" ] ||
+  fail "MK-55 inputs alone incorrectly enabled incremental reuse"
+
+data_plan="$tmp/data.plan.json"
+"$command_path" --project "$project" --plan data > "$data_plan" ||
+  fail "output-input data plan failed"
+"$root/m" node - "$data_plan" <<'EOF_NODE' || fail "MK-46 output input did not create producer data dependency"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const producer=plan.operations.find(value=>value.name==='produce');
+const consumer=plan.operations.find(value=>value.name==='consume');
+if(!producer || producer.state!=='ready') process.exit(1);
+if(!consumer || consumer.state!=='blocked') process.exit(2);
+if(consumer.prerequisites.length!==0) process.exit(3);
+if(!consumer.inputs || consumer.inputs.artifact.type!=='output' || consumer.inputs.artifact.operation!=='produce') process.exit(4);
+EOF_NODE
+"$command_path" --project "$project" data || fail "non-incremental output-input execution failed"
+[ "$(cat "$project/consumed")" = artifact ] || fail "consumer did not receive producer output"
+
+collection_plan="$tmp/collection.plan.json"
+"$command_path" --project "$project" --plan collection > "$collection_plan" ||
+  fail "collection-input plan failed"
+"$root/m" node - "$collection_plan" <<'EOF_NODE' || fail "MK-54 collection input did not make collection reachable"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const collection=plan.collections.find(value=>value.name==='sources');
+const op=plan.operations.find(value=>value.name==='scan');
+if(!collection || collection.state!=='resolved' || JSON.stringify(collection.items)!==JSON.stringify(['src/input.txt'])) process.exit(1);
+if(!op || op.state!=='ready' || op.inputs.sources.type!=='collection') process.exit(2);
+EOF_NODE
+
+before="$(trace_count)"
+"$command_path" --project "$project" incremental || fail "new shared-input incremental execution failed"
+after="$(trace_count)"
+[ "$after" -eq "$((before + 1))" ] || fail "new incremental form did not execute initially"
+"$command_path" --project "$project" incremental || fail "new shared-input incremental hit failed"
+[ "$(trace_count)" -eq "$after" ] || fail "MK-56 new shared-input incremental form did not become up-to-date"
+
+before="$(trace_count)"
+"$command_path" --project "$project" legacy || fail "legacy incremental execution failed"
+after="$(trace_count)"
+[ "$after" -eq "$((before + 1))" ] || fail "legacy incremental form did not execute initially"
+"$command_path" --project "$project" legacy || fail "legacy incremental hit failed"
+[ "$(trace_count)" -eq "$after" ] || fail "MK-56 legacy incremental.inputs no longer reuses freshness"
+
+ambiguous="$tmp/ambiguous"
+mkdir "$ambiguous" || error "cannot create ambiguous project"
+cat > "$ambiguous/mk.json" <<'EOF_AMBIGUOUS' || error "cannot write ambiguous project"
+{
+  "version": 2,
+  "goals": {"build": ["x"]},
+  "operations": {
+    "x": {
+      "inputs": {"a": {"path": "a"}},
+      "incremental": {"inputs": {"b": {"path": "b"}}},
+      "action": {"type": "process", "command": "sh", "args": ["-c", "printf x > out"]},
+      "outputs": {"out": {"path": "out"}}
+    }
+  }
+}
+EOF_AMBIGUOUS
+expect_status 1 "$command_path" --project "$ambiguous" --plan build
+
+exit 0
