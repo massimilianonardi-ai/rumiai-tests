@@ -50,6 +50,18 @@ cleanup()
   trap - 0 HUP INT TERM
   [ -z "${cache_project-}" ] || command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
   [ -z "${moved_cache_project-}" ] || command -p -- rm -rf -- "$moved_cache_project" 2>/dev/null || :
+  if [ -n "${shared_root-}" ] && [ -d "$shared_root" ] && [ -n "${shared_before-}" ] && [ -f "$shared_before" ]
+  then
+    for shared_entry in "$shared_root"/*
+    do
+      [ -e "$shared_entry" ] || continue
+      shared_name=${shared_entry##*/}
+      if ! command -p -- grep -F -x -- "$shared_name" "$shared_before" >/dev/null 2>&1
+      then
+        command -p -- rm -rf -- "$shared_entry" 2>/dev/null || :
+      fi
+    done
+  fi
   [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -168,6 +180,15 @@ EOF_PROJECT
 
 cache_root="$("$root/m" "$root/bin/sys/state-path" user sys mk cache)" ||
   error "cannot resolve mk cache area"
+shared_root="$cache_root/shared-artifacts"
+shared_before="$tmp/shared-before"
+if [ -d "$shared_root" ]
+then
+  command -p -- ls -1 "$shared_root" > "$shared_before" ||
+    error "cannot snapshot pre-existing shared artifact state"
+else
+  : > "$shared_before" || error "cannot create empty shared-artifact snapshot"
+fi
 project_key="$(sha256_value "$project")" || error "cannot compute project cache key"
 cache_project="$cache_root/projects/$project_key"
 command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
@@ -238,15 +259,23 @@ command -p -- rm -f -- "$project/out/src/provider-a.txt.out" ||
   fail "provider-derived output was not restored"
 
 file_key="$(sha256_value file)" || error "cannot compute file operation key"
-artifact_operation="$cache_project/artifacts/$file_key"
-[ -d "$artifact_operation" ] || error "cannot locate artifact fixture state"
-artifact_version="$(command -p -- ls -1 "$artifact_operation" | command -p -- tail -n 1)" ||
-  error "cannot locate artifact version"
-[ -n "$artifact_version" ] || error "artifact fixture version is empty"
-artifact_payload="$artifact_operation/$artifact_version/payload"
+file_record="$cache_project/operations/$file_key.json"
+[ -f "$file_record" ] || error "cannot locate file freshness record"
+file_fingerprint="$("$root/m" node - "$file_record" <<'EOF_NODE'
+const fs=require('node:fs');
+const value=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(typeof value.fingerprint!=='string' || !/^[a-f0-9]{64}$/.test(value.fingerprint)) process.exit(1);
+process.stdout.write(value.fingerprint+'\n');
+EOF_NODE
+)" || error "cannot read file operation fingerprint"
+artifact_root="$shared_root/$file_fingerprint"
+[ -d "$artifact_root" ] || error "cannot locate shared artifact fingerprint state"
+artifact_candidate="$(cat "$artifact_root/current")" || error "cannot read shared artifact selector"
+[ -n "$artifact_candidate" ] || error "shared artifact selector is empty"
+artifact_payload="$artifact_root/candidates/$artifact_candidate/payload"
 payload_file="$(command -p -- find "$artifact_payload" -type f -print | command -p -- head -n 1)" ||
-  error "cannot locate artifact payload"
-[ -n "$payload_file" ] || error "artifact payload fixture is missing"
+  error "cannot locate shared artifact payload"
+[ -n "$payload_file" ] || error "shared artifact payload fixture is missing"
 printf '%s\n' CORRUPT > "$payload_file" || error "cannot corrupt artifact fixture"
 command -p -- rm -f -- "$project/out/file.out" || error "cannot remove file before corrupt-cache test"
 before="$(trace_count "$project/file.trace")"
@@ -286,8 +315,16 @@ EOF_MOVED
 moved_key="$(sha256_value "$moved")" || error "cannot compute moved project cache key"
 moved_cache_project="$cache_root/projects/$moved_key"
 command -p -- rm -rf -- "$moved_cache_project" 2>/dev/null || :
-"$command_path" --project "$moved" file || fail "moved checkout build failed"
-[ "$(trace_count "$moved/file.trace")" -eq 1 ] ||
-  fail "MK-81 moved checkout unexpectedly reused source-project artifact cache"
+plan="$tmp/moved.plan.json"
+"$command_path" --project "$moved" --plan file > "$plan" || fail "moved checkout plan failed"
+[ ! -e "$moved/out/file.out" ] || fail "MK-77 moved checkout plan restored artifact"
+[ ! -e "$moved_cache_project" ] || fail "moved checkout plan created freshness metadata"
+"$command_path" --project "$moved" file || fail "moved checkout shared restore failed"
+[ "$(trace_count "$moved/file.trace")" -eq 0 ] ||
+  fail "MK-81 moved checkout action ran instead of shared artifact restore"
+command -p -- cmp -s "$moved/src/file.txt" "$moved/out/file.out" ||
+  fail "MK-81 moved checkout shared artifact bytes are incorrect"
+[ -d "$moved_cache_project" ] ||
+  fail "MK-79 moved checkout restore did not create project-scoped freshness metadata"
 
 exit 0
