@@ -21,6 +21,11 @@ run_pkg()
 cleanup()
 {
   trap - 0 HUP INT TERM
+  if [ -n "${root-}" ] && [ -n "${identity-}" ] && [ -n "${gnupg_home-}" ] &&
+     [ -x "$root/pkg/$identity/root/bin/gpgconf" ]
+  then
+    GNUPGHOME="$gnupg_home" "$root/pkg/$identity/root/bin/gpgconf" --kill all >/dev/null 2>&1 || :
+  fi
   if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     run_pkg uninstall macgpg >/dev/null 2>&1 || :
