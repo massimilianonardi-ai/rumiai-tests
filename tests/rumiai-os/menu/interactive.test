@@ -450,9 +450,13 @@ else:
 
 ui.clear()
 os.write(master, down * 4)
-settle = time.monotonic() + 0.4
-while time.monotonic() < settle:
-    ready, _, _ = select.select([master, out_r, err_r], [], [], 0.03)
+
+# Navigation input can be coalesced and terminal output latency differs materially
+# across hosts. Observe until the final contracted selection is painted instead of
+# treating a fixed sleep interval as part of the menu contract.
+deadline = time.monotonic() + 3.0
+while time.monotonic() < deadline and b"> five" not in ui:
+    ready, _, _ = select.select([master, out_r, err_r], [], [], 0.05)
     for fd in ready:
         try:
             chunk = os.read(fd, 4096)
