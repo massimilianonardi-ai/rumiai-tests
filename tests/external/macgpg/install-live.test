@@ -26,6 +26,7 @@ cleanup()
   then
     GNUPGHOME="$gnupg_home" "$root/pkg/$identity/root/bin/gpgconf" --kill all >/dev/null 2>&1 || :
   fi
+  [ -z "${gnupg_home-}" ] || rm -rf "$gnupg_home"
   if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     run_pkg uninstall macgpg >/dev/null 2>&1 || :
@@ -107,7 +108,7 @@ PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
 grep -F 'gpg (GnuPG' "$tmp/version.out" >/dev/null 2>&1 ||
   fail 'gpg --version did not identify GnuPG/MacGPG'
 
-gnupg_home=${TMPDIR:-/tmp}/gpg-$
+gnupg_home=${TMPDIR:-/tmp}/g$$
 [ ! -e "$gnupg_home" ] && [ ! -L "$gnupg_home" ] || error 'isolated GNUPGHOME already exists'
 mkdir "$gnupg_home" || error 'cannot create isolated GNUPGHOME'
 chmod 700 "$gnupg_home" || error 'cannot protect isolated GNUPGHOME'
