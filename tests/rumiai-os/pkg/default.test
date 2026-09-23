@@ -28,10 +28,10 @@ run_selected()
   )
 }
 
-run_selected_target()
+run_selected_macos_arm64()
 {
   (
-    PATH="$root/bin/ext-$target_osarch:$root/bin/sys:$PATH"
+    PATH="$root/bin/ext-macos-arm64:$root/bin/sys:$PATH"
     export PATH
     "$package"
   )
@@ -44,7 +44,7 @@ cleanup()
   if [ -n "${root-}" ] && [ -n "${package-}" ]
   then
     run_pkg default -u -- "$package" >/dev/null 2>&1 || :
-    run_pkg default -u -- "$package!${target_osarch-macos-arm64}" >/dev/null 2>&1 || :
+    run_pkg default -u -- "$package!macos-arm64" >/dev/null 2>&1 || :
 
     for cleanup_version in 1 2
     do
@@ -60,18 +60,18 @@ cleanup()
 
     for cleanup_version in 3 4
     do
-      if [ -d "$root/pkg/$package@$cleanup_version!${target_osarch-macos-arm64}" ] && [ ! -L "$root/pkg/$package@$cleanup_version!${target_osarch-macos-arm64}" ]
+      if [ -d "$root/pkg/$package@$cleanup_version!macos-arm64" ] && [ ! -L "$root/pkg/$package@$cleanup_version!macos-arm64" ]
       then
         if [ -n "${driver-}" ] && [ -f "$driver" ]
         then
-          "$root/m" "$driver" deintegrate "$package" "$cleanup_version" "${target_osarch-macos-arm64}" >/dev/null 2>&1 || :
+          "$root/m" "$driver" deintegrate "$package" "$cleanup_version" macos-arm64 >/dev/null 2>&1 || :
         fi
-        rm -rf "$root/pkg/$package@$cleanup_version!${target_osarch-macos-arm64}" 2>/dev/null || :
+        rm -rf "$root/pkg/$package@$cleanup_version!macos-arm64" 2>/dev/null || :
       fi
     done
 
-    rm -f "$root/pkg/$package" "$root/pkg/$package!${target_osarch-macos-arm64}" \
-      "$root/bin/ext/$package" "$root/bin/ext-${target_osarch-macos-arm64}/$package" 2>/dev/null || :
+    rm -f "$root/pkg/$package" "$root/pkg/$package!macos-arm64" \
+      "$root/bin/ext/$package" "$root/bin/ext-macos-arm64/$package" 2>/dev/null || :
 
     if [ "${bin_ext_created-0}" -eq 1 ]
     then
@@ -135,8 +135,7 @@ tmp=${TMPDIR:-/tmp}/rumiai-pkg-default-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 
-package=pdtest$
-target_osarch=macos-arm64
+package=pdtest$$
 pkg_store_created=0
 bin_ext_created=0
 
@@ -252,40 +251,41 @@ printf '%s\n' "$versions" | grep -Fx "$package@1" >/dev/null 2>&1 ||
 printf '%s\n' "$versions" | grep -Fx "$package@2" >/dev/null 2>&1 ||
   fail 'version 2 disappeared when the default was cleared'
 
+# Explicit osarch package classes use the same public default surface.
 for version in 3 4
 do
-  make_definition "$version" || error "cannot prepare osarch package version $version"
-  "$root/m" "$driver" integrate "$package" "$version" "$tmp/range-$version" "$tmp/payload-$version" "$target_osarch" \
-    > "$tmp/integrate-target-$version.out" 2> "$tmp/integrate-target-$version.err" || {
-      cat "$tmp/integrate-target-$version.err" >&2
-      fail "cannot integrate osarch package version $version"
+  make_definition "$version" || error "cannot prepare macos-arm64 package version $version"
+  "$root/m" "$driver" integrate "$package" "$version" "$tmp/range-$version" "$tmp/payload-$version" macos-arm64 \
+    > "$tmp/integrate-macos-arm64-$version.out" 2> "$tmp/integrate-macos-arm64-$version.err" || {
+      cat "$tmp/integrate-macos-arm64-$version.err" >&2
+      fail "cannot integrate macos-arm64 package version $version"
     }
 done
 
-run_pkg default "$package@4!$target_osarch" > "$tmp/select-target.out" 2> "$tmp/select-target.err" || {
-  cat "$tmp/select-target.err" >&2
+run_pkg default "$package@4!macos-arm64" > "$tmp/select-macos-arm64.out" 2> "$tmp/select-macos-arm64.err" || {
+  cat "$tmp/select-macos-arm64.err" >&2
   fail 'pkg default could not select an explicit osarch package version'
 }
 
-selected=$(run_selected_target 2> "$tmp/run-target.err") || {
-  cat "$tmp/run-target.err" >&2
+selected=$(run_selected_macos_arm64 2> "$tmp/run-macos-arm64.err") || {
+  cat "$tmp/run-macos-arm64.err" >&2
   fail 'selected explicit-osarch package command was not executable'
 }
 [ "$selected" = 4 ] || fail "explicit-osarch selected package command returned '$selected' instead of version 4"
 
-current=$(run_pkg default "$package!$target_osarch" 2> "$tmp/query-target.err") || {
-  cat "$tmp/query-target.err" >&2
+current=$(run_pkg default "$package!macos-arm64" 2> "$tmp/query-macos-arm64.err") || {
+  cat "$tmp/query-macos-arm64.err" >&2
   fail 'pkg default explicit-osarch query failed after selection'
 }
-[ "$current" = "$package@4!$target_osarch" ] ||
+[ "$current" = "$package@4!macos-arm64" ] ||
   fail "pkg default explicit-osarch query returned '$current'"
 
-run_pkg default -u -- "$package!$target_osarch" > "$tmp/clear-target.out" 2> "$tmp/clear-target.err" || {
-  cat "$tmp/clear-target.err" >&2
+run_pkg default -u -- "$package!macos-arm64" > "$tmp/clear-macos-arm64.out" 2> "$tmp/clear-macos-arm64.err" || {
+  cat "$tmp/clear-macos-arm64.err" >&2
   fail 'pkg default could not clear explicit-osarch current binding'
 }
 
-if run_pkg default "$package!$target_osarch" > "$tmp/query-target-cleared.out" 2> "$tmp/query-target-cleared.err"
+if run_pkg default "$package!macos-arm64" > "$tmp/query-macos-arm64-cleared.out" 2> "$tmp/query-macos-arm64-cleared.err"
 then
   fail 'explicit-osarch pkg default query succeeded after clearing the current binding'
 else
