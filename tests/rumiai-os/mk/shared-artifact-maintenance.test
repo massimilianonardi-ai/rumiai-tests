@@ -1,0 +1,271 @@
+#!/bin/sh
+
+TEST_ID="rumiai-os/mk/shared-artifact-maintenance.test"
+
+fail()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+
+skip()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+
+error()
+{
+  printf -- '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self="$(command -v "$self" 2>/dev/null)" || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+trace_count()
+{
+  file=$1
+  if [ -f "$file" ]
+  then
+    command -p -- awk 'END { print NR }' "$file"
+  else
+    printf -- '0\n'
+  fi
+}
+
+sha256_value()
+{
+  "$root/m" node -e 'const c=require("node:crypto");process.stdout.write(c.createHash("sha256").update(process.argv[1]).digest("hex")+"\\n")' "$1"
+}
+
+wait_marker()
+{
+  marker=$1
+  count=0
+  while [ ! -f "$marker" ]
+  do
+    count=$((count + 1))
+    [ "$count" -lt 500 ] || return 1
+    sleep 0.02
+  done
+}
+
+stop_helper()
+{
+  pid=$1
+  kill -s KILL "$pid" 2>/dev/null || :
+  wait "$pid" 2>/dev/null || :
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  [ -z "${helper_pid-}" ] || stop_helper "$helper_pid"
+  [ -z "${cache_project-}" ] || command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
+  if [ -n "${shared_root-}" ] && [ -d "$shared_root" ] && [ -n "${shared_before-}" ] && [ -f "$shared_before" ]
+  then
+    for shared_entry in "$shared_root"/*
+    do
+      [ -e "$shared_entry" ] || continue
+      shared_name=${shared_entry##*/}
+      if ! command -p -- grep -F -x -- "$shared_name" "$shared_before" >/dev/null 2>&1
+      then
+        command -p -- rm -rf -- "$shared_entry" 2>/dev/null || :
+      fi
+    done
+  fi
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir="$(resolve_test_dir)" || error "cannot resolve test directory"
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error "cannot source rumiai-os target helper"
+
+root="$(rumiai_test_target_rumiai_os_find "$suite_root")"
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip "rumiai-os target checkout not found" ;;
+  2) fail "invalid explicit rumiai-os target" ;;
+  *) error "target discovery failed" ;;
+esac
+
+command_path="$root/bin/sys/mk"
+[ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
+[ -x "$root/bin/sys/state-path" ] || fail "state-path command is missing"
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+then
+  skip "managed nodejs runtime is not installed/default in the supplied target"
+fi
+
+command -p -- mkfifo --help >/dev/null 2>&1 || command -v mkfifo >/dev/null 2>&1 ||
+  skip "mkfifo is not available on this POSIX host"
+
+tmp="${TMPDIR:-/tmp}/rumiai-mk-shared-artifact-maintenance-$$"
+umask 077
+mkdir "$tmp" || error "cannot create temporary directory"
+tmp="$(CDPATH= cd -- "$tmp" 2>/dev/null && pwd -P)" ||
+  error "cannot canonicalize temporary directory"
+
+project="$tmp/project"
+mkdir -p "$project/src" || error "cannot create project fixture"
+printf '%s\n' HYGIENE > "$project/src/input.txt" || error "cannot create source"
+
+cat > "$project/mk.json" <<'EOF_PROJECT' || error "cannot write project"
+{
+  "version": 2,
+  "goals": {"build": ["build"]},
+  "operations": {
+    "build": {
+      "inputs": {"source": {"path": "src/input.txt"}},
+      "incremental": {},
+      "outputs": {"artifact": {"path": "out/artifact"}},
+      "action": {
+        "type": "process",
+        "command": "sh",
+        "args": ["-c", "mkdir -p out; cp src/input.txt out/artifact; printf 'run\\n' >> trace"]
+      }
+    }
+  }
+}
+EOF_PROJECT
+
+cache_root="$("$root/m" "$root/bin/sys/state-path" user sys mk cache)" ||
+  error "cannot resolve mk cache area"
+shared_root="$cache_root/shared-artifacts"
+shared_before="$tmp/shared-before"
+if [ -d "$shared_root" ]
+then
+  command -p -- ls -1 "$shared_root" > "$shared_before" ||
+    error "cannot snapshot shared artifact state"
+else
+  : > "$shared_before" || error "cannot create shared snapshot"
+fi
+
+project_key="$(sha256_value "$project")" || error "cannot compute project key"
+operation_key="$(sha256_value build)" || error "cannot compute operation key"
+cache_project="$cache_root/projects/$project_key"
+command -p -- rm -rf -- "$cache_project" 2>/dev/null || :
+
+"$command_path" --project "$project" build || fail "initial build failed"
+[ "$(trace_count "$project/trace")" -eq 1 ] || fail "initial action did not execute once"
+
+record="$cache_project/operations/$operation_key.json"
+[ -f "$record" ] || error "freshness record missing"
+fingerprint="$("$root/m" node - "$record" <<'EOF_NODE'
+const fs=require('node:fs');
+const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(typeof v.fingerprint!=='string'||!/^[a-f0-9]{64}$/.test(v.fingerprint)) process.exit(1);
+process.stdout.write(v.fingerprint+'\n');
+EOF_NODE
+)" || error "cannot read fingerprint"
+
+artifact_root="$shared_root/$fingerprint"
+[ -d "$artifact_root" ] || error "artifact root missing"
+selected="$(cat "$artifact_root/current")" || error "cannot read selector"
+selected_path="$artifact_root/candidates/$selected"
+[ -d "$selected_path" ] || error "selected candidate missing"
+
+# Ordinary structural hygiene preserves current and reclaims an unselected candidate.
+duplicate="$selected-old"
+command -p -- cp -R -- "$selected_path" "$artifact_root/candidates/$duplicate" ||
+  error "cannot create unselected candidate fixture"
+command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output"
+"$command_path" --project "$project" build || fail "hygiene restore failed"
+[ "$(trace_count "$project/trace")" -eq 1 ] || fail "hygiene restore reran action"
+[ -d "$selected_path" ] || fail "MK-86 ordinary hygiene reclaimed selected candidate"
+[ ! -e "$artifact_root/candidates/$duplicate" ] ||
+  fail "MK-86 ordinary hygiene did not reclaim unselected candidate"
+
+helper="$tmp/lease-holder.js"
+cat > "$helper" <<'EOF_NODE' || error "cannot write lease helper"
+'use strict';
+const fs=require('node:fs');
+const fifo=process.argv[2], marker=process.argv[3];
+const fd=fs.openSync(fifo, fs.constants.O_RDONLY|fs.constants.O_NONBLOCK);
+fs.writeFileSync(marker,'ready\n');
+setInterval(()=>{},1000);
+process.on('exit',()=>{try{fs.closeSync(fd);}catch(e){}});
+EOF_NODE
+
+# A live publication token blocks maintenance; SIGKILL makes the same pathname stale.
+publication_dir="$artifact_root/.publication-leases"
+mkdir -p "$publication_dir" || error "cannot create publication lease directory"
+publication_fifo="$publication_dir/test-publication"
+command -p -- mkfifo "$publication_fifo" || error "cannot create publication fifo"
+publication_marker="$tmp/publication-ready"
+"$root/m" node "$helper" "$publication_fifo" "$publication_marker" &
+helper_pid=$!
+wait_marker "$publication_marker" || fail "publication helper did not become live"
+
+duplicate="$selected-live"
+command -p -- cp -R -- "$selected_path" "$artifact_root/candidates/$duplicate" ||
+  error "cannot create live-publication candidate fixture"
+selector_temp="$artifact_root/.current-live"
+printf '%s\n' "$selected" > "$selector_temp" || error "cannot create selector temp"
+command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output"
+"$command_path" --project "$project" build || fail "restore with live publication failed"
+[ -e "$artifact_root/candidates/$duplicate" ] ||
+  fail "MK-88 maintenance crossed a live publication token"
+[ -e "$selector_temp" ] || fail "MK-88 maintenance removed selector temp during live publication"
+[ -p "$publication_fifo" ] || fail "MK-88 live publication token was reaped"
+
+stop_helper "$helper_pid"
+helper_pid=
+command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output after publication crash"
+"$command_path" --project "$project" build || fail "post-publication-crash restore failed"
+[ ! -e "$artifact_root/candidates/$duplicate" ] ||
+  fail "MK-88 stale publication state did not unblock hygiene"
+[ ! -e "$selector_temp" ] || fail "MK-88 stale selector temp was not reclaimed"
+[ ! -e "$publication_fifo" ] || fail "MK-88 stale publication fifo was not reaped"
+
+# A live attempt token protects staging; owner death makes it reclaimable.
+attempt_dir="$artifact_root/.attempt-leases"
+mkdir -p "$attempt_dir" || error "cannot create attempt lease directory"
+attempt_fifo="$attempt_dir/test-attempt"
+staging="$artifact_root/.staging-test-attempt"
+mkdir -p "$staging" || error "cannot create staging fixture"
+printf '%s\n' partial > "$staging/value" || error "cannot populate staging fixture"
+command -p -- mkfifo "$attempt_fifo" || error "cannot create attempt fifo"
+attempt_marker="$tmp/attempt-ready"
+"$root/m" node "$helper" "$attempt_fifo" "$attempt_marker" &
+helper_pid=$!
+wait_marker "$attempt_marker" || fail "attempt helper did not become live"
+command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output for live attempt"
+"$command_path" --project "$project" build || fail "restore with live attempt failed"
+[ -d "$staging" ] || fail "MK-86 live staging was reclaimed"
+[ -p "$attempt_fifo" ] || fail "MK-88 live attempt fifo was reaped"
+
+stop_helper "$helper_pid"
+helper_pid=
+command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output after attempt crash"
+"$command_path" --project "$project" build || fail "post-attempt-crash restore failed"
+[ ! -e "$staging" ] || fail "MK-86 abandoned staging was not reclaimed"
+[ ! -e "$attempt_fifo" ] || fail "MK-88 stale attempt fifo was not reaped"
+
+# A stale maintenance token from a dead owner is reaped by a later hygiene pass.
+maintenance_dir="$artifact_root/.maintenance-leases"
+mkdir -p "$maintenance_dir" || error "cannot create maintenance lease directory"
+maintenance_fifo="$maintenance_dir/test-maintenance"
+command -p -- mkfifo "$maintenance_fifo" || error "cannot create maintenance fifo"
+command -p -- rm -f -- "$project/out/artifact" || error "cannot remove output for stale maintenance"
+"$command_path" --project "$project" build || fail "restore with stale maintenance token failed"
+[ ! -e "$maintenance_fifo" ] || fail "MK-88 stale maintenance fifo was not reaped"
+[ "$(trace_count "$project/trace")" -eq 1 ] || fail "maintenance hygiene changed lifecycle execution"
+
+printf '%s\n' "PASS shared artifact structural hygiene"
+exit 0
