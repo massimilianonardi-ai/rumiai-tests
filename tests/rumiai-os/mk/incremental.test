@@ -320,12 +320,24 @@ before="$(trace_count)"
 [ "$(trace_count)" -eq "$((before + 1))" ] ||
   fail "MK-45 input content change did not invalidate operation"
 
-# Current declared outputs must still match the successful record.
+# Current declared outputs must still match the successful record. With the
+# promoted artifact-restoration baseline, execution may repair a mismatching
+# output from verified local cache state without rerunning the action.
 printf -- '%s\n' tampered > "$project/out/artifact" || error "cannot tamper declared output"
+plan="$tmp/output-invalidated.plan.json"
+"$command_path" --project "$project" --plan build > "$plan" ||
+  fail "output-invalidated plan failed"
+"$root/m" node - "$plan" <<'EOF_NODE' ||
+  fail "MK-50 mismatching declared output was incorrectly reported up-to-date"
+const fs=require('node:fs');
+const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const op=plan.operations.find(value=>value.name==='compile');
+if(!op || op.state!=='ready') process.exit(1);
+EOF_NODE
 before="$(trace_count)"
 "$command_path" --project "$project" build || fail "output-invalidated build failed"
-[ "$(trace_count)" -eq "$((before + 1))" ] ||
-  fail "MK-47 output modification did not invalidate operation"
+[ "$(trace_count)" -eq "$before" ] ||
+  fail "MK-76 verified artifact restoration unnecessarily reran operation"
 command -p -- cmp -s "$project/src/input.txt" "$project/out/artifact" ||
   fail "output-invalidated execution did not restore artifact"
 
@@ -407,14 +419,15 @@ before="$(trace_count)"
 [ "$(trace_count)" -eq "$before" ] ||
   fail "up-to-date generator did not satisfy collection after barrier"
 
-# Repairing a tampered producer output to the same downstream content need not rerun consumer.
+# Repairing a tampered producer output from verified local artifact state need
+# not rerun either producer or unchanged downstream consumer.
 printf -- '%s\n' damaged > "$project/generated/item.txt" || error "cannot tamper generated output"
 before="$(trace_count)"
 "$command_path" --project "$project" generated || fail "generated-output repair failed"
-[ "$(trace_count)" -eq "$((before + 1))" ] ||
-  fail "producer repair reran downstream operation despite identical restored input"
-[ "$(command -p -- tail -n 1 "$trace")" = generate ] ||
-  fail "generator did not perform output repair"
+[ "$(trace_count)" -eq "$before" ] ||
+  fail "artifact restoration reran producer or downstream operation"
+command -p -- cmp -s "$project/seed.txt" "$project/generated/item.txt" ||
+  fail "generated output was not restored from verified artifact state"
 
 printf -- '%s\n' two > "$project/seed.txt" || error "cannot change generator seed"
 before="$(trace_count)"
