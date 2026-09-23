@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-tests
-          ref: a520387658ca9efa34331ba1639ebfe066a82c27
+          ref: 609158df06efe08b594be9174ad37a150fa6c5a6
           path: rumiai-tests
 
       - name: Checkout target
@@ -51,13 +51,23 @@ jobs:
           RUMIAI_OS_TARGET="$PWD/rumiai-os"
           export PATH RUMIAI_OS_TARGET
           cd rumiai-tests
-          ./rumiai-test rumiai-os/mk/lifecycle.test
-          ./rumiai-test rumiai-os/mk/refinement.test
-          ./rumiai-test rumiai-os/mk/project-dependency.test
-          ./rumiai-test rumiai-os/mk/requirement.test
-          ./rumiai-test rumiai-os/mk/incremental.test
-          ./rumiai-test rumiai-os/mk/inputs.test
-          ./rumiai-test rumiai-os/mk/provider-incremental.test
-          ./rumiai-test rumiai-os/mk/watch.test
-          ./rumiai-test rumiai-os/mk/artifact-restoration.test
-          ./rumiai-test rumiai-os/mk/shared-artifact-concurrency.test
+          run_test()
+          {
+            selection=$1
+            if ./rumiai-test "$selection"
+            then
+              return 0
+            fi
+            find .runs -type f -path "*/logs/$selection" -exec cat {} \; 2>/dev/null || :
+            return 1
+          }
+          run_test rumiai-os/mk/lifecycle.test
+          run_test rumiai-os/mk/refinement.test
+          run_test rumiai-os/mk/project-dependency.test
+          run_test rumiai-os/mk/requirement.test
+          run_test rumiai-os/mk/incremental.test
+          run_test rumiai-os/mk/inputs.test
+          run_test rumiai-os/mk/provider-incremental.test
+          run_test rumiai-os/mk/watch.test
+          run_test rumiai-os/mk/artifact-restoration.test
+          run_test rumiai-os/mk/shared-artifact-concurrency.test
