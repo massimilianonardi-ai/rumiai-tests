@@ -229,7 +229,7 @@ EOF_NODE
 collection_plan="$tmp/collection.plan.json"
 "$command_path" --project "$project" --plan collection > "$collection_plan" ||
   fail "collection-input plan failed"
-"$root/m" node - "$collection_plan" <<'EOF_NODE' || fail "MK-54 collection input did not make collection reachable"
+"$root/m" node - "$collection_plan" <<'EOF_NODE' || fail "MK-44/MK-55 collection input did not make collection reachable"
 const fs=require('node:fs');
 const plan=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const collection=plan.collections.find(value=>value.name==='sources');
