@@ -27,7 +27,7 @@ cleanup()
   then
     run_pkg default -u -- "$package" >/dev/null 2>&1 || :
 
-    for cleanup_version in 1 2 4 5
+    for cleanup_version in 1 2 4 5 8
     do
       if [ -d "$root/pkg/$package@$cleanup_version" ] && [ ! -L "$root/pkg/$package@$cleanup_version" ]
       then
@@ -308,6 +308,38 @@ expected_service_command=$service_concrete/cmd/$service_command
 }
 [ ! -e "$service_concrete" ] && [ ! -L "$service_concrete" ] ||
   fail 'service provider concrete remained after deintegration'
+
+range_payload_root=$tmp/range-payload-root
+payload_payload_root=$tmp/payload-payload-root
+mkdir "$range_payload_root" || error 'cannot create dmg-pkg payload-root definition'
+printf '%s\n' dmg-pkg > "$range_payload_root/format" || error 'cannot write dmg-pkg format'
+printf '%s\n' Example.pkg > "$range_payload_root/component" || error 'cannot write dmg-pkg component'
+printf '%s\n' private/tmp/example/root > "$range_payload_root/payload-root" || error 'cannot write payload-root'
+make_payload "$payload_payload_root" payload-root || error 'cannot create payload-root integration payload'
+integrate 8 "$range_payload_root" "$payload_payload_root" > "$tmp/payload-root.out" 2> "$tmp/payload-root.err" || {
+  cat "$tmp/payload-root.err" >&2
+  fail 'valid dmg-pkg payload-root metadata was rejected by integration'
+}
+"$root/m" "$driver" deintegrate "$package" 8 > "$tmp/payload-root-remove.out" 2> "$tmp/payload-root-remove.err" || {
+  cat "$tmp/payload-root-remove.err" >&2
+  fail 'payload-root metadata package could not be deintegrated'
+}
+
+range_payload_root_invalid=$tmp/range-payload-root-invalid
+payload_payload_root_invalid=$tmp/payload-payload-root-invalid
+mkdir "$range_payload_root_invalid" || error 'cannot create invalid payload-root definition'
+printf '%s\n' dmg-pkg > "$range_payload_root_invalid/format" || error 'cannot write invalid-case format'
+printf '%s\n' Example.pkg > "$range_payload_root_invalid/component" || error 'cannot write invalid-case component'
+printf '%s\n' ../escape > "$range_payload_root_invalid/payload-root" || error 'cannot write invalid payload-root'
+make_payload "$payload_payload_root_invalid" payload-root-invalid || error 'cannot create invalid payload-root integration payload'
+if integrate 9 "$range_payload_root_invalid" "$payload_payload_root_invalid" > "$tmp/payload-root-invalid.out" 2> "$tmp/payload-root-invalid.err"
+then
+  fail 'pkg_integrate accepted a traversing dmg-pkg payload-root'
+else
+  [ "$?" -eq 1 ] || fail 'invalid payload-root did not return 1'
+fi
+[ -d "$payload_payload_root_invalid" ] && [ -f "$payload_payload_root_invalid/payload-marker" ] ||
+  fail 'rejected payload-root definition consumed caller-owned payload'
 
 range_unsupported=$tmp/range-unsupported
 payload_unsupported=$tmp/payload-unsupported
