@@ -39,7 +39,13 @@ jobs:
           PATH="$PWD/rumiai-os:$PWD/rumiai-os/bin/sys:$PATH"
           export PATH
           cd rumiai-os
-          ./m pkg install nodejs
+          attempt=1
+          while ! ./m pkg install nodejs
+          do
+            [ "$attempt" -lt 3 ] || exit 1
+            attempt=$((attempt + 1))
+            sleep 3
+          done
           nodejs_version="$(./m pkg versions nodejs | sed -n '1p')"
           [ -n "$nodejs_version" ]
           ./m pkg default "$nodejs_version"
