@@ -237,6 +237,29 @@ grep -F "rumiai-os:    $new_target" "$tmp/health-transcript" >/dev/null 2>&1 || 
 grep -F 'Selection:    tests/ (full suite)' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope did not invoke the full suite'
 grep -F 'Health result: SUCCESS' "$tmp/health-transcript" >/dev/null 2>&1 || fail 'root health scope was not reported successful'
 
+# An invocation-level exact target override freezes the requested revision without
+# modifying the versioned health scope.
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target"     "$work_suite/rumiai-validate" --rumiai-os-commit="$old_target" health > "$tmp/override-transcript" 2>&1
+override_status="$?"
+if [ "$override_status" -ne 0 ]; then
+    cat "$tmp/override-transcript" >&2
+    fail "invocation-level target override returned $override_status"
+fi
+grep -F "rumiai-os:    $old_target" "$tmp/override-transcript" >/dev/null 2>&1 ||
+    fail 'invocation-level target override was not applied'
+[ "$(git -C "$tmp/work/rumiai-os" rev-parse HEAD)" = "$new_target" ] ||
+    fail 'target override moved the primary product checkout'
+
+# Scope and invocation pins are intentionally mutually exclusive.
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target"     "$work_suite/rumiai-validate" --rumiai-os-commit="$new_target" demo > "$tmp/conflict-transcript" 2>&1
+conflict_status="$?"
+[ "$conflict_status" -eq 3 ] || {
+    cat "$tmp/conflict-transcript" >&2
+    fail "scope/invocation commit conflict returned $conflict_status instead of 3"
+}
+grep -F 'rumiai-os commit is pinned both by scope and invocation' "$tmp/conflict-transcript" >/dev/null 2>&1 ||
+    fail 'scope/invocation commit conflict was not reported'
+
 # A task scope still requires at least one explicit selection.
 counter_before="$(cat "$tmp/fake-state/counter")" || error 'cannot read fake runner counter before invalid task scope'
 RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_SCOPE_STATE="$tmp/fake-state" FAKE_EXPECTED_TARGET="$old_target" "$work_suite/rumiai-validate" bad-task > "$tmp/bad-task-transcript" 2>&1
