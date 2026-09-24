@@ -180,7 +180,7 @@ printf 'rumiai-os-commit\t%s\nselection\twrong-selection\n' "$expected_target" >
     error 'cannot write alpha validation scope'
 printf 'rumiai-os-commit\t%s\nselection\trumiai-os/bootstrap\n' "$expected_target" > "$tmp/suite-seed/validation/beta.conf" ||
     error 'cannot write beta validation scope'
-printf 'kind\thealth\nrumiai-os-commit\t%s\n' "$expected_target" > "$tmp/suite-seed/validation/rumiai-os-health.conf" ||
+printf 'kind\thealth\n' > "$tmp/suite-seed/validation/rumiai-os-health.conf" ||
     error 'cannot write full-suite health scope'
 git -C "$tmp/suite-seed" add -A lib/sh/rumiai-validate.lib.sh validation ||
     error 'cannot stage suite update'
@@ -218,6 +218,34 @@ grep -F 'enter the number of an available validation scope' "$tmp/first-transcri
 
 rm "$work_suite/local-untracked" || error 'cannot remove test residue'
 
+# Advance the suite remote after the local launcher has updated. A frozen
+# validation must retain the exact local suite revision while still using the
+# requested exact product revision.
+printf 'newer\n' > "$tmp/suite-seed/frozen-probe" || error 'cannot write frozen-suite probe'
+git -C "$tmp/suite-seed" add frozen-probe || error 'cannot stage frozen-suite probe'
+commit_repo "$tmp/suite-seed" newer-suite || error 'cannot commit newer suite'
+git -C "$tmp/suite-seed" push -q origin "$suite_branch" || error 'cannot push newer suite'
+newer_suite=$(git -C "$tmp/suite-seed" rev-parse HEAD) || error 'cannot read newer suite commit'
+
+RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" FAKE_SESSION_COUNTER="$tmp/session-counter" \
+    FAKE_EXPECTED_TARGET="$expected_target" "$work_suite/rumiai-validate" \
+    --no-suite-update --rumiai-os-commit="$expected_target" rumiai-os-health \
+    > "$tmp/frozen-transcript" 2>&1
+frozen_status=$?
+if [ "$frozen_status" -ne 0 ]; then
+    cat "$tmp/frozen-transcript" >&2
+    fail "frozen validation returned $frozen_status"
+fi
+[ "$(git -C "$work_suite" rev-parse HEAD)" = "$expected_suite" ] ||
+    fail 'frozen validation advanced the suite revision'
+[ "$expected_suite" != "$newer_suite" ] || error 'newer suite fixture did not advance'
+grep -F 'Using frozen rumiai-tests revision; suite update disabled for this validation.' "$tmp/frozen-transcript" >/dev/null ||
+    fail 'frozen suite mode was not reported'
+grep -F "rumiai-os:    $expected_target" "$tmp/frozen-transcript" >/dev/null ||
+    fail 'frozen validation did not report the requested target revision'
+[ "$(cat "$tmp/runner-args")" = '--validation' ] ||
+    fail 'frozen full-product validation did not execute the root suite'
+
 printf '2\n' | RUMIAI_TEST_RUMIAI_OS_ROOT="$tmp/work/rumiai-os" FAKE_ARGS="$tmp/runner-args" FAKE_PWD="$tmp/runner-pwd" FAKE_SESSION_COUNTER="$tmp/session-counter" \
     sh -c 'cd "$1" && "$2"' sh "$tmp/elsewhere" "$work_suite/rumiai-validate" \
     > "$tmp/second-transcript" 2>&1
@@ -253,6 +281,6 @@ grep -F 'Selection:    tests/ (full suite)' "$tmp/full-transcript" >/dev/null ||
 grep -F 'Health result: SUCCESS' "$tmp/full-transcript" >/dev/null || fail 'full-suite health run was not reported successful'
 
 publication_count="$(git -C "$tmp/suite-remote.git" for-each-ref --format='%(refname)' refs/heads/validation/ | wc -l | tr -d ' ')"
-[ "$publication_count" -eq 4 ] || fail "expected two child sessions plus two outer validation records, found $publication_count"
+[ "$publication_count" -eq 6 ] || fail "expected three child sessions plus three outer validation records, found $publication_count"
 
 exit 0
