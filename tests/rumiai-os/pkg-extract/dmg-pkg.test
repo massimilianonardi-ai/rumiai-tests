@@ -33,7 +33,7 @@ mkdir -p \
   "$tmp/payload/Library/LaunchAgents" \
   "$tmp/raw-payload/bin" \
   "$tmp/raw-payload/lib" \
-  "$tmp/pinentry-payload/private/tmp/org.gpgtools/pinentry_install/pinentry-mac.app/Contents/MacOS" \
+  "$tmp/pinentry-payload/pinentry-mac.app/Contents/MacOS" \
   "$tmp/component/MacGPG2.1_Core.pkg" \
   "$tmp/component/pinentry_Core.pkg" \
   "$tmp/component/Raw.pkg" \
@@ -54,11 +54,11 @@ printf '%s\n' installer-only > "$tmp/payload/Library/LaunchAgents/org.gpgtools.m
 ) || error 'cannot create compressed component cpio'
 gzip -c < "$tmp/payload.cpio" > "$tmp/component/MacGPG2.1_Core.pkg/Payload" || error 'cannot compress component payload'
 
-cat > "$tmp/pinentry-payload/private/tmp/org.gpgtools/pinentry_install/pinentry-mac.app/Contents/MacOS/pinentry-mac" <<'EOF_PINENTRY'
+cat > "$tmp/pinentry-payload/pinentry-mac.app/Contents/MacOS/pinentry-mac" <<'EOF_PINENTRY'
 #!/bin/sh
 exit 0
 EOF_PINENTRY
-chmod 755 "$tmp/pinentry-payload/private/tmp/org.gpgtools/pinentry_install/pinentry-mac.app/Contents/MacOS/pinentry-mac" ||
+chmod 755 "$tmp/pinentry-payload/pinentry-mac.app/Contents/MacOS/pinentry-mac" ||
   error 'cannot prepare pinentry overlay executable'
 (
   CDPATH= cd -- "$tmp/pinentry-payload" || exit 1
@@ -69,8 +69,6 @@ gzip -c < "$tmp/pinentry.cpio" > "$tmp/component/pinentry_Core.pkg/Payload" ||
 
 printf '%s\n' pinentry_Core.pkg > "$tmp/overlay/pinentry/component" ||
   error 'cannot write pinentry overlay component'
-printf '%s\n' private/tmp/org.gpgtools/pinentry_install > "$tmp/overlay/pinentry/payload-root" ||
-  error 'cannot write pinentry overlay payload root'
 printf '%s\n' libexec > "$tmp/overlay/pinentry/target-root" ||
   error 'cannot write pinentry overlay target root'
 
