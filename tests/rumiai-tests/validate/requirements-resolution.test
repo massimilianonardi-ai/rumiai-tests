@@ -74,6 +74,8 @@ printf '%s\n' baseline/contract.test rumiai-os/mk/lifecycle.test rumiai-os/mk/wa
     error 'cannot write selected-test fixture'
 
 validation_requirements_resolve "$runner" "$selected"
+cp "$selected" "$validation_evidence_work/discovered-tests" ||
+    error 'cannot create canonical discovered-test fixture'
 
 [ "$validation_target_package_count" -eq 1 ] ||
     fail "expected one deduplicated target package, got $validation_target_package_count"
