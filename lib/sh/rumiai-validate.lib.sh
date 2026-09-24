@@ -616,6 +616,33 @@ validation_environment_destroy() {
     return 0
 }
 
+validation_environment_parent() {
+    validation_environment_host=$(uname -s 2>/dev/null) || return 1
+    case $validation_environment_host in
+        Darwin)
+            printf '%s\n' /tmp
+            ;;
+        *)
+            printf '%s\n' "${TMPDIR:-/tmp}"
+            ;;
+    esac
+}
+
+validation_environment_create_root() {
+    validation_environment_base=$(validation_environment_parent) || return 1
+    [ -d "$validation_environment_base" ] || return 1
+
+    while :; do
+        validation_environment_counter=$((validation_environment_counter + 1))
+        validation_environment_candidate=$validation_environment_base/rumiai-validate-env-$-$validation_environment_counter
+        if (umask 077; mkdir "$validation_environment_candidate") 2>/dev/null; then
+            validation_environment_root=$validation_environment_candidate
+            return 0
+        fi
+        [ "$validation_environment_counter" -lt 1000 ] || return 1
+    done
+}
+
 validation_preparation_observe() {
     prepared_osarch=$1
     prepared_catalog_commit=$2
@@ -703,9 +730,8 @@ prepare_validation_environment() {
     primary_origin=$(git -C "$primary_root" config --get remote.origin.url 2>/dev/null) ||
         fatal 'cannot read rumiai-os canonical origin URL'
 
-    validation_environment_counter=$((validation_environment_counter + 1))
-    validation_environment_root=${TMPDIR:-/tmp}/rumiai-validate-env-$$-$validation_environment_counter
-    [ ! -e "$validation_environment_root" ] || fatal "temporary validation environment already exists: $validation_environment_root"
+    validation_environment_create_root ||
+        fatal 'cannot create temporary validation environment root'
     mkdir -p "$validation_environment_root/home/.config" \
         "$validation_environment_root/home/.cache" \
         "$validation_environment_root/home/.local/share" \
