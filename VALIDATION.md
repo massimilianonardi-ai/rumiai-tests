@@ -22,7 +22,9 @@ Modalità:
 
 ```text
 session
-    default; un solo ambiente disposable per l'intera invocazione
+    default; un ambiente per la selection omogenea di uno scope task;
+    nella full product validation, un ambiente separato per baseline e per
+    ciascuna classe di requirement attiva
 
 test
     un ambiente disposable nuovo per ogni singolo test scoperto
@@ -174,7 +176,9 @@ L'isolamento non è una security sandbox: OS, architettura, tool di sistema, ret
 
 È la modalità predefinita.
 
-Un solo clone target e un solo insieme di root utente temporanee vengono creati prima della prima selection e riutilizzati per tutte le selection dello scope. Questo consente anche di osservare effetti cumulativi o contaminazioni tra test.
+Per uno scope task omogeneo, un solo clone target e un solo insieme di root utente temporanee vengono creati prima della prima selection e riutilizzati per tutte le selection dello scope. Questo consente anche di osservare effetti cumulativi o contaminazioni tra test.
+
+La full product validation è invece partizionata: la baseline e ciascun requirement profile attivo ricevono ambienti session indipendenti. I test di una stessa classe condividono il loro ambiente; classi diverse non condividono prerequisiti o stato preparato.
 
 Ogni selection resta una normale invocazione elementare di `rumiai-test --validation`.
 
@@ -212,7 +216,7 @@ ERROR
 
 `ERROR` indica che l'audit richiesto dalla validation formale non è stato completato e produce errore infrastrutturale della validation.
 
-In modalità `session` esiste un audit dell'intera vita dell'ambiente. In modalità `test` esiste un audit distinto per ogni test.
+In modalità `session` esiste un audit dell'intera vita di ciascun ambiente session: uno per uno scope task omogeneo oppure uno per baseline/requirement group nella full product validation. In modalità `test` esiste un audit distinto per ogni test.
 
 ## Risultati task/health
 
@@ -252,8 +256,9 @@ Il record contiene almeno:
 validation          metadati globali e aggregate status
 selections          selection richieste
 sessions            run-id delle sessioni elementari
-environment/        audit session-wide, in isolation=session
-environments/       audit per test, in isolation=test
+environment/        audit dell'unico ambiente session quando la validation è omogenea
+environments/       audit per baseline/requirement group in full-product session,
+                    oppure audit per test in isolation=test
 discovered-tests    set canonico dei test selezionati, sempre presente
 requirement-groups/  profili attivi, test reclamati e baseline calcolata quando applicabile
 ```
