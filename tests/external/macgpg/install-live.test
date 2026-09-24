@@ -122,14 +122,6 @@ done
 
 pinentry="$pkg_root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
 [ -x "$pinentry" ] || fail 'installed MacGPG is missing the pinentry overlay executable'
-DYLD_LIBRARY_PATH="$pkg_root/lib" "$pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
-  cat "$tmp/pinentry-version.out" >&2
-  cat "$tmp/pinentry-version.err" >&2
-  fail 'relocated pinentry-mac --version failed'
-}
-grep -i 'pinentry' "$tmp/pinentry-version.out" >/dev/null 2>&1 ||
-  grep -i 'pinentry' "$tmp/pinentry-version.err" >/dev/null 2>&1 ||
-  fail 'relocated pinentry-mac did not identify itself'
 
 GNUPGHOME="$gnupg_home" \
 PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
@@ -142,10 +134,43 @@ PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
 agent_conf="$gnupg_home/gpg-agent.conf"
 [ -f "$agent_conf" ] && [ ! -L "$agent_conf" ] ||
   fail 'public gpg did not create a regular isolated gpg-agent.conf'
-expected_pinentry="$root/pkg/macgpg!$osarch/root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
+
+macgpg_run=$(PATH="$root/bin/sys:$PATH" "$root/m" "$root/bin/sys/state-path" user pkg macgpg run) ||
+  fail 'cannot resolve MacGPG runtime state'
+expected_pinentry="$macgpg_run/pinentry"
+expected_pinentry_root="$macgpg_run/pinentry-root"
 expected_pinentry_line="pinentry-program \"$expected_pinentry\""
+[ -x "$expected_pinentry" ] || fail 'public gpg did not create an executable pinentry wrapper'
+[ -f "$expected_pinentry_root" ] && [ ! -L "$expected_pinentry_root" ] ||
+  fail 'public gpg did not create a regular pinentry root descriptor'
+grep -Fx "$root/pkg/macgpg!$osarch/root" "$expected_pinentry_root" >/dev/null 2>&1 ||
+  fail 'pinentry wrapper does not resolve through the stable MacGPG selector'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
-  fail 'isolated gpg-agent.conf does not point to the relocatable MacGPG pinentry'
+  fail 'isolated gpg-agent.conf does not point to the relocatable pinentry wrapper'
+
+"$expected_pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
+  cat "$tmp/pinentry-version.out" >&2
+  cat "$tmp/pinentry-version.err" >&2
+  fail 'relocatable pinentry wrapper could not launch pinentry-mac without caller DYLD state'
+}
+grep -i 'pinentry' "$tmp/pinentry-version.out" >/dev/null 2>&1 ||
+  grep -i 'pinentry' "$tmp/pinentry-version.err" >/dev/null 2>&1 ||
+  fail 'relocatable pinentry wrapper did not identify pinentry-mac'
+
+direct_pinentry="$root/pkg/macgpg!$osarch/root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
+printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$direct_pinentry" > "$agent_conf" ||
+  error 'cannot prepare previous direct RumiAI pinentry configuration'
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg --version > "$tmp/direct-version.out" 2> "$tmp/direct-version.err" || {
+  cat "$tmp/direct-version.out" >&2
+  cat "$tmp/direct-version.err" >&2
+  fail 'public gpg could not migrate previous direct RumiAI pinentry configuration'
+}
+grep -F "$direct_pinentry" "$agent_conf" >/dev/null 2>&1 &&
+  fail 'previous direct RumiAI pinentry path survived migration'
+grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
+  fail 'previous direct RumiAI pinentry path was not migrated to the wrapper'
 
 legacy_pinentry='/usr/local/MacGPG2/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac'
 printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$legacy_pinentry" > "$agent_conf" ||
