@@ -154,6 +154,8 @@ grep -Fx "$pkg_root" "$expected_pinentry_stamp" >/dev/null 2>&1 ||
   fail 'cached pinentry is not stamped for the selected concrete'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
   fail 'isolated gpg-agent.conf does not point to the relocated cached pinentry'
+[ ! -e "$macgpg_run/pinentry-mac.app" ] && [ ! -L "$macgpg_run/pinentry-mac.app" ] ||
+  fail 'superseded run-state pinentry app survived cache migration'
 codesign --verify --strict --deep "$expected_pinentry_app" >/dev/null 2>&1 ||
   fail 'cached pinentry app is not validly ad-hoc signed'
 
