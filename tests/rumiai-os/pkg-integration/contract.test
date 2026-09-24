@@ -27,7 +27,7 @@ cleanup()
   then
     run_pkg default -u -- "$package" >/dev/null 2>&1 || :
 
-    for cleanup_version in 1 2 4 5 8
+    for cleanup_version in 1 2 4 5 8 10
     do
       if [ -d "$root/pkg/$package@$cleanup_version" ] && [ ! -L "$root/pkg/$package@$cleanup_version" ]
       then
@@ -340,6 +340,48 @@ else
 fi
 [ -d "$payload_payload_root_invalid" ] && [ -f "$payload_payload_root_invalid/payload-marker" ] ||
   fail 'rejected payload-root definition consumed caller-owned payload'
+
+range_overlay=$tmp/range-overlay
+payload_overlay=$tmp/payload-overlay
+mkdir -p "$range_overlay/overlay/pinentry" || error 'cannot create dmg-pkg overlay definition'
+printf '%s\n' dmg-pkg > "$range_overlay/format" || error 'cannot write overlay format'
+printf '%s\n' Example.pkg > "$range_overlay/component" || error 'cannot write overlay primary component'
+printf '%s\n' pinentry_Core.pkg > "$range_overlay/overlay/pinentry/component" ||
+  error 'cannot write overlay component'
+printf '%s\n' private/tmp/org.gpgtools/pinentry_install > "$range_overlay/overlay/pinentry/payload-root" ||
+  error 'cannot write overlay payload root'
+printf '%s\n' libexec > "$range_overlay/overlay/pinentry/target-root" ||
+  error 'cannot write overlay target root'
+make_payload "$payload_overlay" overlay || error 'cannot create overlay integration payload'
+integrate 10 "$range_overlay" "$payload_overlay" > "$tmp/overlay.out" 2> "$tmp/overlay.err" || {
+  cat "$tmp/overlay.err" >&2
+  fail 'valid dmg-pkg overlay metadata was rejected by integration'
+}
+"$root/m" "$driver" deintegrate "$package" 10 > "$tmp/overlay-remove.out" 2> "$tmp/overlay-remove.err" || {
+  cat "$tmp/overlay-remove.err" >&2
+  fail 'overlay metadata package could not be deintegrated'
+}
+
+range_overlay_invalid=$tmp/range-overlay-invalid
+payload_overlay_invalid=$tmp/payload-overlay-invalid
+mkdir -p "$range_overlay_invalid/overlay/pinentry" || error 'cannot create invalid overlay definition'
+printf '%s\n' dmg-pkg > "$range_overlay_invalid/format" || error 'cannot write invalid overlay format'
+printf '%s\n' Example.pkg > "$range_overlay_invalid/component" || error 'cannot write invalid overlay primary component'
+printf '%s\n' pinentry_Core.pkg > "$range_overlay_invalid/overlay/pinentry/component" ||
+  error 'cannot write invalid overlay component'
+printf '%s\n' ../escape > "$range_overlay_invalid/overlay/pinentry/target-root" ||
+  error 'cannot write invalid overlay target root'
+make_payload "$payload_overlay_invalid" overlay-invalid || error 'cannot create invalid overlay integration payload'
+if integrate 11 "$range_overlay_invalid" "$payload_overlay_invalid" > "$tmp/overlay-invalid.out" 2> "$tmp/overlay-invalid.err"
+then
+  fail 'pkg_integrate accepted a traversing dmg-pkg overlay target-root'
+else
+  [ "$?" -eq 1 ] || fail 'invalid overlay target-root did not return 1'
+fi
+[ -d "$payload_overlay_invalid" ] && [ -f "$payload_overlay_invalid/payload-marker" ] ||
+  fail 'rejected overlay definition consumed caller-owned payload'
+[ ! -e "$root/pkg/$package@11" ] && [ ! -L "$root/pkg/$package@11" ] ||
+  fail 'invalid overlay definition created a concrete package'
 
 range_unsupported=$tmp/range-unsupported
 payload_unsupported=$tmp/payload-unsupported
