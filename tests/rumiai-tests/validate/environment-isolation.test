@@ -63,6 +63,10 @@ validation_audit_status=CLEAN
 . "$validator_lib"
 . "$snapshot_lib"
 
+validation_evidence_work=$tmp/evidence
+mkdir -p "$validation_evidence_work" || error 'cannot create validation evidence fixture'
+: > "$validation_evidence_work/validation" || error 'cannot create validation metadata fixture'
+
 original_home=${HOME-}
 original_tmpdir=${TMPDIR-}
 prepare_validation_environment "$target" "$expected_commit"
