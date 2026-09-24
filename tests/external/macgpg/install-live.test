@@ -157,6 +157,17 @@ grep -i 'pinentry' "$tmp/pinentry-version.out" >/dev/null 2>&1 ||
   grep -i 'pinentry' "$tmp/pinentry-version.err" >/dev/null 2>&1 ||
   fail 'relocatable pinentry wrapper did not identify pinentry-mac'
 
+printf 'BYE\n' | "$expected_pinentry" > "$tmp/pinentry-assuan.out" 2> "$tmp/pinentry-assuan.err" || {
+  cat "$tmp/pinentry-assuan.out" >&2
+  cat "$tmp/pinentry-assuan.err" >&2
+  fail 'relocatable pinentry wrapper could not complete an Assuan startup/bye exchange'
+}
+grep '^OK' "$tmp/pinentry-assuan.out" >/dev/null 2>&1 || {
+  cat "$tmp/pinentry-assuan.out" >&2
+  cat "$tmp/pinentry-assuan.err" >&2
+  fail 'relocatable pinentry wrapper did not emit an Assuan OK greeting'
+}
+
 direct_pinentry="$root/pkg/macgpg!$osarch/root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
 printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$direct_pinentry" > "$agent_conf" ||
   error 'cannot prepare previous direct RumiAI pinentry configuration'
