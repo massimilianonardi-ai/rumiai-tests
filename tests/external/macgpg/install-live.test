@@ -147,6 +147,21 @@ expected_pinentry_line="pinentry-program \"$expected_pinentry\""
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
   fail 'isolated gpg-agent.conf does not point to the relocatable MacGPG pinentry'
 
+legacy_pinentry='/usr/local/MacGPG2/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac'
+printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$legacy_pinentry" > "$agent_conf" ||
+  error 'cannot prepare legacy GPGTools pinentry configuration'
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg --version > "$tmp/legacy-version.out" 2> "$tmp/legacy-version.err" || {
+  cat "$tmp/legacy-version.out" >&2
+  cat "$tmp/legacy-version.err" >&2
+  fail 'public gpg could not migrate legacy GPGTools pinentry configuration'
+}
+grep -F "$legacy_pinentry" "$agent_conf" >/dev/null 2>&1 &&
+  fail 'legacy /usr/local MacGPG pinentry path survived migration'
+grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
+  fail 'legacy GPGTools pinentry path was not migrated to the relocatable path'
+
 GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpgconf" --kill gpg-agent >/dev/null 2>&1 || :
 
 if ! GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpg-agent" \
