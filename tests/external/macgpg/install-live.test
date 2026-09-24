@@ -122,7 +122,7 @@ done
 
 pinentry="$pkg_root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
 [ -x "$pinentry" ] || fail 'installed MacGPG is missing the pinentry overlay executable'
-"$pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
+DYLD_LIBRARY_PATH="$pkg_root/lib" "$pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
   cat "$tmp/pinentry-version.out" >&2
   cat "$tmp/pinentry-version.err" >&2
   fail 'relocated pinentry-mac --version failed'
