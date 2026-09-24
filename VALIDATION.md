@@ -13,6 +13,7 @@ Forme supportate:
 ./rumiai-validate <scope-name>
 ./rumiai-validate --isolation=session <scope-name>
 ./rumiai-validate --isolation=test <scope-name>
+./rumiai-validate --no-suite-update --rumiai-os-commit=<commit> <scope-name>
 ```
 
 L'opzione di isolamento può essere usata anche senza scope esplicito prima della selezione interattiva.
@@ -29,16 +30,32 @@ test
 
 Un valore diverso produce errore del launcher.
 
+Opzioni revision-specifiche:
+
+```text
+--rumiai-os-commit=<commit>
+    usa l'esatto commit target per questa invocazione; è mutuamente esclusivo
+    con un rumiai-os-commit già pin-nato nello scope
+
+--no-suite-update
+    non esegue l'auto-update di rumiai-tests per questa invocazione e usa
+    l'esatto commit della suite già checkoutato
+```
+
+Queste opzioni servono soprattutto agli orchestratori multi-host: la coppia esatta `rumiai-tests` / `rumiai-os` viene congelata una sola volta prima del fan-out e riutilizzata su ogni host. Non cambiano selezione dei test, requirement o semantica del target.
+
 ## Self-location, update e menu
 
-Ad ogni avvio il launcher:
+Nel percorso normale il launcher:
 
 1. risolve la propria root canonica e vi esegue `cd`;
 2. rifiuta modifiche tracked locali prima dell'auto-update;
 3. esegue `git pull --ff-only` su `rumiai-tests`;
-4. se la suite cambia, riavvia il launcher aggiornato preservando la modalità di isolamento richiesta;
+4. se la suite cambia, riavvia il launcher aggiornato preservando scope, isolamento ed eventuale override target;
 5. soltanto dopo il self-update scopre gli scope `validation/*.conf`;
-6. senza scope nominato mostra `0) all tests` e gli altri scope in ordine C/bytewise.
+6. senza scope nominato mostra `0) full product (all tests)` e gli altri scope in ordine C/bytewise.
+
+Con `--no-suite-update` il passo 3 viene deliberatamente omesso: la revisione della suite già checkoutata è l'identità frozen della validation e non può cambiare a metà di una matrice.
 
 `0` seleziona il backing scope:
 
@@ -78,7 +95,7 @@ selection<TAB><test-or-group>
 
 `selection` è ripetibile. Uno scope `task` richiede almeno una selection.
 
-Uno scope `health` senza selection rappresenta la root completa `tests/`. Se `rumiai-os-commit` è omesso, il launcher aggiorna il checkout prodotto primario e valida il suo HEAD committed corrente, registrando comunque l'esatto SHA nell'evidenza. Un commit esplicito resta disponibile per riproduzioni revision-specifiche.
+Uno scope `health` senza selection rappresenta la root completa `tests/`. Se `rumiai-os-commit` è omesso e non è presente un override di invocazione, il launcher aggiorna il checkout prodotto primario e valida il suo HEAD committed corrente, registrando comunque l'esatto SHA nell'evidenza. Un commit esplicito nello scope resta disponibile per riproduzioni revision-specifiche; `--rumiai-os-commit=<commit>` consente invece a un orchestratore di congelare per la sola invocazione una revisione corrente già risolta. Le due forme di pin non possono essere combinate.
 
 Gli scope scelgono **quali test eseguire**. Non dichiarano i prerequisiti di esecuzione dei test.
 
@@ -110,7 +127,7 @@ Il launcher:
 
 1. aggiorna quel checkout con `git pull --ff-only`;
 2. richiede che sia clean;
-3. usa il suo HEAD committed corrente se lo scope non dichiara un commit esplicito, altrimenti verifica il commit pin-nato;
+3. usa il suo HEAD committed corrente se non esiste alcun pin; altrimenti verifica e usa l'esatto commit dichiarato dallo scope oppure dall'override di invocazione;
 4. espande il set di test richiesto con `rumiai-test --list`;
 5. risolve automaticamente tutti i requirement profile che intersecano il set scoperto;
 6. nella full product validation costruisce una baseline che esclude i test reclamati dai requirement profile e un gruppo separato per ciascun profile attivo;
