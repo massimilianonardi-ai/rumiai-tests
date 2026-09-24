@@ -5,6 +5,8 @@ LAUNCHER_HOLD_ON_EXIT=0
 FULL_SUITE_SCOPE_NAME="rumiai-os-health"
 validation_scope_name=
 validation_isolation=session
+validation_target_commit_override=
+validation_suite_update=1
 
 say() {
     printf '%s\n' "$*"
@@ -183,6 +185,17 @@ validate_scope_name() {
     return 0
 }
 
+validate_commit_id() {
+    value=$1
+    case $value in
+        *[!0-9A-Fa-f]*) return 1 ;;
+    esac
+    case ${#value} in
+        40|64) return 0 ;;
+    esac
+    return 1
+}
+
 validation_scope_names() {
     validation_dir=$suite_root/validation
     [ -d "$validation_dir" ] || return 1
@@ -265,6 +278,16 @@ main() {
             --isolation=*)
                 fatal "invalid isolation mode: ${1#--isolation=}"
                 ;;
+            --rumiai-os-commit=*)
+                [ -z "$validation_target_commit_override" ] ||
+                    fatal 'rumiai-os commit override may be supplied only once'
+                validation_target_commit_override=${1#--rumiai-os-commit=}
+                validate_commit_id "$validation_target_commit_override" ||
+                    fatal 'invalid rumiai-os commit override'
+                ;;
+            --no-suite-update)
+                validation_suite_update=0
+                ;;
             -*)
                 fatal "unknown option: $1"
                 ;;
@@ -295,18 +318,25 @@ main() {
     repo_require_no_tracked_changes "$suite_root" 'rumiai-tests'
     suite_head_before=$(git rev-parse HEAD 2>/dev/null) || fatal 'cannot read rumiai-tests HEAD'
 
-    say 'Updating rumiai-tests...'
-    git pull --ff-only || fatal 'cannot update rumiai-tests with fast-forward only'
+    if [ "$validation_suite_update" -eq 1 ]; then
+        say 'Updating rumiai-tests...'
+        git pull --ff-only || fatal 'cannot update rumiai-tests with fast-forward only'
 
-    suite_head_after=$(git rev-parse HEAD 2>/dev/null) || fatal 'cannot read updated rumiai-tests HEAD'
-    if [ "$suite_head_before" != "$suite_head_after" ]; then
-        say 'rumiai-tests updated; restarting current launcher...'
-        if [ -n "$validation_scope_name" ]; then
-            exec "$suite_root/rumiai-validate" "--isolation=$validation_isolation" "$validation_scope_name"
-        else
-            exec "$suite_root/rumiai-validate" "--isolation=$validation_isolation"
+        suite_head_after=$(git rev-parse HEAD 2>/dev/null) || fatal 'cannot read updated rumiai-tests HEAD'
+        if [ "$suite_head_before" != "$suite_head_after" ]; then
+            say 'rumiai-tests updated; restarting current launcher...'
+            set -- "$suite_root/rumiai-validate" "--isolation=$validation_isolation"
+            if [ -n "$validation_target_commit_override" ]; then
+                set -- "$@" "--rumiai-os-commit=$validation_target_commit_override"
+            fi
+            if [ -n "$validation_scope_name" ]; then
+                set -- "$@" "$validation_scope_name"
+            fi
+            exec "$@"
+            fatal 'cannot restart updated launcher'
         fi
-        fatal 'cannot restart updated launcher'
+    else
+        say 'Using frozen rumiai-tests revision; suite update disabled for this validation.'
     fi
 
     if [ -z "$validation_scope_name" ]; then
