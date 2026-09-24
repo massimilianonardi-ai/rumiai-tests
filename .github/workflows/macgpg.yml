@@ -54,6 +54,8 @@ jobs:
       - name: Run formal MacGPG validation
         shell: bash
         run: |
+          export TMPDIR="$RUNNER_TEMP/rumiai validation"
+          mkdir -p "$TMPDIR"
           cd rumiai-tests
           ./rumiai-validate macgpg
 
