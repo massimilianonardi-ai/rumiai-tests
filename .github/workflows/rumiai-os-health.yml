@@ -57,6 +57,14 @@ jobs:
           path: rumiai-tests
           persist-credentials: true
 
+      - name: Anchor frozen suite publication branch
+        shell: bash
+        run: |
+          branch="validation-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.os }}"
+          git -C rumiai-tests switch -c "$branch" "${GITHUB_SHA}"
+          git -C rumiai-tests config "branch.$branch.remote" origin
+          git -C rumiai-tests config "branch.$branch.merge" refs/heads/main
+
       - name: Checkout product source/update point
         uses: actions/checkout@v4
         with:
