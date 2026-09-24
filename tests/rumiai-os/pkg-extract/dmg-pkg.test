@@ -33,8 +33,11 @@ mkdir -p \
   "$tmp/payload/Library/LaunchAgents" \
   "$tmp/raw-payload/bin" \
   "$tmp/raw-payload/lib" \
+  "$tmp/pinentry-payload/private/tmp/org.gpgtools/pinentry_install/pinentry-mac.app/Contents/MacOS" \
   "$tmp/component/MacGPG2.1_Core.pkg" \
+  "$tmp/component/pinentry_Core.pkg" \
   "$tmp/component/Raw.pkg" \
+  "$tmp/overlay/pinentry" \
   "$tmp/outer" "$tmp/dmgsrc" "$tmp/stage" || error 'cannot create fixture'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
@@ -51,6 +54,26 @@ printf '%s\n' installer-only > "$tmp/payload/Library/LaunchAgents/org.gpgtools.m
 ) || error 'cannot create compressed component cpio'
 gzip -c < "$tmp/payload.cpio" > "$tmp/component/MacGPG2.1_Core.pkg/Payload" || error 'cannot compress component payload'
 
+cat > "$tmp/pinentry-payload/private/tmp/org.gpgtools/pinentry_install/pinentry-mac.app/Contents/MacOS/pinentry-mac" <<'EOF_PINENTRY'
+#!/bin/sh
+exit 0
+EOF_PINENTRY
+chmod 755 "$tmp/pinentry-payload/private/tmp/org.gpgtools/pinentry_install/pinentry-mac.app/Contents/MacOS/pinentry-mac" ||
+  error 'cannot prepare pinentry overlay executable'
+(
+  CDPATH= cd -- "$tmp/pinentry-payload" || exit 1
+  find . -print | cpio -o -H odc > "$tmp/pinentry.cpio" 2>/dev/null
+) || error 'cannot create pinentry component cpio'
+gzip -c < "$tmp/pinentry.cpio" > "$tmp/component/pinentry_Core.pkg/Payload" ||
+  error 'cannot compress pinentry component payload'
+
+printf '%s\n' pinentry_Core.pkg > "$tmp/overlay/pinentry/component" ||
+  error 'cannot write pinentry overlay component'
+printf '%s\n' private/tmp/org.gpgtools/pinentry_install > "$tmp/overlay/pinentry/payload-root" ||
+  error 'cannot write pinentry overlay payload root'
+printf '%s\n' libexec > "$tmp/overlay/pinentry/target-root" ||
+  error 'cannot write pinentry overlay target root'
+
 cat > "$tmp/raw-payload/bin/raw-tool" <<'EOF_RAW'
 #!/bin/sh
 exit 0
@@ -64,7 +87,7 @@ printf '%s\n' raw > "$tmp/raw-payload/lib/runtime-marker" || error 'cannot prepa
 
 (
   CDPATH= cd -- "$tmp/component" || exit 1
-  xar -cf "$tmp/outer/Install.pkg" MacGPG2.1_Core.pkg Raw.pkg
+  xar -cf "$tmp/outer/Install.pkg" MacGPG2.1_Core.pkg pinentry_Core.pkg Raw.pkg
 ) || error 'cannot create outer flat package'
 cp "$tmp/outer/Install.pkg" "$tmp/dmgsrc/Install.pkg" || error 'cannot stage outer package'
 hdiutil create -quiet -srcfolder "$tmp/dmgsrc" "$tmp/GPG_Suite-test.dmg" || error 'cannot create DMG fixture'
@@ -77,9 +100,13 @@ pkg_extract "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
-"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.1_Core.pkg private/tmp/org.gpgtools/MacGPG2 || fail 'dmg-pkg payload-root extraction failed'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" \
+  MacGPG2.1_Core.pkg private/tmp/org.gpgtools/MacGPG2 "$tmp/overlay" ||
+  fail 'dmg-pkg payload-root/overlay extraction failed'
 [ -x "$tmp/stage/bin/gpg" ] || fail 'selected payload root did not expose gpg'
 [ -f "$tmp/stage/lib/runtime-marker" ] || fail 'selected payload-root sibling was not preserved'
+[ -x "$tmp/stage/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac" ] ||
+  fail 'pinentry overlay was not materialized at target root'
 [ ! -e "$tmp/stage/private" ] || fail 'payload staging prefix survived payload-root selection'
 [ ! -e "$tmp/stage/Library" ] || fail 'installer-only Payload sibling survived payload-root selection'
 
