@@ -19,7 +19,28 @@ permissions:
   contents: write
 
 jobs:
+  resolve-product:
+    runs-on: ubuntu-latest
+    outputs:
+      rumiai-os-commit: ${{ steps.revision.outputs.commit }}
+    steps:
+      - name: Checkout current product head
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Freeze product revision
+        id: revision
+        shell: bash
+        run: |
+          echo "commit=$(git -C rumiai-os rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   formal-validation:
+    needs: resolve-product
     strategy:
       fail-fast: false
       matrix:
@@ -28,10 +49,10 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout current test suite
+      - name: Checkout frozen test suite revision
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           path: rumiai-tests
           persist-credentials: true
@@ -60,7 +81,10 @@ jobs:
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-validate rumiai-os-health
+          ./rumiai-validate \
+            --no-suite-update \
+            --rumiai-os-commit="${{ needs.resolve-product.outputs.rumiai-os-commit }}" \
+            rumiai-os-health
 
       - name: Upload recoverable local evidence
         if: always()
