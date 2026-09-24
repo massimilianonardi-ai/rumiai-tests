@@ -149,6 +149,8 @@ RUMIAI_TEST_RUMIAI_OS_ROOT
 
 Queste variabili sono confinate al processo figlio; non sostituiscono l'ambiente del processo `rumiai-validate` stesso.
 
+Su Darwin la root disposable viene creata direttamente sotto `/tmp`, invece di ereditare il `TMPDIR` host, per mantenere corti i pathname dei socket Unix usati da software reale dentro la validation. Le root figlie restano protette, isolate, auditate e rimosse con le stesse regole degli altri host.
+
 L'isolamento non è una security sandbox: OS, architettura, tool di sistema, rete e altre risorse host non reindirizzate restano quelle reali.
 
 ## Isolamento `session`
