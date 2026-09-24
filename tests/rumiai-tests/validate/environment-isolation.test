@@ -72,6 +72,12 @@ original_tmpdir=${TMPDIR-}
 prepare_validation_environment "$target" "$expected_commit"
 env_one=$validation_environment_root
 [ -d "$env_one" ] || fail 'validation environment was not created'
+if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+    case $env_one in
+        /tmp/rumiai-validate-env-*) : ;;
+        *) fail "Darwin validation environment did not use the socket-safe /tmp base: $env_one" ;;
+    esac
+fi
 [ "$validation_target_root" != "$target" ] || fail 'validation reused the source target checkout'
 [ "$(git -C "$validation_target_root" rev-parse HEAD)" = "$expected_commit" ] || fail 'temporary target is not at the requested commit'
 [ "$(git -C "$validation_target_root" config --get remote.origin.url)" = "$canonical_origin" ] || fail 'temporary target did not retain canonical origin identity'
