@@ -1151,6 +1151,12 @@ rumiai_validate_run() {
     fi
     load_config "$config_path"
 
+    if [ -n "${validation_target_commit_override-}" ]; then
+        [ -z "$expected_rumiai_os_commit" ] ||
+            fatal 'rumiai-os commit is pinned both by scope and invocation'
+        expected_rumiai_os_commit=$validation_target_commit_override
+    fi
+
     target_lib=$suite_root/lib/rumiai-os-target.lib
     [ -r "$target_lib" ] || fatal "target discovery library not found: $target_lib"
     . "$target_lib"
