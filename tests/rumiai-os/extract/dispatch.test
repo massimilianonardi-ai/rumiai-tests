@@ -61,7 +61,9 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 fakebin="$tmp/bin"
 mkdir "$fakebin" || error "cannot create fake backend directory"
 marker="$tmp/marker"
+dmg_mount="$tmp/dmg-mount"
 export EXTRACT_MARKER="$marker"
+export EXTRACT_FAKE_MOUNT="$dmg_mount"
 
 cat > "$fakebin/cat" <<'EOF_CAT'
 #!/bin/sh
@@ -133,6 +135,8 @@ case "$1" in
   attach)
     printf -- '%s\n' hdiutil-attach >> "$EXTRACT_MARKER"
     [ "${EXTRACT_HDIUTIL_FAIL-}" = attach ] && exit 9
+    command -p mkdir -p "$EXTRACT_FAKE_MOUNT" || exit 9
+    printf -- '%s\n' '<plist/>'
     ;;
   detach)
     printf -- '%s\n' hdiutil-detach >> "$EXTRACT_MARKER"
@@ -143,6 +147,25 @@ esac
 exit 0
 EOF_HDIUTIL
 chmod "700" "$fakebin/hdiutil"
+cat > "$fakebin/plutil" <<'EOF_PLUTIL'
+#!/bin/sh
+[ "$#" -ge 2 ] && [ "$1" = -extract ] || exit 9
+case "$2" in
+  system-entities)
+    printf -- '%s\n' 1
+    ;;
+  system-entities.0.dev-entry)
+    printf -- '%s\n' /dev/fake-dmg
+    ;;
+  system-entities.0.mount-point)
+    printf -- '%s\n' "$EXTRACT_FAKE_MOUNT"
+    ;;
+  *)
+    exit 9
+    ;;
+esac
+EOF_PLUTIL
+chmod "700" "$fakebin/plutil"
 cat > "$fakebin/ditto" <<'EOF_DITTO'
 #!/bin/sh
 printf -- '%s\n' ditto >> "$EXTRACT_MARKER"
