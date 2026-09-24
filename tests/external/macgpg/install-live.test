@@ -135,51 +135,70 @@ agent_conf="$gnupg_home/gpg-agent.conf"
 [ -f "$agent_conf" ] && [ ! -L "$agent_conf" ] ||
   fail 'public gpg did not create a regular isolated gpg-agent.conf'
 
+macgpg_cache=$(PATH="$root/bin/sys:$PATH" "$root/m" "$root/bin/sys/state-path" user pkg macgpg cache) ||
+  fail 'cannot resolve MacGPG cache state'
 macgpg_run=$(PATH="$root/bin/sys:$PATH" "$root/m" "$root/bin/sys/state-path" user pkg macgpg run) ||
   fail 'cannot resolve MacGPG runtime state'
-expected_pinentry_app="$macgpg_run/pinentry-mac.app"
-expected_pinentry="$expected_pinentry_app/Contents/MacOS/pinentry-mac"
-expected_pinentry_stamp="$macgpg_run/pinentry-concrete"
+expected_pinentry_app="$macgpg_cache/pinentry-mac.app"
+expected_pinentry_dir="$expected_pinentry_app/Contents/MacOS"
+expected_pinentry="$expected_pinentry_dir/pinentry-mac"
+expected_pinentry_stamp="$macgpg_cache/pinentry-concrete"
 expected_pinentry_line="pinentry-program \"$expected_pinentry\""
 [ -d "$expected_pinentry_app" ] && [ ! -L "$expected_pinentry_app" ] ||
-  fail 'public gpg did not create a real runtime pinentry app'
+  fail 'public gpg did not create a real cached pinentry app'
 [ -x "$expected_pinentry" ] && [ ! -L "$expected_pinentry" ] ||
-  fail 'public gpg did not create an executable runtime pinentry'
+  fail 'public gpg did not create an executable cached pinentry'
 [ -f "$expected_pinentry_stamp" ] && [ ! -L "$expected_pinentry_stamp" ] ||
-  fail 'public gpg did not create a regular runtime pinentry concrete stamp'
+  fail 'public gpg did not create a regular cached pinentry concrete stamp'
 grep -Fx "$pkg_root" "$expected_pinentry_stamp" >/dev/null 2>&1 ||
-  fail 'runtime pinentry is not stamped for the selected concrete'
+  fail 'cached pinentry is not stamped for the selected concrete'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
-  fail 'isolated gpg-agent.conf does not point to the relocated runtime pinentry'
-codesign --verify --strict "$expected_pinentry_app" >/dev/null 2>&1 ||
-  fail 'runtime pinentry app is not validly ad-hoc signed'
+  fail 'isolated gpg-agent.conf does not point to the relocated cached pinentry'
+codesign --verify --strict --deep "$expected_pinentry_app" >/dev/null 2>&1 ||
+  fail 'cached pinentry app is not validly ad-hoc signed'
+
+runtime_dylib_count=0
+for runtime_macho in "$expected_pinentry" "$expected_pinentry_dir"/*.dylib
+do
+  [ -f "$runtime_macho" ] || continue
+  case "$runtime_macho" in
+    "$expected_pinentry") : ;;
+    *) runtime_dylib_count=$((runtime_dylib_count + 1)) ;;
+  esac
+  otool -L "$runtime_macho" > "$tmp/runtime-loads.out" 2> "$tmp/runtime-loads.err" || {
+    cat "$tmp/runtime-loads.err" >&2
+    fail "cannot inspect cached Mach-O load commands: $runtime_macho"
+  }
+  grep -F '/usr/local/MacGPG2/' "$tmp/runtime-loads.out" >/dev/null 2>&1 &&
+    fail "cached Mach-O still contains a /usr/local/MacGPG2 load command: $runtime_macho"
+done
+[ "$runtime_dylib_count" -gt 0 ] || fail 'cached pinentry app contains no copied MacGPG dylibs'
+
 otool -L "$expected_pinentry" > "$tmp/pinentry-loads.out" 2> "$tmp/pinentry-loads.err" || {
   cat "$tmp/pinentry-loads.err" >&2
-  fail 'cannot inspect runtime pinentry load commands'
+  fail 'cannot inspect cached pinentry load commands'
 }
-grep -F '/usr/local/MacGPG2/' "$tmp/pinentry-loads.out" >/dev/null 2>&1 &&
-  fail 'runtime pinentry still contains a /usr/local/MacGPG2 load command'
-grep -F "$root/pkg/macgpg!$osarch/root/lib/" "$tmp/pinentry-loads.out" >/dev/null 2>&1 ||
-  fail 'runtime pinentry load commands do not reference the stable MacGPG selector'
+grep -F '@loader_path/' "$tmp/pinentry-loads.out" >/dev/null 2>&1 ||
+  fail 'cached pinentry does not use loader-relative MacGPG libraries'
 
 "$expected_pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
   cat "$tmp/pinentry-version.out" >&2
   cat "$tmp/pinentry-version.err" >&2
-  fail 'relocated runtime pinentry-mac --version failed'
+  fail 'relocated cached pinentry-mac --version failed'
 }
 grep -i 'pinentry' "$tmp/pinentry-version.out" >/dev/null 2>&1 ||
   grep -i 'pinentry' "$tmp/pinentry-version.err" >/dev/null 2>&1 ||
-  fail 'relocated runtime pinentry did not identify itself'
+  fail 'relocated cached pinentry did not identify itself'
 
 printf 'BYE\n' | "$expected_pinentry" > "$tmp/pinentry-assuan.out" 2> "$tmp/pinentry-assuan.err" || {
   cat "$tmp/pinentry-assuan.out" >&2
   cat "$tmp/pinentry-assuan.err" >&2
-  fail 'relocated runtime pinentry could not complete an Assuan startup/bye exchange'
+  fail 'relocated cached pinentry could not complete an Assuan startup/bye exchange'
 }
 grep '^OK' "$tmp/pinentry-assuan.out" >/dev/null 2>&1 || {
   cat "$tmp/pinentry-assuan.out" >&2
   cat "$tmp/pinentry-assuan.err" >&2
-  fail 'relocated runtime pinentry did not emit an Assuan OK greeting'
+  fail 'relocated cached pinentry did not emit an Assuan OK greeting'
 }
 
 direct_pinentry="$root/pkg/macgpg!$osarch/root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
@@ -196,6 +215,21 @@ grep -F "$direct_pinentry" "$agent_conf" >/dev/null 2>&1 &&
   fail 'previous direct RumiAI pinentry path survived migration'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
   fail 'previous direct RumiAI pinentry path was not migrated to the runtime copy'
+
+previous_runtime="$macgpg_run/pinentry-mac.app/Contents/MacOS/pinentry-mac"
+printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$previous_runtime" > "$agent_conf" ||
+  error 'cannot prepare previous run-state pinentry configuration'
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg --version > "$tmp/run-runtime-version.out" 2> "$tmp/run-runtime-version.err" || {
+  cat "$tmp/run-runtime-version.out" >&2
+  cat "$tmp/run-runtime-version.err" >&2
+  fail 'public gpg could not migrate previous run-state pinentry configuration'
+}
+grep -F "$previous_runtime" "$agent_conf" >/dev/null 2>&1 &&
+  fail 'previous run-state pinentry path survived migration'
+grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
+  fail 'previous run-state pinentry path was not migrated to the cached app'
 
 previous_wrapper="$macgpg_run/pinentry"
 printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$previous_wrapper" > "$agent_conf" ||
