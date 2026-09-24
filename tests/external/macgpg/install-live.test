@@ -114,6 +114,45 @@ mkdir "$gnupg_home" || error 'cannot create isolated GNUPGHOME'
 chmod 700 "$gnupg_home" || error 'cannot protect isolated GNUPGHOME'
 validation_uid='RumiAI MacGPG Validation <validation@example.invalid>'
 
+pkg_root="$root/pkg/$identity/root"
+for helper in gpg-agent gpg-connect-agent gpgconf
+do
+  [ -x "$pkg_root/bin/$helper" ] || fail "installed MacGPG is missing executable $helper"
+done
+
+GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpgconf" --kill gpg-agent >/dev/null 2>&1 || :
+
+if ! GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpg-agent" \
+  --homedir "$gnupg_home" \
+  --daemon \
+  > "$tmp/agent-daemon.out" 2> "$tmp/agent-daemon.err"
+then
+  cat "$tmp/agent-daemon.out" >&2
+  cat "$tmp/agent-daemon.err" >&2
+  "$pkg_root/bin/gpg-agent" --version >&2 || :
+  "$pkg_root/bin/gpgconf" --list-dirs >&2 || :
+  command -v otool >/dev/null 2>&1 && otool -L "$pkg_root/bin/gpg-agent" >&2 || :
+  fail 'gpg-agent could not start directly from the relocated package'
+fi
+
+if ! GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpg-connect-agent" \
+  --homedir "$gnupg_home" \
+  /bye \
+  > "$tmp/agent-connect.out" 2> "$tmp/agent-connect.err"
+then
+  cat "$tmp/agent-daemon.out" >&2
+  cat "$tmp/agent-daemon.err" >&2
+  cat "$tmp/agent-connect.out" >&2
+  cat "$tmp/agent-connect.err" >&2
+  "$pkg_root/bin/gpgconf" --list-dirs >&2 || :
+  fail 'gpg-connect-agent could not connect to the directly started relocated agent'
+fi
+grep '^OK' "$tmp/agent-connect.out" >/dev/null 2>&1 ||
+  fail 'gpg-connect-agent did not confirm the relocated agent with OK'
+
+GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpgconf" --kill gpg-agent >/dev/null 2>&1 ||
+  fail 'gpgconf could not stop the directly started relocated agent'
+
 GNUPGHOME="$gnupg_home" \
 PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
   "$root/m" gpg \
