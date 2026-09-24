@@ -120,6 +120,33 @@ do
   [ -x "$pkg_root/bin/$helper" ] || fail "installed MacGPG is missing executable $helper"
 done
 
+pinentry="$pkg_root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
+[ -x "$pinentry" ] || fail 'installed MacGPG is missing the pinentry overlay executable'
+"$pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
+  cat "$tmp/pinentry-version.out" >&2
+  cat "$tmp/pinentry-version.err" >&2
+  fail 'relocated pinentry-mac --version failed'
+}
+grep -i 'pinentry' "$tmp/pinentry-version.out" >/dev/null 2>&1 ||
+  grep -i 'pinentry' "$tmp/pinentry-version.err" >/dev/null 2>&1 ||
+  fail 'relocated pinentry-mac did not identify itself'
+
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg --version > "$tmp/isolated-version.out" 2> "$tmp/isolated-version.err" || {
+  cat "$tmp/isolated-version.out" >&2
+  cat "$tmp/isolated-version.err" >&2
+  fail 'public gpg could not initialize isolated agent configuration'
+}
+
+agent_conf="$gnupg_home/gpg-agent.conf"
+[ -f "$agent_conf" ] && [ ! -L "$agent_conf" ] ||
+  fail 'public gpg did not create a regular isolated gpg-agent.conf'
+expected_pinentry="$root/pkg/macgpg!$osarch/root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
+expected_pinentry_line="pinentry-program \"$expected_pinentry\""
+grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
+  fail 'isolated gpg-agent.conf does not point to the relocatable MacGPG pinentry'
+
 GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpgconf" --kill gpg-agent >/dev/null 2>&1 || :
 
 if ! GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpg-agent" \
