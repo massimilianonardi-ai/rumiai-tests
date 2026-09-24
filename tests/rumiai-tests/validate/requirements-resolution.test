@@ -70,7 +70,7 @@ suite_root=$tmp/suite
 validation_evidence_work=$tmp/evidence
 
 selected=$tmp/selected
-printf '%s\n' rumiai-os/mk/lifecycle.test rumiai-os/mk/watch.test > "$selected" ||
+printf '%s\n' baseline/contract.test rumiai-os/mk/lifecycle.test rumiai-os/mk/watch.test > "$selected" ||
     error 'cannot write selected-test fixture'
 
 validation_requirements_resolve "$runner" "$selected"
@@ -85,6 +85,67 @@ validation_requirements_resolve "$runner" "$selected"
     fail "expected one active requirement profile, got $validation_requirement_profile_count"
 [ "$(cat "$validation_requirement_claimed_tests")" = "$(printf '%s\n' rumiai-os/mk/lifecycle.test rumiai-os/mk/watch.test)" ] ||
     fail 'active requirement profile did not claim the selected mk tests exactly once'
+
+trace=$tmp/grouping-trace
+: > "$trace" || error 'cannot create grouping trace'
+
+prepare_validation_environment() {
+    validation_environment_counter=$((validation_environment_counter + 1))
+    validation_environment_root=$tmp/env-$validation_environment_counter
+    mkdir -p "$validation_environment_root" || return 3
+    packages=$validation_target_packages
+    [ -n "$packages" ] || packages=none
+    printf 'prepare\t%s\t%s\n' "$validation_environment_counter" "$packages" >> "$trace" || return 3
+}
+
+validation_audit_begin() {
+    mkdir -p "$2" || return 1
+    return 0
+}
+
+validation_audit_end() {
+    return 0
+}
+
+validation_environment_destroy() {
+    return 0
+}
+
+run_validation_selection() {
+    selection=$1
+    packages=$validation_target_packages
+    [ -n "$packages" ] || packages=none
+    exclusions=$(printf '%s' "$validation_runner_exclusions" | tr '\n' ',')
+    [ -n "$exclusions" ] || exclusions=none
+    [ -n "$selection" ] || selection=ROOT
+    printf 'run\t%s\t%s\t%s\n' "$selection" "$packages" "$exclusions" >> "$trace" || return 3
+    return 0
+}
+
+primary_target_root=$tmp/unused-target
+expected_rumiai_os_commit=fixture-commit
+selection_count=0
+validation_selections=
+validation_kind=health
+validation_prepared_osarch=
+validation_prepared_pkg_catalog_commit=
+
+run_validation_session_isolation "$runner"
+grouping_status=$?
+[ "$grouping_status" -eq 0 ] || fail "requirement-grouped session returned $grouping_status"
+
+expected_trace=$(cat <<'EOT'
+prepare	1	none
+run	ROOT	none	rumiai-os/mk/lifecycle.test,rumiai-os/mk/watch.test
+prepare	2	nodejs@v26.10.0
+run	rumiai-os/mk/lifecycle.test	nodejs@v26.10.0	none
+run	rumiai-os/mk/watch.test	nodejs@v26.10.0	none
+EOT
+)
+actual_trace=$(cat "$trace")
+[ "$actual_trace" = "$expected_trace" ] ||
+    fail "requirement grouping execution differs from expected trace:
+$actual_trace"
 
 printf '%s\n' rumiai-os/other/contract.test > "$selected" ||
     error 'cannot replace selected-test fixture'
