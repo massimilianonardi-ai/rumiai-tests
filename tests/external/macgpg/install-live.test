@@ -173,6 +173,12 @@ do
   }
   grep -F '/usr/local/MacGPG2/' "$tmp/runtime-loads.out" >/dev/null 2>&1 &&
     fail "cached Mach-O still contains a /usr/local/MacGPG2 load command: $runtime_macho"
+  otool -l "$runtime_macho" > "$tmp/runtime-commands.out" 2> "$tmp/runtime-commands.err" || {
+    cat "$tmp/runtime-commands.err" >&2
+    fail "cannot inspect cached Mach-O load command table: $runtime_macho"
+  }
+  grep -F '/usr/local/MacGPG2/' "$tmp/runtime-commands.out" >/dev/null 2>&1 &&
+    fail "cached Mach-O still contains a /usr/local/MacGPG2 runpath: $runtime_macho"
 done
 [ "$runtime_dylib_count" -gt 0 ] || fail 'cached pinentry app contains no copied MacGPG dylibs'
 
