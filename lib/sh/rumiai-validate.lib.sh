@@ -1092,65 +1092,6 @@ validation_discover_tests() {
     return 0
 }
 
-run_validation_session_isolation() {
-    runner=$1
-    prepare_validation_environment "$primary_target_root" "$expected_rumiai_os_commit"
-    audit_dir=$validation_evidence_work/environment
-    validation_audit_begin "$validation_environment_root" "$audit_dir" || fatal 'cannot capture initial validation environment metadata'
-
-    aggregate_status=0
-    if [ "$selection_count" -eq 0 ]; then
-        run_validation_selection '' "$runner" "$validation_environment_root"
-        aggregate_status=$?
-    else
-        old_ifs=$IFS
-        selection_ifs=$(printf '\n_')
-        selection_ifs=${selection_ifs%_}
-        IFS=$selection_ifs
-        for validation_selection in $validation_selections; do
-            IFS=$old_ifs
-            run_validation_selection "$validation_selection" "$runner" "$validation_environment_root"
-            selection_status=$?
-            aggregate_status=$(merge_scope_status "$aggregate_status" "$selection_status")
-            [ "$aggregate_status" -ne 3 ] || break
-            IFS=$selection_ifs
-        done
-        IFS=$old_ifs
-    fi
-
-    validation_audit_end "$validation_environment_root" "$audit_dir" 'validation environment'
-    audit_status=$?
-    [ "$audit_status" -ne 2 ] || fatal 'cannot capture final validation environment metadata'
-    validation_environment_destroy || fatal 'cannot remove temporary validation environment'
-    return "$aggregate_status"
-}
-
-run_validation_test_isolation() {
-    runner=$1
-    discovered=$validation_evidence_work/discovered-tests
-    [ -s "$discovered" ] || fatal 'validation discovery returned no tests'
-
-    aggregate_status=0
-    while IFS= read -r test_id; do
-        [ -n "$test_id" ] || continue
-        prepare_validation_environment "$primary_target_root" "$expected_rumiai_os_commit"
-        audit_dir=$validation_evidence_work/environments/$test_id
-        validation_audit_begin "$validation_environment_root" "$audit_dir" || fatal "cannot capture initial environment metadata for: $test_id"
-
-        run_validation_selection "$test_id" "$runner" "$validation_environment_root"
-        test_status=$?
-
-        validation_audit_end "$validation_environment_root" "$audit_dir" "validation environment $test_id"
-        audit_status=$?
-        [ "$audit_status" -ne 2 ] || fatal "cannot capture final environment metadata for: $test_id"
-        validation_environment_destroy || fatal "cannot remove validation environment for: $test_id"
-
-        aggregate_status=$(merge_scope_status "$aggregate_status" "$test_status")
-        [ "$aggregate_status" -ne 3 ] || break
-    done < "$discovered"
-    return "$aggregate_status"
-}
-
 validation_evidence_finish_publish() {
     aggregate_status=$1
     validation_record_put audit-status "$validation_audit_status" || fatal 'cannot write validation audit status'
