@@ -69,7 +69,7 @@ chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
 [ "$osarch" = macos-arm64 ] || skip "MacGPG install validation is macos-arm64-only; target is $osarch"
 
-for tool in hdiutil xar cpio gzip
+for tool in hdiutil xar cpio gzip otool install_name_tool codesign ditto
 do
   command -v "$tool" >/dev/null 2>&1 || skip "$tool is unavailable"
 done
@@ -137,35 +137,49 @@ agent_conf="$gnupg_home/gpg-agent.conf"
 
 macgpg_run=$(PATH="$root/bin/sys:$PATH" "$root/m" "$root/bin/sys/state-path" user pkg macgpg run) ||
   fail 'cannot resolve MacGPG runtime state'
-expected_pinentry="$macgpg_run/pinentry"
-expected_pinentry_root="$macgpg_run/pinentry-root"
+expected_pinentry_app="$macgpg_run/pinentry-mac.app"
+expected_pinentry="$expected_pinentry_app/Contents/MacOS/pinentry-mac"
+expected_pinentry_stamp="$macgpg_run/pinentry-concrete"
 expected_pinentry_line="pinentry-program \"$expected_pinentry\""
-[ -x "$expected_pinentry" ] || fail 'public gpg did not create an executable pinentry wrapper'
-[ -f "$expected_pinentry_root" ] && [ ! -L "$expected_pinentry_root" ] ||
-  fail 'public gpg did not create a regular pinentry root descriptor'
-grep -Fx "$root/pkg/macgpg!$osarch/root" "$expected_pinentry_root" >/dev/null 2>&1 ||
-  fail 'pinentry wrapper does not resolve through the stable MacGPG selector'
+[ -d "$expected_pinentry_app" ] && [ ! -L "$expected_pinentry_app" ] ||
+  fail 'public gpg did not create a real runtime pinentry app'
+[ -x "$expected_pinentry" ] && [ ! -L "$expected_pinentry" ] ||
+  fail 'public gpg did not create an executable runtime pinentry'
+[ -f "$expected_pinentry_stamp" ] && [ ! -L "$expected_pinentry_stamp" ] ||
+  fail 'public gpg did not create a regular runtime pinentry concrete stamp'
+grep -Fx "$pkg_root" "$expected_pinentry_stamp" >/dev/null 2>&1 ||
+  fail 'runtime pinentry is not stamped for the selected concrete'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
-  fail 'isolated gpg-agent.conf does not point to the relocatable pinentry wrapper'
+  fail 'isolated gpg-agent.conf does not point to the relocated runtime pinentry'
+codesign --verify --strict "$expected_pinentry_app" >/dev/null 2>&1 ||
+  fail 'runtime pinentry app is not validly ad-hoc signed'
+otool -L "$expected_pinentry" > "$tmp/pinentry-loads.out" 2> "$tmp/pinentry-loads.err" || {
+  cat "$tmp/pinentry-loads.err" >&2
+  fail 'cannot inspect runtime pinentry load commands'
+}
+grep -F '/usr/local/MacGPG2/' "$tmp/pinentry-loads.out" >/dev/null 2>&1 &&
+  fail 'runtime pinentry still contains a /usr/local/MacGPG2 load command'
+grep -F "$root/pkg/macgpg!$osarch/root/lib/" "$tmp/pinentry-loads.out" >/dev/null 2>&1 ||
+  fail 'runtime pinentry load commands do not reference the stable MacGPG selector'
 
 "$expected_pinentry" --version > "$tmp/pinentry-version.out" 2> "$tmp/pinentry-version.err" || {
   cat "$tmp/pinentry-version.out" >&2
   cat "$tmp/pinentry-version.err" >&2
-  fail 'relocatable pinentry wrapper could not launch pinentry-mac without caller DYLD state'
+  fail 'relocated runtime pinentry-mac --version failed'
 }
 grep -i 'pinentry' "$tmp/pinentry-version.out" >/dev/null 2>&1 ||
   grep -i 'pinentry' "$tmp/pinentry-version.err" >/dev/null 2>&1 ||
-  fail 'relocatable pinentry wrapper did not identify pinentry-mac'
+  fail 'relocated runtime pinentry did not identify itself'
 
 printf 'BYE\n' | "$expected_pinentry" > "$tmp/pinentry-assuan.out" 2> "$tmp/pinentry-assuan.err" || {
   cat "$tmp/pinentry-assuan.out" >&2
   cat "$tmp/pinentry-assuan.err" >&2
-  fail 'relocatable pinentry wrapper could not complete an Assuan startup/bye exchange'
+  fail 'relocated runtime pinentry could not complete an Assuan startup/bye exchange'
 }
 grep '^OK' "$tmp/pinentry-assuan.out" >/dev/null 2>&1 || {
   cat "$tmp/pinentry-assuan.out" >&2
   cat "$tmp/pinentry-assuan.err" >&2
-  fail 'relocatable pinentry wrapper did not emit an Assuan OK greeting'
+  fail 'relocated runtime pinentry did not emit an Assuan OK greeting'
 }
 
 direct_pinentry="$root/pkg/macgpg!$osarch/root/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac"
@@ -181,7 +195,22 @@ PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
 grep -F "$direct_pinentry" "$agent_conf" >/dev/null 2>&1 &&
   fail 'previous direct RumiAI pinentry path survived migration'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
-  fail 'previous direct RumiAI pinentry path was not migrated to the wrapper'
+  fail 'previous direct RumiAI pinentry path was not migrated to the runtime copy'
+
+previous_wrapper="$macgpg_run/pinentry"
+printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$previous_wrapper" > "$agent_conf" ||
+  error 'cannot prepare previous wrapper pinentry configuration'
+GNUPGHOME="$gnupg_home" \
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
+  "$root/m" gpg --version > "$tmp/wrapper-version.out" 2> "$tmp/wrapper-version.err" || {
+  cat "$tmp/wrapper-version.out" >&2
+  cat "$tmp/wrapper-version.err" >&2
+  fail 'public gpg could not migrate previous wrapper pinentry configuration'
+}
+grep -F "$previous_wrapper" "$agent_conf" >/dev/null 2>&1 &&
+  fail 'previous runtime wrapper path survived migration'
+grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
+  fail 'previous runtime wrapper path was not migrated to the runtime app'
 
 legacy_pinentry='/usr/local/MacGPG2/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac'
 printf 'default-cache-ttl 600\npinentry-program "%s"\n' "$legacy_pinentry" > "$agent_conf" ||
@@ -196,7 +225,7 @@ PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
 grep -F "$legacy_pinentry" "$agent_conf" >/dev/null 2>&1 &&
   fail 'legacy /usr/local MacGPG pinentry path survived migration'
 grep -Fx "$expected_pinentry_line" "$agent_conf" >/dev/null 2>&1 ||
-  fail 'legacy GPGTools pinentry path was not migrated to the relocatable path'
+  fail 'legacy GPGTools pinentry path was not migrated to the runtime app'
 
 GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpgconf" --kill gpg-agent >/dev/null 2>&1 || :
 
