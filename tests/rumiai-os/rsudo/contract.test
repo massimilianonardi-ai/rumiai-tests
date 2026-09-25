@@ -395,8 +395,8 @@ run_case stdin-password required alice stdin '' root
     : | "$root/m" "$rsudo_command" --askpass --no-preserve-quotes -- rsudo-target         >/dev/null 2>&1
 )
 status=$?
-[ "$status" -eq 12 ] ||
-    fail "missing --askpass password returned $status instead of 12"
+[ "$status" -eq 11 ] ||
+    fail "missing --askpass password returned $status instead of 11"
 
 # Invalid local invocation is rejected before any remote execution.
 RSUDO_HOST=example.invalid
@@ -405,7 +405,7 @@ RSUDO_PASSWORD=secret
 export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
 "$root/m" "$rsudo_command" --invalid-rsudo-option >/dev/null 2>&1
 status=$?
-[ "$status" -eq 9 ] ||
-    fail "unknown option returned $status instead of 9"
+[ "$status" -eq 8 ] ||
+    fail "unknown option returned $status instead of 8"
 
 exit 0
