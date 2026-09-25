@@ -1,0 +1,262 @@
+#!/bin/sh
+
+# Protected current properties:
+#   RSUDO-01 SSH authentication uses one-shot local IPC through SSH_ASKPASS.
+#   RSUDO-02 sudo authentication data is separated from target stdin/TTY.
+#   RSUDO-04 sudo credentials are validated with sudo -S --prompt='' -v.
+#   RSUDO-05 target execution uses sudo -n after validation.
+#   RSUDO-08 foreground target status is preserved.
+#   RSUDO-09 owned local/remote credential state is cleaned up.
+#   RSUDO-10 termination cleanup preserves terminating-signal semantics.
+
+TEST_ID=rumiai-os/rsudo/interactive.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+
+terminate()
+{
+    signal=$1
+    trap - 0 "$signal"
+    cleanup
+    kill -s "$signal" "$$"
+}
+
+trap cleanup 0
+trap 'terminate HUP' HUP
+trap 'terminate INT' INT
+trap 'terminate QUIT' QUIT
+trap 'terminate TERM' TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+interactive_library=$suite_root/lib/interactive.lib
+
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+[ -f "$interactive_library" ] || error 'interactive test helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+. "$interactive_library" || error 'cannot source interactive test helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+rumiai_test_interactive_require
+status=$?
+case $status in
+    0) : ;;
+    2) skip 'interactive PTY driver is unavailable' ;;
+    *) error 'cannot determine interactive PTY support' ;;
+esac
+
+command -v openssl >/dev/null 2>&1 ||
+    skip 'openssl required by one-shot IPC is unavailable'
+
+rsudo_command=$root/bin/sys/rsudo
+rsudo_askpass=$root/bin/sys/rsudo-askpass
+[ -x "$rsudo_command" ] || fail 'rsudo command entrypoint is unavailable'
+[ -x "$rsudo_askpass" ] || fail 'rsudo-askpass command is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-interactive-$$
+fakebin=$tmp/bin
+runtime_tmp=$tmp/runtime
+mkdir -p "$fakebin" "$runtime_tmp" || error 'cannot create interactive rsudo fixtures'
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+mode=plain
+if [ "${1-}" = -t ]
+then
+    mode=tty
+    shift
+fi
+
+[ "${1-}" = -l ] || exit 80
+[ "${2-}" = "$RSUDO_TEST_EXPECT_USER" ] || exit 81
+[ "${3-}" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 82
+shift 3
+
+printf '%s\n' "$mode" >> "$RSUDO_TEST_SSH_MODES_FILE" || exit 83
+printf '%s\n' "${m_RSUDO_ASKPASS_ID-}" >> "$RSUDO_TEST_ASKPASS_IDS_FILE" || exit 84
+
+[ -n "${m_RSUDO_ASKPASS_ID-}" ] || exit 85
+"$RSUDO_TEST_M" "$SSH_ASKPASS" >> "$RSUDO_TEST_ASKPASS_VALUES_FILE" || exit 86
+
+[ "$#" -gt 0 ] || exit 87
+remote_command=$*
+PATH="$RSUDO_TEST_REMOTE_BIN:$PATH" sh -c "$remote_command"
+EOF_SSH
+
+cat > "$fakebin/sudo" <<'EOF_SUDO'
+#!/bin/sh
+
+log=$RSUDO_TEST_SUDO_LOG
+stdin_auth=0
+noninteractive=0
+validate=0
+
+while [ "$#" -gt 0 ]
+do
+    case "$1" in
+        -S)
+            stdin_auth=1
+            shift
+        ;;
+        -n)
+            noninteractive=1
+            shift
+        ;;
+        -v)
+            validate=1
+            shift
+        ;;
+        --prompt=*)
+            shift
+        ;;
+        --user)
+            [ "$#" -ge 2 ] || exit 90
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+if [ "$validate" -eq 1 ]
+then
+    [ "$stdin_auth" -eq 1 ] || exit 91
+    IFS= read -r password || exit 92
+    printf 'validate:%s\n' "$password" >> "$log"
+    unset password
+    exit 0
+fi
+
+[ "$#" -gt 0 ] || exit 93
+
+if [ "$noninteractive" -ne 1 ]
+then
+    printf 'target-may-prompt:%s\n' "$1" >> "$log"
+    exit 95
+fi
+
+printf 'target-noninteractive:%s\n' "$1" >> "$log"
+exec "$@"
+EOF_SUDO
+
+cat > "$fakebin/rsudo-target-interactive" <<'EOF_TARGET'
+#!/bin/sh
+printf '%s\n' interactive-target
+exit 23
+EOF_TARGET
+
+chmod +x "$fakebin/ssh" "$fakebin/sudo" "$fakebin/rsudo-target-interactive" ||
+    error 'cannot make interactive rsudo fixtures executable'
+
+askpass_values=$tmp/askpass-values
+askpass_ids=$tmp/askpass-ids
+ssh_modes=$tmp/ssh-modes
+sudo_log=$tmp/sudo-log
+status_file=$tmp/status
+dialogue=$tmp/dialogue
+transcript=$tmp/transcript
+wrapper=$tmp/run-rsudo
+
+: > "$askpass_values"
+: > "$askpass_ids"
+: > "$ssh_modes"
+: > "$sudo_log"
+: > "$dialogue"
+
+cat > "$wrapper" <<'EOF_WRAPPER'
+#!/bin/sh
+
+"$RSUDO_TEST_M" "$RSUDO_TEST_RSUDO_COMMAND"     --interactive --no-preserve-quotes -- rsudo-target-interactive
+status=$?
+
+printf '%s\n' "$status" > "$RSUDO_TEST_STATUS_FILE"
+exit 0
+EOF_WRAPPER
+chmod +x "$wrapper" || error 'cannot make interactive wrapper executable'
+
+PATH="$fakebin:$PATH"
+TMPDIR="$runtime_tmp"
+RSUDO_HOST=example.invalid
+RSUDO_USER=alice
+RSUDO_PASSWORD=secret
+RSUDO_TEST_M=$root/m
+RSUDO_TEST_RSUDO_COMMAND=$rsudo_command
+RSUDO_TEST_STATUS_FILE=$status_file
+RSUDO_TEST_REMOTE_BIN=$fakebin
+RSUDO_TEST_EXPECT_USER=alice
+RSUDO_TEST_EXPECT_HOST=example.invalid
+RSUDO_TEST_ASKPASS_VALUES_FILE=$askpass_values
+RSUDO_TEST_ASKPASS_IDS_FILE=$askpass_ids
+RSUDO_TEST_SSH_MODES_FILE=$ssh_modes
+RSUDO_TEST_SUDO_LOG=$sudo_log
+
+export     PATH TMPDIR     RSUDO_HOST RSUDO_USER RSUDO_PASSWORD     RSUDO_TEST_M RSUDO_TEST_RSUDO_COMMAND RSUDO_TEST_STATUS_FILE     RSUDO_TEST_REMOTE_BIN RSUDO_TEST_EXPECT_USER RSUDO_TEST_EXPECT_HOST     RSUDO_TEST_ASKPASS_VALUES_FILE RSUDO_TEST_ASKPASS_IDS_FILE     RSUDO_TEST_SSH_MODES_FILE RSUDO_TEST_SUDO_LOG
+
+rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
+    error 'interactive PTY driver could not complete rsudo scenario'
+
+[ -f "$status_file" ] || error 'interactive rsudo wrapper did not record status'
+[ "$(cat "$status_file")" -eq 23 ] || {
+    cat "$transcript" >&2
+    fail "interactive rsudo did not preserve target status 23: $(cat "$status_file")"
+}
+
+[ "$(grep -c '^secret$' "$askpass_values")" -eq 2 ] ||
+    fail 'interactive rsudo did not provide one one-shot SSH password per SSH session'
+[ "$(grep -c '^plain$' "$ssh_modes")" -eq 1 ] ||
+    fail 'interactive rsudo did not execute exactly one staging SSH session'
+[ "$(grep -c '^tty$' "$ssh_modes")" -eq 1 ] ||
+    fail 'interactive rsudo did not execute exactly one foreground TTY SSH session'
+
+grep -F 'validate:secret' "$sudo_log" >/dev/null 2>&1 ||
+    fail 'interactive rsudo did not validate sudo credentials'
+grep -F 'target-noninteractive:rsudo-target-interactive' "$sudo_log" >/dev/null 2>&1 ||
+    fail 'interactive rsudo did not execute the target through sudo -n'
+if grep -F 'target-may-prompt' "$sudo_log" >/dev/null 2>&1
+then
+    fail 'interactive rsudo allowed target sudo to prompt after validation'
+fi
+
+grep -F 'interactive-target' "$transcript" >/dev/null 2>&1 ||
+    fail 'interactive target output was not propagated'
+
+if find "$runtime_tmp" -type d -name 'rsudo.*' -print | grep . >/dev/null 2>&1
+then
+    fail 'interactive rsudo left remote password rendezvous state behind'
+fi
+
+exit 0
