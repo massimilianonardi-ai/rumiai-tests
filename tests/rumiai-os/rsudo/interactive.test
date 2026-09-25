@@ -209,6 +209,7 @@ EOF_SUDO
 
 cat > "$fakebin/rsudo-target-interactive" <<'EOF_TARGET'
 #!/bin/sh
+[ "${RSUDO_TEST_EFFECTIVE_USER-}" = root ] || exit 60
 printf '%s\n' "INTERACTIVE-STDOUT:$RSUDO_TEST_CASE"
 printf '%s\n' "INTERACTIVE-STDERR:$RSUDO_TEST_CASE" >&2
 exit "$RSUDO_TEST_TARGET_STATUS"
