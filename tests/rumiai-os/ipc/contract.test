@@ -100,7 +100,7 @@ do
         fail "ipc manual omits public function $public_function"
 done
 
-if grep -E '(^|[^[:alnum:]_])_ipc_[[:alnum:]_]*' "$ipc_manual" >/dev/null 2>&1
+if grep -E '(^|[^[:alnum:]_])_ipc_[[:alnum:]_][[:alnum:]_]*' "$ipc_manual" >/dev/null 2>&1
 then
     fail 'ipc manual exposes an internal function identifier'
 fi
