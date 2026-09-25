@@ -264,6 +264,11 @@ status=$?
 [ "$(cat "$askpass_value_file")" = secret ] ||
     fail 'rsudo-askpass did not consume the expected one-shot SSH password'
 
+if grep -F 'secret' "$ssh_args_file" >/dev/null 2>&1
+then
+    fail 'rsudo exposed the sudo password in the remote SSH command line'
+fi
+
 [ "$(cat "$stdout_file")" = payload ] || {
     cat "$stdout_file" >&2
     fail 'sudo authentication data leaked into target stdin'
