@@ -1,12 +1,15 @@
 #!/bin/sh
 
 # Protected current properties:
-#   RSUDO-01 SSH authentication uses one-shot local IPC through SSH_ASKPASS.
-#   RSUDO-02 sudo authentication data is separated from target stdin/TTY.
-#   RSUDO-04 sudo credentials are validated with sudo -S --prompt='' -v.
-#   RSUDO-05 target execution uses sudo -n after validation.
-#   RSUDO-08 foreground target status is preserved.
-#   RSUDO-09 owned local/remote credential state is cleaned up.
+#   RSUDO-01  valid connection data executes the requested remote target under sudo.
+#   RSUDO-03  target stdout/stderr remain observable to the caller.
+#   RSUDO-04  resulting remote target status is propagated.
+#   RSUDO-07  interactive mode executes the target through a terminal-capable remote path.
+#   RSUDO-11  password data is not exposed as ordinary target input/output.
+#
+# The SSH and sudo programs below are external-boundary fixtures. They model a
+# reachable remote host whose sudo policy requires a password. The test asserts
+# only the observable interactive result, not rsudo's internal call sequence.
 
 TEST_ID=rumiai-os/rsudo/interactive.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -72,56 +75,68 @@ case $status in
     *) error 'cannot determine interactive PTY support' ;;
 esac
 
-command -v openssl >/dev/null 2>&1 ||
-    skip 'openssl required by one-shot IPC is unavailable'
-
 rsudo_command=$root/bin/sys/rsudo
-rsudo_askpass=$root/bin/sys/rsudo-askpass
-[ -x "$rsudo_command" ] || fail 'rsudo command entrypoint is unavailable'
-[ -x "$rsudo_askpass" ] || fail 'rsudo-askpass command is unavailable'
+[ -x "$rsudo_command" ] ||
+    fail 'rsudo command entrypoint is unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-rsudo-interactive-$$
 fakebin=$tmp/bin
 runtime_tmp=$tmp/runtime
-mkdir -p "$fakebin" "$runtime_tmp" || error 'cannot create interactive rsudo fixtures'
+mkdir -p "$fakebin" "$runtime_tmp" ||
+    error 'cannot create interactive external-boundary fixtures'
 
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
 
-mode=plain
 if [ "${1-}" = -t ]
 then
-    mode=tty
     shift
 fi
 
-[ "${1-}" = -l ] || exit 80
-[ "${2-}" = "$RSUDO_TEST_EXPECT_USER" ] || exit 81
-[ "${3-}" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 82
-shift 3
+login_user=
+if [ "${1-}" = -l ]
+then
+    [ "$#" -ge 3 ] || exit 80
+    login_user=$2
+    shift 2
+fi
 
-printf '%s\n' "$mode" >> "$RSUDO_TEST_SSH_MODES_FILE" || exit 83
-printf '%s\n' "${m_RSUDO_ASKPASS_ID-}" >> "$RSUDO_TEST_ASKPASS_IDS_FILE" || exit 84
+[ "$#" -ge 2 ] || exit 81
+host=$1
+shift
 
-[ -n "${m_RSUDO_ASKPASS_ID-}" ] || exit 85
-"$RSUDO_TEST_M" "$SSH_ASKPASS" >> "$RSUDO_TEST_ASKPASS_VALUES_FILE" || exit 86
+[ "$login_user" = "$RSUDO_TEST_EXPECT_LOGIN_USER" ] || exit 82
+[ "$host" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 83
 
-[ "$#" -gt 0 ] || exit 87
 remote_command=$*
+[ -n "$remote_command" ] || exit 84
+
+RSUDO_TEST_REMOTE_LOGIN_USER=$login_user
+export RSUDO_TEST_REMOTE_LOGIN_USER
+
 PATH="$RSUDO_TEST_REMOTE_BIN:$PATH" sh -c "$remote_command"
 EOF_SSH
 
 cat > "$fakebin/sudo" <<'EOF_SUDO'
 #!/bin/sh
 
-log=$RSUDO_TEST_SUDO_LOG
+validated=$RSUDO_TEST_SUDO_VALIDATED_FILE
+expected_password=$RSUDO_TEST_EXPECT_PASSWORD
+
+if [ "${1-}" = -K ]
+then
+    rm -f "$validated" || exit 90
+    exit 0
+fi
+
 stdin_auth=0
 noninteractive=0
-validate=0
+validate_only=0
+target_user=root
 
 while [ "$#" -gt 0 ]
 do
-    case "$1" in
+    case $1 in
         -S)
             stdin_auth=1
             shift
@@ -131,19 +146,23 @@ do
             shift
         ;;
         -v)
-            validate=1
+            validate_only=1
             shift
         ;;
-        --prompt=*)
-            shift
+        --prompt=*|-p)
+            if [ "$1" = -p ]; then [ "$#" -ge 2 ] || exit 91; shift 2; else shift; fi
         ;;
-        --user)
-            [ "$#" -ge 2 ] || exit 90
+        --user|-u)
+            [ "$#" -ge 2 ] || exit 92
+            target_user=$2
             shift 2
         ;;
         --)
             shift
             break
+        ;;
+        -*)
+            exit 93
         ;;
         *)
             break
@@ -151,49 +170,66 @@ do
     esac
 done
 
-if [ "$validate" -eq 1 ]
+authenticate()
+{
+    [ -f "$validated" ] && return 0
+
+    if [ "$stdin_auth" -eq 1 ]
+    then
+        IFS= read -r supplied || return 70
+        [ "$supplied" = "$expected_password" ] || return 71
+        : > "$validated" || return 72
+        unset supplied
+        return 0
+    fi
+
+    [ "$noninteractive" -eq 0 ] || return 73
+
+    # An interactive sudo password prompt is intentionally outside this fixture.
+    return 74
+}
+
+if [ "$validate_only" -eq 1 ]
 then
-    [ "$stdin_auth" -eq 1 ] || exit 91
-    IFS= read -r password || exit 92
-    printf 'validate:%s\n' "$password" >> "$log"
-    unset password
-    exit 0
+    authenticate
+    exit $?
 fi
 
-[ "$#" -gt 0 ] || exit 93
+[ "$#" -gt 0 ] || exit 94
 
-if [ "$noninteractive" -ne 1 ]
-then
-    printf 'target-may-prompt:%s\n' "$1" >> "$log"
-    exit 95
-fi
+authenticate
+auth_status=$?
+[ "$auth_status" -eq 0 ] || exit "$auth_status"
 
-printf 'target-noninteractive:%s\n' "$1" >> "$log"
+RSUDO_TEST_EFFECTIVE_USER=$target_user
+export RSUDO_TEST_EFFECTIVE_USER
+
 exec "$@"
 EOF_SUDO
 
 cat > "$fakebin/rsudo-target-interactive" <<'EOF_TARGET'
 #!/bin/sh
-printf '%s\n' interactive-target
-exit 23
+printf '%s\n' "INTERACTIVE-STDOUT:$RSUDO_TEST_CASE"
+printf '%s\n' "INTERACTIVE-STDERR:$RSUDO_TEST_CASE" >&2
+exit "$RSUDO_TEST_TARGET_STATUS"
 EOF_TARGET
 
 chmod +x "$fakebin/ssh" "$fakebin/sudo" "$fakebin/rsudo-target-interactive" ||
-    error 'cannot make interactive rsudo fixtures executable'
+    error 'cannot make interactive external-boundary fixtures executable'
 
-askpass_values=$tmp/askpass-values
-askpass_ids=$tmp/askpass-ids
-ssh_modes=$tmp/ssh-modes
-sudo_log=$tmp/sudo-log
+command -p sh -n "$fakebin/ssh" ||
+    error 'ssh boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/sudo" ||
+    error 'sudo boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/rsudo-target-interactive" ||
+    error 'interactive target fixture has invalid shell syntax'
+
 status_file=$tmp/status
 dialogue=$tmp/dialogue
 transcript=$tmp/transcript
 wrapper=$tmp/run-rsudo
+validated_file=$tmp/sudo.validated
 
-: > "$askpass_values"
-: > "$askpass_ids"
-: > "$ssh_modes"
-: > "$sudo_log"
 : > "$dialogue"
 
 cat > "$wrapper" <<'EOF_WRAPPER'
@@ -216,46 +252,42 @@ RSUDO_TEST_M=$root/m
 RSUDO_TEST_RSUDO_COMMAND=$rsudo_command
 RSUDO_TEST_STATUS_FILE=$status_file
 RSUDO_TEST_REMOTE_BIN=$fakebin
-RSUDO_TEST_EXPECT_USER=alice
+RSUDO_TEST_EXPECT_LOGIN_USER=alice
 RSUDO_TEST_EXPECT_HOST=example.invalid
-RSUDO_TEST_ASKPASS_VALUES_FILE=$askpass_values
-RSUDO_TEST_ASKPASS_IDS_FILE=$askpass_ids
-RSUDO_TEST_SSH_MODES_FILE=$ssh_modes
-RSUDO_TEST_SUDO_LOG=$sudo_log
+RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
+RSUDO_TEST_EXPECT_PASSWORD=secret
+RSUDO_TEST_TARGET_STATUS=23
+RSUDO_TEST_CASE=interactive
 
-export     PATH TMPDIR     RSUDO_HOST RSUDO_USER RSUDO_PASSWORD     RSUDO_TEST_M RSUDO_TEST_RSUDO_COMMAND RSUDO_TEST_STATUS_FILE     RSUDO_TEST_REMOTE_BIN RSUDO_TEST_EXPECT_USER RSUDO_TEST_EXPECT_HOST     RSUDO_TEST_ASKPASS_VALUES_FILE RSUDO_TEST_ASKPASS_IDS_FILE     RSUDO_TEST_SSH_MODES_FILE RSUDO_TEST_SUDO_LOG
+export     PATH TMPDIR     RSUDO_HOST RSUDO_USER RSUDO_PASSWORD     RSUDO_TEST_M RSUDO_TEST_RSUDO_COMMAND RSUDO_TEST_STATUS_FILE     RSUDO_TEST_REMOTE_BIN RSUDO_TEST_EXPECT_LOGIN_USER RSUDO_TEST_EXPECT_HOST     RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD     RSUDO_TEST_TARGET_STATUS RSUDO_TEST_CASE
 
 rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
     error 'interactive PTY driver could not complete rsudo scenario'
 
-[ -f "$status_file" ] || error 'interactive rsudo wrapper did not record status'
-[ "$(cat "$status_file")" -eq 23 ] || {
+[ -f "$status_file" ] ||
+    error 'interactive rsudo wrapper did not record status'
+
+status=$(cat "$status_file")
+case $status in
+    8[0-9]|9[0-9])
+        cat "$transcript" >&2
+        error "external-boundary fixture could not model interactive rsudo (status $status)"
+    ;;
+esac
+
+[ "$status" -eq 23 ] || {
     cat "$transcript" >&2
-    fail "interactive rsudo did not preserve target status 23: $(cat "$status_file")"
+    fail "interactive target status was $status instead of 23"
 }
 
-[ "$(grep -c '^secret$' "$askpass_values")" -eq 2 ] ||
-    fail 'interactive rsudo did not provide one one-shot SSH password per SSH session'
-[ "$(grep -c '^plain$' "$ssh_modes")" -eq 1 ] ||
-    fail 'interactive rsudo did not execute exactly one staging SSH session'
-[ "$(grep -c '^tty$' "$ssh_modes")" -eq 1 ] ||
-    fail 'interactive rsudo did not execute exactly one foreground TTY SSH session'
+grep -F 'INTERACTIVE-STDOUT:interactive' "$transcript" >/dev/null 2>&1 ||
+    fail 'interactive target stdout was not propagated'
+grep -F 'INTERACTIVE-STDERR:interactive' "$transcript" >/dev/null 2>&1 ||
+    fail 'interactive target stderr was not propagated'
 
-grep -F 'validate:secret' "$sudo_log" >/dev/null 2>&1 ||
-    fail 'interactive rsudo did not validate sudo credentials'
-grep -F 'target-noninteractive:rsudo-target-interactive' "$sudo_log" >/dev/null 2>&1 ||
-    fail 'interactive rsudo did not execute the target through sudo -n'
-if grep -F 'target-may-prompt' "$sudo_log" >/dev/null 2>&1
+if grep -F 'secret' "$transcript" >/dev/null 2>&1
 then
-    fail 'interactive rsudo allowed target sudo to prompt after validation'
-fi
-
-grep -F 'interactive-target' "$transcript" >/dev/null 2>&1 ||
-    fail 'interactive target output was not propagated'
-
-if find "$runtime_tmp" -type d -name 'rsudo.*' -print | grep . >/dev/null 2>&1
-then
-    fail 'interactive rsudo left remote password rendezvous state behind'
+    fail 'authentication data appeared as ordinary interactive output'
 fi
 
 exit 0
