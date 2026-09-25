@@ -258,7 +258,7 @@ cat > "$fakebin/rsudo-target" <<'EOF_TARGET'
 #!/bin/sh
 
 cat > "$RSUDO_TEST_TARGET_STDIN_FILE" || exit 60
-printf '%s\n' "${RSUDO_TEST_EFFECTIVE_USER-root}" > "$RSUDO_TEST_TARGET_USER_FILE" || exit 61
+printf '%s\n' "${RSUDO_TEST_EFFECTIVE_USER-unprivileged}" > "$RSUDO_TEST_TARGET_USER_FILE" || exit 61
 printf 'TARGET-STDOUT:%s\n' "$RSUDO_TEST_CASE"
 printf 'TARGET-STDERR:%s\n' "$RSUDO_TEST_CASE" >&2
 exit "$RSUDO_TEST_TARGET_STATUS"
@@ -384,6 +384,19 @@ run_case target-user required alice env daemon daemon
 
 # --askpass consumes its password record and forwards only the remaining input.
 run_case stdin-password required alice stdin '' root
+
+# A required --askpass password record must exist before remote execution.
+(
+    RSUDO_HOST=example.invalid
+    RSUDO_USER=alice
+    unset RSUDO_PASSWORD
+    export RSUDO_HOST RSUDO_USER
+
+    : | "$root/m" "$rsudo_command" --askpass --no-preserve-quotes -- rsudo-target         >/dev/null 2>&1
+)
+status=$?
+[ "$status" -eq 12 ] ||
+    fail "missing --askpass password returned $status instead of 12"
 
 # Invalid local invocation is rejected before any remote execution.
 RSUDO_HOST=example.invalid
