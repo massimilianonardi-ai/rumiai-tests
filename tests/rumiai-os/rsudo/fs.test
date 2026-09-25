@@ -13,9 +13,9 @@
 #             promotion and exposes rollback-capable failure behavior.
 #
 # SSH and sudo below are external-boundary fixtures. The remote filesystem is a
-# real temporary filesystem tree on the host; tar, du, awk and normal filesystem
-# operations are real host utilities. Only df is optionally overridden for the
-# explicit insufficient-space scenario.
+# real temporary filesystem tree on the host; ordinary filesystem operations are
+# real host operations. df, tar and mv wrappers delegate to the host utilities
+# except in the explicit free-space and failure-injection scenarios below.
 
 TEST_ID=rumiai-os/rsudo/fs.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
