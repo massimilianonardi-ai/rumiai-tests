@@ -4,9 +4,9 @@
 #   LIB-07    rsudo-mod-fs.lib.sh documents its complete public function surface.
 #   RSUDO-14  fs get/put preserve regular-file, directory and symbolic-link kind.
 #   RSUDO-15  fs put transfers through the privileged destination filesystem.
-#   RSUDO-16  fs put does not implicitly delete an existing destination when
+#   RSUDO-16  fs get/put do not implicitly delete an existing destination when
 #             staged replacement lacks free space.
-#   RSUDO-17  fs put reports the explicit-delete case and fails until deletion
+#   RSUDO-17  fs get/put report the explicit-delete case and fail until deletion
 #             is explicitly requested.
 #   RSUDO-18  fs put promotes a replacement only after transfer succeeds.
 #   RSUDO-19  fs staged replacement preserves the previous destination until
@@ -170,7 +170,7 @@ EOF_SUDO
 cat > "$fakebin/df" <<'EOF_DF'
 #!/bin/sh
 
-if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] && [ -n "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ]
+if [ -n "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ]
 then
     printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
     printf 'rsudo-test 999999 1 %s 1%% /\n' "$RSUDO_FS_TEST_FAKE_FREE_KB"
@@ -393,5 +393,59 @@ run_rsudo fs put "$local_root/space-source" "$remote_root/space-target" >/dev/nu
     fail 'put after explicit delete failed'
 cmp "$local_root/space-source" "$remote_root/space-target" >/dev/null 2>&1 ||
     fail 'put after explicit delete changed content'
+
+# get applies the same space policy on the local destination filesystem. Keep an
+# existing local target larger than the remote source so fake zero free space
+# represents the precise "fits only after explicit deletion" case.
+mkdir -p "$local_root/get-space-target" || error 'cannot prepare local get space target'
+printf '%s\n' keep-local > "$local_root/get-space-target/marker" ||
+    error 'cannot prepare local get space marker'
+dd if=/dev/zero of="$local_root/get-space-target/padding" bs=1024 count=2048 >/dev/null 2>&1 ||
+    error 'cannot prepare reclaimable local allocation'
+dd if=/dev/zero of="$remote_root/get-space-source" bs=1024 count=1024 >/dev/null 2>&1 ||
+    error 'cannot prepare remote get space source'
+
+RSUDO_FS_TEST_FAKE_FREE_KB=0
+export RSUDO_FS_TEST_FAKE_FREE_KB
+get_space_stdout=$tmp/get-space.stdout
+get_space_stderr=$tmp/get-space.stderr
+run_rsudo fs get "$remote_root/get-space-source" "$local_root/get-space-target" >"$get_space_stdout" 2>"$get_space_stderr"
+status=$?
+unset RSUDO_FS_TEST_FAKE_FREE_KB
+
+[ "$status" -ne 0 ] || fail 'get unexpectedly performed destructive fallback'
+[ -f "$local_root/get-space-target/marker" ] || fail 'insufficient-space get removed the old local destination'
+[ "$(cat "$local_root/get-space-target/marker")" = keep-local ] || fail 'insufficient-space get changed the old local destination'
+grep -F 'explicit-delete-required' "$get_space_stderr" >/dev/null 2>&1 ||
+    fail 'get did not report that explicit local deletion is required'
+
+# After the caller explicitly removes the local destination, the same get can
+# proceed normally.
+rm -rf "$local_root/get-space-target" || error 'cannot explicitly delete local get destination'
+run_rsudo fs get "$remote_root/get-space-source" "$local_root/get-space-target" >/dev/null 2>&1 ||
+    fail 'get after explicit local delete failed'
+cmp "$remote_root/get-space-source" "$local_root/get-space-target" >/dev/null 2>&1 ||
+    fail 'get after explicit local delete changed content'
+
+# With no old local destination to reclaim, zero reported free space is the
+# "insufficient even after deletion" case. No destination may be created and no
+# explicit-delete diagnostic is appropriate.
+RSUDO_FS_TEST_FAKE_FREE_KB=0
+export RSUDO_FS_TEST_FAKE_FREE_KB
+get_full_stdout=$tmp/get-full.stdout
+get_full_stderr=$tmp/get-full.stderr
+run_rsudo fs get "$remote_root/get-space-source" "$local_root/get-space-full" >"$get_full_stdout" 2>"$get_full_stderr"
+status=$?
+unset RSUDO_FS_TEST_FAKE_FREE_KB
+
+[ "$status" -ne 0 ] || fail 'get succeeded despite insufficient local space'
+[ ! -e "$local_root/get-space-full" ] && [ ! -L "$local_root/get-space-full" ] ||
+    fail 'insufficient-space get created the local destination'
+grep -F 'insufficient-space' "$get_full_stderr" >/dev/null 2>&1 ||
+    fail 'get did not report insufficient local space'
+if grep -F 'explicit-delete-required' "$get_full_stderr" >/dev/null 2>&1
+then
+    fail 'get requested deletion when no local destination existed'
+fi
 
 exit 0
