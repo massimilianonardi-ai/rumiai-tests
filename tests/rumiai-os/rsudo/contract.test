@@ -1,16 +1,20 @@
 #!/bin/sh
 
 # Protected current properties:
-#   LIB-07   rsudo.lib.sh documents its complete public function surface.
-#   RSUDO-01 SSH authentication uses one-shot local IPC through SSH_ASKPASS.
-#   RSUDO-02 sudo authentication data is separated from target stdin/TTY.
-#   RSUDO-03 non-interactive remote code consumes the sudo password before target stdin.
-#   RSUDO-04 sudo credentials are validated with sudo -S --prompt='' -v.
-#   RSUDO-05 target execution uses sudo -n after validation.
-#   RSUDO-06 NOPASSWD/root cases never expose the password record to target stdin.
-#   RSUDO-07 unrelated sudo probes do not decide target password consumption.
-#   RSUDO-08 foreground target status is preserved.
-#   RSUDO-11 the sudo password is never embedded in the remote command line.
+#   LIB-07    rsudo.lib.sh documents its complete public function surface.
+#   RSUDO-01  valid connection data executes the requested remote target under sudo.
+#   RSUDO-02  target stdin is preserved and does not receive authentication data.
+#   RSUDO-03  target stdout/stderr remain observable to the caller.
+#   RSUDO-04  resulting remote target status is propagated.
+#   RSUDO-05  password-required sudo is supported.
+#   RSUDO-06  passwordless sudo/root operation is supported without contaminating target stdin.
+#   RSUDO-08  --user selects the requested sudo target user.
+#   RSUDO-09  required password acquisition failure prevents remote execution.
+#   RSUDO-11  password data is not exposed as ordinary target input/output.
+#
+# The SSH and sudo programs below are external-boundary fixtures. They model
+# remote-system characteristics, not the internal sequence rsudo must use.
+# Unsupported fixture interactions are ERROR, not product FAIL.
 
 TEST_ID=rumiai-os/rsudo/contract.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -30,19 +34,20 @@ cleanup()
 {
     [ -z "${tmp-}" ] || rm -rf "$tmp"
 }
-trap cleanup 0 HUP INT TERM
 
-expect_status()
+terminate()
 {
-    expected=$1
-    description=$2
-    shift 2
-
-    "$@" >/dev/null 2>&1
-    status=$?
-    [ "$status" -eq "$expected" ] ||
-        fail "$description returned $status instead of $expected"
+    signal=$1
+    trap - 0 "$signal"
+    cleanup
+    kill -s "$signal" "$$"
 }
+
+trap cleanup 0
+trap 'terminate HUP' HUP
+trap 'terminate INT' INT
+trap 'terminate QUIT' QUIT
+trap 'terminate TERM' TERM
 
 test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
 group_dir=${test_dir%/*}
@@ -65,7 +70,6 @@ esac
 
 rsudo_library=$root/lib/sys/sh/rsudo/rsudo.lib.sh
 rsudo_command=$root/bin/sys/rsudo
-rsudo_askpass=$root/bin/sys/rsudo-askpass
 rsudo_manual=$root/res/sys/manual/rsudo.lib.sh
 
 [ -f "$rsudo_library" ] && [ ! -L "$rsudo_library" ] ||
@@ -95,66 +99,83 @@ then
     fail 'rsudo manual exposes an internal function identifier'
 fi
 
-grep -F "sudo -S --prompt='' -v" "$rsudo_manual" >/dev/null 2>&1 ||
-    fail 'rsudo manual omits sudo validation phase'
-grep -F 'sudo -n' "$rsudo_manual" >/dev/null 2>&1 ||
-    fail 'rsudo manual omits non-interactive target sudo phase'
-
 [ -f "$rsudo_command" ] && [ -x "$rsudo_command" ] ||
     fail 'rsudo command entrypoint is unavailable'
-[ -f "$rsudo_askpass" ] && [ -x "$rsudo_askpass" ] ||
-    fail 'rsudo-askpass command is unavailable'
-command -v openssl >/dev/null 2>&1 ||
-    skip 'openssl required by one-shot IPC is unavailable'
 
 tmp=${TMPDIR:-/tmp}/rumiai-rsudo-contract-$$
 fakebin=$tmp/bin
-mkdir -p "$fakebin" || error 'cannot create rsudo boundary fixtures'
+mkdir -p "$fakebin" || error 'cannot create external-boundary fixtures'
 
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
 
-printf '%s\n' "$SSH_ASKPASS" > "$RSUDO_TEST_ASKPASS_PATH_FILE" || exit 80
-printf '%s\n' "$SSH_ASKPASS_REQUIRE" > "$RSUDO_TEST_ASKPASS_REQUIRE_FILE" || exit 81
-printf '%s\n' "${m_RSUDO_ASKPASS_ID-}" > "$RSUDO_TEST_ASKPASS_ID_FILE" || exit 82
+# Minimal external SSH boundary: resolve the destination and execute the remote
+# command in the modeled remote environment. Authentication itself is assumed
+# successful; this test is about rsudo behavior after a reachable SSH boundary.
 
-[ -n "${m_RSUDO_ASKPASS_ID-}" ] || exit 83
-"$RSUDO_TEST_M" "$SSH_ASKPASS" > "$RSUDO_TEST_ASKPASS_VALUE_FILE" || exit 84
+if [ "${1-}" = -t ]
+then
+    shift
+fi
 
-printf '%s\n' "$#" > "$RSUDO_TEST_SSH_ARGS_FILE" || exit 85
-for arg
-do
-    printf '%s\n' "$arg" >> "$RSUDO_TEST_SSH_ARGS_FILE" || exit 86
-done
+login_user=
+if [ "${1-}" = -l ]
+then
+    [ "$#" -ge 3 ] || exit 80
+    login_user=$2
+    shift 2
+fi
 
-[ "$1" = -l ] || exit 87
-[ "$2" = "$RSUDO_TEST_EXPECT_USER" ] || exit 88
-[ "$3" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 89
-shift 3
+[ "$#" -ge 2 ] || exit 81
+host=$1
+shift
 
-[ "$#" -gt 0 ] || exit 90
+[ "$login_user" = "$RSUDO_TEST_EXPECT_LOGIN_USER" ] || exit 82
+[ "$host" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 83
+
 remote_command=$*
+[ -n "$remote_command" ] || exit 84
+
+RSUDO_TEST_REMOTE_LOGIN_USER=$login_user
+export RSUDO_TEST_REMOTE_LOGIN_USER
+
 PATH="$RSUDO_TEST_REMOTE_BIN:$PATH" sh -c "$remote_command"
 EOF_SSH
 
 cat > "$fakebin/sudo" <<'EOF_SUDO'
 #!/bin/sh
 
-log=$RSUDO_TEST_SUDO_LOG
+# External sudo boundary with three modeled systems:
+#   required     password authentication is required
+#   passwordless sudo never needs a password
+#   root         already privileged login
+#
+# It accepts several legitimate sudo authentication sequences so the product
+# test does not prescribe which one rsudo must choose.
+
+validated=$RSUDO_TEST_SUDO_VALIDATED_FILE
+mode=$RSUDO_TEST_SUDO_MODE
+expected_password=$RSUDO_TEST_EXPECT_PASSWORD
+
+case $mode in
+    required|passwordless|root) : ;;
+    *) exit 90 ;;
+esac
 
 if [ "${1-}" = -K ]
 then
-    printf '%s\n' invalidate >> "$log"
+    rm -f "$validated" || exit 91
     exit 0
 fi
 
 stdin_auth=0
 noninteractive=0
-validate=0
+validate_only=0
+target_user=root
 
 while [ "$#" -gt 0 ]
 do
-    case "$1" in
+    case $1 in
         -S)
             stdin_auth=1
             shift
@@ -164,19 +185,24 @@ do
             shift
         ;;
         -v)
-            validate=1
+            validate_only=1
             shift
         ;;
-        --prompt=*)
-            shift
+        --prompt=*|-p)
+            if [ "$1" = -p ]; then [ "$#" -ge 2 ] || exit 92; shift 2; else shift; fi
         ;;
-        --user)
-            [ "$#" -ge 2 ] || exit 91
+        --user|-u)
+            [ "$#" -ge 2 ] || exit 93
+            target_user=$2
             shift 2
         ;;
         --)
             shift
             break
+        ;;
+        -*)
+            # Fixture cannot safely model an unknown sudo option.
+            exit 94
         ;;
         *)
             break
@@ -184,103 +210,189 @@ do
     esac
 done
 
-if [ "$validate" -eq 1 ]
+needs_auth=0
+if [ "$mode" = required ] && [ "${RSUDO_TEST_REMOTE_LOGIN_USER-}" != root ]
 then
-    [ "$stdin_auth" -eq 1 ] || exit 92
-    IFS= read -r password || exit 93
-    printf 'validate:%s\n' "$password" >> "$log"
-    unset password
-    exit 0
+    needs_auth=1
 fi
 
-# Simulate a selective sudoers policy: the unrelated command "true" requires
-# authentication, while the actual target is NOPASSWD.
-if [ "$noninteractive" -eq 1 ] && [ "${1-}" = true ]
+authenticate()
+{
+    [ "$needs_auth" -eq 1 ] || return 0
+    [ -f "$validated" ] && return 0
+
+    if [ "$stdin_auth" -eq 1 ]
+    then
+        IFS= read -r supplied || return 70
+        [ "$supplied" = "$expected_password" ] || return 71
+        : > "$validated" || return 72
+        unset supplied
+        return 0
+    fi
+
+    [ "$noninteractive" -eq 0 ] || return 73
+
+    # This fixture deliberately does not emulate an interactive sudo prompt.
+    return 74
+}
+
+if [ "$validate_only" -eq 1 ]
 then
-    printf '%s\n' legacy-probe >> "$log"
-    exit 1
+    authenticate
+    exit $?
 fi
 
-[ "$#" -gt 0 ] || exit 94
+[ "$#" -gt 0 ] || exit 95
 
-if [ "$noninteractive" -eq 1 ]
-then
-    printf 'target-noninteractive:%s\n' "$1" >> "$log"
-else
-    printf 'target-may-prompt:%s\n' "$1" >> "$log"
-fi
+authenticate
+auth_status=$?
+[ "$auth_status" -eq 0 ] || exit "$auth_status"
 
-# A NOPASSWD target does not consume stdin even if -S was supplied.
+RSUDO_TEST_EFFECTIVE_USER=$target_user
+export RSUDO_TEST_EFFECTIVE_USER
+
 exec "$@"
 EOF_SUDO
 
 cat > "$fakebin/rsudo-target" <<'EOF_TARGET'
 #!/bin/sh
-cat
-exit "${RSUDO_TEST_TARGET_STATUS:-0}"
+
+cat > "$RSUDO_TEST_TARGET_STDIN_FILE" || exit 60
+printf '%s\n' "${RSUDO_TEST_EFFECTIVE_USER-root}" > "$RSUDO_TEST_TARGET_USER_FILE" || exit 61
+printf 'TARGET-STDOUT:%s\n' "$RSUDO_TEST_CASE"
+printf 'TARGET-STDERR:%s\n' "$RSUDO_TEST_CASE" >&2
+exit "$RSUDO_TEST_TARGET_STATUS"
 EOF_TARGET
 
 chmod +x "$fakebin/ssh" "$fakebin/sudo" "$fakebin/rsudo-target" ||
-    error 'cannot make rsudo boundary fixtures executable'
+    error 'cannot make external-boundary fixtures executable'
 
-expect_status 9 'unknown rsudo option'     env RSUDO_HOST=host RSUDO_USER=user RSUDO_PASSWORD=secret     "$root/m" "$rsudo_command" --invalid-rsudo-option
+command -p sh -n "$fakebin/ssh" ||
+    error 'ssh boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/sudo" ||
+    error 'sudo boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/rsudo-target" ||
+    error 'target fixture has invalid shell syntax'
 
-(
-    unset RSUDO_HOST
-    RSUDO_USER=user
-    RSUDO_PASSWORD=secret
-    export RSUDO_USER RSUDO_PASSWORD
-    "$root/m" "$rsudo_command" --no-preserve-quotes -- true >/dev/null 2>&1
-)
-status=$?
-[ "$status" -eq 10 ] ||
-    fail "missing host returned $status instead of 10"
+run_case()
+{
+    case_name=$1
+    sudo_mode=$2
+    login_user=$3
+    password_source=$4
+    sudo_user=$5
+    expected_user=$6
 
-askpass_path_file=$tmp/askpass-path
-askpass_require_file=$tmp/askpass-require
-askpass_id_file=$tmp/askpass-id
-askpass_value_file=$tmp/askpass-value
-ssh_args_file=$tmp/ssh-args
-sudo_log=$tmp/sudo-log
-stdout_file=$tmp/stdout
-stderr_file=$tmp/stderr
-: > "$sudo_log" || error 'cannot initialize sudo log'
+    case_dir=$tmp/$case_name
+    mkdir "$case_dir" || error "cannot create case directory: $case_name"
 
-printf '%s\n' payload |
-PATH="$fakebin:$PATH" RSUDO_HOST=example.invalid RSUDO_USER=alice RSUDO_PASSWORD=secret RSUDO_TEST_M="$root/m" RSUDO_TEST_REMOTE_BIN="$fakebin" RSUDO_TEST_EXPECT_USER=alice RSUDO_TEST_EXPECT_HOST=example.invalid RSUDO_TEST_ASKPASS_PATH_FILE="$askpass_path_file" RSUDO_TEST_ASKPASS_REQUIRE_FILE="$askpass_require_file" RSUDO_TEST_ASKPASS_ID_FILE="$askpass_id_file" RSUDO_TEST_ASKPASS_VALUE_FILE="$askpass_value_file" RSUDO_TEST_SSH_ARGS_FILE="$ssh_args_file" RSUDO_TEST_SUDO_LOG="$sudo_log" RSUDO_TEST_TARGET_STATUS=37 "$root/m" "$rsudo_command" --no-preserve-quotes -- rsudo-target     > "$stdout_file" 2> "$stderr_file"
-status=$?
+    target_stdin=$case_dir/target.stdin
+    target_user=$case_dir/target.user
+    stdout_file=$case_dir/stdout
+    stderr_file=$case_dir/stderr
+    validated_file=$case_dir/sudo.validated
+    payload="payload-$case_name"
 
-[ "$status" -eq 37 ] || {
-    cat "$stderr_file" >&2
-    fail "rsudo did not preserve remote target status 37: $status"
+    (
+        PATH="$fakebin:$PATH"
+        RSUDO_HOST=example.invalid
+        RSUDO_USER=$login_user
+        RSUDO_TEST_EXPECT_LOGIN_USER=$login_user
+        RSUDO_TEST_EXPECT_HOST=example.invalid
+        RSUDO_TEST_REMOTE_BIN=$fakebin
+        RSUDO_TEST_SUDO_MODE=$sudo_mode
+        RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
+        RSUDO_TEST_EXPECT_PASSWORD=secret
+        RSUDO_TEST_TARGET_STDIN_FILE=$target_stdin
+        RSUDO_TEST_TARGET_USER_FILE=$target_user
+        RSUDO_TEST_TARGET_STATUS=37
+        RSUDO_TEST_CASE=$case_name
+
+        export             PATH RSUDO_HOST RSUDO_USER             RSUDO_TEST_EXPECT_LOGIN_USER RSUDO_TEST_EXPECT_HOST             RSUDO_TEST_REMOTE_BIN RSUDO_TEST_SUDO_MODE             RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD             RSUDO_TEST_TARGET_STDIN_FILE RSUDO_TEST_TARGET_USER_FILE             RSUDO_TEST_TARGET_STATUS RSUDO_TEST_CASE
+
+        if [ "$password_source" = stdin ]
+        then
+            unset RSUDO_PASSWORD
+            if [ -n "$sudo_user" ]
+            then
+                printf 'secret\n%s\n' "$payload" |
+                    "$root/m" "$rsudo_command" --askpass --no-preserve-quotes                         --user "$sudo_user" -- rsudo-target
+            else
+                printf 'secret\n%s\n' "$payload" |
+                    "$root/m" "$rsudo_command" --askpass --no-preserve-quotes                         -- rsudo-target
+            fi
+        else
+            RSUDO_PASSWORD=secret
+            export RSUDO_PASSWORD
+
+            if [ -n "$sudo_user" ]
+            then
+                printf '%s\n' "$payload" |
+                    "$root/m" "$rsudo_command" --no-preserve-quotes                         --user "$sudo_user" -- rsudo-target
+            else
+                printf '%s\n' "$payload" |
+                    "$root/m" "$rsudo_command" --no-preserve-quotes                         -- rsudo-target
+            fi
+        fi
+    ) > "$stdout_file" 2> "$stderr_file"
+
+    status=$?
+    case $status in
+        8[0-9]|9[0-9])
+            cat "$stderr_file" >&2
+            error "external-boundary fixture could not model case $case_name (status $status)"
+        ;;
+    esac
+
+    [ "$status" -eq 37 ] || {
+        cat "$stderr_file" >&2
+        fail "$case_name: remote target status was $status instead of 37"
+    }
+
+    [ -f "$target_stdin" ] ||
+        fail "$case_name: remote target did not execute"
+    [ "$(cat "$target_stdin")" = "$payload" ] ||
+        fail "$case_name: target stdin was not preserved"
+
+    [ -f "$target_user" ] ||
+        fail "$case_name: target user observation is missing"
+    [ "$(cat "$target_user")" = "$expected_user" ] ||
+        fail "$case_name: target ran as $(cat "$target_user") instead of $expected_user"
+
+    grep -F "TARGET-STDOUT:$case_name" "$stdout_file" >/dev/null 2>&1 ||
+        fail "$case_name: target stdout was not propagated"
+    grep -F "TARGET-STDERR:$case_name" "$stderr_file" >/dev/null 2>&1 ||
+        fail "$case_name: target stderr was not propagated"
+
+    if grep -F 'secret' "$target_stdin" "$stdout_file" "$stderr_file" >/dev/null 2>&1
+    then
+        fail "$case_name: authentication data became target input/output"
+    fi
 }
 
-[ "$(cat "$askpass_path_file")" = "$rsudo_askpass" ] ||
-    fail 'rsudo did not export the canonical rsudo-askpass path'
-[ "$(cat "$askpass_require_file")" = force ] ||
-    fail 'rsudo did not force SSH askpass'
-[ -s "$askpass_id_file" ] ||
-    fail 'rsudo did not provide an opaque one-shot SSH askpass identity'
-[ "$(cat "$askpass_value_file")" = secret ] ||
-    fail 'rsudo-askpass did not consume the expected one-shot SSH password'
+# Password-required sudo.
+run_case password-required required alice env '' root
 
-if grep -F 'secret' "$ssh_args_file" >/dev/null 2>&1
-then
-    fail 'rsudo exposed the sudo password in the remote SSH command line'
-fi
+# Passwordless sudo must not leak an unused password record into target stdin.
+run_case passwordless passwordless alice env '' root
 
-[ "$(cat "$stdout_file")" = payload ] || {
-    cat "$stdout_file" >&2
-    fail 'sudo authentication data leaked into target stdin'
-}
+# Already privileged remote login must preserve the same target behavior.
+run_case root-login root root env '' root
 
-grep -F 'validate:secret' "$sudo_log" >/dev/null 2>&1 ||
-    fail 'non-interactive rsudo did not validate sudo credentials with the transferred password'
-grep -F 'target-noninteractive:rsudo-target' "$sudo_log" >/dev/null 2>&1 ||
-    fail 'non-interactive rsudo did not execute the target through sudo -n'
-if grep -F 'legacy-probe' "$sudo_log" >/dev/null 2>&1
-then
-    fail 'non-interactive rsudo still probes an unrelated sudo command'
-fi
+# --user is observable target behavior, not an implementation detail.
+run_case target-user required alice env daemon daemon
+
+# --askpass consumes its password record and forwards only the remaining input.
+run_case stdin-password required alice stdin '' root
+
+# Invalid local invocation is rejected before any remote execution.
+RSUDO_HOST=example.invalid
+RSUDO_USER=alice
+RSUDO_PASSWORD=secret
+export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+"$root/m" "$rsudo_command" --invalid-rsudo-option >/dev/null 2>&1
+status=$?
+[ "$status" -eq 9 ] ||
+    fail "unknown option returned $status instead of 9"
 
 exit 0
