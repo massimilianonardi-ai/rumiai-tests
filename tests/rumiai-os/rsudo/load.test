@@ -1,0 +1,384 @@
+#!/bin/sh
+
+# Protected current properties:
+#   RSUDO-13 --load file:group treats file and group as independently optional
+#            components:
+#              file:group loads file and selects group
+#              file:      loads file and preserves current credentials
+#              :group     selects an already-loaded group
+#              :          preserves current credentials without loading/selecting
+#
+# The SSH and sudo programs below are external-boundary fixtures. They expose
+# the connection/credential values selected by rsudo without prescribing how
+# rsudo performs its internal authentication sequence.
+
+TEST_ID=rumiai-os/rsudo/load.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    if [ -n "${gpg_home-}" ] && command -v gpgconf >/dev/null 2>&1
+    then
+        GNUPGHOME=$gpg_home gpgconf --kill gpg-agent >/dev/null 2>&1 || :
+    fi
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+
+terminate()
+{
+    signal=$1
+    trap - 0 "$signal"
+    cleanup
+    kill -s "$signal" "$$"
+}
+
+trap cleanup 0
+trap 'terminate HUP' HUP
+trap 'terminate INT' INT
+trap 'terminate QUIT' QUIT
+trap 'terminate TERM' TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+rsudo_command=$root/bin/sys/rsudo
+core_library=$root/lib/sys/sh/core.lib.sh
+enc_library=$root/lib/sys/sh/enc.lib.sh
+
+[ -x "$rsudo_command" ] || fail 'rsudo command entrypoint is unavailable'
+[ -f "$core_library" ] && [ ! -L "$core_library" ] ||
+    fail 'core.lib.sh is missing or is not a regular library file'
+[ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
+    fail 'enc.lib.sh is missing or is not a regular library file'
+
+command -v gpg >/dev/null 2>&1 || skip 'gpg is unavailable'
+gpg_options=$(command gpg --no-options --dump-options 2>/dev/null) ||
+    skip 'gpg option discovery failed'
+if ! printf '%s\n' "$gpg_options" | grep -qx -e '--use-ocb-sym' &&
+   ! printf '%s\n' "$gpg_options" | grep -qx -e '--force-ocb'
+then
+    skip 'gpg lacks symmetric OCB encryption support'
+fi
+unset gpg_options
+
+. "$core_library" || error 'cannot source core.lib.sh'
+. "$enc_library" || error 'cannot source enc.lib.sh'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-load-$$
+fakebin=$tmp/bin
+mkdir -p "$fakebin" || error 'cannot create load-test workspace'
+
+gpg_home=$tmp/gnupg
+mkdir -m 700 "$gpg_home" || error 'cannot create temporary GnuPG home'
+GNUPGHOME=$gpg_home
+export GNUPGHOME
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+if [ "${1-}" = -t ]
+then
+    shift
+fi
+
+login_user=
+if [ "${1-}" = -l ]
+then
+    [ "$#" -ge 3 ] || exit 90
+    login_user=$2
+    shift 2
+fi
+
+[ "$#" -ge 2 ] || exit 91
+host=$1
+shift
+
+printf '%s\n' "$login_user" > "$RSUDO_TEST_OBSERVED_LOGIN_USER" || exit 92
+printf '%s\n' "$host" > "$RSUDO_TEST_OBSERVED_HOST" || exit 93
+
+remote_command=$*
+[ -n "$remote_command" ] || exit 94
+
+RSUDO_TEST_REMOTE_LOGIN_USER=$login_user
+export RSUDO_TEST_REMOTE_LOGIN_USER
+
+unset RSUDO_HOST RSUDO_USER RSUDO_PASSWORD m_ENC_PASS
+PATH="$RSUDO_TEST_REMOTE_BIN:$PATH" sh -c "$remote_command"
+EOF_SSH
+
+cat > "$fakebin/sudo" <<'EOF_SUDO'
+#!/bin/sh
+
+validated=$RSUDO_TEST_SUDO_VALIDATED_FILE
+expected_password=$RSUDO_TEST_EXPECT_PASSWORD
+
+if [ "${1-}" = -K ]
+then
+    rm -f "$validated" || exit 90
+    exit 0
+fi
+
+stdin_auth=0
+noninteractive=0
+validate_only=0
+
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -S)
+            stdin_auth=1
+            shift
+        ;;
+        -n)
+            noninteractive=1
+            shift
+        ;;
+        -v)
+            validate_only=1
+            shift
+        ;;
+        --prompt=*)
+            shift
+        ;;
+        -p)
+            [ "$#" -ge 2 ] || exit 91
+            shift 2
+        ;;
+        --user|-u)
+            [ "$#" -ge 2 ] || exit 92
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 93
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+authenticate()
+{
+    [ -f "$validated" ] && return 0
+
+    if [ "$stdin_auth" -eq 1 ]
+    then
+        IFS= read -r supplied || return 70
+        printf '%s\n' "$supplied" > "$RSUDO_TEST_OBSERVED_PASSWORD" || return 71
+        [ "$supplied" = "$expected_password" ] || return 72
+        : > "$validated" || return 73
+        unset supplied
+        return 0
+    fi
+
+    [ "$noninteractive" -eq 0 ] || return 74
+    return 75
+}
+
+if [ "$validate_only" -eq 1 ]
+then
+    authenticate
+    exit $?
+fi
+
+[ "$#" -gt 0 ] || exit 94
+
+authenticate
+auth_status=$?
+[ "$auth_status" -eq 0 ] || exit "$auth_status"
+
+exec "$@"
+EOF_SUDO
+
+cat > "$fakebin/rsudo-load-target" <<'EOF_TARGET'
+#!/bin/sh
+printf '%s\n' load-target-ok
+EOF_TARGET
+
+chmod +x "$fakebin/ssh" "$fakebin/sudo" "$fakebin/rsudo-load-target" ||
+    error 'cannot make load-test boundary fixtures executable'
+
+command -p sh -n "$fakebin/ssh" ||
+    error 'ssh boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/sudo" ||
+    error 'sudo boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/rsudo-load-target" ||
+    error 'target fixture has invalid shell syntax'
+
+load_pass='rsudo load test passphrase'
+
+cat > "$tmp/groups.sh" <<'EOF_GROUPS'
+RSUDO_CREDENTIALS_GROUP_FILE_HOST=file.example.invalid
+RSUDO_CREDENTIALS_GROUP_FILE_USER=file-user
+RSUDO_CREDENTIALS_GROUP_FILE_PASS=file-pass
+EOF_GROUPS
+
+m_ENC_PASS=$load_pass
+encode < "$tmp/groups.sh" > "$tmp/groups.gpg" ||
+    error 'cannot prepare encoded rsudo --load input'
+unset m_ENC_PASS
+
+run_load_case()
+{
+    case_name=$1
+    expected_host=$2
+    expected_login_user=$3
+    expected_password=$4
+    shift 4
+
+    case_dir=$tmp/$case_name
+    mkdir "$case_dir" || error "cannot create case directory: $case_name"
+
+    observed_host=$case_dir/host
+    observed_login_user=$case_dir/user
+    observed_password=$case_dir/password
+    validated_file=$case_dir/sudo.validated
+    stdout_file=$case_dir/stdout
+    stderr_file=$case_dir/stderr
+
+    (
+        PATH="$fakebin:$PATH"
+        RSUDO_TEST_REMOTE_BIN=$fakebin
+        RSUDO_TEST_OBSERVED_HOST=$observed_host
+        RSUDO_TEST_OBSERVED_LOGIN_USER=$observed_login_user
+        RSUDO_TEST_OBSERVED_PASSWORD=$observed_password
+        RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
+        RSUDO_TEST_EXPECT_PASSWORD=$expected_password
+        m_ENC_PASS=$load_pass
+
+        export             PATH             RSUDO_TEST_REMOTE_BIN             RSUDO_TEST_OBSERVED_HOST             RSUDO_TEST_OBSERVED_LOGIN_USER             RSUDO_TEST_OBSERVED_PASSWORD             RSUDO_TEST_SUDO_VALIDATED_FILE             RSUDO_TEST_EXPECT_PASSWORD             m_ENC_PASS
+
+        "$root/m" "$rsudo_command" "$@"             --no-preserve-quotes -- rsudo-load-target
+    ) > "$stdout_file" 2> "$stderr_file"
+
+    status=$?
+
+    case $status in
+        9[0-9])
+            cat "$stderr_file" >&2
+            error "external-boundary fixture could not model $case_name (status $status)"
+        ;;
+    esac
+
+    [ "$status" -eq 0 ] || {
+        cat "$stderr_file" >&2
+        fail "$case_name returned status $status"
+    }
+
+    [ -f "$observed_host" ] ||
+        fail "$case_name did not reach the remote boundary"
+    [ "$(cat "$observed_host")" = "$expected_host" ] ||
+        fail "$case_name selected host $(cat "$observed_host") instead of $expected_host"
+
+    [ -f "$observed_login_user" ] ||
+        fail "$case_name did not expose the selected login user"
+    [ "$(cat "$observed_login_user")" = "$expected_login_user" ] ||
+        fail "$case_name selected user $(cat "$observed_login_user") instead of $expected_login_user"
+
+    [ -f "$observed_password" ] ||
+        fail "$case_name did not provide sudo authentication data"
+    [ "$(cat "$observed_password")" = "$expected_password" ] ||
+        fail "$case_name selected an unexpected password"
+
+    grep -F 'load-target-ok' "$stdout_file" >/dev/null 2>&1 ||
+        fail "$case_name did not execute the target"
+}
+
+# file:group loads the file and immediately selects the named group.
+(
+    unset RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+    export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+    run_load_case         file-and-group         file.example.invalid file-user file-pass         --load "$tmp/groups.gpg:FILE"
+)
+
+# file: loads the file but does not select a group or replace current credentials.
+(
+    RSUDO_HOST=baseline.example.invalid
+    RSUDO_USER=baseline-user
+    RSUDO_PASSWORD=baseline-pass
+    export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+
+    run_load_case         file-only-preserves-credentials         baseline.example.invalid baseline-user baseline-pass         --load "$tmp/groups.gpg:"
+)
+
+# A group loaded by file: remains available later in the same rsudo invocation.
+(
+    RSUDO_HOST=baseline.example.invalid
+    RSUDO_USER=baseline-user
+    RSUDO_PASSWORD=baseline-pass
+    export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+
+    run_load_case         file-only-loads-state         file.example.invalid file-user file-pass         --load "$tmp/groups.gpg:" --load ":FILE"
+)
+
+# :group selects credentials already present in shell memory.
+(
+    unset RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+
+    RSUDO_CREDENTIALS_GROUP_MEMORY_HOST=memory.example.invalid
+    RSUDO_CREDENTIALS_GROUP_MEMORY_USER=memory-user
+    RSUDO_CREDENTIALS_GROUP_MEMORY_PASS=memory-pass
+
+    export         RSUDO_CREDENTIALS_GROUP_MEMORY_HOST         RSUDO_CREDENTIALS_GROUP_MEMORY_USER         RSUDO_CREDENTIALS_GROUP_MEMORY_PASS
+
+    run_load_case         group-only         memory.example.invalid memory-user memory-pass         --load ":MEMORY"
+)
+
+# : performs neither operation and preserves current connection state.
+(
+    RSUDO_HOST=baseline.example.invalid
+    RSUDO_USER=baseline-user
+    RSUDO_PASSWORD=baseline-pass
+    export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+
+    run_load_case         both-empty         baseline.example.invalid baseline-user baseline-pass         --load ":"
+)
+
+# The separator is part of the public --load operand syntax.
+RSUDO_HOST=baseline.example.invalid
+RSUDO_USER=baseline-user
+RSUDO_PASSWORD=baseline-pass
+export RSUDO_HOST RSUDO_USER RSUDO_PASSWORD
+
+"$root/m" "$rsudo_command" --load >/dev/null 2>&1
+status=$?
+[ "$status" -eq 6 ] ||
+    fail "missing --load operand returned $status instead of 6"
+
+"$root/m" "$rsudo_command" --load group >/dev/null 2>&1
+status=$?
+[ "$status" -eq 7 ] ||
+    fail "--load operand without ':' returned $status instead of 7"
+
+exit 0
