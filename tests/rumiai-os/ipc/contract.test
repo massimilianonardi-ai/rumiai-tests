@@ -31,6 +31,12 @@ cleanup()
         kill "$peer_pid" 2>/dev/null || :
         wait "$peer_pid" 2>/dev/null || :
     fi
+    if command -v ipc_once_clear >/dev/null 2>&1
+    then
+        ipc_once_clear once_slot 2>/dev/null || :
+        ipc_once_clear once_a 2>/dev/null || :
+        ipc_once_clear once_b 2>/dev/null || :
+    fi
     [ -z "${tmp-}" ] || rm -rf "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -66,9 +72,12 @@ case $status in
     *) error 'target discovery failed' ;;
 esac
 
+core_library=$root/lib/sys/sh/core.lib.sh
 ipc_library=$root/lib/sys/sh/ipc.lib.sh
 ipc_manual=$root/res/sys/manual/ipc.lib.sh
 
+[ -f "$core_library" ] && [ ! -L "$core_library" ] ||
+    fail 'core.lib.sh is missing or is not a regular library file'
 [ -f "$ipc_library" ] && [ ! -L "$ipc_library" ] ||
     fail 'ipc.lib.sh is missing or is not a regular library file'
 [ ! -x "$ipc_library" ] || fail 'ipc.lib.sh is executable'
@@ -84,7 +93,8 @@ command -p sh -n "$ipc_library" || fail 'ipc.lib.sh is not valid host POSIX-sh s
     fail 'ipc.lib.sh operational manual is missing'
 
 for public_function in \
-    ipc_create ipc_open ipc_write ipc_read ipc_close ipc_sync ipc_cancel ipc_destroy
+    ipc_create ipc_open ipc_write ipc_read ipc_close ipc_sync ipc_cancel ipc_destroy \
+    ipc_once_set ipc_once_get ipc_once_clear
 do
     grep -F "$public_function" "$ipc_manual" >/dev/null 2>&1 ||
         fail "ipc manual omits public function $public_function"
@@ -99,6 +109,7 @@ command -v openssl >/dev/null 2>&1 ||
     skip 'openssl required by rand.lib.sh is unavailable'
 
 m_LIB_DIR=$root/lib
+. "$core_library" || error 'cannot source core.lib.sh'
 . "$ipc_library" || error 'cannot source ipc.lib.sh'
 
 tmp=${TMPDIR:-/tmp}/rumiai-ipc-contract-$$
@@ -227,5 +238,113 @@ sleep 30 &
 cancel_pid=$!
 ipc_cancel "$cancel_pid" || fail 'ipc_cancel rejected a valid asynchronous child pid'
 cancel_pid=
+
+expect_status 2 'ipc_once_set arity' ipc_once_set
+expect_status 2 'ipc_once_get arity' ipc_once_get
+expect_status 2 'ipc_once_clear arity' ipc_once_clear
+
+expect_status 1 'ipc_once_set invalid result variable' \
+    ipc_once_set 1invalid value "$tmp"
+expect_status 1 'ipc_once_set private result variable' \
+    ipc_once_set _ipc_reserved value "$tmp"
+expect_status 1 'ipc_once_set embedded newline value' \
+    ipc_once_set once_slot 'bad
+record' "$tmp"
+
+ipc_once_set once_slot alpha "$tmp" ||
+    fail 'ipc_once_set failed for consumable value'
+[ -n "$once_slot" ] ||
+    fail 'ipc_once_set did not assign an opaque identity'
+
+once_id=$once_slot
+once_value=$(ipc_once_get "$once_id") ||
+    fail 'ipc_once_get failed for first consumption'
+[ "$once_value" = alpha ] ||
+    fail "ipc_once_get returned unexpected value: $once_value"
+
+expect_status 1 'ipc_once_get second consumption' ipc_once_get "$once_id"
+
+ipc_once_clear once_slot ||
+    fail 'ipc_once_clear failed after consumption'
+[ -z "${once_slot+x}" ] ||
+    fail 'ipc_once_clear did not unset consumed result variable'
+
+ipc_once_set once_slot old "$tmp" ||
+    fail 'ipc_once_set failed for replacement source'
+old_id=$once_slot
+
+ipc_once_set once_slot new "$tmp" ||
+    fail 'ipc_once_set failed to replace unread value'
+
+expect_status 1 'ipc_once_get revoked replacement identity' ipc_once_get "$old_id"
+
+once_value=$(ipc_once_get "$once_slot") ||
+    fail 'ipc_once_get failed for replacement value'
+[ "$once_value" = new ] ||
+    fail "ipc_once_get returned unexpected replacement value: $once_value"
+
+ipc_once_clear once_slot ||
+    fail 'ipc_once_clear failed after replacement consumption'
+
+ipc_once_set once_slot first "$tmp" ||
+    fail 'ipc_once_set failed before consumed-value replacement'
+once_value=$(ipc_once_get "$once_slot") ||
+    fail 'ipc_once_get failed before consumed-value replacement'
+[ "$once_value" = first ] ||
+    fail "unexpected first consumed value: $once_value"
+
+ipc_once_set once_slot second "$tmp" ||
+    fail 'ipc_once_set failed to replace already consumed value'
+once_value=$(ipc_once_get "$once_slot") ||
+    fail 'ipc_once_get failed after consumed-value replacement'
+[ "$once_value" = second ] ||
+    fail "unexpected second consumed value: $once_value"
+
+ipc_once_clear once_slot ||
+    fail 'ipc_once_clear failed after consumed-value replacement'
+
+ipc_once_set once_a one "$tmp" ||
+    fail 'ipc_once_set failed for first independent slot'
+ipc_once_set once_b two "$tmp" ||
+    fail 'ipc_once_set failed for second independent slot'
+
+once_value=$(ipc_once_get "$once_b") ||
+    fail 'ipc_once_get failed for second independent slot'
+[ "$once_value" = two ] ||
+    fail "unexpected second independent value: $once_value"
+
+once_value=$(ipc_once_get "$once_a") ||
+    fail 'ipc_once_get failed for first independent slot'
+[ "$once_value" = one ] ||
+    fail "unexpected first independent value: $once_value"
+
+ipc_once_clear once_a ||
+    fail 'ipc_once_clear failed for first independent slot'
+ipc_once_clear once_b ||
+    fail 'ipc_once_clear failed for second independent slot'
+
+ipc_once_set once_slot revoked "$tmp" ||
+    fail 'ipc_once_set failed before unread clear'
+revoked_id=$once_slot
+
+ipc_once_clear once_slot ||
+    fail 'ipc_once_clear failed for unread value'
+[ -z "${once_slot+x}" ] ||
+    fail 'ipc_once_clear did not unset unread result variable'
+expect_status 1 'ipc_once_get explicitly revoked identity' ipc_once_get "$revoked_id"
+
+ipc_once_set once_slot "" "$tmp" ||
+    fail 'ipc_once_set rejected an empty value'
+once_value=$(ipc_once_get "$once_slot")
+status=$?
+[ "$status" -eq 0 ] ||
+    fail "ipc_once_get empty value returned status $status"
+[ -z "$once_value" ] ||
+    fail 'ipc_once_get empty value produced non-empty output'
+ipc_once_clear once_slot ||
+    fail 'ipc_once_clear failed after empty-value consumption'
+
+ipc_once_clear once_slot ||
+    fail 'ipc_once_clear was not idempotent for an already clear slot'
 
 exit 0
