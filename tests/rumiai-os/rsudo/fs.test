@@ -204,17 +204,38 @@ cat > "$fakebin/mv" <<'EOF_MV'
 
 # Fail only stage -> canonical-path promotion. old -> .orig and the subsequent
 # .orig -> canonical-path rollback remain real mv operations.
-if [ "$#" -eq 2 ]
+#
+# The product invokes mv with the POSIX option terminator ("mv -- source
+# destination"). Accept both that form and a plain two-operand call when
+# identifying source/destination, but delegate the original argv unchanged.
+mv_source=
+mv_destination=
+
+case "$#" in
+    2)
+        mv_source=$1
+        mv_destination=$2
+        ;;
+    3)
+        if [ "$1" = -- ]
+        then
+            mv_source=$2
+            mv_destination=$3
+        fi
+        ;;
+esac
+
+if [ -n "$mv_source" ] && [ -n "$mv_destination" ]
 then
-    if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] && [ -n "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] && [ "$2" = "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH" ]
+    if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] && [ -n "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] && [ "$mv_destination" = "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH" ]
     then
-        case $1 in
+        case $mv_source in
             "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH".*.orig) : ;;
             "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH".*) exit 89 ;;
         esac
-    elif [ "${RSUDO_FS_TEST_REMOTE-}" != 1 ] && [ -n "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] && [ "$2" = "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH" ]
+    elif [ "${RSUDO_FS_TEST_REMOTE-}" != 1 ] && [ -n "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] && [ "$mv_destination" = "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH" ]
     then
-        case $1 in
+        case $mv_source in
             "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH".*.orig) : ;;
             "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH".*) exit 89 ;;
         esac
