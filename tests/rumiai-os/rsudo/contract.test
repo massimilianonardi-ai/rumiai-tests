@@ -1,0 +1,281 @@
+#!/bin/sh
+
+# Protected current properties:
+#   LIB-07   rsudo.lib.sh documents its complete public function surface.
+#   RSUDO-01 SSH authentication uses one-shot local IPC through SSH_ASKPASS.
+#   RSUDO-02 sudo authentication data is separated from target stdin/TTY.
+#   RSUDO-03 non-interactive remote code consumes the sudo password before target stdin.
+#   RSUDO-04 sudo credentials are validated with sudo -S --prompt='' -v.
+#   RSUDO-05 target execution uses sudo -n after validation.
+#   RSUDO-06 NOPASSWD/root cases never expose the password record to target stdin.
+#   RSUDO-07 unrelated sudo probes do not decide target password consumption.
+#   RSUDO-08 foreground target status is preserved.
+#   RSUDO-11 the sudo password is never embedded in the remote command line.
+
+TEST_ID=rumiai-os/rsudo/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+expect_status()
+{
+    expected=$1
+    description=$2
+    shift 2
+
+    "$@" >/dev/null 2>&1
+    status=$?
+    [ "$status" -eq "$expected" ] ||
+        fail "$description returned $status instead of $expected"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+rsudo_library=$root/lib/sys/sh/rsudo/rsudo.lib.sh
+rsudo_command=$root/bin/sys/rsudo
+rsudo_askpass=$root/bin/sys/rsudo-askpass
+rsudo_manual=$root/res/sys/manual/rsudo.lib.sh
+
+[ -f "$rsudo_library" ] && [ ! -L "$rsudo_library" ] ||
+    fail 'rsudo.lib.sh is missing or is not a regular library file'
+[ ! -x "$rsudo_library" ] ||
+    fail 'rsudo.lib.sh is executable'
+
+IFS= read -r first_line < "$rsudo_library" || error 'cannot read rsudo.lib.sh'
+case "$first_line" in
+    '#!'*) fail 'rsudo.lib.sh has a shebang' ;;
+esac
+
+command -p sh -n "$rsudo_library" ||
+    fail 'rsudo.lib.sh is not valid host POSIX-sh syntax'
+
+[ -f "$rsudo_manual" ] && [ ! -L "$rsudo_manual" ] ||
+    fail 'rsudo.lib.sh operational manual is missing'
+
+for public_function in rsudo rsudo_core
+do
+    grep -F "$public_function" "$rsudo_manual" >/dev/null 2>&1 ||
+        fail "rsudo manual omits public function $public_function"
+done
+
+if grep -E '(^|[^[:alnum:]_])_rsudo_[[:alnum:]_][[:alnum:]_]*' "$rsudo_manual" >/dev/null 2>&1
+then
+    fail 'rsudo manual exposes an internal function identifier'
+fi
+
+grep -F "sudo -S --prompt='' -v" "$rsudo_manual" >/dev/null 2>&1 ||
+    fail 'rsudo manual omits sudo validation phase'
+grep -F 'sudo -n' "$rsudo_manual" >/dev/null 2>&1 ||
+    fail 'rsudo manual omits non-interactive target sudo phase'
+
+[ -f "$rsudo_command" ] && [ -x "$rsudo_command" ] ||
+    fail 'rsudo command entrypoint is unavailable'
+[ -f "$rsudo_askpass" ] && [ -x "$rsudo_askpass" ] ||
+    fail 'rsudo-askpass command is unavailable'
+command -v openssl >/dev/null 2>&1 ||
+    skip 'openssl required by one-shot IPC is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-contract-$$
+fakebin=$tmp/bin
+mkdir -p "$fakebin" || error 'cannot create rsudo boundary fixtures'
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+printf '%s\n' "$SSH_ASKPASS" > "$RSUDO_TEST_ASKPASS_PATH_FILE" || exit 80
+printf '%s\n' "$SSH_ASKPASS_REQUIRE" > "$RSUDO_TEST_ASKPASS_REQUIRE_FILE" || exit 81
+printf '%s\n' "${m_RSUDO_ASKPASS_ID-}" > "$RSUDO_TEST_ASKPASS_ID_FILE" || exit 82
+
+[ -n "${m_RSUDO_ASKPASS_ID-}" ] || exit 83
+"$RSUDO_TEST_M" "$SSH_ASKPASS" > "$RSUDO_TEST_ASKPASS_VALUE_FILE" || exit 84
+
+printf '%s\n' "$#" > "$RSUDO_TEST_SSH_ARGS_FILE" || exit 85
+for arg
+do
+    printf '%s\n' "$arg" >> "$RSUDO_TEST_SSH_ARGS_FILE" || exit 86
+done
+
+[ "$1" = -l ] || exit 87
+[ "$2" = "$RSUDO_TEST_EXPECT_USER" ] || exit 88
+[ "$3" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 89
+shift 3
+
+[ "$#" -gt 0 ] || exit 90
+remote_command=$*
+PATH="$RSUDO_TEST_REMOTE_BIN:$PATH" sh -c "$remote_command"
+EOF_SSH
+
+cat > "$fakebin/sudo" <<'EOF_SUDO'
+#!/bin/sh
+
+log=$RSUDO_TEST_SUDO_LOG
+
+if [ "${1-}" = -K ]
+then
+    printf '%s\n' invalidate >> "$log"
+    exit 0
+fi
+
+stdin_auth=0
+noninteractive=0
+validate=0
+
+while [ "$#" -gt 0 ]
+do
+    case "$1" in
+        -S)
+            stdin_auth=1
+            shift
+        ;;
+        -n)
+            noninteractive=1
+            shift
+        ;;
+        -v)
+            validate=1
+            shift
+        ;;
+        --prompt=*)
+            shift
+        ;;
+        --user)
+            [ "$#" -ge 2 ] || exit 91
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+if [ "$validate" -eq 1 ]
+then
+    [ "$stdin_auth" -eq 1 ] || exit 92
+    IFS= read -r password || exit 93
+    printf 'validate:%s\n' "$password" >> "$log"
+    unset password
+    exit 0
+fi
+
+# Simulate a selective sudoers policy: the unrelated command "true" requires
+# authentication, while the actual target is NOPASSWD.
+if [ "$noninteractive" -eq 1 ] && [ "${1-}" = true ]
+then
+    printf '%s\n' legacy-probe >> "$log"
+    exit 1
+fi
+
+[ "$#" -gt 0 ] || exit 94
+
+if [ "$noninteractive" -eq 1 ]
+then
+    printf 'target-noninteractive:%s\n' "$1" >> "$log"
+else
+    printf 'target-may-prompt:%s\n' "$1" >> "$log"
+fi
+
+# A NOPASSWD target does not consume stdin even if -S was supplied.
+exec "$@"
+EOF_SUDO
+
+cat > "$fakebin/rsudo-target" <<'EOF_TARGET'
+#!/bin/sh
+cat
+exit "${RSUDO_TEST_TARGET_STATUS:-0}"
+EOF_TARGET
+
+chmod +x "$fakebin/ssh" "$fakebin/sudo" "$fakebin/rsudo-target" ||
+    error 'cannot make rsudo boundary fixtures executable'
+
+expect_status 9 'unknown rsudo option'     env RSUDO_HOST=host RSUDO_USER=user RSUDO_PASSWORD=secret     "$root/m" "$rsudo_command" --invalid-rsudo-option
+
+(
+    unset RSUDO_HOST
+    RSUDO_USER=user
+    RSUDO_PASSWORD=secret
+    export RSUDO_USER RSUDO_PASSWORD
+    "$root/m" "$rsudo_command" --no-preserve-quotes -- true >/dev/null 2>&1
+)
+status=$?
+[ "$status" -eq 10 ] ||
+    fail "missing host returned $status instead of 10"
+
+askpass_path_file=$tmp/askpass-path
+askpass_require_file=$tmp/askpass-require
+askpass_id_file=$tmp/askpass-id
+askpass_value_file=$tmp/askpass-value
+ssh_args_file=$tmp/ssh-args
+sudo_log=$tmp/sudo-log
+stdout_file=$tmp/stdout
+stderr_file=$tmp/stderr
+: > "$sudo_log" || error 'cannot initialize sudo log'
+
+printf '%s\n' payload |
+PATH="$fakebin:$PATH" RSUDO_HOST=example.invalid RSUDO_USER=alice RSUDO_PASSWORD=secret RSUDO_TEST_M="$root/m" RSUDO_TEST_REMOTE_BIN="$fakebin" RSUDO_TEST_EXPECT_USER=alice RSUDO_TEST_EXPECT_HOST=example.invalid RSUDO_TEST_ASKPASS_PATH_FILE="$askpass_path_file" RSUDO_TEST_ASKPASS_REQUIRE_FILE="$askpass_require_file" RSUDO_TEST_ASKPASS_ID_FILE="$askpass_id_file" RSUDO_TEST_ASKPASS_VALUE_FILE="$askpass_value_file" RSUDO_TEST_SSH_ARGS_FILE="$ssh_args_file" RSUDO_TEST_SUDO_LOG="$sudo_log" RSUDO_TEST_TARGET_STATUS=37 "$root/m" "$rsudo_command" --no-preserve-quotes -- rsudo-target     > "$stdout_file" 2> "$stderr_file"
+status=$?
+
+[ "$status" -eq 37 ] || {
+    cat "$stderr_file" >&2
+    fail "rsudo did not preserve remote target status 37: $status"
+}
+
+[ "$(cat "$askpass_path_file")" = "$rsudo_askpass" ] ||
+    fail 'rsudo did not export the canonical rsudo-askpass path'
+[ "$(cat "$askpass_require_file")" = force ] ||
+    fail 'rsudo did not force SSH askpass'
+[ -s "$askpass_id_file" ] ||
+    fail 'rsudo did not provide an opaque one-shot SSH askpass identity'
+[ "$(cat "$askpass_value_file")" = secret ] ||
+    fail 'rsudo-askpass did not consume the expected one-shot SSH password'
+
+[ "$(cat "$stdout_file")" = payload ] || {
+    cat "$stdout_file" >&2
+    fail 'sudo authentication data leaked into target stdin'
+}
+
+grep -F 'validate:secret' "$sudo_log" >/dev/null 2>&1 ||
+    fail 'non-interactive rsudo did not validate sudo credentials with the transferred password'
+grep -F 'target-noninteractive:rsudo-target' "$sudo_log" >/dev/null 2>&1 ||
+    fail 'non-interactive rsudo did not execute the target through sudo -n'
+if grep -F 'legacy-probe' "$sudo_log" >/dev/null 2>&1
+then
+    fail 'non-interactive rsudo still probes an unrelated sudo command'
+fi
+
+exit 0
