@@ -1,0 +1,166 @@
+#!/bin/sh
+
+TEST_ID=external/macgpg/enc-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ -n "${pkg_root-}" ] && [ -n "${gnupg_home-}" ] &&
+     [ -x "$pkg_root/bin/gpgconf" ]
+  then
+    GNUPGHOME="$gnupg_home" "$pkg_root/bin/gpgconf" --kill all >/dev/null 2>&1 || :
+  fi
+
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+
+  if [ "${installed_by_test-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall macgpg >/dev/null 2>&1 || :
+  fi
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-macgpg-enc-live-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+[ "$osarch" = macos-arm64 ] ||
+  skip "MacGPG enc integration is macos-arm64-only; target is $osarch"
+
+installed_by_test=0
+if run_pkg versions macgpg >/dev/null 2>&1
+then
+  :
+else
+  printf '%s\n' "$TEST_ID: installing current catalog-selected MacGPG" >&2
+  run_pkg install macgpg > "$tmp/install.out" 2> "$tmp/install.err" || {
+    cat "$tmp/install.out" >&2
+    cat "$tmp/install.err" >&2
+    fail 'pkg install macgpg failed'
+  }
+  installed_by_test=1
+fi
+
+identity=$(run_pkg default macgpg 2> "$tmp/default.err") || {
+  cat "$tmp/default.err" >&2
+  fail 'MacGPG has no queryable current default'
+}
+[ -n "$identity" ] || fail 'MacGPG current identity is empty'
+pkg_root="$root/pkg/$identity/root"
+[ -x "$pkg_root/bin/gpg" ] || fail 'MacGPG package is missing gpg'
+[ -x "$pkg_root/bin/gpgconf" ] || fail 'MacGPG package is missing gpgconf'
+
+PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH"
+export PATH
+
+"$root/m" gpg --version > "$tmp/gpg-version.out" 2> "$tmp/gpg-version.err" || {
+  cat "$tmp/gpg-version.err" >&2
+  fail 'public MacGPG gpg command is not runnable'
+}
+grep -F 'gpg (GnuPG' "$tmp/gpg-version.out" >/dev/null 2>&1 ||
+  fail 'public MacGPG command did not identify GNU GnuPG'
+
+core_library=$root/lib/sys/sh/core.lib.sh
+enc_library=$root/lib/sys/sh/enc.lib.sh
+[ -f "$core_library" ] && [ ! -L "$core_library" ] ||
+  fail 'core.lib.sh is missing'
+[ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
+  fail 'enc.lib.sh is missing'
+
+. "$core_library" || error 'cannot source core.lib.sh'
+. "$enc_library" || error 'cannot source enc.lib.sh'
+
+gnupg_home=$tmp/gnupg
+mkdir -m 700 "$gnupg_home" || error 'cannot create isolated GNUPGHOME'
+GNUPGHOME=$gnupg_home
+export GNUPGHOME
+
+printf '%b' 'MacGPG enc integration\nsecond line\n' > "$tmp/plain" ||
+  error 'cannot create plaintext fixture'
+pass='MacGPG enc $() \\ * ? [ ] " passphrase'
+
+m_ENC_PASS=$pass
+encode < "$tmp/plain" > "$tmp/cipher" ||
+  fail 'enc encode failed through package-provided MacGPG'
+[ -s "$tmp/cipher" ] || fail 'enc encode produced no ciphertext'
+
+m_ENC_PASS=$pass
+decode < "$tmp/cipher" > "$tmp/roundtrip" ||
+  fail 'enc decode failed through package-provided MacGPG'
+cmp -s "$tmp/plain" "$tmp/roundtrip" ||
+  fail 'MacGPG-backed enc round trip changed plaintext'
+
+cat > "$tmp/source.sh" <<'EOF_SOURCE'
+MACGPG_ENC_EVAL=executed
+printf '%s\n' "arg=${1-}"
+return 7
+EOF_SOURCE
+
+m_ENC_PASS=$pass
+encode < "$tmp/source.sh" > "$tmp/source.gpg" ||
+  fail 'cannot encrypt encoded_file_eval fixture through MacGPG'
+
+MACGPG_ENC_EVAL=before
+m_ENC_PASS=$pass
+encoded_file_eval "$tmp/source.gpg" 'package gpg' > "$tmp/eval.out"
+status=$?
+[ "$status" -eq 7 ] ||
+  fail "encoded_file_eval returned $status instead of source status 7"
+[ "$MACGPG_ENC_EVAL" = executed ] ||
+  fail 'encoded_file_eval did not execute authenticated source'
+[ "$(cat "$tmp/eval.out")" = 'arg=package gpg' ] ||
+  fail 'encoded_file_eval did not preserve forwarded argument'
+
+m_ENC_PASS=wrong-passphrase
+if decode < "$tmp/cipher" > "$tmp/wrong.out" 2>/dev/null
+then
+  fail 'MacGPG-backed decode accepted an incorrect passphrase'
+fi
+
+unset m_ENC_PASS pass MACGPG_ENC_EVAL
+exit 0
