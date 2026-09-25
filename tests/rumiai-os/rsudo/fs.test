@@ -1,0 +1,295 @@
+#!/bin/sh
+
+# Protected current properties:
+#   LIB-07    rsudo-mod-fs.lib.sh documents its complete public function surface.
+#   RSUDO-14  fs get/put preserve regular-file, directory and symbolic-link kind.
+#   RSUDO-15  fs put transfers through the privileged destination filesystem.
+#   RSUDO-16  fs put does not implicitly delete an existing destination when
+#             staged replacement lacks free space.
+#   RSUDO-17  fs put reports the explicit-delete case and fails until deletion
+#             is explicitly requested.
+#   RSUDO-18  fs put promotes a replacement only after transfer succeeds.
+#   RSUDO-19  fs staged replacement preserves the previous destination until
+#             promotion and exposes rollback-capable failure behavior.
+#
+# SSH and sudo below are external-boundary fixtures. The remote filesystem is a
+# real temporary filesystem tree on the host; tar, du, awk and normal filesystem
+# operations are real host utilities. Only df is optionally overridden for the
+# explicit insufficient-space scenario.
+
+TEST_ID=rumiai-os/rsudo/fs.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+
+terminate()
+{
+    signal=$1
+    trap - 0 "$signal"
+    cleanup
+    kill -s "$signal" "$$"
+}
+
+trap cleanup 0
+trap 'terminate HUP' HUP
+trap 'terminate INT' INT
+trap 'terminate QUIT' QUIT
+trap 'terminate TERM' TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+rsudo_command=$root/bin/sys/rsudo
+fs_library=$root/lib/sys/sh/rsudo/rsudo-mod-fs.lib.sh
+fs_manual=$root/res/sys/manual/rsudo-mod-fs.lib.sh
+
+[ -x "$rsudo_command" ] || fail 'rsudo command entrypoint is unavailable'
+[ -f "$fs_library" ] && [ ! -L "$fs_library" ] ||
+    fail 'rsudo-mod-fs.lib.sh is missing or is not a regular library file'
+[ ! -x "$fs_library" ] || fail 'rsudo-mod-fs.lib.sh is executable'
+command -p sh -n "$fs_library" || fail 'rsudo-mod-fs.lib.sh is not valid host POSIX-sh syntax'
+
+[ -f "$fs_manual" ] && [ ! -L "$fs_manual" ] ||
+    fail 'rsudo-mod-fs.lib.sh operational manual is missing'
+for public_function in rsudo_mod_fs_rm rsudo_mod_fs_delete rsudo_mod_fs_get rsudo_mod_fs_put
+do
+    grep -F "$public_function" "$fs_manual" >/dev/null 2>&1 ||
+        fail "rsudo fs manual omits public function $public_function"
+done
+
+command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
+command -v awk >/dev/null 2>&1 || skip 'awk is unavailable'
+command -v readlink >/dev/null 2>&1 || skip 'readlink is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-fs-$$
+fakebin=$tmp/bin
+local_root=$tmp/local
+remote_root=$tmp/remote
+mkdir -p "$fakebin" "$local_root" "$remote_root" || error 'cannot create fs-test workspace'
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+if [ "${1-}" = -t ]
+then
+    shift
+fi
+
+if [ "${1-}" = -l ]
+then
+    [ "$#" -ge 3 ] || exit 90
+    shift 2
+fi
+
+[ "$#" -ge 2 ] || exit 91
+shift
+
+remote_command=$*
+[ -n "$remote_command" ] || exit 92
+
+RSUDO_FS_TEST_REMOTE=1
+export RSUDO_FS_TEST_REMOTE
+PATH="$RSUDO_TEST_REMOTE_BIN:$PATH" sh -c "$remote_command"
+EOF_SSH
+
+cat > "$fakebin/sudo" <<'EOF_SUDO'
+#!/bin/sh
+
+if [ "${1-}" = -K ]
+then
+    exit 0
+fi
+
+validate_only=0
+
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -S|-n)
+            shift
+        ;;
+        -v)
+            validate_only=1
+            shift
+        ;;
+        --prompt=*)
+            shift
+        ;;
+        -p|--user|-u)
+            [ "$#" -ge 2 ] || exit 93
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 94
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+[ "$validate_only" -eq 0 ] || exit 0
+[ "$#" -gt 0 ] || exit 95
+exec "$@"
+EOF_SUDO
+
+cat > "$fakebin/df" <<'EOF_DF'
+#!/bin/sh
+
+if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] && [ -n "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ]
+then
+    printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+    printf 'rsudo-test 999999 1 %s 1%% /\n' "$RSUDO_FS_TEST_FAKE_FREE_KB"
+    exit 0
+fi
+
+command -p df "$@"
+EOF_DF
+
+chmod +x "$fakebin/ssh" "$fakebin/sudo" "$fakebin/df" ||
+    error 'cannot make fs external-boundary fixtures executable'
+command -p sh -n "$fakebin/ssh" || error 'ssh boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/sudo" || error 'sudo boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/df" || error 'df boundary fixture has invalid shell syntax'
+
+run_rsudo()
+(
+    PATH="$fakebin:$PATH"
+    RSUDO_HOST=example.invalid
+    RSUDO_USER=alice
+    RSUDO_PASSWORD=secret
+    RSUDO_TEST_REMOTE_BIN=$fakebin
+    m_LOG_LEVEL=error
+
+    export PATH RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
+    [ -z "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ] || export RSUDO_FS_TEST_FAKE_FREE_KB
+
+    "$root/m" "$rsudo_command" "$@"
+)
+
+# Build representative source objects. Relative link targets make it easy to
+# prove that tar copied the link itself rather than dereferencing it.
+printf '%s\n' 'regular-data' > "$local_root/file" || error 'cannot create regular source'
+mkdir -p "$local_root/dir/sub" || error 'cannot create directory source'
+printf '%s\n' 'directory-data' > "$local_root/dir/sub/value" || error 'cannot populate directory source'
+ln -s file "$local_root/link-file" || error 'cannot create file symlink source'
+ln -s dir "$local_root/link-dir" || error 'cannot create directory symlink source'
+ln -s missing-target "$local_root/link-dangling" || error 'cannot create dangling symlink source'
+
+# put: regular file and directory, including replacement of an existing remote
+# directory only after the new tree has transferred successfully.
+run_rsudo fs put "$local_root/file" "$remote_root/file" >/dev/null 2>&1 ||
+    fail 'put regular file failed'
+cmp "$local_root/file" "$remote_root/file" >/dev/null 2>&1 ||
+    fail 'put regular file changed content'
+
+mkdir -p "$remote_root/dir" || error 'cannot prepare existing remote directory'
+printf '%s\n' old > "$remote_root/dir/old" || error 'cannot populate old remote directory'
+run_rsudo fs put "$local_root/dir" "$remote_root/dir" >/dev/null 2>&1 ||
+    fail 'put directory replacement failed'
+cmp "$local_root/dir/sub/value" "$remote_root/dir/sub/value" >/dev/null 2>&1 ||
+    fail 'put directory changed content'
+[ ! -e "$remote_root/dir/old" ] || fail 'put directory left old destination content'
+
+# put: symlink-to-file, symlink-to-directory and dangling symlink must remain
+# symlinks with the same stored target text.
+for name in link-file link-dir link-dangling
+do
+    run_rsudo fs put "$local_root/$name" "$remote_root/$name" >/dev/null 2>&1 ||
+        fail "put $name failed"
+    [ -L "$remote_root/$name" ] || fail "put $name dereferenced the symlink"
+    [ "$(readlink "$remote_root/$name")" = "$(readlink "$local_root/$name")" ] ||
+        fail "put $name changed the symlink target"
+done
+
+# get: replacement of existing local objects plus the same three symlink forms.
+printf '%s\n' old > "$local_root/get-file" || error 'cannot prepare old local file'
+printf '%s\n' remote-data > "$remote_root/get-file" || error 'cannot prepare remote get file'
+run_rsudo fs get "$remote_root/get-file" "$local_root/get-file" >/dev/null 2>&1 ||
+    fail 'get regular file replacement failed'
+cmp "$remote_root/get-file" "$local_root/get-file" >/dev/null 2>&1 ||
+    fail 'get regular file changed content'
+
+mkdir -p "$remote_root/get-dir/sub" || error 'cannot prepare remote get directory'
+printf '%s\n' remote-dir > "$remote_root/get-dir/sub/value" || error 'cannot populate remote get directory'
+run_rsudo fs get "$remote_root/get-dir" "$local_root/get-dir" >/dev/null 2>&1 ||
+    fail 'get directory failed'
+cmp "$remote_root/get-dir/sub/value" "$local_root/get-dir/sub/value" >/dev/null 2>&1 ||
+    fail 'get directory changed content'
+
+for name in link-file link-dir link-dangling
+do
+    run_rsudo fs get "$remote_root/$name" "$local_root/get-$name" >/dev/null 2>&1 ||
+        fail "get $name failed"
+    [ -L "$local_root/get-$name" ] || fail "get $name dereferenced the symlink"
+    [ "$(readlink "$local_root/get-$name")" = "$(readlink "$remote_root/$name")" ] ||
+        fail "get $name changed the symlink target"
+done
+
+# Force the precise preflight case where staged replacement does not fit but
+# deleting the existing destination first would make the estimate fit. The
+# product must fail, explain that explicit deletion is required, and preserve
+# the old destination.
+mkdir -p "$remote_root/space-target" || error 'cannot prepare space target'
+printf '%s\n' keep-me > "$remote_root/space-target/marker" || error 'cannot prepare space marker'
+dd if=/dev/zero of="$remote_root/space-target/padding" bs=1024 count=2048 >/dev/null 2>&1 ||
+    error 'cannot prepare reclaimable remote allocation'
+printf '%s\n' new-data > "$local_root/space-source" || error 'cannot prepare space source'
+
+RSUDO_FS_TEST_FAKE_FREE_KB=0
+export RSUDO_FS_TEST_FAKE_FREE_KB
+space_stdout=$tmp/space.stdout
+space_stderr=$tmp/space.stderr
+run_rsudo fs put "$local_root/space-source" "$remote_root/space-target" >"$space_stdout" 2>"$space_stderr"
+status=$?
+unset RSUDO_FS_TEST_FAKE_FREE_KB
+
+[ "$status" -ne 0 ] || fail 'put unexpectedly performed destructive fallback'
+[ -f "$remote_root/space-target/marker" ] || fail 'insufficient-space put removed the old destination'
+[ "$(cat "$remote_root/space-target/marker")" = keep-me ] || fail 'insufficient-space put changed the old destination'
+grep -F 'explicit-delete-required' "$space_stderr" >/dev/null 2>&1 ||
+    fail 'put did not report that explicit deletion is required'
+
+# Once deletion is explicitly requested, the same destination can be reused.
+run_rsudo fs delete "$remote_root/space-target" >/dev/null 2>&1 ||
+    fail 'explicit fs delete failed'
+run_rsudo fs put "$local_root/space-source" "$remote_root/space-target" >/dev/null 2>&1 ||
+    fail 'put after explicit delete failed'
+cmp "$local_root/space-source" "$remote_root/space-target" >/dev/null 2>&1 ||
+    fail 'put after explicit delete changed content'
+
+exit 0
