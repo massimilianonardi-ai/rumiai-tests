@@ -186,6 +186,48 @@ command -p sh -n "$fakebin/ssh" || error 'ssh boundary fixture has invalid shell
 command -p sh -n "$fakebin/sudo" || error 'sudo boundary fixture has invalid shell syntax'
 command -p sh -n "$fakebin/df" || error 'df boundary fixture has invalid shell syntax'
 
+cat > "$fakebin/tar" <<'EOF_TAR'
+#!/bin/sh
+
+# tar is an external dependency. This switch fails only the remote side so the
+# real local producer can reach a remote-consumer failure before promotion.
+if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] && [ "${RSUDO_FS_TEST_FAIL_REMOTE_TAR-}" = 1 ]
+then
+    exit 88
+fi
+
+command -p tar "$@"
+EOF_TAR
+
+cat > "$fakebin/mv" <<'EOF_MV'
+#!/bin/sh
+
+# Fail only stage -> canonical-path promotion. old -> .orig and the subsequent
+# .orig -> canonical-path rollback remain real mv operations.
+if [ "$#" -eq 2 ]
+then
+    if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] && [ -n "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] && [ "$2" = "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH" ]
+    then
+        case $1 in
+            "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH".*.orig) : ;;
+            "$RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH".*) exit 89 ;;
+        esac
+    elif [ "${RSUDO_FS_TEST_REMOTE-}" != 1 ] && [ -n "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] && [ "$2" = "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH" ]
+    then
+        case $1 in
+            "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH".*.orig) : ;;
+            "$RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH".*) exit 89 ;;
+        esac
+    fi
+fi
+
+command -p mv "$@"
+EOF_MV
+
+chmod +x "$fakebin/tar" "$fakebin/mv" || error 'cannot make fs failure fixtures executable'
+command -p sh -n "$fakebin/tar" || error 'tar boundary fixture has invalid shell syntax'
+command -p sh -n "$fakebin/mv" || error 'mv boundary fixture has invalid shell syntax'
+
 run_rsudo()
 (
     PATH="$fakebin:$PATH"
@@ -197,6 +239,9 @@ run_rsudo()
 
     export PATH RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
     [ -z "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ] || export RSUDO_FS_TEST_FAKE_FREE_KB
+    [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_TAR
+    [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH
+    [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH
 
     "$root/m" "$rsudo_command" "$@"
 )
@@ -259,6 +304,42 @@ do
     [ "$(readlink "$local_root/get-$name")" = "$(readlink "$remote_root/$name")" ] ||
         fail "get $name changed the symlink target"
 done
+
+# A remote extraction failure occurs before commit. The existing remote target
+# must therefore remain untouched (RSUDO-18).
+printf '%s\n' old-transfer > "$remote_root/fail-transfer" || error 'cannot prepare transfer-failure destination'
+printf '%s\n' new-transfer > "$local_root/fail-transfer" || error 'cannot prepare transfer-failure source'
+RSUDO_FS_TEST_FAIL_REMOTE_TAR=1
+export RSUDO_FS_TEST_FAIL_REMOTE_TAR
+run_rsudo fs put "$local_root/fail-transfer" "$remote_root/fail-transfer" >/dev/null 2>&1
+status=$?
+unset RSUDO_FS_TEST_FAIL_REMOTE_TAR
+[ "$status" -ne 0 ] || fail 'put succeeded despite forced remote transfer failure'
+[ "$(cat "$remote_root/fail-transfer")" = old-transfer ] || fail 'failed transfer changed the existing remote destination'
+
+# Force stage -> canonical promotion to fail remotely. The commit path must
+# restore .orig to the canonical name (RSUDO-19 put rollback).
+printf '%s\n' old-remote > "$remote_root/fail-promotion" || error 'cannot prepare remote rollback destination'
+printf '%s\n' new-remote > "$local_root/fail-promotion" || error 'cannot prepare remote rollback source'
+RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH="$remote_root/fail-promotion"
+export RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH
+run_rsudo fs put "$local_root/fail-promotion" "$remote_root/fail-promotion" >/dev/null 2>&1
+status=$?
+unset RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH
+[ "$status" -ne 0 ] || fail 'put succeeded despite forced promotion failure'
+[ "$(cat "$remote_root/fail-promotion")" = old-remote ] || fail 'put rollback did not restore the previous remote destination'
+
+# The equivalent local promotion failure in get must restore the old local
+# destination rather than leave the canonical pathname replaced or absent.
+printf '%s\n' old-local > "$local_root/fail-get-promotion" || error 'cannot prepare local rollback destination'
+printf '%s\n' new-local > "$remote_root/fail-get-promotion" || error 'cannot prepare local rollback source'
+RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH="$local_root/fail-get-promotion"
+export RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH
+run_rsudo fs get "$remote_root/fail-get-promotion" "$local_root/fail-get-promotion" >/dev/null 2>&1
+status=$?
+unset RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH
+[ "$status" -ne 0 ] || fail 'get succeeded despite forced promotion failure'
+[ "$(cat "$local_root/fail-get-promotion")" = old-local ] || fail 'get rollback did not restore the previous local destination'
 
 # Force the precise preflight case where staged replacement does not fit but
 # deleting the existing destination first would make the estimate fit. The
