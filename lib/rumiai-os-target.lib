@@ -72,3 +72,24 @@ rumiai_test_target_rumiai_os_find() {
 
     return 1
 }
+
+
+rumiai_test_target_rumiai_os_enter_m() {
+    target_root=$1
+    script_path=$2
+    shift 2
+
+    [ -n "$target_root" ] || return 1
+    [ -n "$script_path" ] || return 1
+    [ -x "$target_root/m" ] || return 1
+
+    if [ "${m_ROOT-}" = "$target_root" ] && [ "${m_COMMAND_BIN-}" = "$script_path" ]
+    then
+        return 0
+    fi
+
+    RUMIAI_TEST_SOURCE_PATH=$script_path
+    export RUMIAI_TEST_SOURCE_PATH
+
+    exec "$target_root/m" "$script_path" "$@"
+}
