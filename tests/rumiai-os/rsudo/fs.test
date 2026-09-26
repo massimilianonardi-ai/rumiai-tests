@@ -130,12 +130,17 @@ then
     exit 0
 fi
 
+stdin_auth=0
 validate_only=0
 
 while [ "$#" -gt 0 ]
 do
     case $1 in
-        -S|-n)
+        -S)
+            stdin_auth=1
+            shift
+        ;;
+        -n)
             shift
         ;;
         -v)
@@ -161,6 +166,13 @@ do
         ;;
     esac
 done
+
+if [ "$stdin_auth" -eq 1 ]
+then
+    IFS= read -r supplied || exit 96
+    [ "$supplied" = secret ] || exit 97
+    unset supplied
+fi
 
 [ "$validate_only" -eq 0 ] || exit 0
 [ "$#" -gt 0 ] || exit 95
