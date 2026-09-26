@@ -55,8 +55,6 @@ command_path="$root/bin/sys/http-fetch"
 [ -f "$command_path" ] || fail "bin/sys/http-fetch is missing"
 [ -x "$command_path" ] || fail "bin/sys/http-fetch is not executable"
 
-command -v python3 >/dev/null 2>&1 || skip "python3 is unavailable for PTY test support"
-
 tmp="${TMPDIR:-/tmp}/rumiai-http-fetch-progress-$$"
 umask "077"
 mkdir "$tmp" || error "cannot create temporary directory"
@@ -145,7 +143,14 @@ runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
 export HTTP_FETCH_CURL_ARGS="$tmp/curl.args"
 export HTTP_FETCH_WGET_ARGS="$tmp/wget.args"
 
-python3 - "$command_path" "$runtime_path" "$tmp" <<'PY'
+system="$(command -p -- uname -s 2>/dev/null)" || error "cannot determine host system"
+
+case "$system" in
+  Linux)
+    command -v python3 >/dev/null 2>&1 ||
+      skip "python3 is unavailable for Linux PTY test support"
+
+    python3 - "$command_path" "$runtime_path" "$tmp" <<'PY'
 import errno
 import os
 import pty
@@ -237,7 +242,157 @@ assert b"wget-progress" not in stderr, stderr
 args = arg_lines("wget.args")
 assert "--no-verbose" in args, args
 PY
-status="$?"
-[ "$status" -eq 0 ] || fail "PTY progress behavior validation failed"
+    status="$?"
+    [ "$status" -eq 0 ] || fail "Linux PTY progress behavior validation failed"
+    ;;
+
+  Darwin)
+    command -v expect >/dev/null 2>&1 ||
+      skip "expect is unavailable for Darwin PTY test support"
+
+    PATH="$runtime_path"
+    export PATH
+
+    runner="$tmp/progress-runner"
+    cat > "$runner" <<'EOF_RUNNER'
+#!/bin/sh
+case "${HTTP_FETCH_TEST_CASE-}" in
+  curl-output)
+    exec "$HTTP_FETCH_TEST_COMMAND" -o "$HTTP_FETCH_TEST_OUTPUT" -- "https://example.test/file" > "$HTTP_FETCH_TEST_STDOUT"
+    ;;
+  curl-body)
+    exec "$HTTP_FETCH_TEST_COMMAND" -- "https://example.test/body" > "$HTTP_FETCH_TEST_STDOUT"
+    ;;
+  wget-output)
+    HTTP_FETCH_FORCE_WGET=1
+    export HTTP_FETCH_FORCE_WGET
+    exec "$HTTP_FETCH_TEST_COMMAND" -o "$HTTP_FETCH_TEST_OUTPUT" -- "https://example.test/file" > "$HTTP_FETCH_TEST_STDOUT"
+    ;;
+  wget-body)
+    HTTP_FETCH_FORCE_WGET=1
+    export HTTP_FETCH_FORCE_WGET
+    exec "$HTTP_FETCH_TEST_COMMAND" -- "https://example.test/body" > "$HTTP_FETCH_TEST_STDOUT"
+    ;;
+  *)
+    exit 93
+    ;;
+esac
+EOF_RUNNER
+    chmod "700" "$runner" || error "cannot create Darwin progress runner"
+
+    expect_driver="$tmp/progress.expect"
+    cat > "$expect_driver" <<'EOF_EXPECT'
+set timeout 10
+log_user 0
+log_file -noappend $env(HTTP_FETCH_TEST_TRANSCRIPT)
+
+spawn -noecho $env(HTTP_FETCH_TEST_RUNNER)
+expect {
+    eof {}
+    timeout {
+        puts stderr "timeout waiting for http-fetch"
+        exit 124
+    }
+}
+
+set result [wait]
+log_file
+set os_error [lindex $result 2]
+set status [lindex $result 3]
+
+if {$os_error != 0} {
+    puts stderr "http-fetch wait error: $result"
+    exit 125
+}
+
+exit $status
+EOF_EXPECT
+
+    run_darwin_case()
+    {
+      HTTP_FETCH_TEST_CASE="$1"
+      HTTP_FETCH_TEST_OUTPUT="$2"
+      HTTP_FETCH_TEST_STDOUT="$3"
+      HTTP_FETCH_TEST_TRANSCRIPT="$4"
+      HTTP_FETCH_TEST_COMMAND="$command_path"
+      HTTP_FETCH_TEST_RUNNER="$runner"
+      export HTTP_FETCH_TEST_CASE HTTP_FETCH_TEST_OUTPUT HTTP_FETCH_TEST_STDOUT         HTTP_FETCH_TEST_TRANSCRIPT HTTP_FETCH_TEST_COMMAND HTTP_FETCH_TEST_RUNNER
+
+      : > "$HTTP_FETCH_TEST_STDOUT" || return 1
+      : > "$HTTP_FETCH_TEST_TRANSCRIPT" || return 1
+      expect -f "$expect_driver"
+    }
+
+    curl_output="$tmp/curl-output"
+    curl_stdout="$tmp/curl.stdout"
+    curl_transcript="$tmp/curl.transcript"
+    run_darwin_case curl-output "$curl_output" "$curl_stdout" "$curl_transcript" || {
+      cat "$curl_transcript" >&2 2>/dev/null || :
+      fail "Darwin curl -o progress case failed"
+    }
+    [ ! -s "$curl_stdout" ] || fail "Darwin curl -o produced unexpected stdout"
+    grep -F -- "curl-progress" "$curl_transcript" >/dev/null 2>&1 ||
+      fail "Darwin curl -o did not expose backend progress on terminal stderr"
+    [ "$(cat "$curl_output")" = "body-from-curl" ] ||
+      fail "Darwin curl -o produced unexpected body"
+    if grep -F -x -- "--silent" "$HTTP_FETCH_CURL_ARGS" >/dev/null 2>&1
+    then
+      fail "Darwin curl -o unexpectedly enabled --silent"
+    fi
+    grep -F -x -- "--show-error" "$HTTP_FETCH_CURL_ARGS" >/dev/null 2>&1 ||
+      fail "Darwin curl -o omitted --show-error"
+
+    curl_body_stdout="$tmp/curl-body.stdout"
+    curl_body_transcript="$tmp/curl-body.transcript"
+    run_darwin_case curl-body "" "$curl_body_stdout" "$curl_body_transcript" || {
+      cat "$curl_body_transcript" >&2 2>/dev/null || :
+      fail "Darwin curl body case failed"
+    }
+    [ "$(cat "$curl_body_stdout")" = "body-from-curl" ] ||
+      fail "Darwin curl body case produced unexpected body"
+    if grep -F -- "curl-progress" "$curl_body_transcript" >/dev/null 2>&1
+    then
+      fail "Darwin curl body case exposed progress"
+    fi
+    grep -F -x -- "--silent" "$HTTP_FETCH_CURL_ARGS" >/dev/null 2>&1 ||
+      fail "Darwin curl body case omitted --silent"
+
+    wget_output="$tmp/wget-output"
+    wget_stdout="$tmp/wget.stdout"
+    wget_transcript="$tmp/wget.transcript"
+    run_darwin_case wget-output "$wget_output" "$wget_stdout" "$wget_transcript" || {
+      cat "$wget_transcript" >&2 2>/dev/null || :
+      fail "Darwin wget -o progress case failed"
+    }
+    [ ! -s "$wget_stdout" ] || fail "Darwin wget -o produced unexpected stdout"
+    grep -F -- "wget-progress" "$wget_transcript" >/dev/null 2>&1 ||
+      fail "Darwin wget -o did not expose backend progress on terminal stderr"
+    [ "$(cat "$wget_output")" = "body-from-wget" ] ||
+      fail "Darwin wget -o produced unexpected body"
+    if grep -F -x -- "--no-verbose" "$HTTP_FETCH_WGET_ARGS" >/dev/null 2>&1
+    then
+      fail "Darwin wget -o unexpectedly enabled --no-verbose"
+    fi
+
+    wget_body_stdout="$tmp/wget-body.stdout"
+    wget_body_transcript="$tmp/wget-body.transcript"
+    run_darwin_case wget-body "" "$wget_body_stdout" "$wget_body_transcript" || {
+      cat "$wget_body_transcript" >&2 2>/dev/null || :
+      fail "Darwin wget body case failed"
+    }
+    [ "$(cat "$wget_body_stdout")" = "body-from-wget" ] ||
+      fail "Darwin wget body case produced unexpected body"
+    if grep -F -- "wget-progress" "$wget_body_transcript" >/dev/null 2>&1
+    then
+      fail "Darwin wget body case exposed progress"
+    fi
+    grep -F -x -- "--no-verbose" "$HTTP_FETCH_WGET_ARGS" >/dev/null 2>&1 ||
+      fail "Darwin wget body case omitted --no-verbose"
+    ;;
+
+  *)
+    skip "no PTY progress driver is defined for $system"
+    ;;
+esac
 
 exit "0"
