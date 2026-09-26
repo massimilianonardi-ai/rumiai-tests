@@ -22,7 +22,7 @@ skip()
 
 resolve_test_dir()
 {
-  self="$0"
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
   case "$self" in
     */*)
       :
@@ -63,6 +63,9 @@ case "$status" in
     ;;
 esac
 
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
+
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-github.lib.sh"
 [ -f "$library" ] || fail "lib/sys/sh/pkg/repository/pkg-repository-github.lib.sh is missing"
@@ -95,7 +98,7 @@ PATH="$fakebin:/usr/bin:/bin"
 export PATH
 m_LIB_DIR="$root/lib"
 export m_LIB_DIR
-. "$library" || error "cannot source GitHub repository adapter"
+loadsyslib "pkg/repository/pkg-repository-github" || error "cannot load GitHub repository adapter through m"
 
 write_valid_repository
 resolved="$(pkg_repository_resolve_version "$repository_dir")" || fail "valid .github repository name was rejected"
