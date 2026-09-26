@@ -1,0 +1,142 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/bootstrap/library-loading.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+bootstrap_group=${test_dir%/*}
+rumiai_os_group=${bootstrap_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+tmp=${TMPDIR:-/tmp}/rumiai-library-loading-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+probe_name=rumiai-loadlib-probe-$$
+probe=$tmp/$probe_name
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+
+loadsyslib >/dev/null 2>&1
+printf 'loadsyslib-zero=%s\n' "$?"
+
+loadsyslib array extra >/dev/null 2>&1
+printf 'loadsyslib-extra=%s\n' "$?"
+
+loadsyslib does-not-exist >/dev/null 2>&1
+printf 'loadsyslib-missing=%s\n' "$?"
+
+loadsyslib array >/dev/null 2>&1
+printf 'loadsyslib-array=%s\n' "$?"
+command -v array >/dev/null 2>&1
+printf 'array-function=%s\n' "$?"
+
+loadlib sys/sh/map >/dev/null 2>&1
+printf 'loadlib-map=%s\n' "$?"
+command -v map >/dev/null 2>&1
+printf 'map-function=%s\n' "$?"
+
+loadsyslib pkg/facility/pkg-facility >/dev/null 2>&1
+printf 'loadsyslib-grouped=%s\n' "$?"
+command -v pkg_facility_resolve >/dev/null 2>&1
+printf 'grouped-function=%s\n' "$?"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot make loader probe executable'
+
+PATH="$tmp:$PATH" "$root/m" "$probe_name" > "$tmp/probe.out" 2> "$tmp/probe.err"
+probe_status=$?
+[ "$probe_status" -eq 0 ] || {
+  cat "$tmp/probe.err" >&2
+  fail "loader probe failed with status $probe_status"
+}
+
+cat > "$tmp/probe.expected" <<'EOF_EXPECTED'
+loadsyslib-zero=1
+loadsyslib-extra=1
+loadsyslib-missing=2
+loadsyslib-array=0
+array-function=0
+loadlib-map=0
+map-function=0
+loadsyslib-grouped=0
+grouped-function=0
+EOF_EXPECTED
+
+cmp -s "$tmp/probe.expected" "$tmp/probe.out" || {
+  printf '%s\n' 'expected loader probe output:' >&2
+  cat "$tmp/probe.expected" >&2
+  printf '%s\n' 'observed loader probe output:' >&2
+  cat "$tmp/probe.out" >&2
+  fail 'loadlib/loadsyslib behavior does not match the contract'
+}
+
+: > "$tmp/direct-imports"
+
+scan_file()
+{
+  awk '
+    /^[[:space:]]*\.[[:space:]]+/ && /\$m_LIB_DIR\/sys\/sh\// {
+      print FNR ":" $0
+      found=1
+    }
+    END { exit found ? 0 : 1 }
+  ' "$1" > "$tmp/matches" 2>/dev/null || return 0
+
+  while IFS= read -r match
+  do
+    printf '%s:%s\n' "$1" "$match" >> "$tmp/direct-imports"
+  done < "$tmp/matches"
+}
+
+for file in "$root/m" "$root/rumiai-os" "$root/rumiai-os-sh"
+do
+  [ -f "$file" ] && scan_file "$file"
+done
+
+for dir in "$root/bin/sys" "$root/bin/ai" "$root/lib/sys/sh" "$root/lib/ai/sh"
+do
+  [ -d "$dir" ] || continue
+  find "$dir" -type f -print | while IFS= read -r file
+  do
+    scan_file "$file"
+  done
+done
+
+if [ -s "$tmp/direct-imports" ]
+then
+  cat "$tmp/direct-imports" >&2
+  fail 'owned system shell libraries are still dot-sourced directly'
+fi
+
+exit 0
