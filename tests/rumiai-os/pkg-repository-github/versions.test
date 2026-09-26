@@ -168,8 +168,6 @@ chmod "700" "$fakebin/http-fetch" || error "cannot make fake http-fetch executab
 
 PATH="$fakebin:/usr/bin:/bin"
 export PATH
-m_LIB_DIR="$root/lib"
-export m_LIB_DIR
 loadsyslib "pkg/repository/pkg-repository-github" || error "cannot load GitHub repository adapter through m"
 
 versions="$(pkg_repository_list_versions "$repository_dir")" || fail "pkg_repository_list_versions failed"

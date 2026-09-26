@@ -80,7 +80,6 @@ EOF_HTTP
 chmod 700 "$tmp/bin/http-fetch" || error "cannot make fake http-fetch executable"
 
 PATH="$tmp/bin:/usr/bin:/bin"; export PATH
-m_LIB_DIR="$root/lib"; export m_LIB_DIR
 loadsyslib "pkg/repository/pkg-repository-github" || error "cannot load GitHub repository adapter through m"
 
 descriptor="$(pkg_repository_resolve_artifact "$repository" "$range" 1.2.3)" || fail "default GitHub artifact resolution failed"
