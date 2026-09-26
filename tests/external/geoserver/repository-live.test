@@ -8,7 +8,7 @@ skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-  self=$0
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
   case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
   self_dir=${self%/*}
   [ "$self_dir" != "$self" ] || self_dir=.
@@ -30,6 +30,9 @@ case $status in
   *) error 'target discovery failed';;
 esac
 
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
+
 library=$root/lib/sys/sh/pkg/repository/pkg-repository-geoserver.lib.sh
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] ||
   fail 'GeoServer repository adapter missing'
@@ -46,9 +49,8 @@ printf '%s\n' '^geoserver-[A-Za-z0-9][A-Za-z0-9._+~-]*-bin\\.zip$' > "$tmp/range
 printf '%s\n' md5 > "$tmp/range/digest_type" || error 'cannot prepare digest selector'
 
 PATH="$root/bin/sys:$PATH"
-m_LIB_DIR=$root/lib
-export PATH m_LIB_DIR
-. "$library" || error 'cannot source GeoServer repository adapter'
+export PATH
+loadsyslib "pkg/repository/pkg-repository-geoserver" || error 'cannot load GeoServer repository adapter through m'
 
 version=3.0.1
 resolved=$(pkg_repository_resolve_version "$tmp/repository" "$version") ||
