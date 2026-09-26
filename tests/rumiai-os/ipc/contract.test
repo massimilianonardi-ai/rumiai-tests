@@ -7,7 +7,7 @@ skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-    self=$0
+    self=${RUMIAI_TEST_SOURCE_PATH:-$0}
     case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
     self_dir=${self%/*}
     [ "$self_dir" != "$self" ] || self_dir=.
@@ -72,6 +72,9 @@ case $status in
     *) error 'target discovery failed' ;;
 esac
 
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
+
 core_library=$root/lib/sys/sh/core.lib.sh
 ipc_library=$root/lib/sys/sh/ipc.lib.sh
 ipc_manual=$root/res/sys/manual/ipc.lib.sh
@@ -109,8 +112,7 @@ command -v openssl >/dev/null 2>&1 ||
     skip 'openssl required by rand.lib.sh is unavailable'
 
 m_LIB_DIR=$root/lib
-. "$core_library" || error 'cannot source core.lib.sh'
-. "$ipc_library" || error 'cannot source ipc.lib.sh'
+loadsyslib "ipc" || error 'cannot load ipc.lib.sh through m'
 
 tmp=${TMPDIR:-/tmp}/rumiai-ipc-contract-$$
 umask 077
