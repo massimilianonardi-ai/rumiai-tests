@@ -83,13 +83,20 @@ rumiai_test_target_rumiai_os_enter_m() {
     [ -n "$script_path" ] || return 1
     [ -x "$target_root/m" ] || return 1
 
-    if [ "${m_ROOT-}" = "$target_root" ] && [ "${m_COMMAND_BIN-}" = "$script_path" ]
-    then
-        return 0
-    fi
+    [ -z "${RUMIAI_TEST_UNDER_M-}" ] || return 0
+
+    test_wrapper="${TMPDIR:-/tmp}/rumiai-test-m-wrapper-$$"
+    umask 077
+    cat > "$test_wrapper" <<'EOF_RUMIAI_TEST_M_WRAPPER' || return 1
+#!/usr/bin/env m
+command -p -- rm -f -- "$m_COMMAND_BIN" || exit 3
+RUMIAI_TEST_UNDER_M=1
+export RUMIAI_TEST_UNDER_M
+. "$RUMIAI_TEST_SOURCE_PATH"
+EOF_RUMIAI_TEST_M_WRAPPER
 
     RUMIAI_TEST_SOURCE_PATH=$script_path
     export RUMIAI_TEST_SOURCE_PATH
 
-    exec "$target_root/m" "$script_path" "$@"
+    exec "$target_root/m" "$test_wrapper" "$@"
 }
