@@ -8,7 +8,7 @@ skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-  self=$0
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
   case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
   self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
@@ -22,6 +22,9 @@ target_library="$suite_root/lib/rumiai-os-target.lib"
 
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-chromium.lib.sh"
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "Chromium repository adapter is missing or has invalid mode"
@@ -110,7 +113,7 @@ write_range()
 
 PATH="$tmp/bin:/usr/bin:/bin"; export PATH
 m_LIB_DIR="$root/lib"; export m_LIB_DIR
-. "$library" || error "cannot source Chromium repository adapter"
+loadsyslib "pkg/repository/pkg-repository-chromium" || error "cannot load Chromium repository adapter through m"
 
 CHROMIUM_METADATA_MODE=ok; export CHROMIUM_METADATA_MODE
 : > "$CHROMIUM_HTTP_LOG"
