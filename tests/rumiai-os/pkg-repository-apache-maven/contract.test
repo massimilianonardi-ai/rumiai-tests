@@ -7,7 +7,7 @@ skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-  self=$0
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
   case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
   self_dir=${self%/*}; [ "$self_dir" != "$self" ] || self_dir=.
   CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
@@ -18,6 +18,9 @@ group_dir=${test_dir%/*}; rumiai_os_group=${group_dir%/*}; tests_dir=${rumiai_os
 . "$suite_root/lib/rumiai-os-target.lib" || error "cannot source target discovery"
 root="$(rumiai_test_target_rumiai_os_find "$suite_root")"; status=$?
 case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail "invalid explicit rumiai-os target";; *) error "target discovery failed";; esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-apache-maven.lib.sh"
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "Apache Maven repository adapter is missing or has invalid mode"
@@ -122,7 +125,7 @@ MAVEN_HTTP_LOG="$tmp/http.log"; export MAVEN_HTTP_LOG
 MAVEN_INDEX_MODE=ok; export MAVEN_INDEX_MODE
 MAVEN_SIDECAR_MODE=ok; export MAVEN_SIDECAR_MODE
 
-. "$library" || error "cannot source Apache Maven repository adapter"
+loadsyslib "pkg/repository/pkg-repository-apache-maven" || error "cannot load Apache Maven repository adapter through m"
 
 write_valid_repository
 [ "$(pkg_repository_resolve_version "$repository_dir" 4.0.0-rc-6)" = 4.0.0-rc-6 ] || fail "exact release resolution failed"
