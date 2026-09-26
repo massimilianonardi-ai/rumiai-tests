@@ -281,8 +281,18 @@ ln -s missing-target "$local_root/link-dangling" || error 'cannot create danglin
 
 # put: regular file and directory, including replacement of an existing remote
 # directory only after the new tree has transferred successfully.
-run_rsudo fs put "$local_root/file" "$remote_root/file" >/dev/null 2>&1 ||
+if ! run_rsudo fs put "$local_root/file" "$remote_root/file" >"$tmp/put-file.stdout" 2>"$tmp/put-file.stderr"
+then
+    [ ! -s "$tmp/put-file.stdout" ] || {
+        printf '%s\n' 'put regular file stdout:' >&2
+        cat "$tmp/put-file.stdout" >&2
+    }
+    [ ! -s "$tmp/put-file.stderr" ] || {
+        printf '%s\n' 'put regular file stderr:' >&2
+        cat "$tmp/put-file.stderr" >&2
+    }
     fail 'put regular file failed'
+fi
 cmp "$local_root/file" "$remote_root/file" >/dev/null 2>&1 ||
     fail 'put regular file changed content'
 
