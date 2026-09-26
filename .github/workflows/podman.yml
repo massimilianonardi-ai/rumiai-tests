@@ -54,6 +54,8 @@ jobs:
 
       - name: Run formal Podman package validation
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           export TMPDIR="$RUNNER_TEMP/rumiai podman validation"
           mkdir -p "$TMPDIR"
