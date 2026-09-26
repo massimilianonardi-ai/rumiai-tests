@@ -11,6 +11,7 @@ on:
       - lib/rumiai-os-target.lib
       - tests/rumiai-os/pkg-extract/**
       - tests/rumiai-os/pkg-integration/contract.test
+      - tests/rumiai-os/pkg-repository-podman/**
       - tests/external/podman/**
       - validation/podman.conf
   workflow_dispatch:
@@ -54,8 +55,6 @@ jobs:
 
       - name: Run formal Podman package validation
         shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           export TMPDIR="$RUNNER_TEMP/rumiai podman validation"
           mkdir -p "$TMPDIR"
