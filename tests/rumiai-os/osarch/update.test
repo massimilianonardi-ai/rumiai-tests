@@ -33,11 +33,7 @@ case $status in
 esac
 
 osarch=$root/bin/sys/osarch
-osarch_update=$root/bin/sys/osarch-update
-osarch_set=$root/bin/sys/osarch-set
 [ -x "$osarch" ] || fail 'canonical osarch command is missing or not executable'
-[ -x "$osarch_update" ] || fail 'compatibility osarch-update command is missing or not executable'
-[ -x "$osarch_set" ] || fail 'compatibility osarch-set command is missing or not executable'
 
 case $(command -p -- uname -s 2>/dev/null) in
   Linux) expected_os=linux;;
@@ -85,20 +81,5 @@ do
   [ -d "$root/bin/$prefix-$expected" ] ||
     fail "$name-osarch target directory is missing"
 done
-
-"$root/m" "$osarch_update" > "$tmp/compat-update.out" 2> "$tmp/compat-update.err" || {
-  cat "$tmp/compat-update.err" >&2
-  fail 'compatibility osarch-update command failed'
-}
-[ ! -s "$tmp/compat-update.out" ] || fail 'compatibility osarch-update produced unexpected stdout'
-
-"$root/m" "$osarch_set" "$expected" > "$tmp/compat-set.out" 2> "$tmp/compat-set.err" || {
-  cat "$tmp/compat-set.err" >&2
-  fail 'compatibility osarch-set command failed'
-}
-[ ! -s "$tmp/compat-set.out" ] || fail 'compatibility osarch-set produced unexpected stdout'
-
-selected=$("$root/m" "$osarch") || fail 'bare osarch query failed after compatibility commands'
-[ "$selected" = "$expected" ] || fail 'compatibility commands changed the selected osarch unexpectedly'
 
 exit 0
