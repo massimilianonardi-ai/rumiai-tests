@@ -22,7 +22,7 @@ skip()
 
 resolve_test_dir()
 {
-  self="$0"
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
   case "$self" in
     */*)
       :
@@ -62,6 +62,9 @@ case "$status" in
     error "target discovery failed"
     ;;
 esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-github.lib.sh"
 [ -f "$library" ] || fail "lib/sys/sh/pkg/repository/pkg-repository-github.lib.sh is missing"
@@ -167,7 +170,7 @@ PATH="$fakebin:/usr/bin:/bin"
 export PATH
 m_LIB_DIR="$root/lib"
 export m_LIB_DIR
-. "$library" || error "cannot source GitHub repository adapter"
+loadsyslib "pkg/repository/pkg-repository-github" || error "cannot load GitHub repository adapter through m"
 
 versions="$(pkg_repository_list_versions "$repository_dir")" || fail "pkg_repository_list_versions failed"
 expected_versions="v1
