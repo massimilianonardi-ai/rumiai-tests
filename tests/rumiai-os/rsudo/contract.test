@@ -11,6 +11,8 @@
 #   RSUDO-08  --user selects the requested sudo target user.
 #   RSUDO-09  required password acquisition failure prevents remote execution.
 #   RSUDO-11  password data is not exposed as ordinary target input/output.
+#   RSUDO-20  rsudo invocation-mode state is reset before each invocation parses options.
+#   RSUDO-21  recursive rsudo calls reuse connection state without inheriting outer invocation modes.
 #
 # The SSH and sudo programs below are external-boundary fixtures. They model
 # remote-system characteristics, not the internal sequence rsudo must use.
@@ -70,7 +72,10 @@ esac
 
 rsudo_library=$root/lib/sys/sh/rsudo/rsudo.lib.sh
 rsudo_command=$root/bin/sys/rsudo
+rsudo_askpass_command=$root/bin/sys/rsudo-askpass
 rsudo_manual=$root/res/sys/manual/rsudo.lib.sh
+rsudo_command_manual=$root/res/sys/manual/rsudo
+rsudo_askpass_manual=$root/res/sys/manual/rsudo-askpass
 
 [ -f "$rsudo_library" ] && [ ! -L "$rsudo_library" ] ||
     fail 'rsudo.lib.sh is missing or is not a regular library file'
@@ -101,8 +106,14 @@ fi
 
 [ -f "$rsudo_command" ] && [ -x "$rsudo_command" ] ||
     fail 'rsudo command entrypoint is unavailable'
+[ -f "$rsudo_askpass_command" ] && [ -x "$rsudo_askpass_command" ] ||
+    fail 'rsudo-askpass command entrypoint is unavailable'
+[ -f "$rsudo_command_manual" ] && [ ! -L "$rsudo_command_manual" ] ||
+    fail 'rsudo command operational manual is missing'
+[ -f "$rsudo_askpass_manual" ] && [ ! -L "$rsudo_askpass_manual" ] ||
+    fail 'rsudo-askpass command operational manual is missing'
 
-tmp=${TMPDIR:-/tmp}/rumiai-rsudo-contract-$$
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-contract-$
 fakebin=$tmp/bin
 mkdir -p "$fakebin" || error 'cannot create external-boundary fixtures'
 
@@ -216,6 +227,12 @@ then
     needs_auth=1
 fi
 
+if [ -n "${RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER-}" ] &&
+   [ "$target_user" != "$RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER" ]
+then
+    exit 96
+fi
+
 authenticate()
 {
     [ "$needs_auth" -eq 1 ] || return 0
@@ -259,6 +276,16 @@ cat > "$fakebin/rsudo-target" <<'EOF_TARGET'
 
 cat > "$RSUDO_TEST_TARGET_STDIN_FILE" || exit 60
 printf '%s\n' "${RSUDO_TEST_EFFECTIVE_USER-unprivileged}" > "$RSUDO_TEST_TARGET_USER_FILE" || exit 61
+
+if [ -n "${RSUDO_TEST_TARGET_ARGC_FILE-}" ]
+then
+    printf '%s\n' "$#" > "$RSUDO_TEST_TARGET_ARGC_FILE" || exit 62
+fi
+if [ -n "${RSUDO_TEST_TARGET_ARG1_FILE-}" ]
+then
+    printf '%s\n' "${1-}" > "$RSUDO_TEST_TARGET_ARG1_FILE" || exit 63
+fi
+
 printf 'TARGET-STDOUT:%s\n' "$RSUDO_TEST_CASE"
 printf 'TARGET-STDERR:%s\n' "$RSUDO_TEST_CASE" >&2
 exit "$RSUDO_TEST_TARGET_STATUS"
@@ -369,6 +396,146 @@ run_case()
         fail "$case_name: authentication data became target input/output"
     fi
 }
+
+run_invocation_state_reset_case()
+{
+    case_name=invocation-state-reset
+    case_dir=$tmp/$case_name
+    mkdir "$case_dir" || error "cannot create case directory: $case_name"
+
+    target_stdin=$case_dir/target.stdin
+    target_user=$case_dir/target.user
+    target_argc=$case_dir/target.argc
+    target_arg1=$case_dir/target.arg1
+    stdout_file=$case_dir/stdout
+    stderr_file=$case_dir/stderr
+    validated_file=$case_dir/sudo.validated
+    payload=payload-invocation-state
+    argument='argument with spaces'
+
+    (
+        PATH="$fakebin:$PATH"
+        RSUDO_HOST=example.invalid
+        RSUDO_USER=alice
+        RSUDO_PASSWORD=secret
+
+        # Poison all non-interactive invocation-mode state. rsudo must clear
+        # these values before parsing the current invocation.
+        RSUDO_ASKPASS=true
+        RSUDO_AS_USER=daemon
+        RSUDO_NO_PRESERVE_QUOTES=true
+
+        RSUDO_TEST_EXPECT_LOGIN_USER=alice
+        RSUDO_TEST_EXPECT_HOST=example.invalid
+        RSUDO_TEST_REMOTE_BIN=$fakebin
+        RSUDO_TEST_SUDO_MODE=passwordless
+        RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
+        RSUDO_TEST_EXPECT_PASSWORD=secret
+        RSUDO_TEST_TARGET_STDIN_FILE=$target_stdin
+        RSUDO_TEST_TARGET_USER_FILE=$target_user
+        RSUDO_TEST_TARGET_ARGC_FILE=$target_argc
+        RSUDO_TEST_TARGET_ARG1_FILE=$target_arg1
+        RSUDO_TEST_TARGET_STATUS=37
+        RSUDO_TEST_CASE=$case_name
+
+        export \
+            PATH RSUDO_HOST RSUDO_USER RSUDO_PASSWORD \
+            RSUDO_ASKPASS RSUDO_AS_USER RSUDO_NO_PRESERVE_QUOTES \
+            RSUDO_TEST_EXPECT_LOGIN_USER RSUDO_TEST_EXPECT_HOST \
+            RSUDO_TEST_REMOTE_BIN RSUDO_TEST_SUDO_MODE \
+            RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD \
+            RSUDO_TEST_TARGET_STDIN_FILE RSUDO_TEST_TARGET_USER_FILE \
+            RSUDO_TEST_TARGET_ARGC_FILE RSUDO_TEST_TARGET_ARG1_FILE \
+            RSUDO_TEST_TARGET_STATUS RSUDO_TEST_CASE
+
+        printf '%s\n' "$payload" |
+            "$root/m" "$rsudo_command" -- rsudo-target "$argument"
+    ) > "$stdout_file" 2> "$stderr_file"
+
+    status=$?
+    case $status in
+        8[0-9]|9[0-9])
+            cat "$stderr_file" >&2
+            error "external-boundary fixture could not model $case_name (status $status)"
+        ;;
+    esac
+
+    [ "$status" -eq 37 ] || {
+        cat "$stderr_file" >&2
+        fail "$case_name: remote target status was $status instead of 37"
+    }
+
+    [ "$(cat "$target_stdin")" = "$payload" ] ||
+        fail "$case_name: ambient RSUDO_ASKPASS consumed target stdin"
+    [ "$(cat "$target_user")" = root ] ||
+        fail "$case_name: ambient RSUDO_AS_USER selected $(cat "$target_user")"
+    [ "$(cat "$target_argc")" = 1 ] ||
+        fail "$case_name: ambient RSUDO_NO_PRESERVE_QUOTES changed argument count"
+    [ "$(cat "$target_arg1")" = "$argument" ] ||
+        fail "$case_name: normal command preservation did not preserve one spaced argument"
+}
+
+run_recursive_state_reset_case()
+{
+    case_name=recursive-state-reset
+    remote_path="$tmp/recursive path with spaces"
+    validated_file=$tmp/$case_name.sudo.validated
+
+    mkdir -p "$remote_path" || error 'cannot create recursive-state target'
+    printf '%s\n' keep > "$remote_path/marker" ||
+        error 'cannot populate recursive-state target'
+
+    (
+        PATH="$fakebin:$PATH"
+        RSUDO_HOST=example.invalid
+        RSUDO_USER=alice
+        unset RSUDO_PASSWORD
+
+        RSUDO_TEST_EXPECT_LOGIN_USER=alice
+        RSUDO_TEST_EXPECT_HOST=example.invalid
+        RSUDO_TEST_REMOTE_BIN=$fakebin
+        RSUDO_TEST_SUDO_MODE=passwordless
+        RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
+        RSUDO_TEST_EXPECT_PASSWORD=secret
+        RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER=root
+
+        export \
+            PATH RSUDO_HOST RSUDO_USER \
+            RSUDO_TEST_EXPECT_LOGIN_USER RSUDO_TEST_EXPECT_HOST \
+            RSUDO_TEST_REMOTE_BIN RSUDO_TEST_SUDO_MODE \
+            RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD \
+            RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER
+
+        # The outer call deliberately enables three invocation-local modes.
+        # fs delete calls rsudo recursively without those options.
+        printf '%s\n' secret |
+            "$root/m" "$rsudo_command" \
+                --askpass --user daemon --no-preserve-quotes \
+                fs delete "$remote_path"
+    ) > "$tmp/$case_name.stdout" 2> "$tmp/$case_name.stderr"
+
+    status=$?
+    case $status in
+        96)
+            fail "$case_name: nested rsudo inherited the outer --user mode"
+        ;;
+        8[0-9]|9[0-5])
+            cat "$tmp/$case_name.stderr" >&2
+            error "external-boundary fixture could not model $case_name (status $status)"
+        ;;
+    esac
+
+    [ "$status" -eq 0 ] || {
+        cat "$tmp/$case_name.stderr" >&2
+        fail "$case_name: recursive rsudo returned $status"
+    }
+
+    [ ! -e "$remote_path" ] && [ ! -L "$remote_path" ] ||
+        fail "$case_name: nested rsudo did not restore normal quote preservation"
+}
+
+run_invocation_state_reset_case
+run_recursive_state_reset_case
 
 # Password-required sudo.
 run_case password-required required alice env '' root

@@ -6,6 +6,7 @@
 #   RSUDO-04  resulting remote target status is propagated.
 #   RSUDO-07  interactive mode executes the target through a terminal-capable remote path.
 #   RSUDO-11  password data is not exposed as ordinary target input/output.
+#   RSUDO-20  rsudo clears ambient interactive mode before parsing each invocation.
 #
 # The SSH and sudo programs below are external-boundary fixtures. They model a
 # reachable remote host whose sudo policy requires a password. The test asserts
@@ -90,6 +91,7 @@ cat > "$fakebin/ssh" <<'EOF_SSH'
 
 if [ "${1-}" = -t ]
 then
+    : > "$RSUDO_TEST_SSH_TTY_MARKER" || exit 85
     shift
 fi
 
@@ -230,8 +232,10 @@ dialogue=$tmp/dialogue
 transcript=$tmp/transcript
 wrapper=$tmp/run-rsudo
 validated_file=$tmp/sudo.validated
+tty_marker=$tmp/ssh.tty
 
 : > "$dialogue"
+rm -f "$tty_marker"
 
 cat > "$wrapper" <<'EOF_WRAPPER'
 #!/bin/sh
@@ -257,10 +261,16 @@ RSUDO_TEST_EXPECT_LOGIN_USER=alice
 RSUDO_TEST_EXPECT_HOST=example.invalid
 RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
 RSUDO_TEST_EXPECT_PASSWORD=secret
+RSUDO_TEST_SSH_TTY_MARKER=$tty_marker
 RSUDO_TEST_TARGET_STATUS=23
 RSUDO_TEST_CASE=interactive
 
-export     PATH TMPDIR     RSUDO_HOST RSUDO_USER RSUDO_PASSWORD     RSUDO_TEST_M RSUDO_TEST_RSUDO_COMMAND RSUDO_TEST_STATUS_FILE     RSUDO_TEST_REMOTE_BIN RSUDO_TEST_EXPECT_LOGIN_USER RSUDO_TEST_EXPECT_HOST     RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD     RSUDO_TEST_TARGET_STATUS RSUDO_TEST_CASE
+export \
+    PATH TMPDIR RSUDO_HOST RSUDO_USER RSUDO_PASSWORD \
+    RSUDO_TEST_M RSUDO_TEST_RSUDO_COMMAND RSUDO_TEST_STATUS_FILE \
+    RSUDO_TEST_REMOTE_BIN RSUDO_TEST_EXPECT_LOGIN_USER RSUDO_TEST_EXPECT_HOST \
+    RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD \
+    RSUDO_TEST_SSH_TTY_MARKER RSUDO_TEST_TARGET_STATUS RSUDO_TEST_CASE
 
 rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
     error 'interactive PTY driver could not complete rsudo scenario'
@@ -290,5 +300,56 @@ if grep -F 'secret' "$transcript" >/dev/null 2>&1
 then
     fail 'authentication data appeared as ordinary interactive output'
 fi
+
+[ -f "$tty_marker" ] ||
+    fail 'explicit --interactive execution did not use a terminal-capable SSH path'
+
+# Ambient RSUDO_INTERACTIVE is not an rsudo command input. A new invocation must
+# clear it and remain non-interactive unless --interactive is present.
+rm -f "$tty_marker" "$status_file" "$validated_file"
+RSUDO_TEST_CASE=ambient-interactive-reset
+export RSUDO_TEST_CASE
+
+cat > "$wrapper" <<'EOF_WRAPPER_RESET'
+#!/bin/sh
+
+RSUDO_INTERACTIVE=true
+export RSUDO_INTERACTIVE
+
+"$RSUDO_TEST_M" "$RSUDO_TEST_RSUDO_COMMAND" \
+    --no-preserve-quotes -- rsudo-target-interactive
+status=$?
+
+printf '%s\n' "$status" > "$RSUDO_TEST_STATUS_FILE"
+exit 0
+EOF_WRAPPER_RESET
+chmod +x "$wrapper" || error 'cannot make invocation-reset wrapper executable'
+
+rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
+    error 'interactive PTY driver could not complete ambient-state reset scenario'
+
+[ -f "$status_file" ] ||
+    error 'ambient-state reset wrapper did not record status'
+
+status=$(cat "$status_file")
+case $status in
+    8[0-9]|9[0-9])
+        cat "$transcript" >&2
+        error "external-boundary fixture could not model ambient-state reset (status $status)"
+    ;;
+esac
+
+[ "$status" -eq 23 ] || {
+    cat "$transcript" >&2
+    fail "ambient-state reset target status was $status instead of 23"
+}
+
+[ ! -e "$tty_marker" ] ||
+    fail 'ambient RSUDO_INTERACTIVE leaked into a new rsudo invocation'
+
+grep -F 'INTERACTIVE-STDOUT:ambient-interactive-reset' "$transcript" >/dev/null 2>&1 ||
+    fail 'ambient-state reset target stdout was not propagated'
+grep -F 'INTERACTIVE-STDERR:ambient-interactive-reset' "$transcript" >/dev/null 2>&1 ||
+    fail 'ambient-state reset target stderr was not propagated'
 
 exit 0
