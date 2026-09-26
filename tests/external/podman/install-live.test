@@ -1,0 +1,160 @@
+#!/bin/sh
+
+TEST_ID=external/podman/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${machine_created-0}" -eq 1 ] && [ -n "${public-}" ] && [ -x "${public-}" ]
+  then
+    "$public" machine rm -f "$machine_name" >/dev/null 2>&1 || :
+  fi
+  if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall podman >/dev/null 2>&1 || :
+  fi
+  if [ -n "${package_state-}" ]
+  then
+    command -p -- rm -rf -- "$package_state" 2>/dev/null || :
+  fi
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp" 2>/dev/null || :
+}
+trap cleanup 0 HUP INT TERM
+
+[ "$(uname -s 2>/dev/null)" = Darwin ] || skip 'Podman package validation is macOS-specific'
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+podman_group=${test_dir%/*}
+external_group=${podman_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-podman-install-live-$$
+umask 077
+command -p -- mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
+
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+printf '%s\n' "$m_OSARCH"
+EOF_PROBE
+command -p -- chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+[ "$osarch" = macos-arm64 ] || skip "Podman package is declared only for macos-arm64; target is $osarch"
+
+for host_path in /opt/podman /etc/paths.d/podman-pkg /usr/local/etc/man.d/podman.man.conf
+do
+  [ ! -e "$host_path" ] && [ ! -L "$host_path" ] ||
+    skip "host already contains Podman system integration: $host_path"
+done
+
+run_pkg versions podman > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
+status=$?
+case $status in
+  0) skip 'Podman is already installed in the supplied RumiAI target';;
+  1) :;;
+  *)
+    command -p -- cat "$tmp/preexisting.err" >&2
+    fail "cannot determine pre-existing Podman package state (status $status)"
+    ;;
+esac
+
+printf '%s\n' "$TEST_ID: installing current official Podman payload through RumiAI pkg" >&2
+run_pkg install podman > "$tmp/install.out" 2> "$tmp/install.err" || {
+  command -p -- cat "$tmp/install.out" >&2
+  command -p -- cat "$tmp/install.err" >&2
+  fail 'pkg install podman failed'
+}
+installed=1
+
+identity=$(run_pkg default podman 2> "$tmp/default.err") || {
+  command -p -- cat "$tmp/default.err" >&2
+  fail 'installed Podman has no queryable current default'
+}
+[ -n "$identity" ] || fail 'Podman current identity is empty'
+
+public="$root/bin/ext-$osarch/podman"
+[ -e "$public" ] || [ -L "$public" ] || fail 'Podman public command binding is missing'
+[ -x "$public" ] || fail 'Podman public command binding is not executable'
+
+version=$("$public" --version 2> "$tmp/version.err") || {
+  command -p -- cat "$tmp/version.err" >&2
+  fail 'managed Podman --version failed'
+}
+case "$version" in
+  "podman version "*) :;;
+  *) fail "unexpected managed Podman version output: $version";;
+esac
+
+"$public" machine info > "$tmp/machine-info.out" 2> "$tmp/machine-info.err" || {
+  command -p -- cat "$tmp/machine-info.err" >&2
+  fail 'managed Podman machine info failed'
+}
+
+machine_name=rumiai-pkg-test
+"$public" machine init --cpus 1 --memory 2048 --disk-size 10 "$machine_name" \
+  > "$tmp/machine-init.out" 2> "$tmp/machine-init.err" || {
+    command -p -- cat "$tmp/machine-init.out" >&2
+    command -p -- cat "$tmp/machine-init.err" >&2
+    fail 'managed Podman machine init failed'
+  }
+machine_created=1
+
+"$public" machine inspect "$machine_name" > "$tmp/machine-inspect.out" 2> "$tmp/machine-inspect.err" || {
+  command -p -- cat "$tmp/machine-inspect.err" >&2
+  fail 'managed Podman machine inspect failed'
+}
+
+package_home=$(
+  "$root/m" "$root/bin/sys/state-path" user pkg podman home
+) || fail 'cannot resolve Podman package HOME'
+[ -d "$package_home" ] && [ ! -L "$package_home" ] || fail 'Podman package HOME was not materialized'
+package_state=${package_home%/home}
+[ "$package_state" != "$package_home" ] || error 'cannot derive Podman package state root'
+
+for host_path in /opt/podman /etc/paths.d/podman-pkg /usr/local/etc/man.d/podman.man.conf
+do
+  [ ! -e "$host_path" ] && [ ! -L "$host_path" ] ||
+    fail "RumiAI Podman package modified host integration path: $host_path"
+done
+
+printf 'installed=%s\n' "$identity"
+printf 'osarch=%s\n' "$osarch"
+printf 'version=%s\n' "$version"
+printf 'machine-init=ok\n'
+printf 'host-system-integration=absent\n'
+
+exit 0
