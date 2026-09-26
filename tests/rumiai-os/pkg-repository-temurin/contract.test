@@ -7,7 +7,7 @@ skip() { printf -- '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 
 resolve_test_dir()
 {
-  self=$0
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
   case "$self" in */*) :;; *) self="$(command -v "$self" 2>/dev/null)" || return 1;; esac
   self_dir=${self%/*}
   [ "$self_dir" != "$self" ] || self_dir=.
@@ -27,6 +27,9 @@ case "$status" in
   2) fail "invalid explicit rumiai-os target";;
   *) error "target discovery failed";;
 esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-temurin.lib.sh"
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] ||
@@ -116,7 +119,7 @@ TEMURIN_LIST_MODE=ok
 export TEMURIN_LIST_MODE
 TEMURIN_CHECKSUM_MODE=ok
 export TEMURIN_CHECKSUM_MODE
-. "$library" || error "cannot source Temurin repository adapter"
+loadsyslib "pkg/repository/pkg-repository-temurin" || error "cannot load Temurin repository adapter through m"
 
 write_valid_repository
 expected_versions='21+35
