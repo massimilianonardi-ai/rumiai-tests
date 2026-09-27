@@ -94,10 +94,8 @@ selected=$(run_pkg provider default python-env 2> "$tmp/provider-selected.err") 
   command -p -- cat "$tmp/provider-selected.err" >&2
   fail 'cannot query selected python-env provider'
 }
-case "$selected" in
-  micromamba@*|micromamba@*!*) :;;
-  *) fail "python-env selected unexpected provider: $selected";;
-esac
+[ "$selected" = micromamba ] ||
+  fail "python-env selected unexpected provider selector: $selected"
 
 probe_cache=$("$root/m" "$root/bin/sys/state-path" user pkg python-env-probe cache) ||
   error 'cannot resolve probe package cache state'
