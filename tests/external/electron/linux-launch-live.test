@@ -19,6 +19,14 @@ run_pkg()
   "$root/m" "$root/bin/sys/pkg" "$@"
 }
 
+electron_sandbox_namespace_unavailable()
+{
+  [ "$#" -eq 1 ] || return 1
+
+  grep -F 'Failed to move to new namespace:' "$1" >/dev/null 2>&1 &&
+    grep -F 'Operation not permitted' "$1" >/dev/null 2>&1
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
@@ -165,7 +173,14 @@ status=$?
 case $status in
   0) :;;
   2) skip 'Electron requires DISPLAY or xvfb-run';;
-  *) cat "$tmp/launch.err" >&2; fail "Electron public launch failed: $status";;
+  *)
+    if electron_sandbox_namespace_unavailable "$tmp/launch.err"
+    then
+      skip 'host denies namespace creation required by the Electron sandbox'
+    fi
+    cat "$tmp/launch.err" >&2
+    fail "Electron public launch failed: $status"
+    ;;
 esac
 
 [ -f "$marker" ] || fail 'Electron workload produced no completion marker'

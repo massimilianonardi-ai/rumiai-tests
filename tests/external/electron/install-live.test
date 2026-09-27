@@ -19,6 +19,14 @@ run_pkg()
   "$root/m" "$root/bin/sys/pkg" "$@"
 }
 
+electron_sandbox_namespace_unavailable()
+{
+  [ "$#" -eq 1 ] || return 1
+
+  grep -F 'Failed to move to new namespace:' "$1" >/dev/null 2>&1 &&
+    grep -F 'Operation not permitted' "$1" >/dev/null 2>&1
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
@@ -140,11 +148,18 @@ printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'current Electron identity is absent from pkg versions output'
 
 PATH="$root/bin/ext-$osarch:$root/bin/sys:$PATH" \
-  "$root/m" electron --version > "$tmp/version.out" 2> "$tmp/version.err" || {
+  "$root/m" electron --version > "$tmp/version.out" 2> "$tmp/version.err"
+status=$?
+if [ "$status" -ne 0 ]
+then
+  if electron_sandbox_namespace_unavailable "$tmp/version.err"
+  then
+    skip 'host denies namespace creation required by the Electron sandbox'
+  fi
   cat "$tmp/version.out" >&2
   cat "$tmp/version.err" >&2
   fail 'Electron public command failed after privileged installation'
-}
+fi
 [ -s "$tmp/version.out" ] || fail 'Electron --version produced no output'
 
 printf 'installed=%s\n' "$identity"
