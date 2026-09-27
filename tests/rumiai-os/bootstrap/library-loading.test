@@ -1,5 +1,5 @@
 #!/bin/sh
-# Protects: LIB-11, LIB-12, LIB-13, LIB-15.
+# Protects: BOOT-10, BOOT-11, BOOT-12, BOOT-13, BOOT-14, LIB-11, LIB-12, LIB-13, LIB-15.
 
 TEST_ID=rumiai-os/bootstrap/library-loading.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -40,9 +40,43 @@ case $status in
   *) error 'target discovery failed';;
 esac
 
-tmp=${TMPDIR:-/tmp}/rumiai-library-loading-$$
+tmp=${TMPDIR:-/tmp}/rumiai-library-loading-$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
+
+awk '
+  /^[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*\(\)[[:space:]]*$/ {
+    name=$0
+    sub(/\(\)[[:space:]]*$/, "", name)
+    print name
+  }
+' "$root/m" > "$tmp/bootstrap-functions" ||
+  error 'cannot inspect bootstrap function surface'
+
+cat > "$tmp/bootstrap-functions.expected" <<'EOF_BOOTSTRAP_FUNCTIONS'
+readpathce
+export_readonly
+EOF_BOOTSTRAP_FUNCTIONS
+
+cmp -s "$tmp/bootstrap-functions.expected" "$tmp/bootstrap-functions" || {
+  printf '%s\n' 'expected bootstrap functions:' >&2
+  cat "$tmp/bootstrap-functions.expected" >&2
+  printf '%s\n' 'observed bootstrap functions:' >&2
+  cat "$tmp/bootstrap-functions" >&2
+  fail 'root m bootstrap function surface is not minimal'
+}
+
+awk '
+  $0 == ". \"$m_LIB_DIR/sys/sh/core.lib.sh\"" { count++ }
+  END { exit count == 1 ? 0 : 1 }
+' "$root/m" ||
+  fail 'root m bootstrap must directly source core.lib.sh exactly once'
+
+grep -F 'pkg/pkg-provider' "$root/m" >/dev/null 2>&1 &&
+  fail 'root m bootstrap must not own pkg provider initialization'
+
+grep -F 'pkg_provider_global_environment_apply' "$root/m" >/dev/null 2>&1 &&
+  fail 'root m bootstrap must not apply pkg provider environment'
 
 probe_name=rumiai-loadlib-probe-$$
 probe=$tmp/$probe_name
@@ -201,8 +235,14 @@ missing_library_status=$?
 
 scan_file()
 {
-  awk '
+  scan_allow_bootstrap_core=${2-}
+
+  awk -v allow_bootstrap_core="$scan_allow_bootstrap_core" '
     /^[[:space:]]*\.[[:space:]]+/ && /\$m_LIB_DIR\/sys\/sh\// {
+      if (allow_bootstrap_core == "yes" &&
+          $0 == ". \"$m_LIB_DIR/sys/sh/core.lib.sh\"")
+        next
+
       print FNR ":" $0
       found=1
     }
@@ -215,7 +255,9 @@ scan_file()
   done < "$tmp/matches"
 }
 
-for file in "$root/m" "$root/rumiai-os" "$root/rumiai-os-sh"
+[ -f "$root/m" ] && scan_file "$root/m" yes
+
+for file in "$root/rumiai-os" "$root/rumiai-os-sh"
 do
   [ -f "$file" ] && scan_file "$file"
 done
