@@ -180,20 +180,29 @@ fi
   fail 'rejected PATH facility-env created a concrete package'
 
 shared_facility=sharedfacility${package#pitest}
+shared_command=$package-shared-adapter
 range_shared=$tmp/range-shared
 payload_shared=$tmp/payload-shared
-mkdir -p "$range_shared/facility-cmd/$shared_facility" "$range_shared/facility-env" "$payload_shared/bin" ||
+mkdir -p "$range_shared/cmd" "$range_shared/link" \
+  "$range_shared/facility-cmd/$shared_facility" "$range_shared/facility-env" "$payload_shared/bin" ||
   error 'cannot create shared facility realization fixture'
 printf '%s 1\n' "$shared_facility" > "$range_shared/facility" ||
   error 'cannot write shared facility declaration'
-printf '%s\n' bin/tool > "$range_shared/facility-cmd/$shared_facility/tool" ||
-  error 'cannot write shared facility command realization'
+cat > "$range_shared/cmd/$shared_command" <<EOF_SHARED_COMMAND
+#!/usr/bin/env m
+loadsyslib "pkg/pkg-launch"
+launcher "$package" "\$@"
+EOF_SHARED_COMMAND
+printf '%s\n' bin/tool > "$range_shared/link/$shared_command" ||
+  error 'cannot write shared package-command link'
 tab=$(printf '\t')
+printf 'package-command%s%s\n' "$tab" "$shared_command" > "$range_shared/facility-cmd/$shared_facility/tool" ||
+  error 'cannot write shared facility package-command realization'
 printf 'TOOL_HOME%sroot\n' "$tab" > "$range_shared/facility-env/$shared_facility" ||
   error 'cannot write shared facility env realization'
 cat > "$payload_shared/bin/tool" <<'EOF_TOOL'
 #!/bin/sh
-exit 0
+printf '%s\n' "${1-}"
 EOF_TOOL
 chmod 700 "$payload_shared/bin/tool" || error 'cannot prepare shared facility target'
 
@@ -202,8 +211,15 @@ integrate 5 "$range_shared" "$payload_shared" > "$tmp/shared.out" 2> "$tmp/share
   fail 'valid shared cmd/env facility realization failed integration'
 }
 shared_concrete=$root/pkg/$package@5
-[ -L "$shared_concrete/facility-cmd/$shared_facility/tool" ] ||
+shared_projection=$shared_concrete/facility-cmd/$shared_facility/tool
+[ -L "$shared_projection" ] ||
   fail 'shared facility command realization was not materialized'
+[ "$(command -p -- readlink "$shared_projection")" = "../../cmd/$shared_command" ] ||
+  fail 'shared facility package-command realization did not bind the same concrete package command'
+shared_result=$("$root/m" "$shared_projection" same-concrete) ||
+  fail 'shared facility package-command projection did not execute'
+[ "$shared_result" = same-concrete ] ||
+  fail "shared facility package-command projection executed unexpected target: $shared_result"
 [ -f "$shared_concrete/facility-env/$shared_facility" ] &&
 [ ! -L "$shared_concrete/facility-env/$shared_facility" ] ||
   fail 'shared facility env realization was not materialized'

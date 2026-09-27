@@ -117,9 +117,9 @@ make_valid()
   printf '%s\n' sigterm > "$contract/service/stop" || return 1
 
   printf '%s 25\n' "$facility" > "$provider/facility" || return 1
-  printf '%s\n' bin/java > "$provider/facility-cmd/$facility/java" || return 1
-  printf '%s\n' bin/javac > "$provider/facility-cmd/$facility/javac" || return 1
   tab=$(printf '\t')
+  printf 'package-command%sservice-start\n' "$tab" > "$provider/facility-cmd/$facility/java" || return 1
+  printf '%s\n' bin/javac > "$provider/facility-cmd/$facility/javac" || return 1
   printf 'JAVA_HOME%sroot\n' "$tab" > "$provider/facility-env/$facility" || return 1
 
   printf '%s\n' service-start > "$provider/facility-service/$facility/start" || return 1
@@ -175,6 +175,12 @@ expect_status 1 unknown-contract-part "$root/m" "$driver" contract "$contract"
 make_valid || error 'cannot reset valid fixture'
 rm "$provider/facility-cmd/$facility/javac" || error 'cannot remove required command realization'
 expect_status 1 missing-command "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
+# package-command cmd realizations must name an ordinary command of the same provider.
+make_valid || error 'cannot reset valid fixture'
+printf 'package-command%smissing-command\n' "$tab" > "$provider/facility-cmd/$facility/java" ||
+  error 'cannot prepare missing package-command realization'
+expect_status 1 missing-package-command "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
 
 # Provider-specific extras do not become optional facility members.
 make_valid || error 'cannot reset valid fixture'

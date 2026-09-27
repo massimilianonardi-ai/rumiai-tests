@@ -1,0 +1,110 @@
+name: python-env
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/python-env.yml
+      - rumiai-validate
+      - rumiai-test
+      - lib/sh/rumiai-validate.lib.sh
+      - lib/rumiai-os-target.lib
+      - validation/python-env.conf
+      - validation/requirements/python-env.conf
+      - tests/external/micromamba/python-env-live.test
+      - tests/rumiai-os/pkg/facility-contract.test
+      - tests/rumiai-os/pkg-integration/contract.test
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-product:
+    runs-on: ubuntu-latest
+    outputs:
+      rumiai-os-commit: ${{ steps.revision.outputs.commit }}
+    steps:
+      - name: Checkout current product head
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Freeze product revision
+        id: revision
+        shell: bash
+        run: |
+          echo "commit=$(git -C rumiai-os rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  formal-validation:
+    needs: resolve-product
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-26.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout frozen test suite revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Anchor frozen suite publication branch
+        shell: bash
+        run: |
+          branch="validation-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.os }}"
+          git -C rumiai-tests switch -c "$branch" "${GITHUB_SHA}"
+          git -C rumiai-tests config "branch.$branch.remote" origin
+          git -C rumiai-tests config "branch.$branch.merge" refs/heads/main
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "4189822+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run python-env task validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate \
+            --no-suite-update \
+            --rumiai-os-commit="${{ needs.resolve-product.outputs.rumiai-os-commit }}" \
+            python-env
+
+      - name: Upload recoverable local evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-env-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true

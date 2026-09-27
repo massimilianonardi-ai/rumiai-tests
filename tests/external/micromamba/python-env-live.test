@@ -1,0 +1,183 @@
+#!/bin/sh
+
+TEST_ID=external/micromamba/python-env-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${provider_default_set-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg provider default -u -- python-env >/dev/null 2>&1 || :
+  fi
+  [ -z "${probe_state-}" ] || command -p -- rm -rf -- "$probe_state" 2>/dev/null || :
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp" 2>/dev/null || :
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+[ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-python-env-live-$$
+umask 077
+command -p -- mkdir -- "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+probe=$tmp/osarch
+cat > "$probe" <<'EOF_OSARCH'
+#!/usr/bin/env m
+loadsyslib "osarch"
+printf '%s\n' "$m_OSARCH"
+EOF_OSARCH
+command -p -- chmod 700 "$probe" || error 'cannot prepare osarch probe'
+osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
+case "$osarch" in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) :;;
+  *) skip "python-env micromamba provider is not declared for $osarch";;
+esac
+
+identity=$(run_pkg default micromamba 2> "$tmp/micromamba-default.err") || {
+  command -p -- cat "$tmp/micromamba-default.err" >&2
+  fail 'micromamba execution requirement is not installed/defaulted'
+}
+[ -n "$identity" ] || fail 'micromamba concrete identity is empty'
+
+run_pkg provider default python-env > "$tmp/provider-before.out" 2> "$tmp/provider-before.err"
+status=$?
+case "$status" in
+  1) :;;
+  0) skip 'python-env facility default already exists in supplied target';;
+  *) fail "cannot inspect python-env facility default (status $status)";;
+esac
+
+run_pkg provider default python-env micromamba > "$tmp/provider-set.out" 2> "$tmp/provider-set.err" || {
+  command -p -- cat "$tmp/provider-set.err" >&2
+  fail 'cannot select micromamba as python-env provider'
+}
+provider_default_set=1
+
+selected=$(run_pkg provider default python-env 2> "$tmp/provider-selected.err") || {
+  command -p -- cat "$tmp/provider-selected.err" >&2
+  fail 'cannot query selected python-env provider'
+}
+case "$selected" in
+  micromamba@*|micromamba@*!*) :;;
+  *) fail "python-env selected unexpected provider: $selected";;
+esac
+
+probe_cache=$("$root/m" "$root/bin/sys/state-path" user pkg python-env-probe cache) ||
+  error 'cannot resolve probe package cache state'
+probe_state=${probe_cache%/cache}
+[ ! -e "$probe_state" ] && [ ! -L "$probe_state" ] ||
+  skip 'python-env probe state already exists in supplied target'
+command -p -- mkdir -p -- "$probe_cache" || error 'cannot create probe cache state'
+environment=$probe_cache/environment
+
+unrelated=$probe_cache/unrelated
+command -p -- mkdir -- "$unrelated" || error 'cannot create unrelated target'
+printf '%s\n' keep > "$unrelated/marker" || error 'cannot create unrelated marker'
+if "$root/m" python-env create "$unrelated" 3.12 > "$tmp/existing.out" 2> "$tmp/existing.err"
+then
+  fail 'python-env create accepted an existing target'
+else
+  status=$?
+  [ "$status" -eq 1 ] || fail "existing target returned status $status instead of 1"
+fi
+[ "$(command -p -- cat "$unrelated/marker")" = keep ] ||
+  fail 'python-env create mutated an existing unrelated target'
+
+"$root/m" python-env create "$environment" 3.12 > "$tmp/create-312.out" 2> "$tmp/create-312.err" || {
+  command -p -- cat "$tmp/create-312.err" >&2
+  fail 'python-env create 3.12 failed'
+}
+
+version=$("$root/m" python-env run "$environment" -- python -c 'import sys; print(".".join(map(str, sys.version_info[:2])))') ||
+  fail 'python-env run could not execute Python 3.12'
+[ "$version" = 3.12 ] || fail "expected Python 3.12, observed $version"
+"$root/m" python-env run "$environment" -- python -m pip --version > "$tmp/pip.out" 2> "$tmp/pip.err" || {
+  command -p -- cat "$tmp/pip.err" >&2
+  fail 'python -m pip is unavailable in created environment'
+}
+
+argv=$("$root/m" python-env run "$environment" -- python -c 'import sys; print(repr(sys.argv[1:]))' --help 'a b' '') ||
+  fail 'python-env run argv probe failed'
+[ "$argv" = "['--help', 'a b', '']" ] ||
+  fail "python-env run changed argv: $argv"
+
+set +e
+printf 'stdin-marker\n' | "$root/m" python-env run "$environment" -- python -c 'import sys; data=sys.stdin.read(); sys.stdout.write("OUT:"+data); sys.stderr.write("ERR:marker\n"); raise SystemExit(37)' > "$tmp/stream.out" 2> "$tmp/stream.err"
+status=$?
+set -e
+[ "$status" -eq 37 ] || fail "python-env run returned $status instead of child status 37"
+grep -Fx 'OUT:stdin-marker' "$tmp/stream.out" >/dev/null 2>&1 ||
+  fail 'python-env run did not preserve stdout/stdin'
+grep -Fx 'ERR:marker' "$tmp/stream.err" >/dev/null 2>&1 ||
+  fail 'python-env run did not preserve stderr'
+
+"$root/m" python-env remove "$environment" > "$tmp/remove-312.out" 2> "$tmp/remove-312.err" || {
+  command -p -- cat "$tmp/remove-312.err" >&2
+  fail 'python-env remove failed'
+}
+[ ! -e "$environment" ] && [ ! -L "$environment" ] ||
+  fail 'python-env remove left the environment pathname'
+
+if "$root/m" python-env remove "$unrelated" > "$tmp/remove-unrelated.out" 2> "$tmp/remove-unrelated.err"
+then
+  fail 'python-env remove accepted an unrelated directory'
+else
+  status=$?
+  [ "$status" -eq 1 ] || fail "unrelated remove returned status $status instead of 1"
+fi
+[ "$(command -p -- cat "$unrelated/marker")" = keep ] ||
+  fail 'python-env remove mutated an unrelated directory'
+
+"$root/m" python-env create "$environment" 3.13 > "$tmp/create-313.out" 2> "$tmp/create-313.err" || {
+  command -p -- cat "$tmp/create-313.err" >&2
+  fail 'python-env rebuild with Python 3.13 failed'
+}
+version=$("$root/m" python-env run "$environment" -- python -c 'import sys; print(".".join(map(str, sys.version_info[:2])))') ||
+  fail 'python-env run could not execute rebuilt Python 3.13'
+[ "$version" = 3.13 ] || fail "expected rebuilt Python 3.13, observed $version"
+
+"$root/m" python-env remove "$environment" > "$tmp/remove-313.out" 2> "$tmp/remove-313.err" ||
+  fail 'python-env final remove failed'
+
+printf 'provider=%s\n' "$selected"
+printf 'create-run-remove=ok\n'
+printf 'argv-stream-status=ok\n'
+printf 'python-version-rebuild=ok\n'
+exit 0
