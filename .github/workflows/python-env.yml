@@ -11,6 +11,8 @@ on:
       - lib/sh/rumiai-validate.lib.sh
       - lib/rumiai-os-target.lib
       - validation/python-env.conf
+      - validation/python-env-contract.conf
+      - validation/python-env-live.conf
       - validation/requirements/python-env.conf
       - tests/external/micromamba/python-env-live.test
       - tests/rumiai-os/pkg/facility-contract.test
@@ -41,7 +43,7 @@ jobs:
         run: |
           echo "commit=$(git -C rumiai-os rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-  formal-validation:
+  contract-validation:
     needs: resolve-product
     strategy:
       fail-fast: false
@@ -63,7 +65,7 @@ jobs:
       - name: Anchor frozen suite publication branch
         shell: bash
         run: |
-          branch="validation-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.os }}"
+          branch="validation-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-contract-${{ matrix.os }}"
           git -C rumiai-tests switch -c "$branch" "${GITHUB_SHA}"
           git -C rumiai-tests config "branch.$branch.remote" origin
           git -C rumiai-tests config "branch.$branch.merge" refs/heads/main
@@ -88,21 +90,82 @@ jobs:
           git -C rumiai-tests config user.name "github-actions[bot]"
           git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Run python-env task validation
+      - name: Run python-env generic contract validation
         shell: bash
         run: |
           cd rumiai-tests
           ./rumiai-validate \
             --no-suite-update \
             --rumiai-os-commit="${{ needs.resolve-product.outputs.rumiai-os-commit }}" \
-            python-env
+            python-env-contract
 
       - name: Upload recoverable local evidence
         if: always()
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: python-env-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: python-env-contract-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+  live-provider-validation:
+    needs: resolve-product
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout frozen test suite revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Anchor frozen suite publication branch
+        shell: bash
+        run: |
+          branch="validation-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-live"
+          git -C rumiai-tests switch -c "$branch" "${GITHUB_SHA}"
+          git -C rumiai-tests config "branch.$branch.remote" origin
+          git -C rumiai-tests config "branch.$branch.merge" refs/heads/main
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run python-env live provider validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate \
+            --no-suite-update \
+            --rumiai-os-commit="${{ needs.resolve-product.outputs.rumiai-os-commit }}" \
+            python-env-live
+
+      - name: Upload recoverable local evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-env-live-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             rumiai-tests/sessions
             rumiai-tests/validations
