@@ -352,4 +352,92 @@ grep -F 'INTERACTIVE-STDOUT:ambient-interactive-reset' "$transcript" >/dev/null 
 grep -F 'INTERACTIVE-STDERR:ambient-interactive-reset' "$transcript" >/dev/null 2>&1 ||
     fail 'ambient-state reset target stderr was not propagated'
 
+# Interactive non-TTY stdin is a shell-source prefix. It may define a function
+# that is then invoked by the requested command in the same privileged shell.
+rm -f "$status_file" "$validated_file"
+cat > "$wrapper" <<'EOF_WRAPPER_SOURCE_COMMAND'
+#!/bin/sh
+
+printf '%s\n' '
+rsudo_injected_target()
+{
+    [ "$RSUDO_TEST_EFFECTIVE_USER" = root ] || return 60
+    printf "INJECTED-STDOUT:%s\\n" "$1"
+    printf "INJECTED-STDERR:%s\\n" "$1" >&2
+    return 29
+}
+' |
+    "$RSUDO_TEST_M" "$RSUDO_TEST_RSUDO_COMMAND"         --interactive -- rsudo_injected_target 'value with space'
+status=$?
+
+printf '%s\n' "$status" > "$RSUDO_TEST_STATUS_FILE"
+exit 0
+EOF_WRAPPER_SOURCE_COMMAND
+chmod +x "$wrapper" || error 'cannot make source+command wrapper executable'
+
+rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
+    error 'interactive PTY driver could not complete source+command scenario'
+
+[ -f "$status_file" ] ||
+    error 'source+command wrapper did not record status'
+
+status=$(cat "$status_file")
+case $status in
+    8[0-9]|9[0-9])
+        cat "$transcript" >&2
+        error "external-boundary fixture could not model source+command rsudo (status $status)"
+    ;;
+esac
+
+[ "$status" -eq 29 ] || {
+    cat "$transcript" >&2
+    fail "source+command target status was $status instead of 29"
+}
+
+grep -F 'INJECTED-STDOUT:value with space' "$transcript" >/dev/null 2>&1 ||
+    fail 'interactive source prefix did not define/invoke the requested command'
+grep -F 'INJECTED-STDERR:value with space' "$transcript" >/dev/null 2>&1 ||
+    fail 'interactive source+command stderr was not propagated'
+
+# A non-empty interactive source also forms the complete target when no command
+# operands follow --.
+rm -f "$status_file" "$validated_file"
+cat > "$wrapper" <<'EOF_WRAPPER_SOURCE_ONLY'
+#!/bin/sh
+
+printf '%s\n' '
+[ "$RSUDO_TEST_EFFECTIVE_USER" = root ] || exit 60
+printf "INJECTED-SOURCE-ONLY\\n"
+exit 31
+' |
+    "$RSUDO_TEST_M" "$RSUDO_TEST_RSUDO_COMMAND" --interactive --
+status=$?
+
+printf '%s\n' "$status" > "$RSUDO_TEST_STATUS_FILE"
+exit 0
+EOF_WRAPPER_SOURCE_ONLY
+chmod +x "$wrapper" || error 'cannot make source-only wrapper executable'
+
+rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
+    error 'interactive PTY driver could not complete source-only scenario'
+
+[ -f "$status_file" ] ||
+    error 'source-only wrapper did not record status'
+
+status=$(cat "$status_file")
+case $status in
+    8[0-9]|9[0-9])
+        cat "$transcript" >&2
+        error "external-boundary fixture could not model source-only rsudo (status $status)"
+    ;;
+esac
+
+[ "$status" -eq 31 ] || {
+    cat "$transcript" >&2
+    fail "source-only target status was $status instead of 31"
+}
+
+grep -F 'INJECTED-SOURCE-ONLY' "$transcript" >/dev/null 2>&1 ||
+    fail 'interactive source-only program was not executed'
+
 exit 0
