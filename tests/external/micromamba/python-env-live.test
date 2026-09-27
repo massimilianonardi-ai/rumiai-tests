@@ -105,6 +105,21 @@ probe_state=${probe_cache%/cache}
 command -p -- mkdir -p -- "$probe_cache" || error 'cannot create probe cache state'
 environment=$probe_cache/environment
 
+invalid_version_environment=$probe_cache/invalid-version
+for invalid_version in 3 03.12 3.12.0.1
+do
+  if "$root/m" python-env create "$invalid_version_environment" "$invalid_version" > "$tmp/invalid-version.out" 2> "$tmp/invalid-version.err"
+  then
+    fail "python-env create accepted invalid Python version: $invalid_version"
+  else
+    status=$?
+    [ "$status" -eq 2 ] ||
+      fail "invalid Python version $invalid_version returned status $status instead of 2"
+  fi
+  [ ! -e "$invalid_version_environment" ] && [ ! -L "$invalid_version_environment" ] ||
+    fail "invalid Python version $invalid_version created an environment target"
+done
+
 unrelated=$probe_cache/unrelated
 command -p -- mkdir -- "$unrelated" || error 'cannot create unrelated target'
 printf '%s\n' keep > "$unrelated/marker" || error 'cannot create unrelated marker'
