@@ -1,5 +1,5 @@
 #!/bin/sh
-# Protects: LIB-11, LIB-12, LIB-13.
+# Protects: LIB-11, LIB-12, LIB-13, LIB-15.
 
 TEST_ID=rumiai-os/bootstrap/library-loading.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -101,6 +101,101 @@ cmp -s "$tmp/probe.expected" "$tmp/probe.out" || {
   cat "$tmp/probe.out" >&2
   fail 'loadlib/loadsyslib behavior does not match the contract'
 }
+
+inject_command=$tmp/inject-command
+cat > "$inject_command" <<'EOF_INJECT_COMMAND'
+loadsyslib "array" || exit "$?"
+
+command -v array >/dev/null 2>&1 || exit 9
+
+printf 'argc=%s\n' "$#"
+printf 'argv='
+quote "$@" || exit "$?"
+printf '\n'
+EOF_INJECT_COMMAND
+
+generator_name=rumiai-loadlib-inject-stream-probe-$
+generator=$tmp/$generator_name
+cat > "$generator" <<'EOF_GENERATOR'
+#!/usr/bin/env m
+
+loadsyslib "loadlib-inject-stream" || exit "$?"
+
+case "$1" in
+  complete)
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" core array -- "alpha beta" "" gamma
+    ;;
+  missing-dependency)
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" core -- "alpha beta" "" gamma
+    ;;
+  no-core)
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" array --
+    ;;
+  missing-library)
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" core does-not-exist --
+    ;;
+  *)
+    exit 99
+    ;;
+esac
+EOF_GENERATOR
+chmod 700 "$generator" || error 'cannot make injection generator probe executable'
+
+RUMIAI_INJECT_COMMAND=$inject_command
+export RUMIAI_INJECT_COMMAND
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" complete > "$tmp/inject.stream" 2> "$tmp/inject-generate.err"
+inject_generate_status=$?
+[ "$inject_generate_status" -eq 0 ] || {
+  cat "$tmp/inject-generate.err" >&2
+  fail "injection stream generation failed with status $inject_generate_status"
+}
+
+sh -n "$tmp/inject.stream" || fail 'generated injection stream is not valid POSIX-sh syntax'
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh "$tmp/inject.stream" > "$tmp/inject.out" 2> "$tmp/inject.err"
+inject_status=$?
+[ "$inject_status" -eq 0 ] || {
+  cat "$tmp/inject.err" >&2
+  fail "generated injection stream execution failed with status $inject_status"
+}
+
+cat > "$tmp/inject.expected" <<'EOF_INJECT_EXPECTED'
+argc=3
+argv='alpha beta' '' 'gamma'
+EOF_INJECT_EXPECTED
+
+cmp -s "$tmp/inject.expected" "$tmp/inject.out" || {
+  printf '%s\n' 'expected injection stream output:' >&2
+  cat "$tmp/inject.expected" >&2
+  printf '%s\n' 'observed injection stream output:' >&2
+  cat "$tmp/inject.out" >&2
+  fail 'generated injection stream did not preserve command argv'
+}
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-dependency > "$tmp/inject-missing.stream" 2> "$tmp/inject-missing-generate.err"
+missing_generate_status=$?
+[ "$missing_generate_status" -eq 0 ] || {
+  cat "$tmp/inject-missing-generate.err" >&2
+  fail "explicit incomplete preload set was not generated: status $missing_generate_status"
+}
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh "$tmp/inject-missing.stream" > "$tmp/inject-missing.out" 2> "$tmp/inject-missing.err"
+missing_status=$?
+[ "$missing_status" -eq 2 ] || {
+  cat "$tmp/inject-missing.err" >&2
+  fail "non-embedded runtime library did not fail with status 2: observed $missing_status"
+}
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" no-core > "$tmp/inject-no-core.out" 2> "$tmp/inject-no-core.err"
+no_core_status=$?
+[ "$no_core_status" -eq 1 ] ||
+  fail "generator without explicit core returned $no_core_status instead of 1"
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-library > "$tmp/inject-missing-library.out" 2> "$tmp/inject-missing-library.err"
+missing_library_status=$?
+[ "$missing_library_status" -eq 2 ] ||
+  fail "generator with unavailable selected library returned $missing_library_status instead of 2"
 
 : > "$tmp/direct-imports"
 
