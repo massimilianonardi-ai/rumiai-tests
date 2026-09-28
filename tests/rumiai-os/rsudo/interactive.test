@@ -6,7 +6,7 @@
 #   RSUDO-04  resulting remote target status is propagated.
 #   RSUDO-07  interactive mode executes the target through a terminal-capable remote path.
 #   RSUDO-11  password data is not exposed as ordinary target input/output.
-#   RSUDO-20  rsudo clears ambient interactive mode before parsing each invocation.
+#   RSUDO-20  rsudo preserves reusable interactive caller state.
 #
 # The SSH and sudo programs below are external-boundary fixtures. They model a
 # reachable remote host whose sudo policy requires a password. The test asserts
@@ -304,10 +304,10 @@ fi
 [ -f "$tty_marker" ] ||
     fail 'explicit --interactive execution did not use a terminal-capable SSH path'
 
-# Ambient RSUDO_INTERACTIVE is not an rsudo command input. A new invocation must
-# clear it and remain non-interactive unless --interactive is present.
+# Ambient/current-shell RSUDO_INTERACTIVE is reusable caller state. A new rsudo
+# invocation in the same shell must preserve it unless changed by the caller.
 rm -f "$tty_marker" "$status_file" "$validated_file"
-RSUDO_TEST_CASE=ambient-interactive-reset
+RSUDO_TEST_CASE=ambient-interactive-inherited
 export RSUDO_TEST_CASE
 
 cat > "$wrapper" <<'EOF_WRAPPER_RESET'
@@ -326,31 +326,31 @@ EOF_WRAPPER_RESET
 chmod +x "$wrapper" || error 'cannot make invocation-reset wrapper executable'
 
 rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
-    error 'interactive PTY driver could not complete ambient-state reset scenario'
+    error 'interactive PTY driver could not complete ambient-state inheritance scenario'
 
 [ -f "$status_file" ] ||
-    error 'ambient-state reset wrapper did not record status'
+    error 'ambient-state inheritance wrapper did not record status'
 
 status=$(cat "$status_file")
 case $status in
     8[0-9]|9[0-9])
         cat "$transcript" >&2
-        error "external-boundary fixture could not model ambient-state reset (status $status)"
+        error "external-boundary fixture could not model ambient-state inheritance (status $status)"
     ;;
 esac
 
 [ "$status" -eq 23 ] || {
     cat "$transcript" >&2
-    fail "ambient-state reset target status was $status instead of 23"
+    fail "ambient-state inheritance target status was $status instead of 23"
 }
 
-[ ! -e "$tty_marker" ] ||
-    fail 'ambient RSUDO_INTERACTIVE leaked into a new rsudo invocation'
+[ -f "$tty_marker" ] ||
+    fail 'reusable RSUDO_INTERACTIVE was not preserved by the new invocation'
 
-grep -F 'INTERACTIVE-STDOUT:ambient-interactive-reset' "$transcript" >/dev/null 2>&1 ||
-    fail 'ambient-state reset target stdout was not propagated'
-grep -F 'INTERACTIVE-STDERR:ambient-interactive-reset' "$transcript" >/dev/null 2>&1 ||
-    fail 'ambient-state reset target stderr was not propagated'
+grep -F 'INTERACTIVE-STDOUT:ambient-interactive-inherited' "$transcript" >/dev/null 2>&1 ||
+    fail 'ambient-state inheritance target stdout was not propagated'
+grep -F 'INTERACTIVE-STDERR:ambient-interactive-inherited' "$transcript" >/dev/null 2>&1 ||
+    fail 'ambient-state inheritance target stderr was not propagated'
 
 # Interactive non-TTY stdin is a shell-source prefix. It may define a function
 # that is then invoked by the requested command in the same privileged shell.

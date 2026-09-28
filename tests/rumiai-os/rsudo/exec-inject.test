@@ -1,0 +1,137 @@
+#!/bin/sh
+# Protects: LIB-16, RSUDO-20, RSUDO-21, RSUDO-23.
+
+TEST_ID=rumiai-os/rsudo/exec-inject.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+module=$root/lib/sys/sh/rsudo/rsudo-mod-exec.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-exec.lib.sh
+
+[ -f "$module" ] && [ ! -x "$module" ] ||
+  fail 'rsudo exec module is missing or executable'
+[ -f "$manual" ] ||
+  fail 'rsudo exec module operational manual is missing'
+command -p sh -n "$module" ||
+  fail 'rsudo exec module is not valid POSIX-sh syntax'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-exec-inject-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+command_source=$tmp/command-source
+cat > "$command_source" <<'EOF_COMMAND'
+command -v array >/dev/null 2>&1 || exit 40
+printf 'command-argc=%s\n' "$#"
+printf 'command-arg1=%s\n' "$1"
+EOF_COMMAND
+
+probe_name=rumiai-rsudo-exec-inject-probe
+probe=$tmp/$probe_name
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+
+loadsyslib "rsudo/rsudo-mod-exec" || exit "$?"
+
+rsudo()
+{
+  cat > "$RSUDO_EXEC_INJECT_CAPTURE" || return 91
+  return "${RSUDO_EXEC_INJECT_STATUS:-0}"
+}
+
+rsudo_mod_exec_inject "$@"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot make exec-inject probe executable'
+
+capture=$tmp/generated-source
+RSUDO_EXEC_INJECT_CAPTURE=$capture
+RSUDO_EXEC_INJECT_STATUS=0
+export RSUDO_EXEC_INJECT_CAPTURE RSUDO_EXEC_INJECT_STATUS
+
+cat > "$tmp/stdin-source" <<'EOF_STDIN'
+command -v array >/dev/null 2>&1 || exit 41
+printf 'stdin-argc=%s\n' "$#"
+printf 'stdin-source-ok\n'
+EOF_STDIN
+
+cat "$tmp/stdin-source" |
+  PATH="$tmp:$PATH" "$root/m" "$probe_name" base array -- "$command_source" "alpha beta"
+status=$?
+[ "$status" -eq 0 ] ||
+  fail "exec inject composition returned $status"
+
+sh -n "$capture" ||
+  fail 'exec inject did not produce valid POSIX-sh source'
+
+m_LIB_DIR="$tmp/no-remote-libraries" sh "$capture" > "$tmp/generated.out" 2> "$tmp/generated.err"
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/generated.err" >&2
+  fail "captured exec inject source failed with status $status"
+}
+
+cat > "$tmp/generated.expected" <<'EOF_EXPECTED'
+command-argc=1
+command-arg1=alpha beta
+stdin-argc=1
+stdin-source-ok
+EOF_EXPECTED
+
+cmp -s "$tmp/generated.expected" "$tmp/generated.out" || {
+  printf '%s\n' 'expected exec inject output:' >&2
+  cat "$tmp/generated.expected" >&2
+  printf '%s\n' 'observed exec inject output:' >&2
+  cat "$tmp/generated.out" >&2
+  fail 'exec inject did not preserve command/source ordering'
+}
+
+: |
+  PATH="$tmp:$PATH" "$root/m" "$probe_name" does-not-exist > "$tmp/failure.out" 2> "$tmp/failure.err"
+status=$?
+[ "$status" -eq 2 ] ||
+  fail "generator failure through pipefail returned $status instead of 2"
+
+RSUDO_EXEC_INJECT_STATUS=37
+export RSUDO_EXEC_INJECT_STATUS
+: |
+  PATH="$tmp:$PATH" "$root/m" "$probe_name" > "$tmp/rsudo-failure.out" 2> "$tmp/rsudo-failure.err"
+status=$?
+[ "$status" -eq 37 ] ||
+  fail "recursive rsudo failure returned $status instead of 37"
+
+exit 0

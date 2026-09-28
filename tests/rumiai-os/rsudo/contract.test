@@ -11,8 +11,8 @@
 #   RSUDO-08  --user selects the requested sudo target user.
 #   RSUDO-09  required password acquisition failure prevents remote execution.
 #   RSUDO-11  password data is not exposed as ordinary target input/output.
-#   RSUDO-20  rsudo invocation-mode state is reset before each invocation parses options.
-#   RSUDO-21  recursive rsudo calls reuse connection state without inheriting outer invocation modes.
+#   RSUDO-20  target-user/interactive state persist while askpass/no-preserve reset per invocation.
+#   RSUDO-21  recursive rsudo calls inherit target-user/interactive state.
 #
 # The SSH and sudo programs below are external-boundary fixtures. They model
 # remote-system characteristics, not the internal sequence rsudo must use.
@@ -397,9 +397,9 @@ run_case()
     fi
 }
 
-run_invocation_state_reset_case()
+run_invocation_state_case()
 {
-    case_name=invocation-state-reset
+    case_name=invocation-state
     case_dir=$tmp/$case_name
     mkdir "$case_dir" || error "cannot create case directory: $case_name"
 
@@ -419,8 +419,8 @@ run_invocation_state_reset_case()
         RSUDO_USER=alice
         RSUDO_PASSWORD=secret
 
-        # Poison all non-interactive invocation-mode state. rsudo must clear
-        # these values before parsing the current invocation.
+        # Target-user is reusable caller state. Askpass and no-preserve-quotes
+        # remain invocation-local and must be cleared before this invocation.
         RSUDO_ASKPASS=true
         RSUDO_AS_USER=daemon
         RSUDO_NO_PRESERVE_QUOTES=true
@@ -467,17 +467,17 @@ run_invocation_state_reset_case()
 
     [ "$(cat "$target_stdin")" = "$payload" ] ||
         fail "$case_name: ambient RSUDO_ASKPASS consumed target stdin"
-    [ "$(cat "$target_user")" = root ] ||
-        fail "$case_name: ambient RSUDO_AS_USER selected $(cat "$target_user")"
+    [ "$(cat "$target_user")" = daemon ] ||
+        fail "$case_name: reusable RSUDO_AS_USER was not preserved"
     [ "$(cat "$target_argc")" = 1 ] ||
         fail "$case_name: ambient RSUDO_NO_PRESERVE_QUOTES changed argument count"
     [ "$(cat "$target_arg1")" = "$argument" ] ||
         fail "$case_name: normal command preservation did not preserve one spaced argument"
 }
 
-run_recursive_state_reset_case()
+run_recursive_state_case()
 {
-    case_name=recursive-state-reset
+    case_name=recursive-state
     remote_path="$tmp/recursive path with spaces"
     validated_file=$tmp/$case_name.sudo.validated
 
@@ -497,7 +497,7 @@ run_recursive_state_reset_case()
         RSUDO_TEST_SUDO_MODE=passwordless
         RSUDO_TEST_SUDO_VALIDATED_FILE=$validated_file
         RSUDO_TEST_EXPECT_PASSWORD=secret
-        RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER=root
+        RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER=daemon
 
         export \
             PATH RSUDO_HOST RSUDO_USER \
@@ -506,8 +506,9 @@ run_recursive_state_reset_case()
             RSUDO_TEST_SUDO_VALIDATED_FILE RSUDO_TEST_EXPECT_PASSWORD \
             RSUDO_TEST_FIXTURE_EXPECT_TARGET_USER
 
-        # The outer call deliberately enables three invocation-local modes.
-        # fs delete calls rsudo recursively without those options.
+        # The outer call selects reusable target-user state plus two
+        # invocation-local modes. fs delete calls rsudo recursively: target-user
+        # must persist while askpass/no-preserve do not.
         printf '%s\n' secret |
             "$root/m" "$rsudo_command" \
                 --askpass --user daemon --no-preserve-quotes \
@@ -517,7 +518,7 @@ run_recursive_state_reset_case()
     status=$?
     case $status in
         96)
-            fail "$case_name: nested rsudo inherited the outer --user mode"
+            fail "$case_name: nested rsudo did not inherit the outer --user mode"
         ;;
         8[0-9]|9[0-5])
             cat "$tmp/$case_name.stderr" >&2
@@ -534,8 +535,8 @@ run_recursive_state_reset_case()
         fail "$case_name: nested rsudo did not restore normal quote preservation"
 }
 
-run_invocation_state_reset_case
-run_recursive_state_reset_case
+run_invocation_state_case
+run_recursive_state_case
 
 # Password-required sudo.
 run_case password-required required alice env '' root

@@ -253,6 +253,45 @@ cmp -s "$tmp/inject.expected" "$tmp/inject.out" || {
   fail 'generated injection stream did not preserve command argv'
 }
 
+cat > "$tmp/inject-stdin-source" <<'EOF_INJECT_STDIN_SOURCE'
+command -v array >/dev/null 2>&1 || exit 14
+printf 'stdin-argc=%s\n' "$#"
+printf 'stdin-source-ok\n'
+EOF_INJECT_STDIN_SOURCE
+
+cat "$tmp/inject-stdin-source" |
+  PATH="$tmp:$PATH" "$root/m" "$generator_name" complete > "$tmp/inject-with-stdin.stream" 2> "$tmp/inject-with-stdin-generate.err"
+inject_with_stdin_generate_status=$?
+[ "$inject_with_stdin_generate_status" -eq 0 ] || {
+  cat "$tmp/inject-with-stdin-generate.err" >&2
+  fail "stdin-source injection generation failed with status $inject_with_stdin_generate_status"
+}
+
+sh -n "$tmp/inject-with-stdin.stream" ||
+  fail 'generated command+stdin injection stream is not valid POSIX-sh syntax'
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh "$tmp/inject-with-stdin.stream" > "$tmp/inject-with-stdin.out" 2> "$tmp/inject-with-stdin.err"
+inject_with_stdin_status=$?
+[ "$inject_with_stdin_status" -eq 0 ] || {
+  cat "$tmp/inject-with-stdin.err" >&2
+  fail "generated command+stdin injection stream execution failed with status $inject_with_stdin_status"
+}
+
+cat > "$tmp/inject-with-stdin.expected" <<'EOF_INJECT_WITH_STDIN_EXPECTED'
+argc=3
+argv='alpha beta' '' 'gamma'
+stdin-argc=3
+stdin-source-ok
+EOF_INJECT_WITH_STDIN_EXPECTED
+
+cmp -s "$tmp/inject-with-stdin.expected" "$tmp/inject-with-stdin.out" || {
+  printf '%s\n' 'expected command+stdin injection output:' >&2
+  cat "$tmp/inject-with-stdin.expected" >&2
+  printf '%s\n' 'observed command+stdin injection output:' >&2
+  cat "$tmp/inject-with-stdin.out" >&2
+  fail 'stdin source was not appended after command source in the same shell state'
+}
+
 PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-dependency > "$tmp/inject-missing.stream" 2> "$tmp/inject-missing-generate.err"
 missing_generate_status=$?
 [ "$missing_generate_status" -eq 0 ] || {
