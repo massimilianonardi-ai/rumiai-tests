@@ -1,5 +1,5 @@
 #!/bin/sh
-# Protects: BOOT-10, BOOT-11, BOOT-12, BOOT-13, BOOT-14, LIB-11, LIB-12, LIB-13, LIB-15, PKG-30.
+# Protects: BOOT-10, BOOT-11, BOOT-12, BOOT-13, BOOT-14, LIB-11, LIB-12, LIB-13, LIB-15, LIB-16, PKG-30.
 
 TEST_ID=rumiai-os/bootstrap/library-loading.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -81,11 +81,29 @@ grep -F 'pkg_provider_global_environment_apply' "$root/m" >/dev/null 2>&1 &&
 core_library="$root/lib/sys/sh/core.lib.sh"
 [ -f "$core_library" ] || error 'core library is unavailable'
 
+base_library="$root/lib/sys/sh/base.lib.sh"
+[ -f "$base_library" ] || error 'base library is unavailable'
+
+grep -F 'loadlib "sys/sh/base"' "$core_library" >/dev/null 2>&1 ||
+  fail 'core must load the common base through loadlib'
+
+grep -F 'loadsyslib()' "$core_library" >/dev/null 2>&1 &&
+  fail 'core must not define loadsyslib'
+
+grep -F 'loadsyslib()' "$base_library" >/dev/null 2>&1 ||
+  fail 'base must define loadsyslib'
+
 grep -F 'loadsyslib "pkg/pkg-provider"' "$core_library" >/dev/null 2>&1 &&
   fail 'core must not initialize pkg defaults'
 
 grep -F 'pkg_provider_global_environment_apply' "$core_library" >/dev/null 2>&1 &&
   fail 'core must not apply pkg default environment'
+
+grep -F 'loadsyslib "pkg/pkg-provider"' "$base_library" >/dev/null 2>&1 &&
+  fail 'base must not initialize pkg defaults'
+
+grep -F 'pkg_provider_global_environment_apply' "$base_library" >/dev/null 2>&1 &&
+  fail 'base must not apply pkg default environment'
 
 probe_name=rumiai-loadlib-probe-$$
 probe=$tmp/$probe_name
@@ -166,16 +184,16 @@ loadsyslib "loadlib-inject-stream" || exit "$?"
 
 case "$1" in
   complete)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" core array -- "alpha beta" "" gamma
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" base array -- "alpha beta" "" gamma
     ;;
   missing-dependency)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" core -- "alpha beta" "" gamma
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" base -- "alpha beta" "" gamma
     ;;
-  no-core)
+  no-base)
     loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" array --
     ;;
   missing-library)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" core does-not-exist --
+    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" base does-not-exist --
     ;;
   *)
     exit 99
@@ -230,10 +248,10 @@ missing_status=$?
   fail "non-embedded runtime library did not fail with status 2: observed $missing_status"
 }
 
-PATH="$tmp:$PATH" "$root/m" "$generator_name" no-core > "$tmp/inject-no-core.out" 2> "$tmp/inject-no-core.err"
-no_core_status=$?
-[ "$no_core_status" -eq 1 ] ||
-  fail "generator without explicit core returned $no_core_status instead of 1"
+PATH="$tmp:$PATH" "$root/m" "$generator_name" no-base > "$tmp/inject-no-base.out" 2> "$tmp/inject-no-base.err"
+no_base_status=$?
+[ "$no_base_status" -eq 1 ] ||
+  fail "generator without explicit base returned $no_base_status instead of 1"
 
 PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-library > "$tmp/inject-missing-library.out" 2> "$tmp/inject-missing-library.err"
 missing_library_status=$?
