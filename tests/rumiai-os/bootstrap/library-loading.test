@@ -78,7 +78,16 @@ grep -F 'pkg/pkg-provider' "$root/m" >/dev/null 2>&1 &&
 grep -F 'pkg_provider_global_environment_apply' "$root/m" >/dev/null 2>&1 &&
   fail 'root m bootstrap must not apply pkg provider environment'
 
-probe_name=rumiai-loadlib-probe-$$
+core_library="$root/lib/sys/sh/core.lib.sh"
+[ -f "$core_library" ] || error 'core library is unavailable'
+
+grep -F 'loadsyslib "pkg/pkg-provider"' "$core_library" >/dev/null 2>&1 &&
+  fail 'core must not initialize pkg defaults'
+
+grep -F 'pkg_provider_global_environment_apply' "$core_library" >/dev/null 2>&1 &&
+  fail 'core must not apply pkg default environment'
+
+probe_name=rumiai-loadlib-probe-$
 probe=$tmp/$probe_name
 cat > "$probe" <<'EOF_PROBE'
 #!/usr/bin/env m
