@@ -323,7 +323,7 @@ status=$?
 printf '%s\n' "$status" > "$RSUDO_TEST_STATUS_FILE"
 exit 0
 EOF_WRAPPER_RESET
-chmod +x "$wrapper" || error 'cannot make invocation-reset wrapper executable'
+chmod +x "$wrapper" || error 'cannot make interactive-state inheritance wrapper executable'
 
 rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
     error 'interactive PTY driver could not complete ambient-state inheritance scenario'
