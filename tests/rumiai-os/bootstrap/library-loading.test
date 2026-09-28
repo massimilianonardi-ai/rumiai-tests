@@ -87,7 +87,7 @@ grep -F 'loadsyslib "pkg/pkg-provider"' "$core_library" >/dev/null 2>&1 &&
 grep -F 'pkg_provider_global_environment_apply' "$core_library" >/dev/null 2>&1 &&
   fail 'core must not apply pkg default environment'
 
-probe_name=rumiai-loadlib-probe-$
+probe_name=rumiai-loadlib-probe-$$
 probe=$tmp/$probe_name
 cat > "$probe" <<'EOF_PROBE'
 #!/usr/bin/env m
