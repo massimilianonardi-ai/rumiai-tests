@@ -175,6 +175,14 @@ quote "$@" || exit "$?"
 printf '\n'
 EOF_INJECT_COMMAND
 
+standalone_command=$tmp/inject-standalone-command
+cat > "$standalone_command" <<'EOF_STANDALONE_COMMAND'
+[ "$#" -eq 2 ] || exit 8
+[ "$1" = "alpha beta" ] || exit 8
+[ -z "$2" ] || exit 8
+printf '%s\n' 'standalone-command-ok'
+EOF_STANDALONE_COMMAND
+
 generator_name=rumiai-loadlib-inject-stream-probe
 generator=$tmp/$generator_name
 cat > "$generator" <<'EOF_GENERATOR'
@@ -184,16 +192,25 @@ loadsyslib "loadlib-inject-stream" || exit "$?"
 
 case "$1" in
   complete)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" base array -- "alpha beta" "" gamma
+    loadlib_inject_stream base array -- "$RUMIAI_INJECT_COMMAND" "alpha beta" "" gamma
     ;;
   missing-dependency)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" base -- "alpha beta" "" gamma
+    loadlib_inject_stream base -- "$RUMIAI_INJECT_COMMAND" "alpha beta" "" gamma
     ;;
-  no-base)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" array --
+  library-only)
+    loadlib_inject_stream base array
+    ;;
+  zero-library)
+    loadlib_inject_stream
+    ;;
+  command-only)
+    loadlib_inject_stream -- "$RUMIAI_STANDALONE_COMMAND" "alpha beta" ""
+    ;;
+  separator-without-command)
+    loadlib_inject_stream base --
     ;;
   missing-library)
-    loadlib_inject_stream "$RUMIAI_INJECT_COMMAND" base does-not-exist --
+    loadlib_inject_stream base does-not-exist
     ;;
   *)
     exit 99
@@ -204,6 +221,8 @@ chmod 700 "$generator" || error 'cannot make injection generator probe executabl
 
 RUMIAI_INJECT_COMMAND=$inject_command
 export RUMIAI_INJECT_COMMAND
+RUMIAI_STANDALONE_COMMAND=$standalone_command
+export RUMIAI_STANDALONE_COMMAND
 
 PATH="$tmp:$PATH" "$root/m" "$generator_name" complete > "$tmp/inject.stream" 2> "$tmp/inject-generate.err"
 inject_generate_status=$?
@@ -238,7 +257,7 @@ PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-dependency > "$tmp/inject-
 missing_generate_status=$?
 [ "$missing_generate_status" -eq 0 ] || {
   cat "$tmp/inject-missing-generate.err" >&2
-  fail "explicit incomplete preload set was not generated: status $missing_generate_status"
+  fail "explicit incomplete library set was not generated: status $missing_generate_status"
 }
 
 m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh "$tmp/inject-missing.stream" > "$tmp/inject-missing.out" 2> "$tmp/inject-missing.err"
@@ -248,10 +267,70 @@ missing_status=$?
   fail "non-embedded runtime library did not fail with status 2: observed $missing_status"
 }
 
-PATH="$tmp:$PATH" "$root/m" "$generator_name" no-base > "$tmp/inject-no-base.out" 2> "$tmp/inject-no-base.err"
-no_base_status=$?
-[ "$no_base_status" -eq 1 ] ||
-  fail "generator without explicit base returned $no_base_status instead of 1"
+PATH="$tmp:$PATH" "$root/m" "$generator_name" library-only > "$tmp/inject-library-only.stream" 2> "$tmp/inject-library-only-generate.err"
+library_only_generate_status=$?
+[ "$library_only_generate_status" -eq 0 ] || {
+  cat "$tmp/inject-library-only-generate.err" >&2
+  fail "library-only stream generation failed with status $library_only_generate_status"
+}
+
+sh -n "$tmp/inject-library-only.stream" ||
+  fail 'library-only generated stream is not valid POSIX-sh syntax'
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh -c '
+  stream=$1
+  set -- keep ""
+  . "$stream" || exit "$?"
+  command -v loadsyslib >/dev/null 2>&1 || exit 9
+  command -v array >/dev/null 2>&1 || exit 10
+  [ "$#" -eq 2 ] || exit 11
+  [ "$1" = "keep" ] || exit 12
+  [ -z "$2" ] || exit 13
+' sh "$tmp/inject-library-only.stream"
+library_only_status=$?
+[ "$library_only_status" -eq 0 ] ||
+  fail "library-only stream failed or changed positional parameters: status $library_only_status"
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" zero-library > "$tmp/inject-zero-library.stream" 2> "$tmp/inject-zero-library-generate.err"
+zero_library_generate_status=$?
+[ "$zero_library_generate_status" -eq 0 ] || {
+  cat "$tmp/inject-zero-library-generate.err" >&2
+  fail "zero-library stream generation failed with status $zero_library_generate_status"
+}
+
+sh -n "$tmp/inject-zero-library.stream" ||
+  fail 'zero-library generated stream is not valid POSIX-sh syntax'
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh -c '
+  . "$1" || exit "$?"
+  loadlib "sys/sh/base" >/dev/null 2>&1
+  [ "$?" -eq 2 ]
+' sh "$tmp/inject-zero-library.stream"
+zero_library_status=$?
+[ "$zero_library_status" -eq 0 ] ||
+  fail "zero-library stream did not install the empty injected loader: status $zero_library_status"
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" command-only > "$tmp/inject-command-only.stream" 2> "$tmp/inject-command-only-generate.err"
+command_only_generate_status=$?
+[ "$command_only_generate_status" -eq 0 ] || {
+  cat "$tmp/inject-command-only-generate.err" >&2
+  fail "command-only stream generation failed with status $command_only_generate_status"
+}
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" sh "$tmp/inject-command-only.stream" > "$tmp/inject-command-only.out" 2> "$tmp/inject-command-only.err"
+command_only_status=$?
+[ "$command_only_status" -eq 0 ] || {
+  cat "$tmp/inject-command-only.err" >&2
+  fail "command-only stream execution failed with status $command_only_status"
+}
+
+grep -Fx 'standalone-command-ok' "$tmp/inject-command-only.out" >/dev/null 2>&1 ||
+  fail 'command-only stream did not execute the command source with preserved argv'
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" separator-without-command > "$tmp/inject-separator.out" 2> "$tmp/inject-separator.err"
+separator_status=$?
+[ "$separator_status" -eq 1 ] ||
+  fail "separator without command source returned $separator_status instead of 1"
 
 PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-library > "$tmp/inject-missing-library.out" 2> "$tmp/inject-missing-library.err"
 missing_library_status=$?
