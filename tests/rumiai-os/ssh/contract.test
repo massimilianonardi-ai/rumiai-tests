@@ -171,7 +171,13 @@ fi
 
 command -v ssh >/dev/null 2>&1 || skip 'OpenSSH ssh client is unavailable'
 
-effective=$(ssh_password secret -G     -o BatchMode=yes     -o PasswordAuthentication=no     -o PreferredAuthentications=publickey     -o NumberOfPasswordPrompts=9     -o ControlPath="$tmp/control"     example.invalid 2>/dev/null) ||
+effective=$(ssh_password secret -G \
+    -o BatchMode=yes \
+    -o PasswordAuthentication=no \
+    -o PreferredAuthentications=publickey \
+    -o NumberOfPasswordPrompts=9 \
+    -o ControlPath="$tmp/control" \
+    example.invalid 2>/dev/null) ||
     fail 'OpenSSH -G rejected ssh_password effective configuration'
 
 printf '%s\n' "$effective" | grep -E '^batchmode no$' >/dev/null 2>&1 ||
@@ -182,14 +188,11 @@ printf '%s\n' "$effective" | grep -E '^preferredauthentications password$' >/dev
     fail 'PreferredAuthentications=password was not effective'
 printf '%s\n' "$effective" | grep -E '^numberofpasswordprompts 1$' >/dev/null 2>&1 ||
     fail 'NumberOfPasswordPrompts=1 was not effective'
-printf '%s\n' "$effective" | grep -E '^controlpath none
-
-exit 0
- >/dev/null 2>&1 || {
+printf '%s\n' "$effective" | grep -E '^controlpath none$' >/dev/null 2>&1 || {
     printf '%s\n' 'effective ControlPath lines:' >&2
     printf '%s\n' "$effective" | grep -E '^controlpath([[:space:]]|$)' >&2 ||
         printf '%s\n' '<none>' >&2
-    ssh -V 2>&1 >&2 || :
+    ssh -V >&2 2>&1 || :
     fail 'ControlPath=none was not effective'
 }
 
