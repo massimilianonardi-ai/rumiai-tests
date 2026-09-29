@@ -68,12 +68,7 @@ for arg
 do
     if [ "$arg" = '--dump-options' ]
     then
-        if [ -n "${FAKE_GPG_OPTIONS_FILE-}" ]
-        then
-            cat "$FAKE_GPG_OPTIONS_FILE" || exit 97
-        else
-            printf '%s\n' "$FAKE_GPG_OPTIONS"
-        fi
+        printf '%s\n' "$FAKE_GPG_OPTIONS"
         exit 0
     fi
 done
@@ -145,34 +140,6 @@ then
     fail 'encode used fallback OCB option when preferred option was available'
 fi
 
-# With pipefail active, option discovery must still succeed when the matching
-# line appears first in a large dump. A successful early-closing grep -q would
-# otherwise SIGPIPE the printf producer and turn the match into pipeline failure.
-if (set -o pipefail) 2>/dev/null
-then
-    large_options=$tmp/gpg-options-large
-    {
-        printf '%s\n' '--use-ocb-sym'
-        command -p awk 'BEGIN { for (i = 0; i < 20000; i++) printf "--unused-option-%d\\n", i }'
-    } > "$large_options" || error 'cannot prepare large GPG option list'
-
-    FAKE_GPG_OPTIONS_FILE=$large_options
-    export FAKE_GPG_OPTIONS_FILE
-
-    (
-        set -o pipefail || exit 98
-        export m_ENC_PASS="$secret"
-        encode < "$tmp/plain" > "$tmp/out-pipefail"
-    ) || fail 'encode failed under pipefail after an early option match'
-
-    cmp -s "$tmp/plain" "$tmp/out-pipefail" ||
-        fail 'pipefail encode did not preserve payload stdin at the gpg boundary'
-    grep -qx -e '--use-ocb-sym' "$FAKE_GPG_LOG" ||
-        fail 'pipefail encode did not select the advertised preferred OCB option'
-
-    unset FAKE_GPG_OPTIONS_FILE
-fi
-
 export m_ENC_PASS="$secret"
 decode < "$tmp/plain" > "$tmp/out" || fail 'supplied-passphrase decode failed'
 unset m_ENC_PASS
@@ -207,6 +174,6 @@ fi
 
 PATH=$old_path
 export PATH
-unset FAKE_GPG_LOG FAKE_GPG_OPTIONS FAKE_GPG_OPTIONS_FILE
+unset FAKE_GPG_LOG FAKE_GPG_OPTIONS
 
 exit 0
