@@ -151,7 +151,11 @@ esac
 [ "$(cat "$secret_file_2")" = candidate-secret ] ||
     fail 'repeated ssh-askpass request did not receive the same candidate secret'
 [ "$(cat "$stdout_file")" = "$payload" ] || fail 'ssh stdin/stdout transparency failed'
-[ ! -s "$stderr_file" ] || fail 'unexpected ssh stderr output'
+if [ -s "$stderr_file" ]
+then
+    cat "$stderr_file" >&2
+    fail 'unexpected ssh stderr output'
+fi
 
 cat > "$tmp/expected-argv" <<'EOF_ARGS'
 -o
