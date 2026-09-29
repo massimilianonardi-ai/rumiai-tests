@@ -69,14 +69,8 @@ case $status in
 esac
 
 rsudo_command=$root/bin/sys/rsudo
-core_library=$root/lib/sys/sh/core.lib.sh
-enc_library=$root/lib/sys/sh/enc.lib.sh
 
 [ -x "$rsudo_command" ] || fail 'rsudo command entrypoint is unavailable'
-[ -f "$core_library" ] && [ ! -L "$core_library" ] ||
-    fail 'core.lib.sh is missing or is not a regular library file'
-[ -f "$enc_library" ] && [ ! -L "$enc_library" ] ||
-    fail 'enc.lib.sh is missing or is not a regular library file'
 
 command -v gpg >/dev/null 2>&1 || skip 'gpg is unavailable'
 gpg_options=$(command gpg --no-options --dump-options 2>/dev/null) ||
@@ -88,10 +82,7 @@ then
 fi
 unset gpg_options
 
-. "$core_library" || error 'cannot source core.lib.sh'
-. "$enc_library" || error 'cannot source enc.lib.sh'
-
-tmp=${TMPDIR:-/tmp}/rumiai-rsudo-load-$$
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-load-$
 fakebin=$tmp/bin
 mkdir -p "$fakebin" || error 'cannot create load-test workspace'
 
@@ -261,8 +252,17 @@ RSUDO_CREDENTIALS_GROUP_FILE_USER=file-user
 RSUDO_CREDENTIALS_GROUP_FILE_PASS=file-pass
 EOF_GROUPS
 
+cat > "$tmp/encode-helper" <<'EOF_ENCODE_HELPER'
+#!/usr/bin/env m
+
+loadsyslib "enc" || exit 1
+encode
+EOF_ENCODE_HELPER
+chmod +x "$tmp/encode-helper" || error 'cannot make encode helper executable'
+
 m_ENC_PASS=$load_pass
-encode < "$tmp/groups.sh" > "$tmp/groups.gpg" ||
+export m_ENC_PASS
+"$root/m" "$tmp/encode-helper" < "$tmp/groups.sh" > "$tmp/groups.gpg" ||
     error 'cannot prepare encoded rsudo --load input'
 unset m_ENC_PASS
 
