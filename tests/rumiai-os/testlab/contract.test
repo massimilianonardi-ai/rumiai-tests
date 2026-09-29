@@ -65,13 +65,13 @@ do
 done
 
 tmp=${TMPDIR:-/tmp}/rumiai-testlab-contract-$$
-command -p mkdir -m 700 -- "$tmp" || error 'cannot create temporary project'
-trap 'command -p rm -rf -- "$tmp"' 0 HUP INT TERM
+command -p mkdir -m 700 "$tmp" || error 'cannot create temporary project'
+trap 'command -p rm -rf "$tmp"' 0 HUP INT TERM
 
-command -p mkdir -p -- "$tmp/testlab/scenarios" || error 'cannot create scenario directory'
-command -p cp -- "$root/testlab/scenarios/host" "$tmp/testlab/scenarios/host" ||
+command -p mkdir -p "$tmp/testlab/scenarios" || error 'cannot create scenario directory'
+command -p cp "$root/testlab/scenarios/host" "$tmp/testlab/scenarios/host" ||
   error 'cannot copy scenario'
-command -p chmod 700 -- "$tmp/testlab/scenarios/host" || error 'cannot prepare scenario'
+command -p chmod 700 "$tmp/testlab/scenarios/host" || error 'cannot prepare scenario'
 
 (
   CDPATH= cd -P -- "$tmp" || exit 3
@@ -79,10 +79,10 @@ command -p chmod 700 -- "$tmp/testlab/scenarios/host" || error 'cannot prepare s
 ) > "$tmp/scenarios" 2> "$tmp/scenarios.err"
 status=$?
 [ "$status" -eq 0 ] || {
-  command -p cat -- "$tmp/scenarios.err" >&2
+  command -p cat "$tmp/scenarios.err" >&2
   fail "scenario discovery returned status $status"
 }
-[ "$(command -p cat -- "$tmp/scenarios")" = host ] ||
+[ "$(command -p cat "$tmp/scenarios")" = host ] ||
   fail 'scenario discovery did not expose the executable project scenario'
 
 exit 0

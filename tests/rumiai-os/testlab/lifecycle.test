@@ -44,12 +44,12 @@ cleanup()
       for candidate in "$instances_root"/"$prefix"-*
       do
         [ -e "$candidate" ] || [ -L "$candidate" ] || continue
-        command -p rm -rf -- "$candidate" 2>/dev/null || :
+        command -p rm -rf "$candidate" 2>/dev/null || :
       done
     done
   fi
 
-  [ -z "${project-}" ] || command -p rm -rf -- "$project" 2>/dev/null || :
+  [ -z "${project-}" ] || command -p rm -rf "$project" 2>/dev/null || :
 
   if [ "${instances_root_existed-1}" -eq 0 ] && [ -n "${instances_root-}" ]
   then
@@ -110,8 +110,8 @@ if [ -e "$owner_root" ] || [ -L "$owner_root" ]; then owner_root_existed=1; else
 if [ -e "$scope_root" ] || [ -L "$scope_root" ]; then scope_root_existed=1; else scope_root_existed=0; fi
 
 project=${TMPDIR:-/tmp}/rumiai-testlab-lifecycle-$$
-command -p rm -rf -- "$project"
-command -p mkdir -m 700 -- "$project" "$project/testlab" "$project/testlab/scenarios" ||
+command -p rm -rf "$project"
+command -p mkdir -m 700 "$project" "$project/testlab" "$project/testlab/scenarios" ||
   error 'cannot create temporary project'
 
 probe_name=probe$$
@@ -149,7 +149,7 @@ case "$phase" in
     [ -f "$TESTLAB_RESOURCES_DIR/external" ] || exit 20
     [ "$(cat "$TESTLAB_RESOURCES_DIR/external")" = owned ] || exit 21
     external=$(cat "$TESTLAB_CONTEXT_DIR/external") || exit 22
-    rm -f -- "$external" || exit 23
+    rm -f "$external" || exit 23
     printf 'cleanup\n' >> "$TESTLAB_INSTANCE_DIR/cleanup-count" || exit 24
     ;;
   *)
@@ -158,10 +158,10 @@ case "$phase" in
 esac
 EOF_SCENARIO
 
-command -p chmod 700 -- "$scenario_source" || error 'cannot make fixture scenario executable'
-command -p cp -- "$scenario_source" "$project/testlab/scenarios/$reject_name" || error 'cannot copy reject scenario'
-command -p cp -- "$scenario_source" "$project/testlab/scenarios/$fail_name" || error 'cannot copy failure scenario'
-command -p chmod 700 -- "$project/testlab/scenarios/$reject_name" "$project/testlab/scenarios/$fail_name" ||
+command -p chmod 700 "$scenario_source" || error 'cannot make fixture scenario executable'
+command -p cp "$scenario_source" "$project/testlab/scenarios/$reject_name" || error 'cannot copy reject scenario'
+command -p cp "$scenario_source" "$project/testlab/scenarios/$fail_name" || error 'cannot copy failure scenario'
+command -p chmod 700 "$project/testlab/scenarios/$reject_name" "$project/testlab/scenarios/$fail_name" ||
   error 'cannot make fixture scenarios executable'
 
 run_testlab prepare "$reject_name" reject-token > "$project/reject.out" 2> "$project/reject.err"
@@ -188,7 +188,7 @@ cat > "$scenario_source" <<'EOF_REPLACEMENT'
 #!/bin/sh
 exit 99
 EOF_REPLACEMENT
-command -p chmod 700 -- "$scenario_source" || error 'cannot replace source scenario'
+command -p chmod 700 "$scenario_source" || error 'cannot replace source scenario'
 
 enter_output=$(run_testlab enter "$instance") || fail 'enter did not use frozen scenario'
 [ "$enter_output" = 'frozen-enter:alpha' ] || fail 'enter output did not come from frozen scenario'
