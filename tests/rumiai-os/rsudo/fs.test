@@ -220,6 +220,15 @@ then
     exit 87
 fi
 
+if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] &&
+   [ "${RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR-}" = 1 ]
+then
+    cat >/dev/null || exit 86
+    [ -n "${RSUDO_FS_TEST_ACCEPT_EMPTY_NAME-}" ] || exit 85
+    : > "$RSUDO_FS_TEST_ACCEPT_EMPTY_NAME" || exit 84
+    exit 0
+fi
+
 command -p tar "$@"
 EOF_TAR
 
@@ -286,6 +295,8 @@ run_rsudo()
     [ -z "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ] || export RSUDO_FS_TEST_FAKE_FREE_KB
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_TAR
     [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_TAR-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_TAR
+    [ -z "${RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR
+    [ -z "${RSUDO_FS_TEST_ACCEPT_EMPTY_NAME-}" ] || export RSUDO_FS_TEST_ACCEPT_EMPTY_NAME
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH
     [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH
 
@@ -380,10 +391,18 @@ printf '%s\n' old-local-producer > "$remote_root/fail-local-producer" ||
 printf '%s\n' new-local-producer > "$local_root/fail-local-producer" ||
     error 'cannot prepare local-producer-failure source'
 RSUDO_FS_TEST_FAIL_LOCAL_TAR=1
-export RSUDO_FS_TEST_FAIL_LOCAL_TAR
+RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR=1
+RSUDO_FS_TEST_ACCEPT_EMPTY_NAME=fail-local-producer
+export \
+    RSUDO_FS_TEST_FAIL_LOCAL_TAR \
+    RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR \
+    RSUDO_FS_TEST_ACCEPT_EMPTY_NAME
 run_rsudo fs put "$local_root/fail-local-producer" "$remote_root/fail-local-producer" >/dev/null 2>&1
 status=$?
-unset RSUDO_FS_TEST_FAIL_LOCAL_TAR
+unset \
+    RSUDO_FS_TEST_FAIL_LOCAL_TAR \
+    RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR \
+    RSUDO_FS_TEST_ACCEPT_EMPTY_NAME
 [ "$status" -ne 0 ] || fail 'put succeeded despite forced local tar producer failure'
 [ "$(cat "$remote_root/fail-local-producer")" = old-local-producer ] ||
     fail 'local producer failure changed the existing remote destination'
