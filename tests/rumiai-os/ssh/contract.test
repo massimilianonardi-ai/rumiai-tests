@@ -1,16 +1,18 @@
 #!/bin/sh
 
 # Protected current properties:
-#   SSH-01  non-empty newline-free remote-account password is required.
-#   SSH-02  OpenSSH authentication is constrained to password.
-#   SSH-03  exactly one OpenSSH password prompt is permitted.
+#   SSH-01  both public functions require a non-empty newline-free supplied secret.
+#   SSH-02  ssh_password constrains OpenSSH authentication to password.
+#   SSH-03  ssh_password permits exactly one OpenSSH password prompt.
 #   SSH-04  configured SSH connection sharing is disabled.
 #   SSH-05  caller SSH arguments remain ordered after facility options.
 #   SSH-06  authentication data is not consumed from SSH stdin.
 #   SSH-07  SSH stdin/stdout/stderr retain their OpenSSH meanings.
 #   SSH-08  authentication data is not placed in ordinary SSH arguments.
 #   SSH-09  invocation-owned authentication IPC state is cleared after use.
-#   SSH-11  confirmation prompts are refused without consuming the password.
+#   SSH-11  confirmation prompts are refused without receiving the secret.
+#   SSH-13  ssh_auth preserves normal OpenSSH authentication-method selection.
+#   SSH-14  ssh_auth can supply the same secret for multiple secret-entry prompts.
 #
 # The fake ssh executable below represents only the external OpenSSH process
 # boundary. The real ssh.lib.sh and ssh-askpass target components are exercised.
@@ -69,19 +71,23 @@ command -p sh -n "$ssh_library" || fail 'ssh.lib.sh is not valid POSIX-sh syntax
 [ -x "$ssh_helper" ] || fail 'ssh-askpass is not executable'
 [ -f "$ssh_manual" ] || fail 'ssh.lib.sh manual is missing'
 [ -f "$ssh_helper_manual" ] || fail 'ssh-askpass manual is missing'
+grep -F 'ssh_auth' "$ssh_manual" >/dev/null 2>&1 || fail 'ssh manual omits ssh_auth'
 grep -F 'ssh_password' "$ssh_manual" >/dev/null 2>&1 || fail 'ssh manual omits ssh_password'
 
 loadsyslib "ssh" || error 'cannot load ssh.lib.sh'
 
-ssh_password '' example.invalid >/dev/null 2>&1
-[ "$?" -eq 1 ] || fail 'empty password was not rejected with status 1'
+for function_name in ssh_auth ssh_password
+do
+    "$function_name" '' example.invalid >/dev/null 2>&1
+    [ "$?" -eq 1 ] || fail "$function_name did not reject empty secret with status 1"
 
-ssh_password 'bad
-password' example.invalid >/dev/null 2>&1
-[ "$?" -eq 1 ] || fail 'newline password was not rejected with status 1'
+    "$function_name" 'bad
+secret' example.invalid >/dev/null 2>&1
+    [ "$?" -eq 1 ] || fail "$function_name did not reject newline secret with status 1"
 
-ssh_password secret >/dev/null 2>&1
-[ "$?" -eq 2 ] || fail 'missing ssh arguments were not rejected with status 2'
+    "$function_name" secret >/dev/null 2>&1
+    [ "$?" -eq 2 ] || fail "$function_name did not reject missing ssh arguments with status 2"
+done
 
 tmp=${TMPDIR:-/tmp}/rumiai-ssh-contract-$$
 fakebin=$tmp/bin
@@ -98,50 +104,81 @@ done
 
 [ "${SSH_ASKPASS_REQUIRE-}" = force ] || exit 82
 [ -n "${SSH_ASKPASS-}" ] || exit 83
-[ -n "${m_SSH_ASKPASS_ID-}" ] || exit 84
 
-SSH_ASKPASS_PROMPT=confirm "$SSH_ASKPASS" 'confirm host?' >/dev/null 2>&1
-[ "$?" -ne 0 ] || exit 85
+case ${SSH_TEST_MODE-} in
+    password)
+        [ -n "${m_SSH_ASKPASS_ID-}" ] || exit 84
+        [ -z "${m_SSH_ASKPASS_FIFO-}" ] || exit 85
 
-"$SSH_ASKPASS" 'remote password:' > "$SSH_TEST_PASSWORD_FILE" || exit 86
+        SSH_ASKPASS_PROMPT=confirm "$SSH_ASKPASS" 'confirm host?' >/dev/null 2>&1
+        [ "$?" -ne 0 ] || exit 86
+
+        "$SSH_ASKPASS" 'remote password:' > "$SSH_TEST_SECRET_1_FILE" || exit 87
+        ;;
+    auth)
+        [ -z "${m_SSH_ASKPASS_ID-}" ] || exit 88
+        [ -n "${m_SSH_ASKPASS_FIFO-}" ] || exit 89
+
+        printf '%s\n' "$m_SSH_ASKPASS_FIFO" > "$SSH_TEST_PROVIDER_FILE" || exit 90
+
+        SSH_ASKPASS_PROMPT=confirm "$SSH_ASKPASS" 'confirm host?' >/dev/null 2>&1
+        [ "$?" -ne 0 ] || exit 91
+
+        "$SSH_ASKPASS" 'key passphrase:' > "$SSH_TEST_SECRET_1_FILE" || exit 92
+        "$SSH_ASKPASS" 'remote password:' > "$SSH_TEST_SECRET_2_FILE" || exit 93
+        ;;
+    *)
+        exit 94
+        ;;
+esac
 
 cat
-exit 37
+
+case ${SSH_TEST_MODE-} in
+    password) exit 37 ;;
+    auth) exit 38 ;;
+esac
 EOF_SSH
 
 chmod +x "$fakebin/ssh" || error 'cannot make ssh boundary fixture executable'
 command -p sh -n "$fakebin/ssh" || error 'ssh boundary fixture has invalid syntax'
 
-argv_file=$tmp/argv
-password_file=$tmp/password
-stdout_file=$tmp/stdout
-stderr_file=$tmp/stderr
-payload='payload over ssh stdin'
+run_password_case()
+{
+    case_dir=$tmp/password
+    mkdir "$case_dir" || error 'cannot create password case directory'
 
-(
-    PATH="$fakebin:$PATH"
-    SSH_TEST_ARGV_FILE=$argv_file
-    SSH_TEST_PASSWORD_FILE=$password_file
-    export PATH SSH_TEST_ARGV_FILE SSH_TEST_PASSWORD_FILE
+    argv_file=$case_dir/argv
+    secret_1_file=$case_dir/secret-1
+    stdout_file=$case_dir/stdout
+    stderr_file=$case_dir/stderr
+    payload='payload over ssh_password stdin'
 
-    printf '%s\n' "$payload" |
-        ssh_password secret -p 2222 -l alice example.invalid command 'arg with spaces'
-) >"$stdout_file" 2>"$stderr_file"
-status=$?
+    (
+        PATH="$fakebin:$PATH"
+        SSH_TEST_MODE=password
+        SSH_TEST_ARGV_FILE=$argv_file
+        SSH_TEST_SECRET_1_FILE=$secret_1_file
+        export PATH SSH_TEST_MODE SSH_TEST_ARGV_FILE SSH_TEST_SECRET_1_FILE
 
-case $status in
-    8[0-9])
-        [ ! -s "$stderr_file" ] || cat "$stderr_file" >&2
-        error "external ssh fixture failed with status $status"
-        ;;
-esac
-[ "$status" -eq 37 ] || fail "ssh status $status was not propagated"
+        printf '%s\n' "$payload" |
+            ssh_password secret -p 2222 -l alice example.invalid command 'arg with spaces'
+    ) >"$stdout_file" 2>"$stderr_file"
+    status=$?
 
-[ "$(cat "$password_file")" = secret ] || fail 'ssh-askpass did not deliver the password'
-[ "$(cat "$stdout_file")" = "$payload" ] || fail 'ssh stdin/stdout transparency failed'
-[ ! -s "$stderr_file" ] || fail 'unexpected ssh stderr output'
+    case $status in
+        8[0-9]|9[0-9])
+            [ ! -s "$stderr_file" ] || cat "$stderr_file" >&2
+            error "external ssh password fixture failed with status $status"
+            ;;
+    esac
 
-cat > "$tmp/expected-argv" <<'EOF_ARGS'
+    [ "$status" -eq 37 ] || fail "ssh_password status $status was not propagated"
+    [ "$(cat "$secret_1_file")" = secret ] || fail 'ssh_password askpass did not deliver password'
+    [ "$(cat "$stdout_file")" = "$payload" ] || fail 'ssh_password stdin/stdout transparency failed'
+    [ ! -s "$stderr_file" ] || fail 'unexpected ssh_password stderr output'
+
+    cat > "$case_dir/expected-argv" <<'EOF_ARGS'
 -o
 BatchMode=no
 -o
@@ -161,13 +198,85 @@ command
 arg with spaces
 EOF_ARGS
 
-cmp "$tmp/expected-argv" "$argv_file" >/dev/null 2>&1 ||
-    fail 'forced SSH settings or caller argument order differ from contract'
+    cmp "$case_dir/expected-argv" "$argv_file" >/dev/null 2>&1 ||
+        fail 'ssh_password forced settings or caller argument order differ from contract'
 
-if grep -F 'secret' "$argv_file" "$stdout_file" "$stderr_file" >/dev/null 2>&1
-then
-    fail 'password appeared in ordinary ssh argv or output'
-fi
+    if grep -F 'secret' "$argv_file" "$stdout_file" "$stderr_file" >/dev/null 2>&1
+    then
+        fail 'ssh_password secret appeared in ordinary ssh argv or output'
+    fi
+}
+
+run_auth_case()
+{
+    case_dir=$tmp/auth
+    mkdir "$case_dir" || error 'cannot create auth case directory'
+
+    argv_file=$case_dir/argv
+    secret_1_file=$case_dir/secret-1
+    secret_2_file=$case_dir/secret-2
+    provider_file=$case_dir/provider
+    stdout_file=$case_dir/stdout
+    stderr_file=$case_dir/stderr
+    payload='payload over ssh_auth stdin'
+
+    (
+        PATH="$fakebin:$PATH"
+        SSH_TEST_MODE=auth
+        SSH_TEST_ARGV_FILE=$argv_file
+        SSH_TEST_SECRET_1_FILE=$secret_1_file
+        SSH_TEST_SECRET_2_FILE=$secret_2_file
+        SSH_TEST_PROVIDER_FILE=$provider_file
+        export             PATH             SSH_TEST_MODE             SSH_TEST_ARGV_FILE             SSH_TEST_SECRET_1_FILE             SSH_TEST_SECRET_2_FILE             SSH_TEST_PROVIDER_FILE
+
+        printf '%s\n' "$payload" |
+            ssh_auth secret -p 2222 -l alice example.invalid command 'arg with spaces'
+    ) >"$stdout_file" 2>"$stderr_file"
+    status=$?
+
+    case $status in
+        8[0-9]|9[0-9])
+            [ ! -s "$stderr_file" ] || cat "$stderr_file" >&2
+            error "external ssh auth fixture failed with status $status"
+            ;;
+    esac
+
+    [ "$status" -eq 38 ] || fail "ssh_auth status $status was not propagated"
+    [ "$(cat "$secret_1_file")" = secret ] || fail 'ssh_auth first secret request was not answered'
+    [ "$(cat "$secret_2_file")" = secret ] || fail 'ssh_auth second secret request was not answered'
+    [ "$(cat "$stdout_file")" = "$payload" ] || fail 'ssh_auth stdin/stdout transparency failed'
+    [ ! -s "$stderr_file" ] || fail 'unexpected ssh_auth stderr output'
+
+    provider=$(cat "$provider_file") || error 'cannot read ssh_auth provider identity'
+    [ -n "$provider" ] || fail 'ssh_auth provider identity was empty'
+    [ ! -e "$provider" ] && [ ! -L "$provider" ] ||
+        fail 'ssh_auth provider resource remained after cleanup'
+
+    cat > "$case_dir/expected-argv" <<'EOF_ARGS'
+-o
+BatchMode=no
+-o
+ControlPath=none
+-p
+2222
+-l
+alice
+example.invalid
+command
+arg with spaces
+EOF_ARGS
+
+    cmp "$case_dir/expected-argv" "$argv_file" >/dev/null 2>&1 ||
+        fail 'ssh_auth forced settings or caller argument order differ from contract'
+
+    if grep -F 'secret' "$argv_file" "$stdout_file" "$stderr_file" >/dev/null 2>&1
+    then
+        fail 'ssh_auth secret appeared in ordinary ssh argv or output'
+    fi
+}
+
+run_password_case
+run_auth_case
 
 command -v ssh >/dev/null 2>&1 || skip 'OpenSSH ssh client is unavailable'
 
@@ -176,29 +285,45 @@ effective=$(ssh_password secret -G \
     -o PasswordAuthentication=no \
     -o PreferredAuthentications=publickey \
     -o NumberOfPasswordPrompts=9 \
-    -o ControlPath="$tmp/control" \
+    -o ControlPath="$tmp/password-control" \
     example.invalid 2>/dev/null) ||
     fail 'OpenSSH -G rejected ssh_password effective configuration'
 
 printf '%s\n' "$effective" | grep -E '^batchmode no$' >/dev/null 2>&1 ||
-    fail 'BatchMode=no was not effective'
+    fail 'ssh_password BatchMode=no was not effective'
 printf '%s\n' "$effective" | grep -E '^passwordauthentication yes$' >/dev/null 2>&1 ||
-    fail 'PasswordAuthentication=yes was not effective'
+    fail 'ssh_password PasswordAuthentication=yes was not effective'
 printf '%s\n' "$effective" | grep -E '^preferredauthentications password$' >/dev/null 2>&1 ||
-    fail 'PreferredAuthentications=password was not effective'
+    fail 'ssh_password PreferredAuthentications=password was not effective'
 printf '%s\n' "$effective" | grep -E '^numberofpasswordprompts 1$' >/dev/null 2>&1 ||
-    fail 'NumberOfPasswordPrompts=1 was not effective'
+    fail 'ssh_password NumberOfPasswordPrompts=1 was not effective'
 effective_controlpath=$(printf '%s\n' "$effective" | grep -E '^controlpath([[:space:]]|$)' || :)
-case "$effective_controlpath" in
-    ''|'controlpath none')
-        :
-        ;;
-    *)
-        printf '%s\n' 'effective ControlPath lines:' >&2
-        printf '%s\n' "$effective_controlpath" >&2
-        ssh -V >&2 2>&1 || :
-        fail 'ControlPath=none was not effective'
-        ;;
+case $effective_controlpath in
+    ''|'controlpath none') : ;;
+    *) fail 'ssh_password ControlPath=none was not effective' ;;
+esac
+
+effective=$(ssh_auth secret -G \
+    -o BatchMode=yes \
+    -o PasswordAuthentication=no \
+    -o PreferredAuthentications=publickey \
+    -o NumberOfPasswordPrompts=9 \
+    -o ControlPath="$tmp/auth-control" \
+    example.invalid 2>/dev/null) ||
+    fail 'OpenSSH -G rejected ssh_auth effective configuration'
+
+printf '%s\n' "$effective" | grep -E '^batchmode no$' >/dev/null 2>&1 ||
+    fail 'ssh_auth BatchMode=no was not effective'
+printf '%s\n' "$effective" | grep -E '^passwordauthentication no$' >/dev/null 2>&1 ||
+    fail 'ssh_auth unexpectedly overrode PasswordAuthentication'
+printf '%s\n' "$effective" | grep -E '^preferredauthentications publickey$' >/dev/null 2>&1 ||
+    fail 'ssh_auth unexpectedly overrode PreferredAuthentications'
+printf '%s\n' "$effective" | grep -E '^numberofpasswordprompts 9$' >/dev/null 2>&1 ||
+    fail 'ssh_auth unexpectedly overrode NumberOfPasswordPrompts'
+effective_controlpath=$(printf '%s\n' "$effective" | grep -E '^controlpath([[:space:]]|$)' || :)
+case $effective_controlpath in
+    ''|'controlpath none') : ;;
+    *) fail 'ssh_auth ControlPath=none was not effective' ;;
 esac
 
 exit 0
