@@ -1,0 +1,80 @@
+name: testlab-rsudo-scenario
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/testlab-rsudo-scenario.yml
+      - rumiai-validate
+      - lib/sh/rumiai-validate.lib.sh
+      - lib/rumiai-os-target.lib
+      - tests/rumiai-os/testlab-rsudo/**
+      - validation/testlab-rsudo.conf
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  formal-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current test suite
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: rumiai-tests
+          persist-credentials: true
+
+      - name: Checkout product source/update point
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 0
+          path: rumiai-os
+          persist-credentials: true
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Install host scenario prerequisites
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman openssh-client openssl
+
+          if ! podman info >/tmp/podman-info.log 2>&1; then
+            cat /tmp/podman-info.log
+            if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+            fi
+          fi
+          podman info
+
+      - name: Configure validation evidence author
+        shell: bash
+        run: |
+          git -C rumiai-tests config user.name "github-actions[bot]"
+          git -C rumiai-tests config user.email "4189822+github-actions[bot]@users.noreply.github.com"
+
+      - name: Run formal rsudo scenario validation
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-validate testlab-rsudo
+
+      - name: Upload recoverable local evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testlab-rsudo-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/validations
+          if-no-files-found: ignore
+          include-hidden-files: true

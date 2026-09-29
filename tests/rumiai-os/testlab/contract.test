@@ -56,7 +56,7 @@ manual_text=$("$root/m" "$manual_command" --no-pager testlab) ||
   fail 'manual lookup for testlab failed'
 [ -n "$manual_text" ] || fail 'manual lookup for testlab returned no content'
 
-for scenario in host scratch
+for scenario in host scratch rsudo
 do
   path=$root/testlab/scenarios/$scenario
   [ -f "$path" ] && [ ! -L "$path" ] && [ -x "$path" ] ||

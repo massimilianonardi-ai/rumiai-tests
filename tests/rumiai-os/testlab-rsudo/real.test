@@ -1,0 +1,174 @@
+#!/bin/sh
+
+# Protected current properties:
+#   TESTLAB-15  Podman/SSH tooling is scenario-specific, not a global testlab prerequisite.
+#   TESTLAB-16  the rsudo scenario owns only its created disposable container.
+# This test also exercises the real development path:
+#   testlab -> rsudo -> ssh -> sshd -> sudo.
+
+TEST_ID=rumiai-os/testlab-rsudo/real.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd "$dir" 2>/dev/null && pwd -P
+}
+
+run_testlab()
+{
+  (
+    CDPATH= cd -P "$root" || exit 125
+    "$root/m" "$testlab" "$@"
+  )
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ -n "${instance-}" ]
+  then
+    run_testlab close "$instance" >/dev/null 2>&1 || :
+  fi
+
+  if [ -n "${container-}" ] && command -v podman >/dev/null 2>&1
+  then
+    if podman container exists "$container" >/dev/null 2>&1
+    then
+      podman rm -f "$container" >/dev/null 2>&1 || :
+    fi
+  fi
+
+  if [ -n "${instance_dir-}" ] && [ -d "$instance_dir" ] && [ ! -L "$instance_dir" ]
+  then
+    command -p rm -rf "$instance_dir" 2>/dev/null || :
+  fi
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+testlab=$root/bin/sys/testlab
+state_path=$root/bin/sys/state-path
+scenario=$root/testlab/scenarios/rsudo
+
+[ -x "$testlab" ] || fail 'testlab command is unavailable'
+[ -x "$state_path" ] || error 'state-path command is unavailable'
+[ -f "$scenario" ] && [ ! -L "$scenario" ] && [ -x "$scenario" ] ||
+  fail 'rsudo scenario is missing or invalid'
+
+for tool in podman ssh ssh-keyscan openssl
+do
+  command -v "$tool" >/dev/null 2>&1 ||
+    skip "rsudo scenario host prerequisite is unavailable: $tool"
+done
+
+podman info >/dev/null 2>&1 ||
+  skip 'rsudo scenario is not applicable without operational host Podman'
+
+data_root=$("$root/m" "$state_path" user sys testlab data) ||
+  error 'cannot resolve testlab data root'
+instances_root=$data_root/instances
+
+instance=$(run_testlab prepare rsudo) || fail 'testlab prepare rsudo failed'
+[ -n "$instance" ] || fail 'testlab prepare rsudo returned empty instance id'
+instance_dir=$instances_root/$instance
+[ -d "$instance_dir" ] && [ ! -L "$instance_dir" ] ||
+  fail 'rsudo scenario instance state is missing'
+
+state=$(run_testlab status "$instance") || fail 'cannot read rsudo scenario status'
+printf '%s\n' "$state" | grep "$(printf 'state\tready')" >/dev/null 2>&1 ||
+  fail 'rsudo scenario is not ready'
+
+target_root=$(run_testlab context "$instance" target-root) ||
+  fail 'target-root context is missing'
+container=$(run_testlab context "$instance" podman-container) ||
+  fail 'podman-container context is missing'
+ssh_host=$(run_testlab context "$instance" ssh-host) ||
+  fail 'ssh-host context is missing'
+ssh_port=$(run_testlab context "$instance" ssh-port) ||
+  fail 'ssh-port context is missing'
+ssh_user=$(run_testlab context "$instance" ssh-user) ||
+  fail 'ssh-user context is missing'
+ssh_password=$(run_testlab context "$instance" ssh-password) ||
+  fail 'ssh-password context is missing'
+ssh_config=$(run_testlab context "$instance" ssh-config) ||
+  fail 'ssh-config context is missing'
+path_prefix=$(run_testlab context "$instance" path-prefix) ||
+  fail 'path-prefix context is missing'
+
+[ "$target_root" = "$root" ] || fail 'rsudo scenario target-root does not match the selected product checkout'
+[ -n "$container" ] || fail 'owned container identity is empty'
+[ -n "$ssh_host" ] || fail 'ssh host identity is empty'
+case "$ssh_port" in ''|*[!0123456789]*) fail "invalid SSH port context: $ssh_port" ;; esac
+[ -n "$ssh_user" ] || fail 'ssh user identity is empty'
+[ -n "$ssh_password" ] || fail 'synthetic SSH/sudo password is empty'
+[ -f "$ssh_config" ] && [ ! -L "$ssh_config" ] || fail 'scenario SSH configuration is missing'
+[ -x "$path_prefix/ssh" ] && [ ! -L "$path_prefix/ssh" ] || fail 'scenario SSH PATH adapter is missing'
+
+podman container exists "$container" ||
+  fail 'owned rsudo scenario container is not live while instance is ready'
+
+stdout=$instance_dir/rsudo.stdout
+stderr=$instance_dir/rsudo.stderr
+PATH="$path_prefix:$PATH" \
+RSUDO_HOST="$ssh_host" \
+RSUDO_USER="$ssh_user" \
+RSUDO_PASSWORD="$ssh_password" \
+  "$root/m" "$root/bin/sys/rsudo" -- id -u > "$stdout" 2> "$stderr"
+rsudo_status=$?
+
+if [ "$rsudo_status" -ne 0 ]
+then
+  command -p cat "$stderr" >&2
+  fail "real rsudo activity returned status $rsudo_status"
+fi
+
+[ "$(command -p cat "$stdout")" = 0 ] ||
+  fail 'real rsudo activity did not observe privileged uid 0'
+
+run_testlab close "$instance" || fail 'testlab close rsudo failed'
+state=$(run_testlab status "$instance") || fail 'cannot read closed rsudo scenario status'
+printf '%s\n' "$state" | grep "$(printf 'state\tclosed')" >/dev/null 2>&1 ||
+  fail 'rsudo scenario did not persist closed state'
+
+if podman container exists "$container" >/dev/null 2>&1
+then
+  fail 'owned container remains after scenario close'
+fi
+
+run_testlab close "$instance" || fail 'repeated rsudo scenario close failed'
+
+[ -x "$root/m" ] || fail 'external target checkout was removed by scenario cleanup'
+[ -z "$(git -C "$root" status --porcelain --untracked-files=normal)" ] ||
+  fail 'external target checkout was modified by rsudo scenario'
+
+command -p rm -rf "$instance_dir" || error 'cannot remove closed test instance record'
+instance=
+instance_dir=
+container=
+
+trap - 0 HUP INT TERM
+exit 0
