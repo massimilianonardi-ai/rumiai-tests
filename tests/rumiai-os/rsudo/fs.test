@@ -91,11 +91,13 @@ command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
 command -v awk >/dev/null 2>&1 || skip 'awk is unavailable'
 command -v readlink >/dev/null 2>&1 || skip 'readlink is unavailable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-rsudo-fs-$$
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-fs-$
 fakebin=$tmp/bin
 local_root=$tmp/local
 remote_root=$tmp/remote
-mkdir -p "$fakebin" "$local_root" "$remote_root" || error 'cannot create fs-test workspace'
+runtime_tmp=$tmp/runtime
+mkdir -p "$fakebin" "$local_root" "$remote_root" "$runtime_tmp" ||
+    error 'cannot create fs-test workspace'
 
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
@@ -285,13 +287,14 @@ command -p sh -n "$fakebin/mv" || error 'mv boundary fixture has invalid shell s
 run_rsudo()
 (
     PATH="$fakebin:$PATH"
+    TMPDIR="$runtime_tmp"
     RSUDO_HOST=example.invalid
     RSUDO_USER=alice
     RSUDO_PASSWORD=secret
     RSUDO_TEST_REMOTE_BIN=$fakebin
     m_LOG_LEVEL=error
 
-    export PATH RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
+    export PATH TMPDIR RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
     [ -z "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ] || export RSUDO_FS_TEST_FAKE_FREE_KB
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_TAR
     [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_TAR-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_TAR
@@ -516,5 +519,13 @@ if grep -F 'explicit-delete-required' "$get_full_stderr" >/dev/null 2>&1
 then
     fail 'get requested deletion when no local destination existed'
 fi
+
+for leftover in "$runtime_tmp"/rsudo-fs-stream.*
+do
+    if [ -e "$leftover" ] || [ -L "$leftover" ]
+    then
+        fail "rsudo fs left stream resource behind: $leftover"
+    fi
+done
 
 exit 0
