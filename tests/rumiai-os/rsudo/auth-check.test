@@ -117,9 +117,16 @@ shift
 remote_command=$*
 [ -n "$remote_command" ] || exit 87
 
-# This fixture models a reachable authenticated SSH boundary. For normal rsudo
-# calls used by the invocation-local reset check, success is enough: sudo
-# behavior is covered by contract.test and interactive.test.
+# The invocation-local reset scenario reaches normal rsudo_core, whose stdin
+# carries sudo authentication data. Drain that modeled remote input so the
+# producer does not encounter an artificial SIGPIPE if the host shell has
+# pipefail established. The dedicated rsudo contract tests own sudo semantics.
+case "$remote_command" in
+    *'sudo -K;'*)
+        cat >/dev/null || exit 88
+    ;;
+esac
+
 exit 0
 EOF_SSH
 
