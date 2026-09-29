@@ -76,6 +76,10 @@ loadsyslib "ssh" || error 'cannot load ssh.lib.sh'
 ssh_password '' example.invalid >/dev/null 2>&1
 [ "$?" -eq 1 ] || fail 'empty password was not rejected with status 1'
 
+ssh_password 'bad
+password' example.invalid >/dev/null 2>&1
+[ "$?" -eq 1 ] || fail 'newline password was not rejected with status 1'
+
 ssh_password secret >/dev/null 2>&1
 [ "$?" -eq 2 ] || fail 'missing ssh arguments were not rejected with status 2'
 
