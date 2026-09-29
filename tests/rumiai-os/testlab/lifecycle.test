@@ -1,0 +1,236 @@
+#!/bin/sh
+
+# Protected current properties:
+#   TESTLAB-03  check precedes persistent instance allocation.
+#   TESTLAB-04  each allocated instance freezes the selected scenario executable.
+#   TESTLAB-05  persistent instance state uses user-scoped sys testlab data.
+#   TESTLAB-06  context contains facts/handles.
+#   TESTLAB-07/08 persistent resource inventory controls owned cleanup.
+#   TESTLAB-09  enter is separate and passes through child streams.
+#   TESTLAB-10/11 lifecycle states and failed/interrupted cleanup recovery.
+#   TESTLAB-12  lifecycle outcomes are not rumiai-test assertions.
+
+TEST_ID=rumiai-os/testlab/lifecycle.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+run_testlab()
+{
+  (
+    CDPATH= cd -P -- "$project" || exit 125
+    "$root/m" "$testlab" "$@"
+  )
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  if [ -n "${instances_root-}" ] && [ -d "$instances_root" ]
+  then
+    for prefix in "${probe_name-}" "${reject_name-}" "${fail_name-}"
+    do
+      [ -n "$prefix" ] || continue
+      for candidate in "$instances_root"/"$prefix"-*
+      do
+        [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+        command -p rm -rf -- "$candidate" 2>/dev/null || :
+      done
+    done
+  fi
+
+  [ -z "${project-}" ] || command -p rm -rf -- "$project" 2>/dev/null || :
+
+  if [ "${instances_root_existed-1}" -eq 0 ] && [ -n "${instances_root-}" ]
+  then
+    command -p rmdir -- "$instances_root" 2>/dev/null || :
+  fi
+  if [ "${data_root_existed-1}" -eq 0 ] && [ -n "${data_root-}" ]
+  then
+    command -p rmdir -- "$data_root" 2>/dev/null || :
+  fi
+  if [ "${identity_root_existed-1}" -eq 0 ] && [ -n "${identity_root-}" ]
+  then
+    command -p rmdir -- "$identity_root" 2>/dev/null || :
+  fi
+  if [ "${owner_root_existed-1}" -eq 0 ] && [ -n "${owner_root-}" ]
+  then
+    command -p rmdir -- "$owner_root" 2>/dev/null || :
+  fi
+  if [ "${scope_root_existed-1}" -eq 0 ] && [ -n "${scope_root-}" ]
+  then
+    command -p rmdir -- "$scope_root" 2>/dev/null || :
+  fi
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+testlab_group=${test_dir%/*}
+rumiai_os_group=${testlab_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+testlab=$root/bin/sys/testlab
+state_path=$root/bin/sys/state-path
+[ -x "$testlab" ] || fail 'testlab command is unavailable'
+[ -x "$state_path" ] || error 'state-path command is unavailable'
+
+data_root=$("$root/m" "$state_path" user sys testlab data) || error 'cannot resolve testlab data root'
+instances_root=$data_root/instances
+identity_root=${data_root%/data}
+owner_root=${identity_root%/testlab}
+scope_root=${owner_root%/sys}
+
+if [ -e "$data_root" ] || [ -L "$data_root" ]; then data_root_existed=1; else data_root_existed=0; fi
+if [ -e "$instances_root" ] || [ -L "$instances_root" ]; then instances_root_existed=1; else instances_root_existed=0; fi
+if [ -e "$identity_root" ] || [ -L "$identity_root" ]; then identity_root_existed=1; else identity_root_existed=0; fi
+if [ -e "$owner_root" ] || [ -L "$owner_root" ]; then owner_root_existed=1; else owner_root_existed=0; fi
+if [ -e "$scope_root" ] || [ -L "$scope_root" ]; then scope_root_existed=1; else scope_root_existed=0; fi
+
+project=${TMPDIR:-/tmp}/rumiai-testlab-lifecycle-$$
+command -p rm -rf -- "$project"
+command -p mkdir -m 700 -- "$project" "$project/testlab" "$project/testlab/scenarios" ||
+  error 'cannot create temporary project'
+
+probe_name=probe$$
+reject_name=reject$$
+fail_name=failprepare$$
+scenario_source=$project/testlab/scenarios/$probe_name
+
+cat > "$scenario_source" <<'EOF_SCENARIO'
+#!/bin/sh
+phase=$1
+shift
+
+case "$phase" in
+  check)
+    [ "$#" -eq 1 ] || exit 11
+    [ "$1" != reject-token ] || exit 9
+    ;;
+  prepare)
+    [ "$#" -eq 1 ] || exit 12
+    printf '%s' "$1" > "$TESTLAB_CONTEXT_DIR/arg" || exit 13
+    external="$TESTLAB_PROJECT_ROOT/resource-$TESTLAB_INSTANCE_ID"
+    printf '%s\n' owned > "$TESTLAB_RESOURCES_DIR/external" || exit 14
+    : > "$external" || exit 15
+    printf '%s' "$external" > "$TESTLAB_CONTEXT_DIR/external" || exit 16
+    case "$TESTLAB_SCENARIO_NAME" in failprepare*) exit 7 ;; esac
+    ;;
+  enter)
+    [ "$#" -eq 0 ] || exit 17
+    printf 'frozen-enter:'
+    cat "$TESTLAB_CONTEXT_DIR/arg" || exit 18
+    printf '\n'
+    ;;
+  cleanup)
+    [ "$#" -eq 0 ] || exit 19
+    [ -f "$TESTLAB_RESOURCES_DIR/external" ] || exit 20
+    [ "$(cat "$TESTLAB_RESOURCES_DIR/external")" = owned ] || exit 21
+    external=$(cat "$TESTLAB_CONTEXT_DIR/external") || exit 22
+    rm -f -- "$external" || exit 23
+    printf 'cleanup\n' >> "$TESTLAB_INSTANCE_DIR/cleanup-count" || exit 24
+    ;;
+  *)
+    exit 25
+    ;;
+esac
+EOF_SCENARIO
+
+command -p chmod 700 -- "$scenario_source" || error 'cannot make fixture scenario executable'
+command -p cp -- "$scenario_source" "$project/testlab/scenarios/$reject_name" || error 'cannot copy reject scenario'
+command -p cp -- "$scenario_source" "$project/testlab/scenarios/$fail_name" || error 'cannot copy failure scenario'
+command -p chmod 700 -- "$project/testlab/scenarios/$reject_name" "$project/testlab/scenarios/$fail_name" ||
+  error 'cannot make fixture scenarios executable'
+
+run_testlab prepare "$reject_name" reject-token > "$project/reject.out" 2> "$project/reject.err"
+status=$?
+[ "$status" -eq 3 ] || fail "check rejection expected status 3, got $status"
+for candidate in "$instances_root"/"$reject_name"-*
+do
+  [ -e "$candidate" ] || [ -L "$candidate" ] || continue
+  fail 'check failure allocated persistent instance state'
+done
+
+instance=$(run_testlab prepare "$probe_name" alpha) || fail 'probe scenario prepare failed'
+[ -n "$instance" ] || fail 'prepare returned empty instance id'
+instance_dir=$instances_root/$instance
+[ -d "$instance_dir" ] && [ ! -L "$instance_dir" ] || fail 'persistent instance directory is missing'
+[ -x "$instance_dir/scenario" ] && [ ! -L "$instance_dir/scenario" ] || fail 'frozen scenario executable is missing'
+[ "$(cat "$instance_dir/state")" = ready ] || fail 'prepared instance is not ready'
+[ "$(run_testlab context "$instance" arg)" = alpha ] || fail 'scenario argument was not published as context'
+external=$(run_testlab context "$instance" external) || fail 'external context handle unavailable'
+[ -f "$external" ] || fail 'prepared owned resource is missing'
+[ "$(cat "$instance_dir/resources/external")" = owned ] || fail 'owned resource inventory is missing'
+
+cat > "$scenario_source" <<'EOF_REPLACEMENT'
+#!/bin/sh
+exit 99
+EOF_REPLACEMENT
+command -p chmod 700 -- "$scenario_source" || error 'cannot replace source scenario'
+
+enter_output=$(run_testlab enter "$instance") || fail 'enter did not use frozen scenario'
+[ "$enter_output" = 'frozen-enter:alpha' ] || fail 'enter output did not come from frozen scenario'
+
+run_testlab close "$instance" || fail 'close failed'
+[ ! -e "$external" ] || fail 'close did not remove owned resource'
+[ "$(cat "$instance_dir/state")" = closed ] || fail 'closed state was not persisted'
+[ "$(wc -l < "$instance_dir/cleanup-count" | tr -d ' ')" = 1 ] || fail 'cleanup did not run exactly once'
+
+run_testlab close "$instance" || fail 'repeated close failed'
+[ "$(wc -l < "$instance_dir/cleanup-count" | tr -d ' ')" = 1 ] || fail 'repeated close reran cleanup'
+
+run_testlab prepare "$fail_name" beta > "$project/fail.out" 2> "$project/fail.err"
+status=$?
+[ "$status" -eq 3 ] || fail "failed prepare expected status 3, got $status"
+
+failed_instance=
+for candidate in "$instances_root"/"$fail_name"-*
+do
+  [ -d "$candidate" ] && [ ! -L "$candidate" ] || continue
+  [ -z "$failed_instance" ] || fail 'more than one failed fixture instance was allocated'
+  failed_instance=${candidate##*/}
+done
+[ -n "$failed_instance" ] || fail 'failed prepare did not retain recoverable instance'
+failed_dir=$instances_root/$failed_instance
+[ "$(cat "$failed_dir/state")" = failed ] || fail 'failed prepare did not persist failed state'
+[ "$(cat "$failed_dir/failure-phase")" = prepare ] || fail 'failed prepare phase was not recorded'
+[ "$(cat "$failed_dir/failure-status")" = 7 ] || fail 'failed prepare status was not recorded'
+failed_external=$(run_testlab context "$failed_instance" external) || fail 'failed instance context unavailable'
+[ -f "$failed_external" ] || fail 'failed prepare owned resource is missing before recovery'
+
+run_testlab close "$failed_instance" || fail 'recovery close of failed instance failed'
+[ ! -e "$failed_external" ] || fail 'recovery close did not remove owned resource'
+[ "$(cat "$failed_dir/state")" = closed ] || fail 'recovery close did not persist closed state'
+
+status_text=$(run_testlab status "$instance") || fail 'status lookup failed'
+printf '%s\n' "$status_text" | grep "$(printf 'state\tclosed')" >/dev/null 2>&1 ||
+  fail 'status did not report closed lifecycle state'
+
+all_status=$(run_testlab status) || fail 'status listing failed'
+printf '%s\n' "$all_status" | grep -F "$instance" >/dev/null 2>&1 ||
+  fail 'status listing omitted persisted instance'
+
+exit 0

@@ -1,0 +1,89 @@
+#!/bin/sh
+
+# Protected current properties:
+#   TESTLAB-01  testlab belongs to m and is a bootstrap-integrated command.
+#   TESTLAB-02  project scenarios are executable child programs, never sourced.
+# Plus mandatory operational-manual and interpreter coverage for the command.
+
+TEST_ID=rumiai-os/testlab/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+testlab_group=${test_dir%/*}
+rumiai_os_group=${testlab_group%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+testlab=$root/bin/sys/testlab
+manual=$root/res/sys/manual/testlab
+manual_command=$root/bin/sys/manual
+
+[ -f "$testlab" ] && [ -x "$testlab" ] || fail 'TESTLAB-01: expected executable bin/sys/testlab'
+[ ! -L "$testlab" ] || fail 'TESTLAB-01: testlab must not be a symlink'
+
+first_line=$(command -p sed -n '1p' "$testlab") || error 'cannot read testlab interpreter header'
+[ "$first_line" = '#!/usr/bin/env m' ] ||
+  fail "TESTLAB-01: expected '#!/usr/bin/env m', observed '$first_line'"
+
+command -p sh -n "$testlab" || fail 'TESTLAB-01: testlab is not valid POSIX sh syntax'
+
+[ -f "$manual" ] && [ ! -L "$manual" ] || fail 'mandatory testlab operational manual topic is missing'
+[ -x "$manual_command" ] || error 'manual command is unavailable'
+manual_text=$("$root/m" "$manual_command" --no-pager testlab) ||
+  fail 'manual lookup for testlab failed'
+[ -n "$manual_text" ] || fail 'manual lookup for testlab returned no content'
+
+for scenario in host scratch
+do
+  path=$root/testlab/scenarios/$scenario
+  [ -f "$path" ] && [ ! -L "$path" ] && [ -x "$path" ] ||
+    fail "shipped scenario is missing or invalid: $scenario"
+  command -p sh -n "$path" || fail "shipped scenario is not valid POSIX sh syntax: $scenario"
+done
+
+tmp=${TMPDIR:-/tmp}/rumiai-testlab-contract-$$
+command -p mkdir -m 700 -- "$tmp" || error 'cannot create temporary project'
+trap 'command -p rm -rf -- "$tmp"' 0 HUP INT TERM
+
+command -p mkdir -p -- "$tmp/testlab/scenarios" || error 'cannot create scenario directory'
+command -p cp -- "$root/testlab/scenarios/host" "$tmp/testlab/scenarios/host" ||
+  error 'cannot copy scenario'
+command -p chmod 700 -- "$tmp/testlab/scenarios/host" || error 'cannot prepare scenario'
+
+(
+  CDPATH= cd -P -- "$tmp" || exit 3
+  "$root/m" "$testlab" scenarios
+) > "$tmp/scenarios" 2> "$tmp/scenarios.err"
+status=$?
+[ "$status" -eq 0 ] || {
+  command -p cat -- "$tmp/scenarios.err" >&2
+  fail "scenario discovery returned status $status"
+}
+[ "$(command -p cat -- "$tmp/scenarios")" = host ] ||
+  fail 'scenario discovery did not expose the executable project scenario'
+
+exit 0
