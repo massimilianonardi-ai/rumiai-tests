@@ -28,13 +28,6 @@ run_testlab()
   )
 }
 
-podman_storage_reset()
-{
-  [ -n "${podman_wrapper-}" ] || return 0
-  [ -x "$podman_wrapper" ] || return 0
-  "$podman_wrapper" system reset --force >/dev/null 2>&1
-}
-
 cleanup()
 {
   trap - 0 HUP INT TERM
@@ -51,8 +44,6 @@ cleanup()
       podman rm -f "$container" >/dev/null 2>&1 || :
     fi
   fi
-
-  podman_storage_reset || :
 
   if [ -n "${instance_dir-}" ] && [ -d "$instance_dir" ] && [ ! -L "$instance_dir" ]
   then
@@ -102,38 +93,39 @@ case "$podman_real" in
   *) error 'podman did not resolve to an absolute command path' ;;
 esac
 
+[ -n "${RUMIAI_TESTLAB_PODMAN_HOME-}" ] ||
+  skip 'rsudo scenario validation requires an explicit host Podman HOME'
+case "$RUMIAI_TESTLAB_PODMAN_HOME" in
+  /*) : ;;
+  *) error 'RUMIAI_TESTLAB_PODMAN_HOME must be an absolute path' ;;
+esac
+[ -d "$RUMIAI_TESTLAB_PODMAN_HOME" ] ||
+  error 'declared host Podman HOME is unavailable'
+
 test_work=${TMPDIR:-/tmp}/rumiai-testlab-rsudo-$$
-command -p mkdir -m 700 "$test_work" "$test_work/bin" "$test_work/podman-root" "$test_work/podman-runroot" ||
-  error 'cannot create isolated rsudo scenario test state'
+command -p mkdir -m 700 "$test_work" "$test_work/bin" ||
+  error 'cannot create rsudo scenario test state'
 
 podman_wrapper=$test_work/bin/podman
 cat > "$podman_wrapper" <<'EOF_PODMAN'
 #!/bin/sh
 
 [ -n "${RUMIAI_TESTLAB_PODMAN_REAL-}" ] || exit 127
-[ -n "${RUMIAI_TESTLAB_PODMAN_ROOT-}" ] || exit 127
-[ -n "${RUMIAI_TESTLAB_PODMAN_RUNROOT-}" ] || exit 127
+[ -n "${RUMIAI_TESTLAB_PODMAN_HOME-}" ] || exit 127
 
-exec "$RUMIAI_TESTLAB_PODMAN_REAL" \
-  --root "$RUMIAI_TESTLAB_PODMAN_ROOT" \
-  --runroot "$RUMIAI_TESTLAB_PODMAN_RUNROOT" \
-  "$@"
+HOME=$RUMIAI_TESTLAB_PODMAN_HOME
+export HOME
+
+exec "$RUMIAI_TESTLAB_PODMAN_REAL" "$@"
 EOF_PODMAN
-command -p chmod 700 "$podman_wrapper" || error 'cannot prepare isolated podman wrapper'
+command -p chmod 700 "$podman_wrapper" || error 'cannot prepare host Podman wrapper'
 
 RUMIAI_TESTLAB_PODMAN_REAL=$podman_real
-RUMIAI_TESTLAB_PODMAN_ROOT=$test_work/podman-root
-RUMIAI_TESTLAB_PODMAN_RUNROOT=$test_work/podman-runroot
 PATH="$test_work/bin:$PATH"
-export RUMIAI_TESTLAB_PODMAN_REAL RUMIAI_TESTLAB_PODMAN_ROOT RUMIAI_TESTLAB_PODMAN_RUNROOT PATH
+export RUMIAI_TESTLAB_PODMAN_REAL RUMIAI_TESTLAB_PODMAN_HOME PATH
 
 podman info >/dev/null 2>&1 ||
-  skip 'rsudo scenario is not applicable without operational host Podman'
-
-git_before=$test_work/git-before
-git_after=$test_work/git-after
-git -C "$root" status --porcelain --untracked-files=normal > "$git_before" ||
-  error 'cannot capture target checkout baseline'
+  skip 'declared host Podman environment is not operational'
 
 data_root=$("$root/m" "$state_path" user sys testlab data) ||
   error 'cannot resolve testlab data root'
@@ -224,8 +216,6 @@ fi
 instance_saved=$instance_dir
 instance=
 container=
-
-podman_storage_reset || error 'cannot reset isolated Podman storage'
 
 command -p rm -rf "$instance_saved" || error 'cannot remove closed test instance record'
 instance_dir=
