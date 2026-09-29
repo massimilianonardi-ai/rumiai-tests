@@ -69,6 +69,7 @@ ssh_helper_manual=$root/res/sys/manual/ssh-askpass
 [ ! -x "$ssh_library" ] || fail 'ssh.lib.sh is executable'
 command -p sh -n "$ssh_library" || fail 'ssh.lib.sh is not valid POSIX-sh syntax'
 [ -x "$ssh_helper" ] || fail 'ssh-askpass is not executable'
+command -p sh -n "$ssh_helper" || fail 'ssh-askpass is not valid POSIX-sh syntax'
 [ -f "$ssh_manual" ] || fail 'ssh.lib.sh manual is missing'
 [ -f "$ssh_helper_manual" ] || fail 'ssh-askpass manual is missing'
 grep -F 'ssh_auth' "$ssh_manual" >/dev/null 2>&1 || fail 'ssh manual omits ssh_auth'
