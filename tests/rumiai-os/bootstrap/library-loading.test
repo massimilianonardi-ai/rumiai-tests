@@ -1,5 +1,5 @@
 #!/bin/sh
-# Protects: BOOT-10, BOOT-11, BOOT-12, BOOT-13, BOOT-14, LIB-11, LIB-12, LIB-13, LIB-15, LIB-16, PKG-30.
+# Protects: BOOT-10, BOOT-11, BOOT-12, BOOT-13, BOOT-14, LIB-11, LIB-12, LIB-13, LIB-15, LIB-16, LIB-17, LIB-18, PKG-30.
 
 TEST_ID=rumiai-os/bootstrap/library-loading.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -183,6 +183,35 @@ cat > "$standalone_command" <<'EOF_STANDALONE_COMMAND'
 printf '%s\n' 'standalone-command-ok'
 EOF_STANDALONE_COMMAND
 
+named_command=$tmp/inject-named-command
+cat > "$named_command" <<'EOF_NAMED_COMMAND'
+printf 'named-argc=%s\n' "$#"
+printf 'named-arg1=%s\n' "$1"
+RUMIAI_NAMED_LEAK=1
+cd "$RUMIAI_ALT_DIR" || exit 30
+umask 027
+exit 7
+EOF_NAMED_COMMAND
+
+isolated_command=$tmp/inject-isolated-command
+cat > "$isolated_command" <<'EOF_ISOLATED_COMMAND'
+command -v array >/dev/null 2>&1 || exit 31
+command -v named_probe >/dev/null 2>&1 || exit 32
+printf 'one-shot-argc=%s\n' "$#"
+printf 'one-shot-arg1=%s\n' "$1"
+named_probe "from one-shot"
+printf 'named-status=%s\n' "$?"
+oneshot_private()
+{
+  :
+}
+RUMIAI_ONESHOT_LEAK=1
+cd "$RUMIAI_ALT_DIR" || exit 33
+umask 022
+trap 'printf "%s\n" "one-shot-trap"' 0
+exit 6
+EOF_ISOLATED_COMMAND
+
 generator_name=rumiai-loadlib-inject-stream-probe
 generator=$tmp/$generator_name
 cat > "$generator" <<'EOF_GENERATOR'
@@ -193,6 +222,13 @@ loadsyslib "loadlib-inject-stream" || exit "$?"
 case "$1" in
   complete)
     loadlib_inject_stream base array -- "$RUMIAI_INJECT_COMMAND" "alpha beta" "" gamma
+    ;;
+  isolated)
+    loadlib_inject_stream \
+      base \
+      --command named_probe "$RUMIAI_NAMED_COMMAND" \
+      array \
+      -- "$RUMIAI_ISOLATED_COMMAND" "alpha beta"
     ;;
   missing-dependency)
     loadlib_inject_stream base -- "$RUMIAI_INJECT_COMMAND" "alpha beta" "" gamma
@@ -209,6 +245,26 @@ case "$1" in
   separator-without-command)
     loadlib_inject_stream base --
     ;;
+  named-missing-operands)
+    loadlib_inject_stream base --command named_probe
+    ;;
+  named-invalid-name)
+    loadlib_inject_stream base --command bad-name "$RUMIAI_NAMED_COMMAND"
+    ;;
+  named-duplicate)
+    loadlib_inject_stream \
+      --command named_probe "$RUMIAI_NAMED_COMMAND" \
+      --command named_probe "$RUMIAI_NAMED_COMMAND"
+    ;;
+  named-reserved-loadlib)
+    loadlib_inject_stream --command loadlib "$RUMIAI_NAMED_COMMAND"
+    ;;
+  named-reserved-internal)
+    loadlib_inject_stream --command _loadlib_inject_stream_probe "$RUMIAI_NAMED_COMMAND"
+    ;;
+  named-missing-source)
+    loadlib_inject_stream --command named_probe "$RUMIAI_MISSING_COMMAND"
+    ;;
   missing-library)
     loadlib_inject_stream base does-not-exist
     ;;
@@ -220,9 +276,19 @@ EOF_GENERATOR
 chmod 700 "$generator" || error 'cannot make injection generator probe executable'
 
 RUMIAI_INJECT_COMMAND=$inject_command
-export RUMIAI_INJECT_COMMAND
 RUMIAI_STANDALONE_COMMAND=$standalone_command
-export RUMIAI_STANDALONE_COMMAND
+RUMIAI_NAMED_COMMAND=$named_command
+RUMIAI_ISOLATED_COMMAND=$isolated_command
+RUMIAI_MISSING_COMMAND=$tmp/does-not-exist-command
+RUMIAI_ALT_DIR=$tmp/isolated-cwd
+command -p -- mkdir "$RUMIAI_ALT_DIR" || error 'cannot create isolated-command alternate directory'
+export \
+  RUMIAI_INJECT_COMMAND \
+  RUMIAI_STANDALONE_COMMAND \
+  RUMIAI_NAMED_COMMAND \
+  RUMIAI_ISOLATED_COMMAND \
+  RUMIAI_MISSING_COMMAND \
+  RUMIAI_ALT_DIR
 
 PATH="$tmp:$PATH" "$root/m" "$generator_name" complete > "$tmp/inject.stream" 2> "$tmp/inject-generate.err"
 inject_generate_status=$?
@@ -280,7 +346,7 @@ inject_with_stdin_status=$?
 cat > "$tmp/inject-with-stdin.expected" <<'EOF_INJECT_WITH_STDIN_EXPECTED'
 argc=3
 argv='alpha beta' '' 'gamma'
-stdin-argc=3
+stdin-argc=0
 stdin-source-ok
 EOF_INJECT_WITH_STDIN_EXPECTED
 
@@ -289,7 +355,70 @@ cmp -s "$tmp/inject-with-stdin.expected" "$tmp/inject-with-stdin.out" || {
   cat "$tmp/inject-with-stdin.expected" >&2
   printf '%s\n' 'observed command+stdin injection output:' >&2
   cat "$tmp/inject-with-stdin.out" >&2
-  fail 'stdin source was not appended after command source in the same shell state'
+  fail 'one-shot command positional parameters leaked into continuation source'
+}
+
+cat > "$tmp/isolated-stdin-source" <<'EOF_ISOLATED_STDIN'
+printf 'one-shot-status=%s\n' "$?"
+[ "$#" -eq 0 ] || exit 40
+[ "${RUMIAI_ONESHOT_LEAK+x}" != x ] || exit 41
+[ "${RUMIAI_NAMED_LEAK+x}" != x ] || exit 42
+command -v oneshot_private >/dev/null 2>&1 && exit 43
+[ "$(command -p -- pwd -P)" = "$RUMIAI_EXPECT_PWD" ] || exit 44
+[ "$(umask)" = "$RUMIAI_EXPECT_UMASK" ] || exit 45
+printf '%s\n' 'state-clean'
+named_probe "from stdin"
+printf 'stdin-named-status=%s\n' "$?"
+printf '%s\n' 'isolated-stdin-ok'
+EOF_ISOLATED_STDIN
+
+RUMIAI_EXPECT_PWD="$(command -p -- pwd -P)" || error 'cannot capture expected working directory'
+RUMIAI_EXPECT_UMASK="$(umask)"
+export RUMIAI_EXPECT_PWD RUMIAI_EXPECT_UMASK
+
+cat "$tmp/isolated-stdin-source" |
+  PATH="$tmp:$PATH" "$root/m" "$generator_name" isolated > "$tmp/isolated.stream" 2> "$tmp/isolated-generate.err"
+isolated_generate_status=$?
+[ "$isolated_generate_status" -eq 0 ] || {
+  cat "$tmp/isolated-generate.err" >&2
+  fail "isolated command stream generation failed with status $isolated_generate_status"
+}
+
+sh -n "$tmp/isolated.stream" ||
+  fail 'isolated command generated stream is not valid POSIX-sh syntax'
+
+m_LIB_DIR="$tmp/nonexistent-remote-lib-root" \
+  RUMIAI_ALT_DIR="$RUMIAI_ALT_DIR" \
+  RUMIAI_EXPECT_PWD="$RUMIAI_EXPECT_PWD" \
+  RUMIAI_EXPECT_UMASK="$RUMIAI_EXPECT_UMASK" \
+  sh "$tmp/isolated.stream" > "$tmp/isolated.out" 2> "$tmp/isolated.err"
+isolated_status=$?
+[ "$isolated_status" -eq 0 ] || {
+  cat "$tmp/isolated.err" >&2
+  fail "isolated command generated stream failed with status $isolated_status"
+}
+
+cat > "$tmp/isolated.expected" <<'EOF_ISOLATED_EXPECTED'
+one-shot-argc=1
+one-shot-arg1=alpha beta
+named-argc=1
+named-arg1=from one-shot
+named-status=7
+one-shot-trap
+one-shot-status=6
+state-clean
+named-argc=1
+named-arg1=from stdin
+stdin-named-status=7
+isolated-stdin-ok
+EOF_ISOLATED_EXPECTED
+
+cmp -s "$tmp/isolated.expected" "$tmp/isolated.out" || {
+  printf '%s\n' 'expected isolated-command output:' >&2
+  cat "$tmp/isolated.expected" >&2
+  printf '%s\n' 'observed isolated-command output:' >&2
+  cat "$tmp/isolated.out" >&2
+  fail 'named/one-shot command subshell isolation does not match the contract'
 }
 
 PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-dependency > "$tmp/inject-missing.stream" 2> "$tmp/inject-missing-generate.err"
@@ -366,10 +495,24 @@ command_only_status=$?
 grep -Fx 'standalone-command-ok' "$tmp/inject-command-only.out" >/dev/null 2>&1 ||
   fail 'command-only stream did not execute the command source with preserved argv'
 
-PATH="$tmp:$PATH" "$root/m" "$generator_name" separator-without-command > "$tmp/inject-separator.out" 2> "$tmp/inject-separator.err"
-separator_status=$?
-[ "$separator_status" -eq 1 ] ||
-  fail "separator without command source returned $separator_status instead of 1"
+for invalid_case in \
+  separator-without-command \
+  named-missing-operands \
+  named-invalid-name \
+  named-duplicate \
+  named-reserved-loadlib \
+  named-reserved-internal
+do
+  PATH="$tmp:$PATH" "$root/m" "$generator_name" "$invalid_case" > "$tmp/$invalid_case.out" 2> "$tmp/$invalid_case.err"
+  invalid_status=$?
+  [ "$invalid_status" -eq 1 ] ||
+    fail "$invalid_case returned $invalid_status instead of 1"
+done
+
+PATH="$tmp:$PATH" "$root/m" "$generator_name" named-missing-source > "$tmp/named-missing-source.out" 2> "$tmp/named-missing-source.err"
+named_missing_source_status=$?
+[ "$named_missing_source_status" -eq 2 ] ||
+  fail "named command with unavailable source returned $named_missing_source_status instead of 2"
 
 PATH="$tmp:$PATH" "$root/m" "$generator_name" missing-library > "$tmp/inject-missing-library.out" 2> "$tmp/inject-missing-library.err"
 missing_library_status=$?

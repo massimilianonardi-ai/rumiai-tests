@@ -1,5 +1,5 @@
 #!/bin/sh
-# Protects: LIB-16, RSUDO-20, RSUDO-21, RSUDO-23.
+# Protects: LIB-16, LIB-17, LIB-18, RSUDO-20, RSUDO-21, RSUDO-23.
 
 TEST_ID=rumiai-os/rsudo/exec-inject.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -54,11 +54,21 @@ tmp=${TMPDIR:-/tmp}/rumiai-rsudo-exec-inject-$$
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 
+named_source=$tmp/named-source
+cat > "$named_source" <<'EOF_NAMED'
+printf 'named-arg=%s\n' "$1"
+exit 7
+EOF_NAMED
+
 command_source=$tmp/command-source
 cat > "$command_source" <<'EOF_COMMAND'
 command -v array >/dev/null 2>&1 || exit 40
+command -v injected_helper >/dev/null 2>&1 || exit 41
 printf 'command-argc=%s\n' "$#"
 printf 'command-arg1=%s\n' "$1"
+injected_helper "from-command"
+printf 'command-helper-status=%s\n' "$?"
+exit 6
 EOF_COMMAND
 
 probe_name=rumiai-rsudo-exec-inject-probe
@@ -84,13 +94,20 @@ RSUDO_EXEC_INJECT_STATUS=0
 export RSUDO_EXEC_INJECT_CAPTURE RSUDO_EXEC_INJECT_STATUS
 
 cat > "$tmp/stdin-source" <<'EOF_STDIN'
-command -v array >/dev/null 2>&1 || exit 41
+printf 'one-shot-status=%s\n' "$?"
+command -v array >/dev/null 2>&1 || exit 42
 printf 'stdin-argc=%s\n' "$#"
+injected_helper "from-stdin"
+printf 'stdin-helper-status=%s\n' "$?"
 printf 'stdin-source-ok\n'
 EOF_STDIN
 
 cat "$tmp/stdin-source" |
-  PATH="$tmp:$PATH" "$root/m" "$probe_name" base array -- "$command_source" "alpha beta"
+  PATH="$tmp:$PATH" "$root/m" "$probe_name" \
+    base \
+    --command injected_helper "$named_source" \
+    array \
+    -- "$command_source" "alpha beta"
 status=$?
 [ "$status" -eq 0 ] ||
   fail "exec inject composition returned $status"
@@ -108,7 +125,12 @@ status=$?
 cat > "$tmp/generated.expected" <<'EOF_EXPECTED'
 command-argc=1
 command-arg1=alpha beta
-stdin-argc=1
+named-arg=from-command
+command-helper-status=7
+one-shot-status=6
+stdin-argc=0
+named-arg=from-stdin
+stdin-helper-status=7
 stdin-source-ok
 EOF_EXPECTED
 
@@ -117,7 +139,7 @@ cmp -s "$tmp/generated.expected" "$tmp/generated.out" || {
   cat "$tmp/generated.expected" >&2
   printf '%s\n' 'observed exec inject output:' >&2
   cat "$tmp/generated.out" >&2
-  fail 'exec inject did not preserve command/source ordering'
+  fail 'exec inject did not preserve named/one-shot/continuation composition'
 }
 
 : |
