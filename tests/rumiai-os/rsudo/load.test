@@ -103,20 +103,37 @@ export GNUPGHOME
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
 
-if [ "${1-}" = -t ]
-then
-    shift
-fi
-
 login_user=
-if [ "${1-}" = -l ]
-then
-    [ "$#" -ge 3 ] || exit 90
-    login_user=$2
-    shift 2
-fi
 
-[ "$#" -ge 2 ] || exit 91
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -t)
+            shift
+        ;;
+        -o)
+            [ "$#" -ge 2 ] || exit 90
+            shift 2
+        ;;
+        -l)
+            [ "$#" -ge 2 ] || exit 91
+            login_user=$2
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 92
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+[ "$#" -ge 2 ] || exit 93
 host=$1
 shift
 
