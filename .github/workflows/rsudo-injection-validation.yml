@@ -45,18 +45,27 @@ jobs:
           test "$(git -C rumiai-tests rev-parse HEAD)" = "25fbd5320ecbe5b724e656f6426605bb36e4e33e"
           test "$(git -C rumiai-os rev-parse HEAD)" = "94cb0620f62a481c8300432bb642367e81c11432"
 
-      - name: Run loadlib injection permanent test
+      - name: Run permanent tests with diagnostics
         shell: bash
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           cd rumiai-tests
-          ./rumiai-test rumiai-os/bootstrap/library-loading.test
-
-      - name: Run rsudo exec-inject permanent test
-        shell: bash
-        env:
-          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
-        run: |
-          cd rumiai-tests
-          ./rumiai-test rumiai-os/rsudo/exec-inject.test
+          overall=0
+          for test_id in \
+            rumiai-os/bootstrap/library-loading.test \
+            rumiai-os/rsudo/exec-inject.test
+          do
+            echo "=== RUN $test_id ==="
+            ./rumiai-test "$test_id"
+            status=$?
+            echo "=== STATUS $test_id: $status ==="
+            find .runs -type f -path '*/logs/*.log' -print | LC_ALL=C sort | while IFS= read -r log
+            do
+              echo "--- $log ---"
+              cat "$log"
+            done
+            rm -rf .runs
+            if [ "$status" -ne 0 ]; then overall=1; fi
+          done
+          exit "$overall"
