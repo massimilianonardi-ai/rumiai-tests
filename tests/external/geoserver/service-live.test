@@ -364,6 +364,47 @@ do
   fi
 done
 
+geoserver_version=3.0.1
+geoserver_requirements=$(run_pkg requirement list "geoserver@$geoserver_version" 2> "$tmp/geoserver-requirements.err") || {
+  command -p -- cat "$tmp/geoserver-requirements.err" >&2
+  fail 'cannot query GeoServer requirements'
+}
+[ "$geoserver_requirements" = 'java >=17 <22' ] ||
+  fail "unexpected GeoServer requirement declaration: $geoserver_requirements"
+
+printf '%s\n' "$TEST_ID: installing GeoServer $geoserver_version without a Java provider" >&2
+run_pkg install "geoserver@$geoserver_version" > "$tmp/geoserver-install.out" 2> "$tmp/geoserver-install.err" || {
+  command -p -- cat "$tmp/geoserver-install.out" >&2
+  command -p -- cat "$tmp/geoserver-install.err" >&2
+  fail 'pkg install GeoServer was incorrectly gated by its unavailable Java dependency'
+}
+geoserver_installed=1
+grep -F 'dependency-unsatisfied' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
+  fail 'GeoServer install did not report its unavailable dependency'
+grep -F 'facility="java"' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
+  grep -F 'facility=java' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
+  fail 'GeoServer dependency warning did not identify java'
+grep -F 'constraints=">=17 <22"' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
+  grep -F 'constraints=>=17 <22' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
+  fail 'GeoServer dependency warning did not identify the compatibility range'
+grep -F 'provider-unavailable' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
+  fail 'GeoServer dependency warning did not identify provider unavailability'
+
+geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") || {
+  command -p -- cat "$tmp/geoserver-default.err" >&2
+  fail 'GeoServer has no queryable package default'
+}
+[ -n "$geoserver_identity" ] || fail 'GeoServer concrete identity is empty'
+[ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility" 2>/dev/null)" = 'geoserver 1' ] ||
+  fail 'installed GeoServer does not declare geoserver 1'
+[ "$(command -p -- cat "$root/pkg/$geoserver_identity/dependency" 2>/dev/null)" = 'java >=17 <22' ] ||
+  fail 'installed GeoServer dependency is not java >=17 <22'
+[ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility-service/geoserver/start" 2>/dev/null)" = 'geoserver-start' ] ||
+  fail 'GeoServer service realization was not materialized'
+[ ! -e "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] &&
+[ ! -L "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] ||
+  fail 'GeoServer internal service command was incorrectly published as a facility cmd part'
+
 java_version=21.0.12.1+1
 printf '%s\n' "$TEST_ID: installing Temurin $java_version" >&2
 run_pkg install "temurin@$java_version" > "$tmp/temurin-install.out" 2> "$tmp/temurin-install.err" || {
@@ -384,29 +425,6 @@ run_pkg provider default java "$temurin_identity" > "$tmp/java-default-set.out" 
   fail 'cannot configure exact Temurin Java 21 provider'
 }
 java_default_set=1
-
-geoserver_version=3.0.1
-printf '%s\n' "$TEST_ID: installing GeoServer $geoserver_version" >&2
-run_pkg install "geoserver@$geoserver_version" > "$tmp/geoserver-install.out" 2> "$tmp/geoserver-install.err" || {
-  command -p -- cat "$tmp/geoserver-install.out" >&2
-  command -p -- cat "$tmp/geoserver-install.err" >&2
-  fail 'pkg install GeoServer failed'
-}
-geoserver_installed=1
-geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") || {
-  command -p -- cat "$tmp/geoserver-default.err" >&2
-  fail 'GeoServer has no queryable package default'
-}
-[ -n "$geoserver_identity" ] || fail 'GeoServer concrete identity is empty'
-[ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility" 2>/dev/null)" = 'geoserver 1' ] ||
-  fail 'installed GeoServer does not declare geoserver 1'
-[ "$(command -p -- cat "$root/pkg/$geoserver_identity/dependency" 2>/dev/null)" = 'java >=17 <22' ] ||
-  fail 'installed GeoServer dependency is not java >=17 <22'
-[ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility-service/geoserver/start" 2>/dev/null)" = 'geoserver-start' ] ||
-  fail 'GeoServer service realization was not materialized'
-[ ! -e "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] &&
-[ ! -L "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] ||
-  fail 'GeoServer internal service command was incorrectly published as a facility cmd part'
 
 run_pkg provider default geoserver "$geoserver_identity" > "$tmp/geoserver-provider-set.out" 2> "$tmp/geoserver-provider-set.err" || {
   command -p -- cat "$tmp/geoserver-provider-set.err" >&2
@@ -547,5 +565,7 @@ printf 'java-provider=%s\n' "$temurin_identity"
 printf 'portable-service=ok\n'
 printf 'host-user-service=ok\n'
 printf 'host-system-service=ok\n'
+printf 'install-with-unresolved-dependency=ok\n'
+printf 'requirement-list=ok\n'
 
 exit 0
