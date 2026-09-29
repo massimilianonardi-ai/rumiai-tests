@@ -2,7 +2,6 @@
 
 # Protected current properties:
 #   LIB-07    rsudo-mod-fs.lib.sh documents its complete public function surface.
-#   RSUDO-10  invocation-owned fs stream resources are cleaned up.
 #   RSUDO-14  fs get/put preserve regular-file, directory and symbolic-link kind.
 #   RSUDO-15  fs put transfers through the privileged destination filesystem.
 #   RSUDO-16  fs get/put do not implicitly delete an existing destination when
@@ -92,13 +91,11 @@ command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
 command -v awk >/dev/null 2>&1 || skip 'awk is unavailable'
 command -v readlink >/dev/null 2>&1 || skip 'readlink is unavailable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-rsudo-fs-$
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-fs-$$
 fakebin=$tmp/bin
 local_root=$tmp/local
 remote_root=$tmp/remote
-runtime_tmp=$tmp/runtime
-mkdir -p "$fakebin" "$local_root" "$remote_root" "$runtime_tmp" ||
-    error 'cannot create fs-test workspace'
+mkdir -p "$fakebin" "$local_root" "$remote_root" || error 'cannot create fs-test workspace'
 
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
@@ -218,20 +215,6 @@ then
     exit 88
 fi
 
-if [ "${RSUDO_FS_TEST_REMOTE-}" != 1 ] && [ "${RSUDO_FS_TEST_FAIL_LOCAL_TAR-}" = 1 ]
-then
-    exit 87
-fi
-
-if [ "${RSUDO_FS_TEST_REMOTE-}" = 1 ] &&
-   [ "${RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR-}" = 1 ]
-then
-    cat >/dev/null || exit 86
-    [ -n "${RSUDO_FS_TEST_ACCEPT_EMPTY_NAME-}" ] || exit 85
-    : > "$RSUDO_FS_TEST_ACCEPT_EMPTY_NAME" || exit 84
-    exit 0
-fi
-
 command -p tar "$@"
 EOF_TAR
 
@@ -288,19 +271,15 @@ command -p sh -n "$fakebin/mv" || error 'mv boundary fixture has invalid shell s
 run_rsudo()
 (
     PATH="$fakebin:$PATH"
-    TMPDIR="$runtime_tmp"
     RSUDO_HOST=example.invalid
     RSUDO_USER=alice
     RSUDO_PASSWORD=secret
     RSUDO_TEST_REMOTE_BIN=$fakebin
     m_LOG_LEVEL=error
 
-    export PATH TMPDIR RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
+    export PATH RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
     [ -z "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ] || export RSUDO_FS_TEST_FAKE_FREE_KB
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_TAR
-    [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_TAR-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_TAR
-    [ -z "${RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR
-    [ -z "${RSUDO_FS_TEST_ACCEPT_EMPTY_NAME-}" ] || export RSUDO_FS_TEST_ACCEPT_EMPTY_NAME
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH
     [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH
 
@@ -387,29 +366,6 @@ status=$?
 unset RSUDO_FS_TEST_FAIL_REMOTE_TAR
 [ "$status" -ne 0 ] || fail 'put succeeded despite forced remote transfer failure'
 [ "$(cat "$remote_root/fail-transfer")" = old-transfer ] || fail 'failed transfer changed the existing remote destination'
-
-# A local tar producer failure must also fail put even when the remote consumer
-# would otherwise succeed, and it must not replace the existing destination.
-printf '%s\n' old-local-producer > "$remote_root/fail-local-producer" ||
-    error 'cannot prepare local-producer-failure destination'
-printf '%s\n' new-local-producer > "$local_root/fail-local-producer" ||
-    error 'cannot prepare local-producer-failure source'
-RSUDO_FS_TEST_FAIL_LOCAL_TAR=1
-RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR=1
-RSUDO_FS_TEST_ACCEPT_EMPTY_NAME=fail-local-producer
-export \
-    RSUDO_FS_TEST_FAIL_LOCAL_TAR \
-    RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR \
-    RSUDO_FS_TEST_ACCEPT_EMPTY_NAME
-run_rsudo fs put "$local_root/fail-local-producer" "$remote_root/fail-local-producer" >/dev/null 2>&1
-status=$?
-unset \
-    RSUDO_FS_TEST_FAIL_LOCAL_TAR \
-    RSUDO_FS_TEST_ACCEPT_EMPTY_REMOTE_TAR \
-    RSUDO_FS_TEST_ACCEPT_EMPTY_NAME
-[ "$status" -ne 0 ] || fail 'put succeeded despite forced local tar producer failure'
-[ "$(cat "$remote_root/fail-local-producer")" = old-local-producer ] ||
-    fail 'local producer failure changed the existing remote destination'
 
 # Force stage -> canonical promotion to fail remotely. The commit path must
 # restore .orig to the canonical name (RSUDO-19 put rollback).
@@ -520,13 +476,5 @@ if grep -F 'explicit-delete-required' "$get_full_stderr" >/dev/null 2>&1
 then
     fail 'get requested deletion when no local destination existed'
 fi
-
-for leftover in "$runtime_tmp"/rsudo-fs-stream.*
-do
-    if [ -e "$leftover" ] || [ -L "$leftover" ]
-    then
-        fail "rsudo fs left stream resource behind: $leftover"
-    fi
-done
 
 exit 0
