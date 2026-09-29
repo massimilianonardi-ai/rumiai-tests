@@ -188,12 +188,17 @@ printf '%s\n' "$effective" | grep -E '^preferredauthentications password$' >/dev
     fail 'PreferredAuthentications=password was not effective'
 printf '%s\n' "$effective" | grep -E '^numberofpasswordprompts 1$' >/dev/null 2>&1 ||
     fail 'NumberOfPasswordPrompts=1 was not effective'
-printf '%s\n' "$effective" | grep -E '^controlpath none$' >/dev/null 2>&1 || {
-    printf '%s\n' 'effective ControlPath lines:' >&2
-    printf '%s\n' "$effective" | grep -E '^controlpath([[:space:]]|$)' >&2 ||
-        printf '%s\n' '<none>' >&2
-    ssh -V >&2 2>&1 || :
-    fail 'ControlPath=none was not effective'
-}
+effective_controlpath=$(printf '%s\n' "$effective" | grep -E '^controlpath([[:space:]]|$)' || :)
+case "$effective_controlpath" in
+    ''|'controlpath none')
+        :
+        ;;
+    *)
+        printf '%s\n' 'effective ControlPath lines:' >&2
+        printf '%s\n' "$effective_controlpath" >&2
+        ssh -V >&2 2>&1 || :
+        fail 'ControlPath=none was not effective'
+        ;;
+esac
 
 exit 0
