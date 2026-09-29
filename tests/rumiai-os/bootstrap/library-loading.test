@@ -251,6 +251,9 @@ case "$1" in
   named-invalid-name)
     loadlib_inject_stream base --command bad-name "$RUMIAI_NAMED_COMMAND"
     ;;
+  named-reserved-word)
+    loadlib_inject_stream base --command if "$RUMIAI_NAMED_COMMAND"
+    ;;
   named-duplicate)
     loadlib_inject_stream \
       --command named_probe "$RUMIAI_NAMED_COMMAND" \
@@ -499,6 +502,7 @@ for invalid_case in \
   separator-without-command \
   named-missing-operands \
   named-invalid-name \
+  named-reserved-word \
   named-duplicate \
   named-reserved-loadlib \
   named-reserved-internal
