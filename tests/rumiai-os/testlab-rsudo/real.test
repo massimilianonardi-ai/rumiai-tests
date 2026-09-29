@@ -102,6 +102,15 @@ esac
 [ -d "$RUMIAI_TESTLAB_PODMAN_HOME" ] ||
   error 'declared host Podman HOME is unavailable'
 
+[ -n "${RUMIAI_TESTLAB_PODMAN_RUNTIME-}" ] ||
+  skip 'rsudo scenario validation requires an explicit host Podman runtime directory'
+case "$RUMIAI_TESTLAB_PODMAN_RUNTIME" in
+  /*) : ;;
+  *) error 'RUMIAI_TESTLAB_PODMAN_RUNTIME must be an absolute path' ;;
+esac
+[ -d "$RUMIAI_TESTLAB_PODMAN_RUNTIME" ] ||
+  error 'declared host Podman runtime directory is unavailable'
+
 test_work=${TMPDIR:-/tmp}/rumiai-testlab-rsudo-$$
 command -p mkdir -m 700 "$test_work" "$test_work/bin" ||
   error 'cannot create rsudo scenario test state'
@@ -112,9 +121,15 @@ cat > "$podman_wrapper" <<'EOF_PODMAN'
 
 [ -n "${RUMIAI_TESTLAB_PODMAN_REAL-}" ] || exit 127
 [ -n "${RUMIAI_TESTLAB_PODMAN_HOME-}" ] || exit 127
+[ -n "${RUMIAI_TESTLAB_PODMAN_RUNTIME-}" ] || exit 127
 
 HOME=$RUMIAI_TESTLAB_PODMAN_HOME
-export HOME
+XDG_CONFIG_HOME=$HOME/.config
+XDG_CACHE_HOME=$HOME/.cache
+XDG_DATA_HOME=$HOME/.local/share
+XDG_STATE_HOME=$HOME/.local/state
+XDG_RUNTIME_DIR=$RUMIAI_TESTLAB_PODMAN_RUNTIME
+export HOME XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_RUNTIME_DIR
 
 exec "$RUMIAI_TESTLAB_PODMAN_REAL" "$@"
 EOF_PODMAN
@@ -122,10 +137,15 @@ command -p chmod 700 "$podman_wrapper" || error 'cannot prepare host Podman wrap
 
 RUMIAI_TESTLAB_PODMAN_REAL=$podman_real
 PATH="$test_work/bin:$PATH"
-export RUMIAI_TESTLAB_PODMAN_REAL RUMIAI_TESTLAB_PODMAN_HOME PATH
+export RUMIAI_TESTLAB_PODMAN_REAL RUMIAI_TESTLAB_PODMAN_HOME RUMIAI_TESTLAB_PODMAN_RUNTIME PATH
 
 podman info >/dev/null 2>&1 ||
   skip 'declared host Podman environment is not operational'
+
+git_before=$test_work/git-before
+git_after=$test_work/git-after
+git -C "$root" status --porcelain --untracked-files=normal > "$git_before" ||
+  error 'cannot capture target checkout baseline'
 
 data_root=$("$root/m" "$state_path" user sys testlab data) ||
   error 'cannot resolve testlab data root'
