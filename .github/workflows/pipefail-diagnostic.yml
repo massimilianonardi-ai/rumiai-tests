@@ -1,0 +1,54 @@
+name: pipefail-diagnostic
+
+on:
+  push:
+    branches:
+      - diagnostic-pipefail-20260929
+    paths:
+      - .github/workflows/pipefail-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-26.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Probe shell and pipefail
+        shell: bash
+        run: |
+          set +e
+          echo '=== HOST ==='
+          uname -a || true
+          if [ -r /etc/os-release ]; then cat /etc/os-release; fi
+          echo '=== /bin/sh ==='
+          ls -l /bin/sh || true
+          readlink /bin/sh || true
+          /bin/sh -c 'printf "shell-zero=%s\n" "$0"' || true
+          echo '=== DASH PACKAGE ==='
+          command -v dash || true
+          if command -v dpkg-query >/dev/null 2>&1; then dpkg-query -W -f='${Package}\t${Version}\n' dash 2>&1 || true; fi
+          dash -c 'set -o' 2>&1 || true
+          echo '=== PIPEFAIL: /bin/sh ==='
+          /bin/sh -c 'set -o pipefail; s=$?; printf "set-status=%s\n" "$s"; false | true; printf "pipeline-status=%s\n" "$?"' 2>&1
+          echo "sh-probe-exit=$?"
+          echo '=== PIPEFAIL: dash ==='
+          if command -v dash >/dev/null 2>&1; then
+            dash -c 'set -o pipefail; s=$?; printf "set-status=%s\n" "$s"; false | true; printf "pipeline-status=%s\n" "$?"' 2>&1
+            echo "dash-probe-exit=$?"
+          fi
+          echo '=== PIPEFAIL: bash POSIX mode ==='
+          bash --posix -c 'set -o pipefail; s=$?; printf "set-status=%s\n" "$s"; false | true; printf "pipeline-status=%s\n" "$?"' 2>&1
+          echo "bash-posix-probe-exit=$?"
+          echo '=== PIPEFAIL: system sh syntax ==='
+          /bin/sh -n -c 'set -o pipefail' 2>&1
+          echo "sh-syntax-exit=$?"
