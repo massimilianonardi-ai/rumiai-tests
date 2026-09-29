@@ -1,0 +1,226 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/rsudo-admin/interactive.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+
+trap cleanup 0 HUP INT QUIT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+command_path=$root/bin/sys/rsudo-admin
+[ -x "$command_path" ] || fail 'rsudo-admin command is unavailable'
+
+command -v python3 >/dev/null 2>&1 ||
+    skip 'python3 is unavailable for PTY validation'
+command -v tput >/dev/null 2>&1 ||
+    skip 'tput is unavailable'
+TERM=xterm-256color tput cols >/dev/null 2>&1 ||
+    skip 'xterm-256color terminfo entry is unavailable'
+down=$(TERM=xterm-256color tput kcud1 2>/dev/null) ||
+    skip 'Down capability is unavailable'
+[ -n "$down" ] || skip 'Down capability is empty'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-admin-interactive-$$
+umask 077
+mkdir -p "$tmp/bin" || error 'cannot create temporary directory'
+
+cat > "$tmp/bin/ssh" <<'EOF_SSH'
+#!/bin/sh
+exit 0
+EOF_SSH
+chmod +x "$tmp/bin/ssh" || error 'cannot create ssh boundary fixture'
+
+python3 - "$root/m" "$command_path" "$down" "$tmp/bin" <<'PY_TEST'
+import errno
+import os
+import pty
+import select
+import signal
+import sys
+import time
+
+m_command, admin_command, down_text, fakebin = sys.argv[1:5]
+down = os.fsencode(down_text)
+escape = b"\x1b"
+enter = b"\r"
+
+base_env = os.environ.copy()
+base_env["TERM"] = "xterm-256color"
+base_env["PATH"] = fakebin + os.pathsep + base_env.get("PATH", "")
+base_env["RSUDO_CREDENTIALS_GROUP_ALPHA_HOST"] = "alpha.example.invalid"
+base_env["RSUDO_CREDENTIALS_GROUP_ALPHA_USER"] = "alpha-user"
+base_env["RSUDO_CREDENTIALS_GROUP_ALPHA_PASS"] = "alpha-pass"
+base_env["RSUDO_CREDENTIALS_GROUP_EMPTY_HOST"] = ""
+base_env["RSUDO_CREDENTIALS_GROUP_EMPTY_USER"] = "empty-user"
+base_env["RSUDO_CREDENTIALS_GROUP_EMPTY_PASS"] = "empty-pass"
+
+
+def read_available(master, buffer, timeout=0.05):
+    ready, _, _ = select.select([master], [], [], timeout)
+    if not ready:
+        return False
+    try:
+        chunk = os.read(master, 4096)
+    except OSError as exc:
+        if exc.errno == errno.EIO:
+            return False
+        raise
+    if not chunk:
+        return False
+    buffer.extend(chunk)
+    return True
+
+
+def wait_for(master, buffer, needle, start=0, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        index = bytes(buffer).find(needle, start)
+        if index >= 0:
+            return index
+        read_available(master, buffer)
+    raise AssertionError(("timeout", needle, bytes(buffer)))
+
+
+def finish(pid, master, buffer, expected=0):
+    deadline = time.monotonic() + 5.0
+    status = None
+    while time.monotonic() < deadline:
+        read_available(master, buffer)
+        waited, wait_status = os.waitpid(pid, os.WNOHANG)
+        if waited == pid:
+            status = os.waitstatus_to_exitcode(wait_status)
+            break
+
+    if status is None:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+        raise AssertionError(("child did not exit", bytes(buffer)))
+
+    while read_available(master, buffer, 0):
+        pass
+    os.close(master)
+
+    if status != expected:
+        raise AssertionError(("unexpected status", status, expected, bytes(buffer)))
+
+
+def spawn():
+    pid, master = pty.fork()
+    if pid == 0:
+        os.execve(
+            m_command,
+            [m_command, admin_command],
+            base_env,
+        )
+    return pid, master, bytearray()
+
+
+def return_to_main(pid, master, buffer, submenu_marker):
+    marker_index = wait_for(master, buffer, submenu_marker)
+    before = len(buffer)
+    os.write(master, escape)
+    wait_for(master, buffer, b"rsudo admin", start=before)
+    return marker_index
+
+
+# Main menu exposes the four requested actions and Escape exits cleanly.
+pid, master, output = spawn()
+wait_for(master, output, b"rsudo admin")
+for label in (
+    b"Connect to host",
+    b"Browse host",
+    b"rsudo jobs",
+    b"Encrypted file load/edit/new",
+):
+    wait_for(master, output, label)
+os.write(master, escape)
+finish(pid, master, output)
+
+# Connect submenu discovers in-memory credential HOST variables and labels the group.
+pid, master, output = spawn()
+wait_for(master, output, b"rsudo admin")
+os.write(master, enter)
+wait_for(master, output, b"Connect to host")
+wait_for(master, output, b"alpha.example.invalid [ALPHA]")
+if b"[EMPTY]" in output:
+    raise AssertionError(("empty HOST group was listed", bytes(output)))
+before = len(output)
+os.write(master, escape)
+wait_for(master, output, b"rsudo admin", start=before)
+os.write(master, escape)
+finish(pid, master, output)
+
+# Browse host uses the same discovered host set.
+pid, master, output = spawn()
+wait_for(master, output, b"rsudo admin")
+os.write(master, down + enter)
+wait_for(master, output, b"Browse host")
+wait_for(master, output, b"alpha.example.invalid [ALPHA]")
+before = len(output)
+os.write(master, escape)
+wait_for(master, output, b"rsudo admin", start=before)
+os.write(master, escape)
+finish(pid, master, output)
+
+# Jobs opens its first filesystem selector and cancellation returns to the console.
+pid, master, output = spawn()
+wait_for(master, output, b"rsudo admin")
+os.write(master, down + down + enter)
+wait_for(master, output, b"rsudo jobs - select library")
+before = len(output)
+os.write(master, escape)
+wait_for(master, output, b"rsudo admin", start=before)
+os.write(master, escape)
+finish(pid, master, output)
+
+# Encrypted-file workflow opens its filesystem/action browser and cancellation returns.
+pid, master, output = spawn()
+wait_for(master, output, b"rsudo admin")
+os.write(master, down + down + down + enter)
+wait_for(master, output, b"Encrypted file load/edit/new")
+wait_for(master, output, b"l: load")
+wait_for(master, output, b"e: edit")
+wait_for(master, output, b"n: new")
+before = len(output)
+os.write(master, escape)
+wait_for(master, output, b"rsudo admin", start=before)
+os.write(master, escape)
+finish(pid, master, output)
+PY_TEST
+status=$?
+[ "$status" -eq 0 ] || fail 'interactive rsudo-admin navigation validation failed'
+
+exit 0
