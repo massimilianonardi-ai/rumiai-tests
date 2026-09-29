@@ -3,6 +3,7 @@
 # Protected current properties:
 #   TESTLAB-01  testlab belongs to m and is a bootstrap-integrated command.
 #   TESTLAB-02  project scenarios are executable child programs, never sourced.
+#   TESTLAB-17  scenario resources use res/sys/testlab; no project-root testlab namespace exists.
 # Plus mandatory operational-manual and interpreter coverage for the command.
 
 TEST_ID=rumiai-os/testlab/contract.test
@@ -56,9 +57,12 @@ manual_text=$("$root/m" "$manual_command" --no-pager testlab) ||
   fail 'manual lookup for testlab failed'
 [ -n "$manual_text" ] || fail 'manual lookup for testlab returned no content'
 
+[ ! -e "$root/testlab" ] && [ ! -L "$root/testlab" ] ||
+  fail 'TESTLAB-17: unexpected project-root testlab namespace exists'
+
 for scenario in host scratch rsudo
 do
-  path=$root/testlab/scenarios/$scenario
+  path=$root/res/sys/testlab/scenarios/$scenario
   [ -f "$path" ] && [ ! -L "$path" ] && [ -x "$path" ] ||
     fail "shipped scenario is missing or invalid: $scenario"
   command -p sh -n "$path" || fail "shipped scenario is not valid POSIX sh syntax: $scenario"
@@ -68,10 +72,10 @@ tmp=${TMPDIR:-/tmp}/rumiai-testlab-contract-$$
 command -p mkdir -m 700 "$tmp" || error 'cannot create temporary project'
 trap 'command -p rm -rf "$tmp"' 0 HUP INT TERM
 
-command -p mkdir -p "$tmp/testlab/scenarios" || error 'cannot create scenario directory'
-command -p cp "$root/testlab/scenarios/host" "$tmp/testlab/scenarios/host" ||
+command -p mkdir -p "$tmp/res/sys/testlab/scenarios" || error 'cannot create scenario resource directory'
+command -p cp "$root/res/sys/testlab/scenarios/host" "$tmp/res/sys/testlab/scenarios/host" ||
   error 'cannot copy scenario'
-command -p chmod 700 "$tmp/testlab/scenarios/host" || error 'cannot prepare scenario'
+command -p chmod 700 "$tmp/res/sys/testlab/scenarios/host" || error 'cannot prepare scenario'
 
 (
   CDPATH= cd -P -- "$tmp" || exit 3

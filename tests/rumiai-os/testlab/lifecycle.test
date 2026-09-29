@@ -111,13 +111,13 @@ if [ -e "$scope_root" ] || [ -L "$scope_root" ]; then scope_root_existed=1; else
 
 project=${TMPDIR:-/tmp}/rumiai-testlab-lifecycle-$$
 command -p rm -rf "$project"
-command -p mkdir -m 700 "$project" "$project/testlab" "$project/testlab/scenarios" ||
+command -p mkdir -m 700 "$project" "$project/res" "$project/res/sys" "$project/res/sys/testlab" "$project/res/sys/testlab/scenarios" ||
   error 'cannot create temporary project'
 
 probe_name=probe$$
 reject_name=reject$$
 fail_name=failprepare$$
-scenario_source=$project/testlab/scenarios/$probe_name
+scenario_source=$project/res/sys/testlab/scenarios/$probe_name
 
 cat > "$scenario_source" <<'EOF_SCENARIO'
 #!/bin/sh
@@ -159,9 +159,9 @@ esac
 EOF_SCENARIO
 
 command -p chmod 700 "$scenario_source" || error 'cannot make fixture scenario executable'
-command -p cp "$scenario_source" "$project/testlab/scenarios/$reject_name" || error 'cannot copy reject scenario'
-command -p cp "$scenario_source" "$project/testlab/scenarios/$fail_name" || error 'cannot copy failure scenario'
-command -p chmod 700 "$project/testlab/scenarios/$reject_name" "$project/testlab/scenarios/$fail_name" ||
+command -p cp "$scenario_source" "$project/res/sys/testlab/scenarios/$reject_name" || error 'cannot copy reject scenario'
+command -p cp "$scenario_source" "$project/res/sys/testlab/scenarios/$fail_name" || error 'cannot copy failure scenario'
+command -p chmod 700 "$project/res/sys/testlab/scenarios/$reject_name" "$project/res/sys/testlab/scenarios/$fail_name" ||
   error 'cannot make fixture scenarios executable'
 
 run_testlab prepare "$reject_name" reject-token > "$project/reject.out" 2> "$project/reject.err"
