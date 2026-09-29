@@ -1,0 +1,215 @@
+#!/bin/sh
+
+# Protected current properties:
+#   SSH-05  caller SSH arguments remain ordered after facility options.
+#   SSH-06  authentication data is not consumed from SSH stdin.
+#   SSH-07  SSH stdin/stdout/stderr retain their OpenSSH meanings.
+#   SSH-08  authentication data is not placed in ordinary SSH command arguments.
+#   SSH-09  invocation-owned authentication transport state is cleared after use.
+#   SSH-11  classified confirmation prompts are refused.
+#   SSH-13  ssh_auth requires a non-empty newline-free candidate secret.
+#   SSH-14  ssh_auth leaves OpenSSH authentication-method selection/order unchanged.
+#   SSH-15  ssh_auth supplies the same secret for repeated secret-entry requests.
+#   SSH-16  ssh_auth does not classify authentication mechanisms by prompt text.
+#   SSH-17  ssh_auth requires pre-established host trust.
+#   SSH-18  ssh_auth preserves ordinary SSH streams while supplying secrets.
+#
+# The fake ssh executable below represents only the external OpenSSH process
+# boundary. The real ssh.lib.sh and ssh-askpass target components are exercised.
+
+TEST_ID=rumiai-os/ssh/auth.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" ||
+    error 'cannot re-enter test through target m bootstrap'
+
+ssh_library=$root/lib/sys/sh/ssh.lib.sh
+ssh_helper=$root/bin/sys/ssh-askpass
+ssh_manual=$root/res/sys/manual/ssh.lib.sh
+ssh_helper_manual=$root/res/sys/manual/ssh-askpass
+
+[ -f "$ssh_library" ] && [ ! -L "$ssh_library" ] || fail 'ssh.lib.sh is unavailable'
+[ ! -x "$ssh_library" ] || fail 'ssh.lib.sh is executable'
+command -p sh -n "$ssh_library" || fail 'ssh.lib.sh is not valid POSIX-sh syntax'
+[ -x "$ssh_helper" ] || fail 'ssh-askpass is not executable'
+[ -f "$ssh_manual" ] || fail 'ssh.lib.sh manual is missing'
+[ -f "$ssh_helper_manual" ] || fail 'ssh-askpass manual is missing'
+grep -F 'ssh_auth' "$ssh_manual" >/dev/null 2>&1 || fail 'ssh manual omits ssh_auth'
+
+loadsyslib "ssh" || error 'cannot load ssh.lib.sh'
+
+ssh_auth '' example.invalid >/dev/null 2>&1
+[ "$?" -eq 1 ] || fail 'empty secret was not rejected with status 1'
+
+ssh_auth 'bad
+secret' example.invalid >/dev/null 2>&1
+[ "$?" -eq 1 ] || fail 'newline secret was not rejected with status 1'
+
+ssh_auth secret >/dev/null 2>&1
+[ "$?" -eq 2 ] || fail 'missing ssh arguments were not rejected with status 2'
+
+tmp=${TMPDIR:-/tmp}/rumiai-ssh-auth-$$
+fakebin=$tmp/bin
+auth_tmp=$tmp/auth-tmp
+mkdir -p "$fakebin" "$auth_tmp" || error 'cannot create ssh auth test workspace'
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+: > "$SSH_TEST_ARGV_FILE" || exit 80
+for arg
+do
+    printf '%s\n' "$arg" >> "$SSH_TEST_ARGV_FILE" || exit 81
+done
+
+[ "${SSH_ASKPASS_REQUIRE-}" = force ] || exit 82
+[ -n "${SSH_ASKPASS-}" ] || exit 83
+[ -n "${m_SSH_ASKPASS_FIFO-}" ] || exit 84
+[ -z "${m_SSH_ASKPASS_ID-}" ] || exit 85
+
+SSH_ASKPASS_PROMPT=confirm "$SSH_ASKPASS" 'confirmation request' >/dev/null 2>&1
+[ "$?" -ne 0 ] || exit 86
+
+"$SSH_ASKPASS" 'opaque secret request' > "$SSH_TEST_SECRET_FILE_1" || exit 87
+"$SSH_ASKPASS" 'remote password:' > "$SSH_TEST_SECRET_FILE_2" || exit 88
+
+cat
+exit 41
+EOF_SSH
+
+chmod +x "$fakebin/ssh" || error 'cannot make ssh boundary fixture executable'
+command -p sh -n "$fakebin/ssh" || error 'ssh boundary fixture has invalid syntax'
+
+argv_file=$tmp/argv
+secret_file_1=$tmp/secret-1
+secret_file_2=$tmp/secret-2
+stdout_file=$tmp/stdout
+stderr_file=$tmp/stderr
+payload='payload over ssh auth stdin'
+
+(
+    PATH="$fakebin:$PATH"
+    TMPDIR=$auth_tmp
+    SSH_TEST_ARGV_FILE=$argv_file
+    SSH_TEST_SECRET_FILE_1=$secret_file_1
+    SSH_TEST_SECRET_FILE_2=$secret_file_2
+    export PATH TMPDIR SSH_TEST_ARGV_FILE SSH_TEST_SECRET_FILE_1 SSH_TEST_SECRET_FILE_2
+
+    printf '%s\n' "$payload" |
+        ssh_auth candidate-secret -p 2222 -l alice example.invalid command 'arg with spaces'
+) >"$stdout_file" 2>"$stderr_file"
+status=$?
+
+case $status in
+    8[0-9])
+        [ ! -s "$stderr_file" ] || cat "$stderr_file" >&2
+        error "external ssh fixture failed with status $status"
+        ;;
+esac
+[ "$status" -eq 41 ] || fail "ssh status $status was not propagated"
+
+[ "$(cat "$secret_file_1")" = candidate-secret ] ||
+    fail 'first ssh-askpass request did not receive the candidate secret'
+[ "$(cat "$secret_file_2")" = candidate-secret ] ||
+    fail 'repeated ssh-askpass request did not receive the same candidate secret'
+[ "$(cat "$stdout_file")" = "$payload" ] || fail 'ssh stdin/stdout transparency failed'
+[ ! -s "$stderr_file" ] || fail 'unexpected ssh stderr output'
+
+cat > "$tmp/expected-argv" <<'EOF_ARGS'
+-o
+BatchMode=no
+-o
+StrictHostKeyChecking=yes
+-p
+2222
+-l
+alice
+example.invalid
+command
+arg with spaces
+EOF_ARGS
+
+cmp "$tmp/expected-argv" "$argv_file" >/dev/null 2>&1 ||
+    fail 'ssh_auth facility settings or caller argument order differ from contract'
+
+if grep -F 'candidate-secret' "$argv_file" "$stdout_file" "$stderr_file" >/dev/null 2>&1
+then
+    fail 'candidate secret appeared in ordinary ssh argv or output'
+fi
+
+for leftover in "$auth_tmp"/ssh-auth.*
+do
+    if [ -e "$leftover" ] || [ -L "$leftover" ]
+    then
+        fail 'ssh_auth left invocation-owned transport state behind'
+    fi
+done
+
+command -v ssh >/dev/null 2>&1 || skip 'OpenSSH ssh client is unavailable'
+
+effective=$(TMPDIR="$auth_tmp" ssh_auth candidate-secret -G \
+    -o BatchMode=yes \
+    -o StrictHostKeyChecking=ask \
+    -o PreferredAuthentications=publickey,password \
+    -o PasswordAuthentication=no \
+    -o KbdInteractiveAuthentication=no \
+    example.invalid 2>/dev/null) ||
+    fail 'OpenSSH -G rejected ssh_auth effective configuration'
+
+printf '%s\n' "$effective" | grep -E '^batchmode no$' >/dev/null 2>&1 ||
+    fail 'BatchMode=no was not effective'
+printf '%s\n' "$effective" | grep -E '^stricthostkeychecking (true|yes)$' >/dev/null 2>&1 ||
+    fail 'StrictHostKeyChecking=yes was not effective'
+printf '%s\n' "$effective" | grep -E '^preferredauthentications publickey,password$' >/dev/null 2>&1 ||
+    fail 'ssh_auth replaced PreferredAuthentications'
+printf '%s\n' "$effective" | grep -E '^passwordauthentication no$' >/dev/null 2>&1 ||
+    fail 'ssh_auth replaced PasswordAuthentication'
+printf '%s\n' "$effective" | grep -E '^kbdinteractiveauthentication no$' >/dev/null 2>&1 ||
+    fail 'ssh_auth replaced KbdInteractiveAuthentication'
+
+for leftover in "$auth_tmp"/ssh-auth.*
+do
+    if [ -e "$leftover" ] || [ -L "$leftover" ]
+    then
+        fail 'ssh_auth -G left invocation-owned transport state behind'
+    fi
+done
+
+exit 0
