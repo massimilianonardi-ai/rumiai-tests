@@ -59,6 +59,7 @@ mkdir -p "$tmp/bin" || error 'cannot create temporary directory'
 
 cat > "$tmp/bin/ssh" <<'EOF_SSH'
 #!/bin/sh
+printf '%s\n' 'RSUDO_ADMIN_SSH_CHANNEL'
 exit 0
 EOF_SSH
 chmod +x "$tmp/bin/ssh" || error 'cannot create ssh boundary fixture'
@@ -183,14 +184,16 @@ wait_for(master, output, b"rsudo admin", start=before)
 os.write(master, escape)
 finish(pid, master, output)
 
-# Browse host uses the same discovered host set.
+# Browse host uses the same discovered host set and keeps the SSH PTY channel
+# visible while the selected remote browser action runs.
 pid, master, output = spawn()
 wait_for(master, output, b"rsudo admin")
 os.write(master, down + enter)
 wait_for(master, output, b"Browse host")
 wait_for(master, output, b"alpha.example.invalid [ALPHA]")
 before = len(output)
-os.write(master, escape)
+os.write(master, enter)
+wait_for(master, output, b"RSUDO_ADMIN_SSH_CHANNEL", start=before)
 wait_for(master, output, b"rsudo admin", start=before)
 os.write(master, escape)
 finish(pid, master, output)
