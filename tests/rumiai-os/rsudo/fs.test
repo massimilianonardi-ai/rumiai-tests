@@ -215,6 +215,11 @@ then
     exit 88
 fi
 
+if [ "${RSUDO_FS_TEST_REMOTE-}" != 1 ] && [ "${RSUDO_FS_TEST_FAIL_LOCAL_TAR-}" = 1 ]
+then
+    exit 87
+fi
+
 command -p tar "$@"
 EOF_TAR
 
@@ -280,6 +285,7 @@ run_rsudo()
     export PATH RSUDO_HOST RSUDO_USER RSUDO_PASSWORD RSUDO_TEST_REMOTE_BIN m_LOG_LEVEL
     [ -z "${RSUDO_FS_TEST_FAKE_FREE_KB-}" ] || export RSUDO_FS_TEST_FAKE_FREE_KB
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_TAR-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_TAR
+    [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_TAR-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_TAR
     [ -z "${RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_REMOTE_PROMOTION_PATH
     [ -z "${RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH-}" ] || export RSUDO_FS_TEST_FAIL_LOCAL_PROMOTION_PATH
 
@@ -366,6 +372,21 @@ status=$?
 unset RSUDO_FS_TEST_FAIL_REMOTE_TAR
 [ "$status" -ne 0 ] || fail 'put succeeded despite forced remote transfer failure'
 [ "$(cat "$remote_root/fail-transfer")" = old-transfer ] || fail 'failed transfer changed the existing remote destination'
+
+# A local tar producer failure must also fail put even when the remote consumer
+# would otherwise succeed, and it must not replace the existing destination.
+printf '%s\n' old-local-producer > "$remote_root/fail-local-producer" ||
+    error 'cannot prepare local-producer-failure destination'
+printf '%s\n' new-local-producer > "$local_root/fail-local-producer" ||
+    error 'cannot prepare local-producer-failure source'
+RSUDO_FS_TEST_FAIL_LOCAL_TAR=1
+export RSUDO_FS_TEST_FAIL_LOCAL_TAR
+run_rsudo fs put "$local_root/fail-local-producer" "$remote_root/fail-local-producer" >/dev/null 2>&1
+status=$?
+unset RSUDO_FS_TEST_FAIL_LOCAL_TAR
+[ "$status" -ne 0 ] || fail 'put succeeded despite forced local tar producer failure'
+[ "$(cat "$remote_root/fail-local-producer")" = old-local-producer ] ||
+    fail 'local producer failure changed the existing remote destination'
 
 # Force stage -> canonical promotion to fail remotely. The commit path must
 # restore .orig to the canonical name (RSUDO-19 put rollback).
