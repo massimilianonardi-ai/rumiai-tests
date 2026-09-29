@@ -59,6 +59,10 @@ cleanup()
   fi
 
   [ -z "${consumer_state-}" ] || rm -rf "$consumer_state" 2>/dev/null || :
+  if [ -n "${corrupt_provider-}" ] && [ -n "${root-}" ]
+  then
+    rm -rf "$root/pkg/$corrupt_provider@1" 2>/dev/null || :
+  fi
   [ -z "${legacy_index_facility_dir-}" ] || rm -rf "$legacy_index_facility_dir" 2>/dev/null || :
   if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
   then
@@ -107,7 +111,8 @@ provider_b=depprovb$$
 provider_bad=depbad$$
 platform_provider=depprovplatform$$
 consumer=depconsumer$$
-all_consumer=depallconsumer$$
+all_consumer=depallconsumer$
+corrupt_provider=depcorrupt$
 
 osarch_probe=$tmp/osarch
 cat > "$osarch_probe" <<'EOF_OSARCH'
@@ -223,6 +228,17 @@ resolved=$(resolve_consumer 2> "$tmp/resolve-implicit-a1.err") || {
 }
 [ "$resolved" = "$facility$tab$provider_a@1" ] ||
   fail "implicit provider resolution returned unexpectedly: $resolved"
+
+# A managed concrete with corrupt provider metadata is not silently hidden from
+# implicit discovery.
+mkdir "$root/pkg/$corrupt_provider@1" ||
+  error 'cannot create corrupt provider concrete fixture'
+printf '%s\n' 'not-a-valid-facility-line' > "$root/pkg/$corrupt_provider@1/facility" ||
+  error 'cannot create corrupt provider facility metadata'
+expect_status 1 corrupt-provider-discovery resolve_consumer
+grep -F 'provider-discovery-invalid' "$tmp/corrupt-provider-discovery.err" >/dev/null 2>&1 ||
+  fail 'corrupt provider metadata was not reported as discovery-invalid'
+rm -rf "$root/pkg/$corrupt_provider@1" || error 'cannot remove corrupt provider fixture'
 
 # Global/non-package queries still require a facility default because they do not
 # receive package-consumer runtime projection.
@@ -401,4 +417,5 @@ printf 'no-install-time-binding=ok\n'
 printf 'global-requirement-query=ok\n'
 printf 'implicit-provider-resolution=ok\n'
 printf 'legacy-provider-index-inert=ok\n'
+printf 'corrupt-provider-diagnostic=ok\n'
 exit 0

@@ -182,7 +182,7 @@ chmod 700 "$payload/bin/upstream" || error 'cannot prepare consumer upstream exe
 
 "$root/m" "$integration_driver" integrate "$consumer" 1 "$range" "$payload"   > "$tmp/consumer-integrate.out" 2> "$tmp/consumer-integrate.err" || {
     cat "$tmp/consumer-integrate.err" >&2
-    fail 'cannot integrate consumer through facility default'
+    fail 'cannot integrate consumer with facility dependency metadata'
   }
 run_pkg default "$consumer@1" >/dev/null 2> "$tmp/consumer-default.err" ||
   fail 'cannot select consumer package default'

@@ -23,10 +23,6 @@ cleanup()
 {
   trap - 0 HUP INT TERM
 
-  if [ "${java_default_set-0}" -eq 1 ] && [ -n "${root-}" ]
-  then
-    run_pkg provider default -u -- java >/dev/null 2>&1 || :
-  fi
   if [ "${keycloak_installed-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     run_pkg uninstall keycloak >/dev/null 2>&1 || :
@@ -142,11 +138,19 @@ temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
 }
 [ -n "$temurin_identity" ] || fail 'Temurin provider identity is empty'
 
-run_pkg provider default java temurin > "$tmp/java-default-set.out" 2> "$tmp/java-default-set.err" || {
-  cat "$tmp/java-default-set.err" >&2
-  fail 'cannot configure Temurin as java facility default'
+requirements=$(run_pkg requirement list keycloak 2> "$tmp/requirements.err") || {
+  cat "$tmp/requirements.err" >&2
+  fail 'cannot query Keycloak requirements'
 }
-java_default_set=1
+[ "$requirements" = 'java =25' ] ||
+  fail "unexpected Keycloak requirement declaration: $requirements"
+
+run_pkg requirement resolve java '=25' > "$tmp/global-requirement.out" 2> "$tmp/global-requirement.err"
+global_requirement_status=$?
+[ "$global_requirement_status" -eq 1 ] || {
+  cat "$tmp/global-requirement.err" >&2
+  fail "global java requirement unexpectedly resolved without a facility default (status $global_requirement_status)"
+}
 
 printf '%s\n' "$TEST_ID: installing current catalog-selected Keycloak" >&2
 run_pkg install keycloak > "$tmp/install.out" 2> "$tmp/install.err" || {
@@ -161,6 +165,11 @@ identity=$(run_pkg default keycloak 2> "$tmp/default.err") || {
   fail 'installed Keycloak has no queryable current default'
 }
 [ -n "$identity" ] || fail 'Keycloak current identity is empty'
+
+run_pkg provider default java > "$tmp/java-default-after-install.out" 2> "$tmp/java-default-after-install.err"
+java_default_after_status=$?
+[ "$java_default_after_status" -eq 1 ] ||
+  fail 'Keycloak install unexpectedly created a java facility default'
 
 [ ! -e "$root/pkg/$identity/binding" ] && [ ! -L "$root/pkg/$identity/binding" ] ||
   fail 'Keycloak install materialized an install-time provider binding'
@@ -194,5 +203,7 @@ printf 'java-provider=%s\n' "$temurin_identity"
 printf 'conf-state=ok\n'
 printf 'data-state=ok\n'
 printf 'public-command=ok\n'
+printf 'implicit-java-provider=ok\n'
+printf 'requirement-list=ok\n'
 
 exit 0
