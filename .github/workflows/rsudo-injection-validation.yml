@@ -39,6 +39,11 @@ jobs:
           path: rumiai-os
           persist-credentials: false
 
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
       - name: Verify frozen revisions
         shell: bash
         run: |
