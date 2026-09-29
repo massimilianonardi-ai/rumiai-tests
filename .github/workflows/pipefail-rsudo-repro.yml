@@ -1,0 +1,60 @@
+name: pipefail-rsudo-repro
+
+on:
+  push:
+    branches:
+      - diagnostic-pipefail-20260929
+    paths:
+      - .github/workflows/pipefail-rsudo-repro.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-26.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout pre-fix frozen test suite
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 25fbd5320ecbe5b724e656f6426605bb36e4e33e
+          fetch-depth: 1
+          path: rumiai-tests
+          persist-credentials: false
+
+      - name: Checkout pre-fix pipefail product
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 94cb0620f62a481c8300432bb642367e81c11432
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Normalize product origin
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Run exact exec-inject permanent test
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          set +e
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/rsudo/exec-inject.test
+          status=$?
+          find .runs -type f -path '*/logs/*.log' -print | LC_ALL=C sort | while IFS= read -r log; do echo "--- $log ---"; cat "$log"; done
+          echo "observed-status=$status"
+          exit 0
