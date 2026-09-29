@@ -73,10 +73,8 @@ esac
 
 rsudo_library=$root/lib/sys/sh/rsudo/rsudo.lib.sh
 rsudo_command=$root/bin/sys/rsudo
-rsudo_askpass_command=$root/bin/sys/rsudo-askpass
 rsudo_manual=$root/res/sys/manual/rsudo.lib.sh
 rsudo_command_manual=$root/res/sys/manual/rsudo
-rsudo_askpass_manual=$root/res/sys/manual/rsudo-askpass
 
 [ -f "$rsudo_library" ] && [ ! -L "$rsudo_library" ] ||
     fail 'rsudo.lib.sh is missing or is not a regular library file'
@@ -107,13 +105,8 @@ fi
 
 [ -f "$rsudo_command" ] && [ -x "$rsudo_command" ] ||
     fail 'rsudo command entrypoint is unavailable'
-[ -f "$rsudo_askpass_command" ] && [ -x "$rsudo_askpass_command" ] ||
-    fail 'rsudo-askpass command entrypoint is unavailable'
 [ -f "$rsudo_command_manual" ] && [ ! -L "$rsudo_command_manual" ] ||
     fail 'rsudo command operational manual is missing'
-[ -f "$rsudo_askpass_manual" ] && [ ! -L "$rsudo_askpass_manual" ] ||
-    fail 'rsudo-askpass command operational manual is missing'
-
 grep -F -- '--ssh-auth-check' "$rsudo_manual" >/dev/null 2>&1 ||
     fail 'rsudo library manual omits --ssh-auth-check'
 grep -F -- '--ssh-auth-check' "$rsudo_command_manual" >/dev/null 2>&1 ||
