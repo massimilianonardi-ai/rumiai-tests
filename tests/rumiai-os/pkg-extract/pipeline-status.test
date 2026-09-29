@@ -1,0 +1,94 @@
+#!/bin/sh
+
+# Protected current property:
+#   _pkg_extract_payload_paths_valid reports producer failure even when cpio
+#   emitted only syntactically valid paths before failing.
+
+TEST_ID=rumiai-os/pkg-extract/pipeline-status.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+( set -o pipefail ) 2>/dev/null ||
+  skip 'the current POSIX shell does not provide the required pipefail option'
+
+library=$root/lib/sys/sh/pkg/pkg-extract.lib.sh
+[ -f "$library" ] && [ ! -L "$library" ] ||
+  fail 'pkg-extract library is missing or invalid'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-extract-pipeline-status-$$
+fakebin=$tmp/bin
+umask 077
+mkdir -p "$fakebin" || error 'cannot create test workspace'
+: > "$tmp/payload" || error 'cannot create payload fixture'
+
+cat > "$fakebin/cpio" <<'EOF_CPIO'
+#!/bin/sh
+
+[ "$1" = -it ] || exit 90
+printf '%s\n' 'safe/path' || exit 91
+[ "${PKG_EXTRACT_TEST_CPIO_FAIL-}" = 1 ] && exit 7
+exit 0
+EOF_CPIO
+chmod 700 "$fakebin/cpio" || error 'cannot make cpio fixture executable'
+command -p sh -n "$fakebin/cpio" ||
+  error 'cpio boundary fixture has invalid shell syntax'
+
+driver=$tmp/pkg-extract-pipeline-driver
+cat > "$driver" <<'EOF_DRIVER'
+#!/usr/bin/env m
+
+. "$m_LIB_DIR/sys/sh/pkg/pkg-extract.lib.sh" || exit 3
+_pkg_extract_payload_paths_valid "$1"
+EOF_DRIVER
+chmod 700 "$driver" || error 'cannot prepare pkg-extract driver'
+
+PATH="$fakebin:$PATH"
+export PATH
+
+PKG_EXTRACT_TEST_CPIO_FAIL=0
+export PKG_EXTRACT_TEST_CPIO_FAIL
+"$root/m" "$driver" "$tmp/payload" ||
+  fail 'valid cpio listing was rejected'
+
+PKG_EXTRACT_TEST_CPIO_FAIL=1
+export PKG_EXTRACT_TEST_CPIO_FAIL
+if "$root/m" "$driver" "$tmp/payload" > "$tmp/fail.out" 2> "$tmp/fail.err"
+then
+  fail 'payload validation succeeded after cpio producer failure'
+fi
+
+exit 0
