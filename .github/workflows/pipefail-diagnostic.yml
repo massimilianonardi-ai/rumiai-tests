@@ -49,6 +49,9 @@ jobs:
           echo '=== PIPEFAIL: bash POSIX mode ==='
           bash --posix -c 'set -o pipefail; s=$?; printf "set-status=%s\n" "$s"; false | true; printf "pipeline-status=%s\n" "$?"' 2>&1
           echo "bash-posix-probe-exit=$?"
+          echo '=== SAFE CAPABILITY PROBE ==='
+          /bin/sh -c 'printf "parent-before\\n"; if (set -o pipefail) 2>/dev/null; then printf "capability=supported\\n"; else printf "capability=unsupported\\n"; fi; printf "parent-after\\n"' 2>&1
+          echo "capability-probe-exit=$?"
           echo '=== PIPEFAIL: system sh syntax ==='
           /bin/sh -n -c 'set -o pipefail' 2>&1
           echo "sh-syntax-exit=$?"
