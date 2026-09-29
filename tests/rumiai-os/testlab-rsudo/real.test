@@ -28,6 +28,13 @@ run_testlab()
   )
 }
 
+podman_storage_reset()
+{
+  [ -n "${podman_wrapper-}" ] || return 0
+  [ -x "$podman_wrapper" ] || return 0
+  "$podman_wrapper" system reset --force >/dev/null 2>&1
+}
+
 cleanup()
 {
   trap - 0 HUP INT TERM
@@ -45,10 +52,14 @@ cleanup()
     fi
   fi
 
+  podman_storage_reset || :
+
   if [ -n "${instance_dir-}" ] && [ -d "$instance_dir" ] && [ ! -L "$instance_dir" ]
   then
     command -p rm -rf "$instance_dir" 2>/dev/null || :
   fi
+
+  [ -z "${test_work-}" ] || command -p rm -rf "$test_work" 2>/dev/null || :
 }
 trap cleanup 0 HUP INT TERM
 
@@ -85,8 +96,44 @@ do
     skip "rsudo scenario host prerequisite is unavailable: $tool"
 done
 
+podman_real=$(command -v podman) || skip 'podman command is unavailable'
+case "$podman_real" in
+  /*) : ;;
+  *) error 'podman did not resolve to an absolute command path' ;;
+esac
+
+test_work=${TMPDIR:-/tmp}/rumiai-testlab-rsudo-$$
+command -p mkdir -m 700 "$test_work" "$test_work/bin" "$test_work/podman-root" "$test_work/podman-runroot" ||
+  error 'cannot create isolated rsudo scenario test state'
+
+podman_wrapper=$test_work/bin/podman
+cat > "$podman_wrapper" <<'EOF_PODMAN'
+#!/bin/sh
+
+[ -n "${RUMIAI_TESTLAB_PODMAN_REAL-}" ] || exit 127
+[ -n "${RUMIAI_TESTLAB_PODMAN_ROOT-}" ] || exit 127
+[ -n "${RUMIAI_TESTLAB_PODMAN_RUNROOT-}" ] || exit 127
+
+exec "$RUMIAI_TESTLAB_PODMAN_REAL" \
+  --root "$RUMIAI_TESTLAB_PODMAN_ROOT" \
+  --runroot "$RUMIAI_TESTLAB_PODMAN_RUNROOT" \
+  "$@"
+EOF_PODMAN
+command -p chmod 700 "$podman_wrapper" || error 'cannot prepare isolated podman wrapper'
+
+RUMIAI_TESTLAB_PODMAN_REAL=$podman_real
+RUMIAI_TESTLAB_PODMAN_ROOT=$test_work/podman-root
+RUMIAI_TESTLAB_PODMAN_RUNROOT=$test_work/podman-runroot
+PATH="$test_work/bin:$PATH"
+export RUMIAI_TESTLAB_PODMAN_REAL RUMIAI_TESTLAB_PODMAN_ROOT RUMIAI_TESTLAB_PODMAN_RUNROOT PATH
+
 podman info >/dev/null 2>&1 ||
   skip 'rsudo scenario is not applicable without operational host Podman'
+
+git_before=$test_work/git-before
+git_after=$test_work/git-after
+git -C "$root" status --porcelain --untracked-files=normal > "$git_before" ||
+  error 'cannot capture target checkout baseline'
 
 data_root=$("$root/m" "$state_path" user sys testlab data) ||
   error 'cannot resolve testlab data root'
@@ -162,13 +209,28 @@ fi
 run_testlab close "$instance" || fail 'repeated rsudo scenario close failed'
 
 [ -x "$root/m" ] || fail 'external target checkout was removed by scenario cleanup'
-[ -z "$(git -C "$root" status --porcelain --untracked-files=normal)" ] ||
-  fail 'external target checkout was modified by rsudo scenario'
 
-command -p rm -rf "$instance_dir" || error 'cannot remove closed test instance record'
+git -C "$root" status --porcelain --untracked-files=normal > "$git_after" ||
+  error 'cannot capture target checkout final state'
+if ! command -p cmp "$git_before" "$git_after" >/dev/null 2>&1
+then
+  printf '%s\n' '--- target status before scenario ---' >&2
+  command -p cat "$git_before" >&2
+  printf '%s\n' '--- target status after scenario ---' >&2
+  command -p cat "$git_after" >&2
+  fail 'external target checkout changed relative to its validation baseline'
+fi
+
+instance_saved=$instance_dir
 instance=
-instance_dir=
 container=
+
+podman_storage_reset || error 'cannot reset isolated Podman storage'
+
+command -p rm -rf "$instance_saved" || error 'cannot remove closed test instance record'
+instance_dir=
+command -p rm -rf "$test_work" || error 'cannot remove isolated rsudo scenario test state'
+test_work=
 
 trap - 0 HUP INT TERM
 exit 0
