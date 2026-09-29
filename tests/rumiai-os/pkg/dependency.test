@@ -59,6 +59,7 @@ cleanup()
   fi
 
   [ -z "${consumer_state-}" ] || rm -rf "$consumer_state" 2>/dev/null || :
+  [ -z "${legacy_index_facility_dir-}" ] || rm -rf "$legacy_index_facility_dir" 2>/dev/null || :
   if [ "${pkg_store_created-0}" -eq 1 ] && [ -n "${root-}" ]
   then
     rmdir "$root/pkg" 2>/dev/null || :
@@ -190,6 +191,13 @@ resolve_consumer()
   "$root/m" "$resolver" "$root/pkg/$consumer@1/dependency" "$consumer" ""
 }
 
+legacy_provider_data=$("$root/m" "$root/bin/sys/state-path" system sys pkg data) ||
+  error 'cannot resolve legacy provider-index state'
+legacy_index_facility_dir="$legacy_provider_data/providers/$facility"
+legacy_index_dir="$legacy_index_facility_dir/17"
+mkdir -p "$legacy_index_dir" || error 'cannot create stale legacy provider-index fixture'
+: > "$legacy_index_dir/$provider_a@1" || error 'cannot create stale legacy provider marker'
+
 integrate_provider "$provider_a" 1 17 > "$tmp/prova1.out" 2> "$tmp/prova1.err" || {
   cat "$tmp/prova1.err" >&2
   fail 'cannot integrate provider A v1'
@@ -197,23 +205,33 @@ integrate_provider "$provider_a" 1 17 > "$tmp/prova1.out" 2> "$tmp/prova1.err" |
 run_pkg default "$provider_a@1" >/dev/null 2> "$tmp/prova1-default.err" ||
   fail 'cannot select provider A v1 as package default'
 
-# A compatible installed provider alone is deliberately insufficient.
-expect_status 1 no-selector integrate_consumer
-[ ! -e "$root/pkg/$consumer@1" ] && [ ! -L "$root/pkg/$consumer@1" ] ||
-  fail 'consumer was integrated without a binding or facility default'
-
-# A generic facility default resolves through the provider package default.
-run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/facility-default.err" ||
-  fail 'cannot set generic facility default'
+# Integration validates dependency declarations but does not gate on mutable
+# provider-selection/runtime state. With one compatible installed provider, runtime
+# resolution uses it without requiring redundant configuration.
 integrate_consumer > "$tmp/consumer.out" 2> "$tmp/consumer.err" || {
   cat "$tmp/consumer.err" >&2
-  fail 'consumer did not integrate through facility default'
+  fail 'consumer integration was incorrectly gated by provider selection'
 }
 [ -f "$root/pkg/$consumer@1/dependency" ] || fail 'consumer dependency declaration was not materialized'
 [ ! -e "$root/pkg/$consumer@1/binding" ] && [ ! -L "$root/pkg/$consumer@1/binding" ] ||
   fail 'integration materialized a concrete provider binding in the package store'
 
 tab=$(printf '\t')
+resolved=$(resolve_consumer 2> "$tmp/resolve-implicit-a1.err") || {
+  cat "$tmp/resolve-implicit-a1.err" >&2
+  fail 'single compatible installed provider did not resolve implicitly'
+}
+[ "$resolved" = "$facility$tab$provider_a@1" ] ||
+  fail "implicit provider resolution returned unexpectedly: $resolved"
+
+# Global/non-package queries still require a facility default because they do not
+# receive package-consumer runtime projection.
+expect_status 1 requirement-no-default-initial run_pkg requirement resolve "$facility" '>=17'
+
+# A generic facility default overrides implicit resolution and follows the provider
+# package default.
+run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/facility-default.err" ||
+  fail 'cannot set generic facility default'
 resolved=$(resolve_consumer 2> "$tmp/resolve-a1.err") || {
   cat "$tmp/resolve-a1.err" >&2
   fail 'runtime dependency resolution failed through generic facility default'
@@ -244,6 +262,20 @@ requirement_provider=$(run_pkg requirement resolve "$facility" '>=17' '<25' 2> "
   fail 'PKG-75 requirement query did not follow the facility/package default'
 [ "$requirement_provider" = "$provider_a@2" ] ||
   fail 'PKG-75 requirement query did not resolve provider A v2'
+
+# Without a facility default, multiple compatible versions of the same provider
+# package are disambiguated by that package's normal default.
+run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/default-a-unset.err" ||
+  fail 'cannot temporarily remove facility default'
+resolved=$(resolve_consumer 2> "$tmp/resolve-implicit-a2.err") || {
+  cat "$tmp/resolve-implicit-a2.err" >&2
+  fail 'provider package default did not disambiguate compatible versions'
+}
+[ "$resolved" = "$facility$tab$provider_a@2" ] ||
+  fail 'implicit same-package resolution did not follow compatible package default'
+expect_status 1 requirement-no-global-default run_pkg requirement resolve "$facility" '>=17'
+run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/default-a-restore.err" ||
+  fail 'cannot restore facility default'
 
 # Explicit consumer binding overrides facility default.
 integrate_provider "$provider_b" 1 25 > "$tmp/provb.out" 2> "$tmp/provb.err" ||
@@ -287,10 +319,17 @@ resolved=$(resolve_consumer 2> "$tmp/resolve-inherited.err") ||
 [ "$resolved" = "$facility$tab$provider_a@2" ] ||
   fail 'binding removal did not restore facility-default provider'
 
-# Removing the facility default leaves no implicit fallback despite installed providers.
+# With multiple compatible provider packages and no explicit selector, package
+# consumer resolution is ambiguous rather than silently picking one.
 run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/default-unset.err" ||
   fail 'cannot remove facility default'
-expect_status 1 no-default-after-install resolve_consumer
+expect_status 1 ambiguous-after-default-unset resolve_consumer
+grep -F 'provider-ambiguous' "$tmp/ambiguous-after-default-unset.err" >/dev/null 2>&1 ||
+  fail 'ambiguous dependency diagnostic did not identify provider ambiguity'
+grep -F "$provider_a@1" "$tmp/ambiguous-after-default-unset.err" >/dev/null 2>&1 ||
+  fail 'ambiguous dependency diagnostic omitted provider A candidate'
+grep -F "$provider_b@1" "$tmp/ambiguous-after-default-unset.err" >/dev/null 2>&1 ||
+  fail 'ambiguous dependency diagnostic omitted provider B candidate'
 expect_status 1 requirement-no-default run_pkg requirement resolve "$facility" '>=17'
 
 # Provider-selection configuration protects an explicitly referenced concrete.
@@ -336,7 +375,7 @@ printf '%s\n' "$facility >=17" > "$all_range/dependency" ||
   error 'cannot define all-consumer dependency'
 make_payload "$all_payload" "$all_consumer" ||
   error 'cannot create all-consumer payload'
-"$root/m" "$driver" integrate "$all_consumer" 1 "$all_range" "$all_payload" "" "$osarch"   > "$tmp/all-consumer.out" 2> "$tmp/all-consumer.err" || {
+"$root/m" "$driver" integrate "$all_consumer" 1 "$all_range" "$all_payload" ""   > "$tmp/all-consumer.out" 2> "$tmp/all-consumer.err" || {
   cat "$tmp/all-consumer.err" >&2
   fail 'platform-independent consumer did not integrate through target-platform provider'
 }
@@ -360,4 +399,6 @@ printf 'provider-selection=ok\n'
 printf 'late-binding=ok\n'
 printf 'no-install-time-binding=ok\n'
 printf 'global-requirement-query=ok\n'
+printf 'implicit-provider-resolution=ok\n'
+printf 'legacy-provider-index-inert=ok\n'
 exit 0

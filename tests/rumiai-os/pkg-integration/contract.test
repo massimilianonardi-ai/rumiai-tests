@@ -27,7 +27,7 @@ cleanup()
   then
     run_pkg default -u -- "$package" >/dev/null 2>&1 || :
 
-    for cleanup_version in 1 2 4 5 8 10
+    for cleanup_version in 1 2 4 5 8 10 12
     do
       if [ -d "$root/pkg/$package@$cleanup_version" ] && [ ! -L "$root/pkg/$package@$cleanup_version" ]
       then
@@ -51,6 +51,7 @@ cleanup()
     fi
   fi
 
+  [ -z "${legacy_index_facility_dir-}" ] || rm -rf "$legacy_index_facility_dir" 2>/dev/null || :
   [ -z "${tmp-}" ] || rm -rf "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -158,6 +159,24 @@ fi
 [ -d "$duplicate" ] && [ -f "$duplicate/payload-marker" ] ||
   fail 'failed duplicate integration consumed caller-owned payload'
 
+# Runtime dependency satisfiability is not an integration precondition.
+range_dependency=$tmp/range-dependency
+payload_dependency=$tmp/payload-dependency
+mkdir "$range_dependency" || error 'cannot create unresolved-dependency definition'
+printf '%s\n' 'missingfacility >=1' > "$range_dependency/dependency" ||
+  error 'cannot write unresolved dependency declaration'
+make_payload "$payload_dependency" unresolved-dependency ||
+  error 'cannot create unresolved-dependency payload'
+integrate 12 "$range_dependency" "$payload_dependency" > "$tmp/dependency.out" 2> "$tmp/dependency.err" || {
+  cat "$tmp/dependency.err" >&2
+  fail 'pkg_integrate incorrectly required runtime dependency satisfiability'
+}
+[ -f "$root/pkg/$package@12/dependency" ] ||
+  fail 'unresolved dependency declaration was not materialized'
+"$root/m" "$driver" deintegrate "$package" 12 >/dev/null 2> "$tmp/dependency-remove.err" || {
+  cat "$tmp/dependency-remove.err" >&2
+  fail 'unresolved-dependency package could not be deintegrated'
+}
 
 range_path_env=$tmp/range-path-env
 payload_path_env=$tmp/payload-path-env
@@ -206,6 +225,14 @@ printf '%s\n' "${1-}"
 EOF_TOOL
 chmod 700 "$payload_shared/bin/tool" || error 'cannot prepare shared facility target'
 
+legacy_provider_data=$("$root/m" "$root/bin/sys/state-path" system sys pkg data) ||
+  error 'cannot resolve legacy provider-index state'
+legacy_index_facility_dir="$legacy_provider_data/providers/$shared_facility"
+mkdir -p "$legacy_index_facility_dir/1" ||
+  error 'cannot create stale legacy provider-index fixture'
+: > "$legacy_index_facility_dir/1/$package@5" ||
+  error 'cannot create stale legacy provider marker'
+
 integrate 5 "$range_shared" "$payload_shared" > "$tmp/shared.out" 2> "$tmp/shared.err" || {
   cat "$tmp/shared.err" >&2
   fail 'valid shared cmd/env facility realization failed integration'
@@ -241,6 +268,8 @@ printf '%s\n' ../outside > "$range_bad_cmd/facility-cmd/$shared_facility/tool" |
   error 'cannot write invalid facility command realization'
 cat > "$payload_bad_cmd/bin/tool" <<'EOF_BAD_TOOL'
 #!/bin/sh
+printf 'runtime-dependency-not-install-gate=ok\n'
+printf 'legacy-provider-index-inert=ok\n'
 exit 0
 EOF_BAD_TOOL
 chmod 700 "$payload_bad_cmd/bin/tool" || error 'cannot prepare invalid facility command payload'

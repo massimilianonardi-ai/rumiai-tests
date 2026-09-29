@@ -87,6 +87,17 @@ case $osarch in
   *) skip "jq package is not declared for $osarch";;
 esac
 
+case $osarch in
+  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64)
+    keycloak_requirements=$(run_pkg requirement list keycloak 2> "$tmp/keycloak-requirements.err") || {
+      cat "$tmp/keycloak-requirements.err" >&2
+      fail 'pkg requirement list keycloak failed'
+    }
+    [ "$keycloak_requirements" = 'java =25' ] ||
+      fail "unexpected Keycloak requirements: $keycloak_requirements"
+    ;;
+esac
+
 system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg jq conf) ||
   error 'cannot resolve jq system state'
 user_conf=$("$root/m" "$root/bin/sys/state-path" user pkg jq conf) ||
@@ -222,5 +233,8 @@ jq_version_after=$(
 printf 'installed=%s\n' "$identity_after"
 printf 'jq=%s\n' "$jq_version_after"
 printf 'osarch=%s\n' "$osarch"
+case $osarch in
+  linux-*|macos-*) printf 'requirement-list=ok\n' ;;
+esac
 
 exit 0

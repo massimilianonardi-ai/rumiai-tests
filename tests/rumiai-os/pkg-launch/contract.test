@@ -146,13 +146,6 @@ make_provider "$provider_a" a > "$tmp/prova.out" 2> "$tmp/prova.err" || {
   cat "$tmp/prova.err" >&2
   fail 'cannot integrate provider A'
 }
-make_provider "$provider_b" b > "$tmp/provb.out" 2> "$tmp/provb.err" || {
-  cat "$tmp/provb.err" >&2
-  fail 'cannot integrate provider B'
-}
-
-run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/provider-default.err" ||
-  fail 'cannot set provider A as facility default'
 
 range=$tmp/range-$consumer
 payload=$tmp/payload-$consumer
@@ -250,7 +243,33 @@ run_consumer()
     fail "$label provider root projection is wrong"
 }
 
-# Unbound consumer inherits facility default A.
+# With no binding/default and exactly one compatible provider, the launcher
+# resolves and projects it implicitly.
+run_consumer implicit-a a
+
+# Adding another compatible provider package makes implicit selection ambiguous.
+make_provider "$provider_b" b > "$tmp/provb.out" 2> "$tmp/provb.err" || {
+  cat "$tmp/provb.err" >&2
+  fail 'cannot integrate provider B'
+}
+"$consumer" arg-ambiguous > "$tmp/ambiguous.out" 2> "$tmp/ambiguous.err"
+ambiguous_status=$?
+[ "$ambiguous_status" -eq 1 ] || {
+  cat "$tmp/ambiguous.err" >&2
+  fail "ambiguous launch returned $ambiguous_status instead of 1"
+}
+grep -F 'provider-ambiguous' "$tmp/ambiguous.err" >/dev/null 2>&1 ||
+  fail 'ambiguous launch diagnostic omitted resolution reason'
+grep -F "$facility" "$tmp/ambiguous.err" >/dev/null 2>&1 ||
+  fail 'ambiguous launch diagnostic omitted facility'
+grep -F "$provider_a@1" "$tmp/ambiguous.err" >/dev/null 2>&1 ||
+  fail 'ambiguous launch diagnostic omitted provider A'
+grep -F "$provider_b@1" "$tmp/ambiguous.err" >/dev/null 2>&1 ||
+  fail 'ambiguous launch diagnostic omitted provider B'
+
+# Explicit facility default resolves the ambiguity.
+run_pkg provider default "$facility" "$provider_a" >/dev/null 2> "$tmp/provider-default.err" ||
+  fail 'cannot set provider A as facility default'
 run_consumer inherited-a a
 
 # Binding changes provider at runtime without reinstalling consumer.
@@ -276,4 +295,6 @@ run_consumer inherited-b b
 printf 'runtime-rebind=ok\n'
 printf 'provider-projection=ok\n'
 printf 'projection-precedence=ok\n'
+printf 'implicit-provider-launch=ok\n'
+printf 'ambiguous-provider-diagnostic=ok\n'
 exit 0
