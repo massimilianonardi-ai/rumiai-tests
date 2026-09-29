@@ -1,0 +1,251 @@
+#!/bin/sh
+
+# Protected current properties:
+#   RSUDO-20  ssh-auth-check is invocation-local.
+#   RSUDO-21  recursive/reused rsudo calls do not inherit ssh-auth-check.
+#   RSUDO-29  --ssh-auth-check performs interactive preparation followed by a
+#             fresh ssh_auth verification and never executes sudo.
+
+TEST_ID=rumiai-os/rsudo/auth-check.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+interactive_library=$suite_root/lib/interactive.lib
+
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+[ -f "$interactive_library" ] || error 'interactive test helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+. "$interactive_library" || error 'cannot source interactive test helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+rumiai_test_interactive_require
+status=$?
+case $status in
+    0) : ;;
+    2) skip 'interactive PTY driver is unavailable' ;;
+    *) error 'cannot determine interactive PTY support' ;;
+esac
+
+rsudo_command=$root/bin/sys/rsudo
+[ -x "$rsudo_command" ] || fail 'rsudo command entrypoint is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-rsudo-auth-check-$$
+fakebin=$tmp/bin
+runtime_tmp=$tmp/runtime
+mkdir -p "$fakebin" "$runtime_tmp" || error 'cannot create auth-check workspace'
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+{
+    printf 'CALL\t%s\n' "${SSH_ASKPASS_REQUIRE-}"
+    for arg
+    do
+        printf 'ARG\t%s\n' "$arg"
+    done
+    printf '%s\n' END
+} >> "$RSUDO_TEST_SSH_TRACE_FILE" || exit 80
+
+login_user=
+
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -t)
+            shift
+        ;;
+        -o)
+            [ "$#" -ge 2 ] || exit 81
+            shift 2
+        ;;
+        -l)
+            [ "$#" -ge 2 ] || exit 82
+            login_user=$2
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 83
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+[ "$#" -ge 2 ] || exit 84
+host=$1
+shift
+
+[ "$login_user" = "$RSUDO_TEST_EXPECT_LOGIN_USER" ] || exit 85
+[ "$host" = "$RSUDO_TEST_EXPECT_HOST" ] || exit 86
+
+remote_command=$*
+[ -n "$remote_command" ] || exit 87
+
+# This fixture models a reachable authenticated SSH boundary. For normal rsudo
+# calls used by the invocation-local reset check, success is enough: sudo
+# behavior is covered by contract.test and interactive.test.
+exit 0
+EOF_SSH
+
+cat > "$fakebin/sudo" <<'EOF_SUDO'
+#!/bin/sh
+: > "$RSUDO_TEST_SUDO_MARKER"
+exit 90
+EOF_SUDO
+
+chmod +x "$fakebin/ssh" "$fakebin/sudo" ||
+    error 'cannot make auth-check fixtures executable'
+command -p sh -n "$fakebin/ssh" || error 'ssh fixture has invalid syntax'
+command -p sh -n "$fakebin/sudo" || error 'sudo fixture has invalid syntax'
+
+trace=$tmp/ssh.trace
+sudo_marker=$tmp/sudo.called
+status_file=$tmp/status
+dialogue=$tmp/dialogue
+transcript=$tmp/transcript
+wrapper=$tmp/run-check
+
+PATH="$fakebin:$PATH"
+TMPDIR="$runtime_tmp"
+RSUDO_HOST=example.invalid
+RSUDO_USER=alice
+RSUDO_PASSWORD=secret
+RSUDO_TEST_EXPECT_HOST=example.invalid
+RSUDO_TEST_EXPECT_LOGIN_USER=alice
+RSUDO_TEST_SSH_TRACE_FILE=$trace
+RSUDO_TEST_SUDO_MARKER=$sudo_marker
+RSUDO_TEST_M=$root/m
+RSUDO_TEST_RSUDO_COMMAND=$rsudo_command
+RSUDO_TEST_STATUS_FILE=$status_file
+
+export \
+    PATH TMPDIR RSUDO_HOST RSUDO_USER RSUDO_PASSWORD \
+    RSUDO_TEST_EXPECT_HOST RSUDO_TEST_EXPECT_LOGIN_USER \
+    RSUDO_TEST_SSH_TRACE_FILE RSUDO_TEST_SUDO_MARKER \
+    RSUDO_TEST_M RSUDO_TEST_RSUDO_COMMAND RSUDO_TEST_STATUS_FILE
+
+cat > "$wrapper" <<'EOF_WRAPPER'
+#!/bin/sh
+"$RSUDO_TEST_M" "$RSUDO_TEST_RSUDO_COMMAND" --ssh-auth-check
+status=$?
+printf '%s\n' "$status" > "$RSUDO_TEST_STATUS_FILE"
+exit 0
+EOF_WRAPPER
+chmod +x "$wrapper" || error 'cannot make auth-check wrapper executable'
+
+: > "$trace"
+rm -f "$sudo_marker" "$status_file"
+
+rumiai_test_interactive_run "$dialogue" "$transcript" "$wrapper" ||
+    error 'interactive PTY driver could not complete ssh-auth-check'
+
+[ -f "$status_file" ] || error 'ssh-auth-check wrapper did not record status'
+status=$(cat "$status_file")
+[ "$status" -eq 0 ] || {
+    cat "$transcript" >&2
+    fail "ssh-auth-check returned $status instead of 0"
+}
+
+[ ! -e "$sudo_marker" ] || fail 'ssh-auth-check invoked sudo'
+
+[ "$(grep -c '^CALL' "$trace")" -eq 2 ] ||
+    fail 'ssh-auth-check did not perform exactly two SSH connections'
+[ "$(grep -c '^CALL[[:space:]]never$' "$trace")" -eq 1 ] ||
+    fail 'interactive preparation did not disable askpass'
+[ "$(grep -c '^CALL[[:space:]]force$' "$trace")" -eq 1 ] ||
+    fail 'second phase did not use ssh_auth'
+
+[ "$(grep -c '^ARG[[:space:]]StrictHostKeyChecking=ask$' "$trace")" -eq 1 ] ||
+    fail 'interactive preparation did not use StrictHostKeyChecking=ask'
+[ "$(grep -c '^ARG[[:space:]]AddKeysToAgent=yes$' "$trace")" -eq 1 ] ||
+    fail 'interactive preparation did not use AddKeysToAgent=yes'
+[ "$(grep -c '^ARG[[:space:]]StrictHostKeyChecking=yes$' "$trace")" -eq 1 ] ||
+    fail 'ssh_auth verification did not require established host trust'
+[ "$(grep -c '^ARG[[:space:]]ControlPath=none$' "$trace")" -eq 2 ] ||
+    fail 'both auth-check phases did not disable multiplexed connection reuse'
+
+if grep -F 'secret' "$trace" >/dev/null 2>&1
+then
+    fail 'rsudo password appeared in SSH argv during auth check'
+fi
+
+# Remaining operands are invalid and must fail before any SSH connection.
+: > "$trace"
+"$root/m" "$rsudo_command" --ssh-auth-check -- unexpected >/dev/null 2>&1
+status=$?
+[ "$status" -eq 253 ] ||
+    fail "ssh-auth-check with operands returned $status instead of 253"
+[ ! -s "$trace" ] || fail 'invalid ssh-auth-check reached SSH'
+
+# Without a TTY and without operands, the check is rejected locally.
+: > "$trace"
+"$root/m" "$rsudo_command" --ssh-auth-check >/dev/null 2>&1
+status=$?
+[ "$status" -eq 254 ] ||
+    fail "non-TTY ssh-auth-check returned $status instead of 254"
+[ ! -s "$trace" ] || fail 'non-TTY ssh-auth-check reached SSH'
+
+# Prove invocation-local state in one m process: a failed check sets the mode in
+# the first rsudo() call, but the next rsudo() call must reset it and perform a
+# normal ssh_auth-backed operation instead of another auth check.
+state_script=$tmp/state-reset
+cat > "$state_script" <<'EOF_STATE'
+#!/usr/bin/env m
+
+loadsyslib "rsudo/rsudo"
+
+rsudo --ssh-auth-check -- unexpected >/dev/null 2>&1
+[ "$?" -eq 253 ] || exit 91
+
+rsudo --no-preserve-quotes -- true
+EOF_STATE
+chmod +x "$state_script" || error 'cannot make state-reset script executable'
+
+: > "$trace"
+"$root/m" "$state_script" >/dev/null 2>&1
+status=$?
+[ "$status" -eq 0 ] ||
+    fail "invocation-local state reset scenario returned $status"
+
+[ "$(grep -c '^CALL' "$trace")" -eq 1 ] ||
+    fail 'later rsudo invocation inherited ssh-auth-check state'
+[ "$(grep -c '^CALL[[:space:]]force$' "$trace")" -eq 1 ] ||
+    fail 'later rsudo invocation did not use normal ssh_auth transport'
+
+exit 0
