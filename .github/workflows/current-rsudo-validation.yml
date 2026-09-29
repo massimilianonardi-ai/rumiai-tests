@@ -1,0 +1,54 @@
+name: current-rsudo-validation
+
+on:
+  push:
+    branches:
+      - diagnostic-pipefail-20260929
+    paths:
+      - .github/workflows/current-rsudo-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-26.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout frozen test suite
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: ce64eab23d03fefc3b93eb2d6baf57d0e5ccd013
+          fetch-depth: 1
+          path: rumiai-tests
+          persist-credentials: false
+
+      - name: Checkout current user product revision
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 36d6b53b461c91db790873625f2f5349972768fb
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Normalize product origin
+        shell: bash
+        run: git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
+      - name: Run permanent tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/bootstrap/library-loading.test
+          ./rumiai-test rumiai-os/rsudo/exec-inject.test
