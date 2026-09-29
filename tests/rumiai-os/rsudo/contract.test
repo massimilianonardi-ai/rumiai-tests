@@ -11,8 +11,9 @@
 #   RSUDO-08  --user selects the requested sudo target user.
 #   RSUDO-09  required password acquisition failure prevents remote execution.
 #   RSUDO-11  password data is not exposed as ordinary target input/output.
-#   RSUDO-20  target-user/interactive state persist while askpass/no-preserve reset per invocation.
-#   RSUDO-21  recursive rsudo calls inherit target-user/interactive state.
+#   RSUDO-20  target-user/interactive state persist while invocation-local modes reset.
+#   RSUDO-21  recursive rsudo calls inherit reusable state only.
+#   RSUDO-28  normal rsudo SSH transport uses the ssh_auth facility.
 #
 # The SSH and sudo programs below are external-boundary fixtures. They model
 # remote-system characteristics, not the internal sequence rsudo must use.
@@ -113,6 +114,13 @@ fi
 [ -f "$rsudo_askpass_manual" ] && [ ! -L "$rsudo_askpass_manual" ] ||
     fail 'rsudo-askpass command operational manual is missing'
 
+grep -F -- '--ssh-auth-check' "$rsudo_manual" >/dev/null 2>&1 ||
+    fail 'rsudo library manual omits --ssh-auth-check'
+grep -F -- '--ssh-auth-check' "$rsudo_command_manual" >/dev/null 2>&1 ||
+    fail 'rsudo command manual omits --ssh-auth-check'
+grep -F 'ssh.lib.sh' "$rsudo_manual" >/dev/null 2>&1 ||
+    fail 'rsudo library manual omits ssh.lib.sh dependency'
+
 tmp=${TMPDIR:-/tmp}/rumiai-rsudo-contract-$$
 fakebin=$tmp/bin
 mkdir -p "$fakebin" || error 'cannot create external-boundary fixtures'
@@ -124,20 +132,37 @@ cat > "$fakebin/ssh" <<'EOF_SSH'
 # command in the modeled remote environment. Authentication itself is assumed
 # successful; this test is about rsudo behavior after a reachable SSH boundary.
 
-if [ "${1-}" = -t ]
-then
-    shift
-fi
-
 login_user=
-if [ "${1-}" = -l ]
-then
-    [ "$#" -ge 3 ] || exit 80
-    login_user=$2
-    shift 2
-fi
 
-[ "$#" -ge 2 ] || exit 81
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -t)
+            shift
+        ;;
+        -o)
+            [ "$#" -ge 2 ] || exit 80
+            shift 2
+        ;;
+        -l)
+            [ "$#" -ge 2 ] || exit 81
+            login_user=$2
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 82
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+[ "$#" -ge 2 ] || exit 83
 host=$1
 shift
 
