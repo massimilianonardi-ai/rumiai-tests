@@ -1,0 +1,181 @@
+#!/bin/sh
+
+# Protected current properties:
+#   SSH-01  non-empty remote-account password is required.
+#   SSH-02  OpenSSH authentication is constrained to password.
+#   SSH-03  exactly one OpenSSH password prompt is permitted.
+#   SSH-04  configured SSH connection sharing is disabled.
+#   SSH-05  caller SSH arguments remain ordered after facility options.
+#   SSH-06  authentication data is not consumed from SSH stdin.
+#   SSH-07  SSH stdin/stdout/stderr retain their OpenSSH meanings.
+#   SSH-08  authentication data is not placed in ordinary SSH arguments.
+#   SSH-09  invocation-owned authentication IPC state is cleared after use.
+#   SSH-11  confirmation prompts are refused without consuming the password.
+#
+# The fake ssh executable below represents only the external OpenSSH process
+# boundary. The real ssh.lib.sh and ssh-askpass target components are exercised.
+
+TEST_ID=rumiai-os/ssh/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+    case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+    [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" ||
+    error 'cannot re-enter test through target m bootstrap'
+
+ssh_library=$root/lib/sys/sh/ssh.lib.sh
+ssh_helper=$root/bin/sys/ssh-askpass
+ssh_manual=$root/res/sys/manual/ssh.lib.sh
+ssh_helper_manual=$root/res/sys/manual/ssh-askpass
+
+[ -f "$ssh_library" ] && [ ! -L "$ssh_library" ] || fail 'ssh.lib.sh is unavailable'
+[ ! -x "$ssh_library" ] || fail 'ssh.lib.sh is executable'
+command -p sh -n "$ssh_library" || fail 'ssh.lib.sh is not valid POSIX-sh syntax'
+[ -x "$ssh_helper" ] || fail 'ssh-askpass is not executable'
+[ -f "$ssh_manual" ] || fail 'ssh.lib.sh manual is missing'
+[ -f "$ssh_helper_manual" ] || fail 'ssh-askpass manual is missing'
+grep -F 'ssh_password' "$ssh_manual" >/dev/null 2>&1 || fail 'ssh manual omits ssh_password'
+
+loadsyslib "ssh" || error 'cannot load ssh.lib.sh'
+
+ssh_password '' example.invalid >/dev/null 2>&1
+[ "$?" -eq 1 ] || fail 'empty password was not rejected with status 1'
+
+ssh_password secret >/dev/null 2>&1
+[ "$?" -eq 2 ] || fail 'missing ssh arguments were not rejected with status 2'
+
+tmp=${TMPDIR:-/tmp}/rumiai-ssh-contract-$$
+fakebin=$tmp/bin
+mkdir -p "$fakebin" || error 'cannot create ssh boundary fixture'
+
+cat > "$fakebin/ssh" <<'EOF_SSH'
+#!/bin/sh
+
+: > "$SSH_TEST_ARGV_FILE" || exit 80
+for arg
+do
+    printf '%s\n' "$arg" >> "$SSH_TEST_ARGV_FILE" || exit 81
+done
+
+[ "${SSH_ASKPASS_REQUIRE-}" = force ] || exit 82
+[ -n "${SSH_ASKPASS-}" ] || exit 83
+[ -n "${m_SSH_ASKPASS_ID-}" ] || exit 84
+
+SSH_ASKPASS_PROMPT=confirm "$SSH_ASKPASS" 'confirm host?' >/dev/null 2>&1
+[ "$?" -ne 0 ] || exit 85
+
+"$SSH_ASKPASS" 'remote password:' > "$SSH_TEST_PASSWORD_FILE" || exit 86
+
+cat
+exit 37
+EOF_SSH
+
+chmod +x "$fakebin/ssh" || error 'cannot make ssh boundary fixture executable'
+command -p sh -n "$fakebin/ssh" || error 'ssh boundary fixture has invalid syntax'
+
+argv_file=$tmp/argv
+password_file=$tmp/password
+stdout_file=$tmp/stdout
+stderr_file=$tmp/stderr
+payload='payload over ssh stdin'
+
+(
+    PATH="$fakebin:$PATH"
+    SSH_TEST_ARGV_FILE=$argv_file
+    SSH_TEST_PASSWORD_FILE=$password_file
+    export PATH SSH_TEST_ARGV_FILE SSH_TEST_PASSWORD_FILE
+
+    printf '%s\n' "$payload" |
+        ssh_password secret -p 2222 -l alice example.invalid command 'arg with spaces'
+) >"$stdout_file" 2>"$stderr_file"
+status=$?
+
+case $status in
+    8[0-9]) error "external ssh fixture failed with status $status" ;;
+esac
+[ "$status" -eq 37 ] || fail "ssh status $status was not propagated"
+
+[ "$(cat "$password_file")" = secret ] || fail 'ssh-askpass did not deliver the password'
+[ "$(cat "$stdout_file")" = "$payload" ] || fail 'ssh stdin/stdout transparency failed'
+[ ! -s "$stderr_file" ] || fail 'unexpected ssh stderr output'
+
+cat > "$tmp/expected-argv" <<'EOF_ARGS'
+-o
+BatchMode=no
+-o
+PasswordAuthentication=yes
+-o
+PreferredAuthentications=password
+-o
+NumberOfPasswordPrompts=1
+-o
+ControlPath=none
+-p
+2222
+-l
+alice
+example.invalid
+command
+arg with spaces
+EOF_ARGS
+
+cmp "$tmp/expected-argv" "$argv_file" >/dev/null 2>&1 ||
+    fail 'forced SSH settings or caller argument order differ from contract'
+
+if grep -F 'secret' "$argv_file" "$stdout_file" "$stderr_file" >/dev/null 2>&1
+then
+    fail 'password appeared in ordinary ssh argv or output'
+fi
+
+command -v ssh >/dev/null 2>&1 || skip 'OpenSSH ssh client is unavailable'
+
+effective=$(ssh_password secret -G     -o BatchMode=yes     -o PasswordAuthentication=no     -o PreferredAuthentications=publickey     -o NumberOfPasswordPrompts=9     -o ControlPath="$tmp/control"     example.invalid 2>/dev/null) ||
+    fail 'OpenSSH -G rejected ssh_password effective configuration'
+
+printf '%s\n' "$effective" | grep -E '^batchmode no$' >/dev/null 2>&1 ||
+    fail 'BatchMode=no was not effective'
+printf '%s\n' "$effective" | grep -E '^passwordauthentication yes$' >/dev/null 2>&1 ||
+    fail 'PasswordAuthentication=yes was not effective'
+printf '%s\n' "$effective" | grep -E '^preferredauthentications password$' >/dev/null 2>&1 ||
+    fail 'PreferredAuthentications=password was not effective'
+printf '%s\n' "$effective" | grep -E '^numberofpasswordprompts 1$' >/dev/null 2>&1 ||
+    fail 'NumberOfPasswordPrompts=1 was not effective'
+printf '%s\n' "$effective" | grep -E '^controlpath none$' >/dev/null 2>&1 ||
+    fail 'ControlPath=none was not effective'
+
+exit 0
