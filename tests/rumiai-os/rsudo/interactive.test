@@ -89,21 +89,38 @@ mkdir -p "$fakebin" "$runtime_tmp" ||
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
 
-if [ "${1-}" = -t ]
-then
-    : > "$RSUDO_TEST_SSH_TTY_MARKER" || exit 85
-    shift
-fi
-
 login_user=
-if [ "${1-}" = -l ]
-then
-    [ "$#" -ge 3 ] || exit 80
-    login_user=$2
-    shift 2
-fi
 
-[ "$#" -ge 2 ] || exit 81
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -t)
+            : > "$RSUDO_TEST_SSH_TTY_MARKER" || exit 85
+            shift
+        ;;
+        -o)
+            [ "$#" -ge 2 ] || exit 80
+            shift 2
+        ;;
+        -l)
+            [ "$#" -ge 2 ] || exit 81
+            login_user=$2
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 82
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
+
+[ "$#" -ge 2 ] || exit 83
 host=$1
 shift
 
