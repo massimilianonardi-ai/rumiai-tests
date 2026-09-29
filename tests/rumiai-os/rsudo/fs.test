@@ -100,18 +100,34 @@ mkdir -p "$fakebin" "$local_root" "$remote_root" || error 'cannot create fs-test
 cat > "$fakebin/ssh" <<'EOF_SSH'
 #!/bin/sh
 
-if [ "${1-}" = -t ]
-then
-    shift
-fi
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+        -t)
+            shift
+        ;;
+        -o)
+            [ "$#" -ge 2 ] || exit 90
+            shift 2
+        ;;
+        -l)
+            [ "$#" -ge 2 ] || exit 91
+            shift 2
+        ;;
+        --)
+            shift
+            break
+        ;;
+        -*)
+            exit 92
+        ;;
+        *)
+            break
+        ;;
+    esac
+done
 
-if [ "${1-}" = -l ]
-then
-    [ "$#" -ge 3 ] || exit 90
-    shift 2
-fi
-
-[ "$#" -ge 2 ] || exit 91
+[ "$#" -ge 2 ] || exit 93
 shift
 
 remote_command=$*
