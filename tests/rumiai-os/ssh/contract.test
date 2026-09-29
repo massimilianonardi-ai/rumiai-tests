@@ -130,7 +130,10 @@ payload='payload over ssh stdin'
 status=$?
 
 case $status in
-    8[0-9]) error "external ssh fixture failed with status $status" ;;
+    8[0-9])
+        [ ! -s "$stderr_file" ] || cat "$stderr_file" >&2
+        error "external ssh fixture failed with status $status"
+        ;;
 esac
 [ "$status" -eq 37 ] || fail "ssh status $status was not propagated"
 
