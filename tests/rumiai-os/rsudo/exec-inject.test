@@ -80,6 +80,7 @@ loadsyslib "rsudo/rsudo-mod-exec" || exit "$?"
 
 rsudo()
 {
+  : > "$RSUDO_EXEC_INJECT_CALLED" || return 90
   cat > "$RSUDO_EXEC_INJECT_CAPTURE" || return 91
   return "${RSUDO_EXEC_INJECT_STATUS:-0}"
 }
@@ -89,9 +90,11 @@ EOF_PROBE
 chmod 700 "$probe" || error 'cannot make exec-inject probe executable'
 
 capture=$tmp/generated-source
+called=$tmp/rsudo-called
 RSUDO_EXEC_INJECT_CAPTURE=$capture
+RSUDO_EXEC_INJECT_CALLED=$called
 RSUDO_EXEC_INJECT_STATUS=0
-export RSUDO_EXEC_INJECT_CAPTURE RSUDO_EXEC_INJECT_STATUS
+export RSUDO_EXEC_INJECT_CAPTURE RSUDO_EXEC_INJECT_CALLED RSUDO_EXEC_INJECT_STATUS
 
 cat > "$tmp/stdin-source" <<'EOF_STDIN'
 printf 'one-shot-status=%s\n' "$?"
@@ -142,11 +145,14 @@ cmp -s "$tmp/generated.expected" "$tmp/generated.out" || {
   fail 'exec inject did not preserve named/one-shot/continuation composition'
 }
 
+rm -f "$called"
 : |
   PATH="$tmp:$PATH" "$root/m" "$probe_name" does-not-exist > "$tmp/failure.out" 2> "$tmp/failure.err"
 status=$?
 [ "$status" -eq 2 ] ||
-  fail "generator failure through pipefail returned $status instead of 2"
+  fail "generator failure returned $status instead of 2"
+[ ! -e "$called" ] ||
+  fail 'recursive rsudo was invoked after generator failure'
 
 RSUDO_EXEC_INJECT_STATUS=37
 export RSUDO_EXEC_INJECT_STATUS
