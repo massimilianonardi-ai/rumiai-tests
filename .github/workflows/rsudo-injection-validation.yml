@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-tests
-          ref: 25fbd5320ecbe5b724e656f6426605bb36e4e33e
+          ref: ce64eab23d03fefc3b93eb2d6baf57d0e5ccd013
           fetch-depth: 1
           path: rumiai-tests
           persist-credentials: false
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: 94cb0620f62a481c8300432bb642367e81c11432
+          ref: a015fb27cd5862808bef3f7fe8b92b2b8e8e8169
           fetch-depth: 1
           path: rumiai-os
           persist-credentials: false
@@ -47,8 +47,8 @@ jobs:
       - name: Verify frozen revisions
         shell: bash
         run: |
-          test "$(git -C rumiai-tests rev-parse HEAD)" = "25fbd5320ecbe5b724e656f6426605bb36e4e33e"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "94cb0620f62a481c8300432bb642367e81c11432"
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "ce64eab23d03fefc3b93eb2d6baf57d0e5ccd013"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "a015fb27cd5862808bef3f7fe8b92b2b8e8e8169"
 
       - name: Run permanent tests with diagnostics
         shell: bash
