@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/ssh.yml
       - rumiai-validate
+      - rumiai-test
       - lib/sh/rumiai-validate.lib.sh
       - lib/rumiai-os-target.lib
       - tests/rumiai-os/ssh/**
@@ -17,7 +18,28 @@ permissions:
   contents: write
 
 jobs:
+  resolve-product:
+    runs-on: ubuntu-latest
+    outputs:
+      rumiai-os-commit: ${{ steps.revision.outputs.commit }}
+    steps:
+      - name: Checkout current product head
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: main
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Freeze product revision
+        id: revision
+        shell: bash
+        run: |
+          echo "commit=$(git -C rumiai-os rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   formal-validation:
+    needs: resolve-product
     strategy:
       fail-fast: false
       matrix:
@@ -26,13 +48,21 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout current test suite
+      - name: Checkout frozen test suite revision
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           path: rumiai-tests
           persist-credentials: true
+
+      - name: Anchor frozen suite publication branch
+        shell: bash
+        run: |
+          branch="validation-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.os }}"
+          git -C rumiai-tests switch -c "$branch" "${GITHUB_SHA}"
+          git -C rumiai-tests config "branch.$branch.remote" origin
+          git -C rumiai-tests config "branch.$branch.merge" refs/heads/main
 
       - name: Checkout product source/update point
         uses: actions/checkout@v4
@@ -58,10 +88,14 @@ jobs:
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-validate ssh
+          ./rumiai-validate \
+            --no-suite-update \
+            --rumiai-os-commit="${{ needs.resolve-product.outputs.rumiai-os-commit }}" \
+            ssh
 
       - name: Upload recoverable local evidence
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ssh-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
