@@ -1,0 +1,62 @@
+name: rsudo-injection-validation
+
+on:
+  push:
+    branches:
+      - validation-rsudo-injection-20260929
+    paths:
+      - .github/workflows/rsudo-injection-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  permanent-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout frozen test suite
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-tests
+          ref: 25fbd5320ecbe5b724e656f6426605bb36e4e33e
+          fetch-depth: 1
+          path: rumiai-tests
+          persist-credentials: false
+
+      - name: Checkout frozen product
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 94cb0620f62a481c8300432bb642367e81c11432
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Verify frozen revisions
+        shell: bash
+        run: |
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "25fbd5320ecbe5b724e656f6426605bb36e4e33e"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "94cb0620f62a481c8300432bb642367e81c11432"
+
+      - name: Run loadlib injection permanent test
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/bootstrap/library-loading.test
+
+      - name: Run rsudo exec-inject permanent test
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/rsudo/exec-inject.test
