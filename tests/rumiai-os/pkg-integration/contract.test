@@ -268,8 +268,6 @@ printf '%s\n' ../outside > "$range_bad_cmd/facility-cmd/$shared_facility/tool" |
   error 'cannot write invalid facility command realization'
 cat > "$payload_bad_cmd/bin/tool" <<'EOF_BAD_TOOL'
 #!/bin/sh
-printf 'runtime-dependency-not-install-gate=ok\n'
-printf 'legacy-provider-index-inert=ok\n'
 exit 0
 EOF_BAD_TOOL
 chmod 700 "$payload_bad_cmd/bin/tool" || error 'cannot prepare invalid facility command payload'
@@ -506,4 +504,6 @@ fi
 "$root/m" "$driver" deintegrate > "$tmp/deintegrate-arity.out" 2> "$tmp/deintegrate-arity.err"
 [ "$?" -eq 2 ] || fail 'pkg_deintegrate invalid arity did not return 2'
 
+printf 'runtime-dependency-not-install-gate=ok\n'
+printf 'legacy-provider-index-inert=ok\n'
 exit 0
