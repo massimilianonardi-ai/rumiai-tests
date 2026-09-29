@@ -231,8 +231,16 @@ cat > "$state_script" <<'EOF_STATE'
 
 loadsyslib "rsudo/rsudo"
 
-rsudo --ssh-auth-check -- unexpected >/dev/null 2>&1
-[ "$?" -eq 253 ] || exit 91
+RSUDO_SAVED_HOST=$RSUDO_HOST
+RSUDO_HOST=""
+
+# This returns before the ssh-auth-check branch, leaving the flag set unless the
+# next rsudo() invocation clears invocation-local state at function entry.
+rsudo --ssh-auth-check >/dev/null 2>&1
+[ "$?" -eq 9 ] || exit 91
+
+RSUDO_HOST=$RSUDO_SAVED_HOST
+unset RSUDO_SAVED_HOST
 
 rsudo --no-preserve-quotes -- true
 EOF_STATE
