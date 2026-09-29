@@ -3,8 +3,11 @@
 # Protected current properties:
 #   TESTLAB-15  Podman/SSH tooling is scenario-specific, not a global testlab prerequisite.
 #   TESTLAB-16  the rsudo scenario owns only its created disposable container.
-# This test also exercises the real development path:
-#   testlab -> rsudo -> ssh -> sshd -> sudo.
+#   LIB-16/17  injected libraries, named commands, one-shot command and stdin continuation compose.
+#   RSUDO-23   exec inject composes the generator with recursive rsudo.
+# This test exercises the real development paths:
+#   testlab -> rsudo -> ssh -> sshd -> sudo
+#   testlab -> rsudo exec inject -> ssh -> sshd -> sudo -> injected shell source.
 
 TEST_ID=rumiai-os/testlab-rsudo/real.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -207,6 +210,80 @@ fi
 
 [ "$(command -p cat "$stdout")" = 0 ] ||
   fail 'real rsudo activity did not observe privileged uid 0'
+
+named_source=$test_work/named-source
+cat > "$named_source" <<'EOF_NAMED'
+printf 'named-arg=%s\n' "$1"
+exit 7
+EOF_NAMED
+
+command_source=$test_work/command-source
+cat > "$command_source" <<'EOF_COMMAND'
+command -v array >/dev/null 2>&1 || exit 40
+command -v injected_helper >/dev/null 2>&1 || exit 41
+printf 'command-argc=%s\n' "$#"
+printf 'command-arg1=%s\n' "$1"
+printf 'command-uid=%s\n' "$(id -u)"
+injected_helper "from-command"
+printf 'command-helper-status=%s\n' "$?"
+exit 6
+EOF_COMMAND
+
+continuation_source=$test_work/continuation-source
+cat > "$continuation_source" <<'EOF_CONTINUATION'
+printf 'one-shot-status=%s\n' "$?"
+command -v array >/dev/null 2>&1 || exit 42
+printf 'stdin-uid=%s\n' "$(id -u)"
+injected_helper "from-stdin"
+printf 'stdin-helper-status=%s\n' "$?"
+printf 'stdin-source-ok\n'
+EOF_CONTINUATION
+
+inject_stdout=$instance_dir/rsudo-exec-inject.stdout
+inject_stderr=$instance_dir/rsudo-exec-inject.stderr
+
+command -p cat "$continuation_source" |
+  PATH="$path_prefix:$PATH" \
+  RSUDO_HOST="$ssh_host" \
+  RSUDO_USER="$ssh_user" \
+  RSUDO_PASSWORD="$ssh_password" \
+    "$root/m" "$root/bin/sys/rsudo" \
+      exec inject \
+      array \
+      --command injected_helper "$named_source" \
+      -- "$command_source" "alpha beta" \
+      > "$inject_stdout" 2> "$inject_stderr"
+inject_status=$?
+
+if [ "$inject_status" -ne 0 ]
+then
+  command -p cat "$inject_stderr" >&2
+  fail "real rsudo exec inject activity returned status $inject_status"
+fi
+
+cat > "$test_work/rsudo-exec-inject.expected" <<'EOF_EXPECTED'
+command-argc=1
+command-arg1=alpha beta
+command-uid=0
+named-arg=from-command
+command-helper-status=7
+one-shot-status=6
+stdin-uid=0
+named-arg=from-stdin
+stdin-helper-status=7
+stdin-source-ok
+EOF_EXPECTED
+
+if ! command -p cmp "$test_work/rsudo-exec-inject.expected" "$inject_stdout"
+then
+  printf '%s\n' '--- expected real rsudo exec inject output ---' >&2
+  command -p cat "$test_work/rsudo-exec-inject.expected" >&2
+  printf '%s\n' '--- observed real rsudo exec inject output ---' >&2
+  command -p cat "$inject_stdout" >&2
+  printf '%s\n' '--- real rsudo exec inject stderr ---' >&2
+  command -p cat "$inject_stderr" >&2
+  fail 'real rsudo exec inject did not preserve injected composition'
+fi
 
 run_testlab close "$instance" || fail 'testlab close rsudo failed'
 state=$(run_testlab status "$instance") || fail 'cannot read closed rsudo scenario status'
