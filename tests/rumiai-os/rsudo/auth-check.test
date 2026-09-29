@@ -223,7 +223,7 @@ status=$?
 
 # Without a TTY and without operands, the check is rejected locally.
 : > "$trace"
-"$root/m" "$rsudo_command" --ssh-auth-check >/dev/null 2>&1
+"$root/m" "$rsudo_command" --ssh-auth-check </dev/null >/dev/null 2>&1
 status=$?
 [ "$status" -eq 254 ] ||
     fail "non-TTY ssh-auth-check returned $status instead of 254"
