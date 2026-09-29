@@ -243,6 +243,11 @@ rm -rf "$root/pkg/$corrupt_provider@1" || error 'cannot remove corrupt provider 
 # Global/non-package queries still require a facility default because they do not
 # receive package-consumer runtime projection.
 expect_status 1 requirement-no-default-initial run_pkg requirement resolve "$facility" '>=17'
+grep -F 'facility-default-unconfigured' "$tmp/requirement-no-default-initial.err" >/dev/null 2>&1 ||
+  fail 'global requirement diagnostic did not identify an unconfigured facility default'
+grep -F "facility=\"$facility\"" "$tmp/requirement-no-default-initial.err" >/dev/null 2>&1 ||
+  grep -F "facility=$facility" "$tmp/requirement-no-default-initial.err" >/dev/null 2>&1 ||
+  fail 'global requirement diagnostic omitted the facility'
 
 # A generic facility default overrides implicit resolution and follows the provider
 # package default.
@@ -262,6 +267,8 @@ requirement_provider=$(run_pkg requirement resolve "$facility" '>=17' 2> "$tmp/r
 [ "$requirement_provider" = "$provider_a@1" ] ||
   fail "PKG-75 requirement query resolved unexpected provider: $requirement_provider"
 expect_status 1 requirement-incompatible run_pkg requirement resolve "$facility" '>17'
+grep -F 'selected-provider-incompatible' "$tmp/requirement-incompatible.err" >/dev/null 2>&1 ||
+  fail 'global requirement diagnostic did not identify the incompatible provider'
 expect_status 2 requirement-invalid-constraint run_pkg requirement resolve "$facility" invalid
 
 # Generic selector follows a later provider package-default change.
@@ -418,4 +425,5 @@ printf 'global-requirement-query=ok\n'
 printf 'implicit-provider-resolution=ok\n'
 printf 'legacy-provider-index-inert=ok\n'
 printf 'corrupt-provider-diagnostic=ok\n'
+printf 'global-requirement-diagnostic=ok\n'
 exit 0
