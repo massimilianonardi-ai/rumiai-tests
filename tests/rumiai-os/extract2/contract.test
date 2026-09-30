@@ -1,0 +1,133 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/extract2/contract.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+suite_root=${rumiai_os_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
+case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
+
+command_path="$root/bin/sys/extract2"
+[ -f "$command_path" ] && [ -x "$command_path" ] || fail 'extract2 command is missing or not executable'
+command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
+command -v gzip >/dev/null 2>&1 || skip 'gzip is unavailable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-extract2-contract-$$
+fakebin=$tmp/bin
+marker=$tmp/marker
+mount=$tmp/mount
+umask 077
+mkdir "$tmp" "$fakebin" "$mount" || error 'cannot create fixture directories'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+export EXTRACT2_MARKER=$marker EXTRACT2_MOUNT=$mount
+
+cat > "$fakebin/pkgutil" <<'EOF_PKGUTIL'
+#!/bin/sh
+[ "$1" = --expand-full ] || exit 9
+printf '%s\n' pkg >> "$EXTRACT2_MARKER"
+mkdir -p "$3/Example.pkg/Payload/bin" || exit 9
+printf '%s\n' raw-pkg > "$3/Example.pkg/Payload/bin/tool" || exit 9
+printf '%s\n' metadata > "$3/Distribution" || exit 9
+EOF_PKGUTIL
+chmod 700 "$fakebin/pkgutil" || error 'cannot prepare fake pkgutil'
+
+cat > "$fakebin/hdiutil" <<'EOF_HDIUTIL'
+#!/bin/sh
+case "$1" in
+  attach)
+    printf '%s\n' dmg-attach >> "$EXTRACT2_MARKER"
+    mkdir -p "$EXTRACT2_MOUNT" || exit 9
+    : > "$EXTRACT2_MOUNT/Installer.pkg"
+    printf '%s\n' readme > "$EXTRACT2_MOUNT/README"
+    printf '%s\n' '<plist/>'
+    ;;
+  detach)
+    printf '%s\n' dmg-detach >> "$EXTRACT2_MARKER"
+    ;;
+  *) exit 9 ;;
+esac
+EOF_HDIUTIL
+chmod 700 "$fakebin/hdiutil" || error 'cannot prepare fake hdiutil'
+
+cat > "$fakebin/plutil" <<'EOF_PLUTIL'
+#!/bin/sh
+case "$2" in
+  system-entities) printf '%s\n' 1 ;;
+  system-entities.0.dev-entry) printf '%s\n' /dev/fake ;;
+  system-entities.0.mount-point) printf '%s\n' "$EXTRACT2_MOUNT" ;;
+  *) exit 9 ;;
+esac
+EOF_PLUTIL
+chmod 700 "$fakebin/plutil" || error 'cannot prepare fake plutil'
+
+cat > "$fakebin/ditto" <<'EOF_DITTO'
+#!/bin/sh
+printf '%s\n' dmg-copy >> "$EXTRACT2_MARKER"
+mkdir -p "$2" || exit 9
+cp -R "$1"/. "$2"/ || exit 9
+EOF_DITTO
+chmod 700 "$fakebin/ditto" || error 'cannot prepare fake ditto'
+
+artifact=$tmp/artifact.bin
+printf '%s\n' artifact > "$artifact"
+runtime_path="$fakebin:$root/bin/sys:/usr/bin:/bin"
+
+mkdir "$tmp/pkg-out" || error 'cannot create pkg destination'
+: > "$marker"
+PATH="$runtime_path" "$command_path" pkg "$artifact" "$tmp/pkg-out" >/dev/null 2>"$tmp/pkg.err" || { cat "$tmp/pkg.err" >&2; fail 'raw pkg extraction failed'; }
+[ -f "$tmp/pkg-out/Example.pkg/Payload/bin/tool" ] || fail 'pkg raw component structure was not preserved'
+[ -f "$tmp/pkg-out/Distribution" ] || fail 'pkg raw metadata was not preserved'
+[ "$(cat "$marker")" = pkg ] || fail 'pkg did not dispatch to pkgutil'
+
+mkdir "$tmp/dmg-out" || error 'cannot create dmg destination'
+: > "$marker"
+PATH="$runtime_path" "$command_path" dmg "$artifact" "$tmp/dmg-out" >/dev/null 2>"$tmp/dmg.err" || { cat "$tmp/dmg.err" >&2; fail 'raw dmg extraction failed'; }
+[ -f "$tmp/dmg-out/Installer.pkg" ] || fail 'dmg did not preserve contained pkg'
+[ -f "$tmp/dmg-out/README" ] || fail 'dmg did not preserve unrelated image content'
+actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//')
+[ "$actual" = 'dmg-attach dmg-copy dmg-detach' ] || fail "unexpected dmg dispatch: $actual"
+
+appimage=$tmp/tool.AppImage
+printf '%s\n' appimage > "$appimage"
+chmod 755 "$appimage" || error 'cannot prepare appimage'
+mkdir "$tmp/appimage-out" || error 'cannot create appimage destination'
+PATH="$runtime_path" "$command_path" appimage "$appimage" "$tmp/appimage-out" >/dev/null 2>"$tmp/appimage.err" || fail 'appimage materialization failed'
+[ -x "$tmp/appimage-out/tool.AppImage" ] || fail 'appimage was not copied opaquely'
+
+executable=$tmp/tool
+printf '%s\n' executable > "$executable"
+chmod 600 "$executable" || error 'cannot prepare executable'
+mkdir "$tmp/executable-out" || error 'cannot create executable destination'
+PATH="$runtime_path" "$command_path" executable "$executable" "$tmp/executable-out" >/dev/null 2>"$tmp/executable.err" || fail 'executable materialization failed'
+[ -x "$tmp/executable-out/tool" ] || fail 'executable output was not made executable'
+[ ! -x "$executable" ] || fail 'executable input mode was modified'
+
+mkdir "$tmp/source" "$tmp/tar-out" || error 'cannot create tar fixture'
+printf '%s\n' payload > "$tmp/source/file"
+( CDPATH= cd -- "$tmp/source" && tar -cf - file ) | gzip -c > "$tmp/archive.tar.gz" || error 'cannot build tar.gz fixture'
+PATH="$runtime_path" "$command_path" tar.gz "$tmp/archive.tar.gz" "$tmp/tar-out" >/dev/null 2>"$tmp/tar.err" || fail 'tar.gz extraction failed'
+[ "$(cat "$tmp/tar-out/file")" = payload ] || fail 'tar.gz payload is incorrect'
+
+for format in flat-pkg dmg-pkg
+do
+  mkdir "$tmp/reject-$format" || error 'cannot create rejection destination'
+  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$tmp/reject-$format" >/dev/null 2>"$tmp/reject-$format.err"
+  [ "$?" -eq 2 ] || fail "extract2 accepted package-semantic format $format"
+done
+
+exit 0
