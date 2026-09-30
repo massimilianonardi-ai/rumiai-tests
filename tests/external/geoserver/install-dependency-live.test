@@ -63,6 +63,15 @@ do
   esac
 done
 
+depend_output=$(run_pkg depend geoserver@3.0.1 2> "$tmp/depend.err") || {
+  cat "$tmp/depend.err" >&2
+  fail 'pkg depend geoserver failed'
+}
+printf '%s\n' "$depend_output" | grep -E '^temurin@' >/dev/null 2>&1 ||
+  fail 'pkg depend geoserver did not return a Temurin dependency concrete'
+printf '%s\n' "$depend_output" | grep -E '^geoserver@' >/dev/null 2>&1 &&
+  fail 'pkg depend geoserver incorrectly returned the requested GeoServer root'
+
 run_pkg install geoserver@3.0.1 > "$tmp/install.out" 2> "$tmp/install.err"
 install_status=$?
 
