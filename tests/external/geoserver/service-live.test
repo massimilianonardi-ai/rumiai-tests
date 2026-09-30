@@ -372,23 +372,14 @@ geoserver_requirements=$(run_pkg requirement list "geoserver@$geoserver_version"
 [ "$geoserver_requirements" = 'java >=17 <22' ] ||
   fail "unexpected GeoServer requirement declaration: $geoserver_requirements"
 
-printf '%s\n' "$TEST_ID: installing GeoServer $geoserver_version without a Java provider" >&2
+printf '%s\n' "$TEST_ID: installing GeoServer $geoserver_version with recursive dependencies" >&2
 run_pkg install "geoserver@$geoserver_version" > "$tmp/geoserver-install.out" 2> "$tmp/geoserver-install.err" || {
   command -p -- cat "$tmp/geoserver-install.out" >&2
   command -p -- cat "$tmp/geoserver-install.err" >&2
-  fail 'pkg install GeoServer was incorrectly gated by its unavailable Java dependency'
+  fail 'pkg install GeoServer with recursive dependencies failed'
 }
 geoserver_installed=1
-grep -F 'dependency-unsatisfied' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
-  fail 'GeoServer install did not report its unavailable dependency'
-grep -F 'facility="java"' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
-  grep -F 'facility=java' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
-  fail 'GeoServer dependency warning did not identify java'
-grep -F 'constraints=">=17 <22"' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
-  grep -F 'constraints=>=17 <22' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
-  fail 'GeoServer dependency warning did not identify the compatibility range'
-grep -F 'provider-unavailable' "$tmp/geoserver-install.err" >/dev/null 2>&1 ||
-  fail 'GeoServer dependency warning did not identify provider unavailability'
+temurin_installed=1
 
 geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") || {
   command -p -- cat "$tmp/geoserver-default.err" >&2
@@ -405,20 +396,12 @@ geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") 
 [ ! -L "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] ||
   fail 'GeoServer internal service command was incorrectly published as a facility cmd part'
 
-java_version=21.0.12.1+1
-printf '%s\n' "$TEST_ID: installing Temurin $java_version" >&2
-run_pkg install "temurin@$java_version" > "$tmp/temurin-install.out" 2> "$tmp/temurin-install.err" || {
-  command -p -- cat "$tmp/temurin-install.out" >&2
-  command -p -- cat "$tmp/temurin-install.err" >&2
-  fail 'pkg install Temurin Java 21 failed'
-}
-temurin_installed=1
 temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
   command -p -- cat "$tmp/temurin-default.err" >&2
-  fail 'Temurin has no queryable package default'
+  fail 'auto-installed Temurin has no queryable package default'
 }
 [ "$(command -p -- cat "$root/pkg/$temurin_identity/facility" 2>/dev/null)" = 'java 21' ] ||
-  fail 'installed Temurin does not declare java 21'
+  fail 'auto-installed Temurin does not declare java 21'
 
 run_pkg provider default java "$temurin_identity" > "$tmp/java-default-set.out" 2> "$tmp/java-default-set.err" || {
   command -p -- cat "$tmp/java-default-set.err" >&2
@@ -565,7 +548,7 @@ printf 'java-provider=%s\n' "$temurin_identity"
 printf 'portable-service=ok\n'
 printf 'host-user-service=ok\n'
 printf 'host-system-service=ok\n'
-printf 'install-with-unresolved-dependency=ok\n'
+printf 'install-with-recursive-dependency=ok\n'
 printf 'requirement-list=ok\n'
 
 exit 0
