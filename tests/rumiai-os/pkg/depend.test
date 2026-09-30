@@ -60,7 +60,7 @@ cat > "$fakebin/state-path" <<'EOF_STATE_PATH'
 #!/bin/sh
 case "$*" in
   "system sys pkg conf") printf '%s\n' "$PKG_DEPEND_TEST_STATE/sys-conf" ;;
-  "system pkg "* " conf")
+  system\ pkg\ *\ conf)
     consumer=$3
     printf '%s\n' "$PKG_DEPEND_TEST_STATE/package-$consumer"
     ;;
