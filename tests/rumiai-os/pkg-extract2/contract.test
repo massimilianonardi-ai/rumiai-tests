@@ -72,7 +72,7 @@ driver=$tmp/driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
 loadsyslib "pkg/pkg-extract2" || exit 3
-pkg_extract2 "$@"
+pkg_extract "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
@@ -84,7 +84,7 @@ range=$tmp/range-tar
 mkdir "$range" || error 'cannot create ordinary range'
 printf '%s\n' tar > "$range/format"
 : > "$marker"
-PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/tar.err" || { cat "$tmp/tar.err" >&2; fail 'ordinary pkg_extract2 failed'; }
+PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/tar.err" || { cat "$tmp/tar.err" >&2; fail 'ordinary pkg_extract failed'; }
 [ -f "$stage/bin/tool" ] || fail 'ordinary useful-root normalization failed'
 [ "$(cat "$marker")" = tar ] || fail 'ordinary format was not delegated once to extract2'
 
@@ -95,7 +95,7 @@ printf '%s\n' flat-pkg > "$range/format"
 printf '%s\n' Example.pkg > "$range/component"
 printf '%s\n' example > "$range/payload-root"
 : > "$marker"
-PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/flat.err" || { cat "$tmp/flat.err" >&2; fail 'flat-pkg pkg_extract2 failed'; }
+PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/flat.err" || { cat "$tmp/flat.err" >&2; fail 'flat-pkg pkg_extract failed'; }
 [ -f "$stage/bin/tool" ] || fail 'flat-pkg component/payload-root selection failed'
 [ ! -e "$stage/installer-only" ] || fail 'flat-pkg content outside payload-root leaked into staging'
 [ "$(cat "$marker")" = pkg ] || fail 'flat-pkg was not composed from extract2 pkg'
@@ -109,7 +109,7 @@ printf '%s\n' example > "$range/payload-root"
 printf '%s\n' Overlay.pkg > "$range/overlay/pinentry/component"
 printf '%s\n' libexec > "$range/overlay/pinentry/target-root"
 : > "$marker"
-PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/dmg.err" || { cat "$tmp/dmg.err" >&2; fail 'dmg-pkg pkg_extract2 failed'; }
+PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/dmg.err" || { cat "$tmp/dmg.err" >&2; fail 'dmg-pkg pkg_extract failed'; }
 [ -f "$stage/bin/tool" ] || fail 'dmg-pkg primary component was not materialized'
 [ -f "$stage/libexec/pinentry-mac.app/Contents/MacOS/pinentry-mac" ] || fail 'dmg-pkg overlay was not materialized'
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//')
@@ -128,6 +128,6 @@ range=$tmp/range-unsupported
 mkdir "$range" || error 'cannot create unsupported range'
 printf '%s\n' pkg > "$range/format"
 PATH="$runtime_path" "$root/m" "$driver" "$artifact" "$range" "$stage" >/dev/null 2>"$tmp/unsupported.err"
-[ "$?" -eq 2 ] || fail 'pkg_extract2 accepted raw pkg as a package format'
+[ "$?" -eq 2 ] || fail 'pkg_extract accepted raw pkg as a package format'
 
 exit 0
