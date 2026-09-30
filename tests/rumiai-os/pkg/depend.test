@@ -19,8 +19,8 @@ range()
   package=$1
   anchor=$2
   version=$3
-  mkdir -p "$catalog/pkg/$package/linux-x86_64/repository" "$catalog/pkg/$package/linux-x86_64/n$anchor=$version" || return 1
-  printf '%s\n' test > "$catalog/pkg/$package/linux-x86_64/repository/type" || return 1
+  mkdir -p "$source/pkg/$package/linux-x86_64/repository" "$source/pkg/$package/linux-x86_64/n$anchor=$version" || return 1
+  printf '%s\n' test > "$source/pkg/$package/linux-x86_64/repository/type" || return 1
 }
 
 plan()
@@ -47,19 +47,21 @@ esac
 [ -f "$root/res/sys/manual/pkg-depend.lib.sh" ] || fail 'pkg-depend manual is missing'
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-depend-$$
-catalog=$tmp/catalog
+source=$tmp/source
 store=$tmp/store
 fakebin=$tmp/bin
 fakelib=$tmp/lib
 state=$tmp/state
 umask 077
-mkdir -p "$catalog/pkg" "$store" "$fakebin" "$fakelib/sys/sh/pkg/repository" "$state/sys-conf/provider/default" || error 'cannot create fixture roots'
+mkdir -p "$source/pkg" "$store" "$fakebin" "$fakelib/sys/sh/pkg/repository" "$state/sys-conf/provider/default" "$tmp/work" "$tmp/cache" || error 'cannot create fixture roots'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 cat > "$fakebin/state-path" <<'EOF_STATE_PATH'
 #!/bin/sh
 case "$*" in
   "system sys pkg conf") printf '%s\n' "$PKG_DEPEND_TEST_STATE/sys-conf" ;;
+  "system sys pkg tmp") printf '%s\n' "$PKG_DEPEND_TEST_WORK" ;;
+  "system sys pkg cache") printf '%s\n' "$PKG_DEPEND_TEST_CACHE" ;;
   system\ pkg\ *\ conf)
     consumer=$3
     printf '%s\n' "$PKG_DEPEND_TEST_STATE/package-$consumer"
@@ -109,42 +111,66 @@ loadsyslib "pkg/pkg-depend" || exit 3
 m_LIB_DIR=$PKG_DEPEND_TEST_LIB
 m_PKG_DIR=$PKG_DEPEND_TEST_STORE
 m_OSARCH=linux-x86_64
-catalog=$1
-shift
-pkg_depend_resolve "$catalog" "$@"
+
+git()
+{
+  case "$1" in
+    clone)
+      [ "$2" = -- ] && [ "$3" = test-catalog ] || return 1
+      mkdir -p "$4/.git" || return 1
+      ;;
+    -C)
+      shift 2
+      case "$1:$2" in
+        remote:set-url) return 0 ;;
+        pull:--ff-only) return 0 ;;
+        rev-parse:HEAD) printf '%s\n' test-head ;;
+        archive:test-head) (CDPATH= cd -- "$PKG_DEPEND_TEST_SOURCE" && command -p tar -cf - .) ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+pkg_depend "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
 export PKG_DEPEND_TEST_LIB="$fakelib"
 export PKG_DEPEND_TEST_STORE="$store"
 export PKG_DEPEND_TEST_STATE="$state"
+export PKG_DEPEND_TEST_SOURCE="$source"
+export PKG_DEPEND_TEST_WORK="$tmp/work"
+export PKG_DEPEND_TEST_CACHE="$tmp/cache"
+printf '%s\n' test-catalog > "$state/sys-conf/catalog"
 PATH="$fakebin:$root/bin/sys:/usr/bin:/bin"
 export PATH
 
 range a 0001 1 || error 'cannot create package a'
-printf '%s\n' 1 > "$catalog/pkg/a/linux-x86_64/repository/version"
-printf '%s\n' 'java >=21' > "$catalog/pkg/a/linux-x86_64/n0001=1/dependency"
+printf '%s\n' 1 > "$source/pkg/a/linux-x86_64/repository/version"
+printf '%s\n' 'java >=21' > "$source/pkg/a/linux-x86_64/n0001=1/dependency"
 
 range b 0001 1 || error 'cannot create package b'
-printf '%s\n' 1 > "$catalog/pkg/b/linux-x86_64/repository/version"
-printf '%s\n' 'java =25' > "$catalog/pkg/b/linux-x86_64/n0001=1/dependency"
+printf '%s\n' 1 > "$source/pkg/b/linux-x86_64/repository/version"
+printf '%s\n' 'java =25' > "$source/pkg/b/linux-x86_64/n0001=1/dependency"
 
 range temurin 0001 1 || error 'cannot create temurin range 1'
-mkdir -p "$catalog/pkg/temurin/linux-x86_64/n0002=2" || error 'cannot create temurin range 2'
-printf '%s\n' 2 > "$catalog/pkg/temurin/linux-x86_64/repository/version"
-printf '%s\n' 'java 21' > "$catalog/pkg/temurin/linux-x86_64/n0001=1/facility"
-printf '%s\n' 'java 25' > "$catalog/pkg/temurin/linux-x86_64/n0002=2/facility"
-printf '%s\n' 'crypto =1' > "$catalog/pkg/temurin/linux-x86_64/n0002=2/dependency"
+mkdir -p "$source/pkg/temurin/linux-x86_64/n0002=2" || error 'cannot create temurin range 2'
+printf '%s\n' 2 > "$source/pkg/temurin/linux-x86_64/repository/version"
+printf '%s\n' 'java 21' > "$source/pkg/temurin/linux-x86_64/n0001=1/facility"
+printf '%s\n' 'java 25' > "$source/pkg/temurin/linux-x86_64/n0002=2/facility"
+printf '%s\n' 'crypto =1' > "$source/pkg/temurin/linux-x86_64/n0002=2/dependency"
 
 range openssl 0001 1 || error 'cannot create openssl'
-printf '%s\n' 1 > "$catalog/pkg/openssl/linux-x86_64/repository/version"
-printf '%s\n' 'crypto 1' > "$catalog/pkg/openssl/linux-x86_64/n0001=1/facility"
+printf '%s\n' 1 > "$source/pkg/openssl/linux-x86_64/repository/version"
+printf '%s\n' 'crypto 1' > "$source/pkg/openssl/linux-x86_64/n0001=1/facility"
 
-result=$(plan "$catalog" a b 2>"$tmp/plan.err") || {
+result=$(plan a b 2>"$tmp/plan.err") || {
   cat "$tmp/plan.err" >&2
   fail 'dependency plan failed'
 }
-eval "set -- $result"
+set -- $result
 [ "$#" -eq 4 ] || fail "expected 4 concretes, got $#"
 [ "$1" = 'openssl@1!linux-x86_64' ] || fail "unexpected first concrete: $1"
 [ "$2" = 'temurin@2!linux-x86_64' ] || fail "constraints were not unified onto java 25: $2"
@@ -152,31 +178,31 @@ eval "set -- $result"
 [ "$4" = 'b@1!linux-x86_64' ] || fail "unexpected fourth concrete: $4"
 
 range graalvm 0001 1 || error 'cannot create graalvm'
-printf '%s\n' 1 > "$catalog/pkg/graalvm/linux-x86_64/repository/version"
-printf '%s\n' 'java 25' > "$catalog/pkg/graalvm/linux-x86_64/n0001=1/facility"
+printf '%s\n' 1 > "$source/pkg/graalvm/linux-x86_64/repository/version"
+printf '%s\n' 'java 25' > "$source/pkg/graalvm/linux-x86_64/n0001=1/facility"
 
-plan "$catalog" a b >"$tmp/ambiguous.out" 2>"$tmp/ambiguous.err"
+plan a b >"$tmp/ambiguous.out" 2>"$tmp/ambiguous.err"
 [ "$?" -eq 1 ] || fail 'multiple catalog provider packages were not ambiguous'
 
 mkdir -p "$store/temurin@2!linux-x86_64" || error 'cannot create installed temurin'
 printf '%s\n' 'java 25' > "$store/temurin@2!linux-x86_64/facility"
 printf '%s\n' 'crypto =1' > "$store/temurin@2!linux-x86_64/dependency"
 
-result=$(plan "$catalog" a b 2>"$tmp/installed.err") || {
+result=$(plan a b 2>"$tmp/installed.err") || {
   cat "$tmp/installed.err" >&2
   fail 'installed compatible provider did not take precedence over catalog ambiguity'
 }
-eval "set -- $result"
+set -- $result
 [ "$#" -eq 4 ] || fail "expected 4 concretes with installed provider, got $#"
 [ "$2" = 'temurin@2!linux-x86_64' ] || fail 'installed temurin was not selected'
 
 mkdir -p "$state/package-a/binding" || error 'cannot create binding fixture'
 printf '%s\n' graalvm > "$state/package-a/binding/java"
-result=$(plan "$catalog" a b 2>"$tmp/binding.err") || {
+result=$(plan a b 2>"$tmp/binding.err") || {
   cat "$tmp/binding.err" >&2
   fail 'explicit consumer binding was not preserved as a separate dependency bucket'
 }
-eval "set -- $result"
+set -- $result
 [ "$#" -eq 5 ] || fail "expected both bound and implicit java providers, got $# concretes"
 case " $* " in *" graalvm@1!linux-x86_64 "*) : ;; *) fail 'bound graalvm provider is missing' ;; esac
 case " $* " in *" temurin@2!linux-x86_64 "*) : ;; *) fail 'implicit installed temurin provider is missing' ;; esac
