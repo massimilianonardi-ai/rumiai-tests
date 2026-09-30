@@ -138,9 +138,9 @@ fi
 invalid_err=$tmp/invalid-only.err
 run_pkg install 'bad@@version' > "$tmp/invalid-only.out" 2> "$invalid_err"
 invalid_status=$?
-[ "$invalid_status" -eq 1 ] || {
+[ "$invalid_status" -eq 2 ] || {
   cat "$invalid_err" >&2
-  fail "invalid-only install returned $invalid_status instead of 1"
+  fail "invalid-only install returned $invalid_status instead of 2"
 }
 [ -s "$invalid_err" ] ||
   fail 'invalid-only install produced no error diagnostic'
@@ -207,31 +207,20 @@ fi
 mixed_err=$tmp/mixed.err
 run_pkg install 'bad@@version' jq > "$tmp/mixed.out" 2> "$mixed_err"
 mixed_status=$?
-[ "$mixed_status" -eq 1 ] || {
+[ "$mixed_status" -eq 2 ] || {
   cat "$mixed_err" >&2
-  fail "mixed install returned $mixed_status instead of 1"
+  fail "mixed install returned $mixed_status instead of 2"
 }
 [ -s "$mixed_err" ] ||
-  fail 'mixed install produced no error diagnostic for the failed operand'
+  fail 'mixed invalid install produced no error diagnostic'
 grep -F 'bad@@version' "$mixed_err" >/dev/null 2>&1 ||
-  fail 'mixed install diagnostic did not identify the invalid operand'
+  fail 'mixed invalid diagnostic did not identify the invalid operand'
 
-identity_after=$(run_pkg default jq 2> "$tmp/mixed-default.err") || {
-  cat "$tmp/mixed-default.err" >&2
-  fail 'mixed install did not install the valid jq operand'
-}
-jq_installed=1
-[ -n "$identity_after" ] || fail 'mixed install produced an empty jq identity'
+run_pkg versions jq > "$tmp/mixed-versions.out" 2> "$tmp/mixed-versions.err"
+[ "$?" -eq 1 ] || fail 'mixed invalid request installed the later valid jq operand'
 
-jq_version_after=$(
-  PATH="$public_dir:$root/bin/sys:$PATH"
-  export PATH
-  jq --version
-) || fail 'mixed install did not leave jq executable'
-[ -n "$jq_version_after" ] || fail 'mixed install jq --version produced no output'
-
-printf 'installed=%s\n' "$identity_after"
-printf 'jq=%s\n' "$jq_version_after"
+printf 'installed=%s\n' "$identity"
+printf 'jq=%s\n' "$jq_version"
 printf 'osarch=%s\n' "$osarch"
 case $osarch in
   linux-*|macos-*) printf 'requirement-list=ok\n' ;;
