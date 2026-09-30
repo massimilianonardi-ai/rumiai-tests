@@ -31,7 +31,7 @@ esac
 
 driver=${TMPDIR:-/tmp}/rumiai-pkg-install-order-$$
 marker=$driver.marker
-trap 'rm -f "$driver" "$marker"' 0 HUP INT TERM
+trap 'rm -rf "$driver" "$marker" "$driver.err" "$driver.store" "$driver.installed" "$driver.installed.err"' 0 HUP INT TERM
 
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
@@ -69,5 +69,28 @@ demo@3!linux-x86_64"
 actual=$(cat "$marker") || error 'cannot read install order'
 [ "$actual" = "$expected" ] || fail "unexpected install order:
 $actual"
+
+installed_store=$driver.store
+mkdir -p "$installed_store/temurin@21!linux-x86_64" || error 'cannot prepare installed concrete fixture'
+installed_driver=$driver.installed
+cat > "$installed_driver" <<'EOF_INSTALLED_DRIVER'
+#!/usr/bin/env m
+loadsyslib "pkg/pkg-install" || exit 3
+
+m_PKG_DIR=$PKG_INSTALL_ORDER_STORE
+
+pkg_catalog_request_resolve()
+{
+  exit 99
+}
+
+pkg_install_one 'temurin@21!linux-x86_64'
+EOF_INSTALLED_DRIVER
+chmod 700 "$installed_driver" || error 'cannot prepare installed concrete driver'
+export PKG_INSTALL_ORDER_STORE=$installed_store
+"$root/m" "$installed_driver" > /dev/null 2>"$installed_driver.err" || {
+  cat "$installed_driver.err" >&2
+  fail 'already-installed dependency concrete was resolved through catalog instead of reused directly'
+}
 
 exit 0
