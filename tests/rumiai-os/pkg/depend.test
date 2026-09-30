@@ -117,13 +117,14 @@ git()
   case "$1" in
     clone)
       [ "$2" = -- ] && [ "$3" = test-catalog ] || return 1
+      printf '%s\n' clone-noise
       mkdir -p "$4/.git" || return 1
       ;;
     -C)
       shift 2
       case "$1:$2" in
         remote:set-url) return 0 ;;
-        pull:--ff-only) return 0 ;;
+        pull:--ff-only) printf '%s\n' pull-noise; return 0 ;;
         rev-parse:HEAD) printf '%s\n' test-head ;;
         archive:test-head) (CDPATH= cd -- "$PKG_DEPEND_TEST_SOURCE" && command -p tar -cf - .) ;;
         *) return 1 ;;
