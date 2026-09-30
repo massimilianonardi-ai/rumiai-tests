@@ -62,6 +62,13 @@ cat > "$driver" <<'EOF_DRIVER'
 loadsyslib "pkg/pkg-common" || exit 3
 
 case "$1" in
+  request)
+    shift
+    pkg_request_read pkg_test_name pkg_test_version pkg_test_osarch "$1" || exit $?
+    printf 'name=%s\n' "$pkg_test_name"
+    printf 'version=%s\n' "$pkg_test_version"
+    printf 'osarch=%s\n' "$pkg_test_osarch"
+    ;;
   read)
     shift
     pkg_concrete_read pkg_test_name pkg_test_version pkg_test_osarch "$1" || exit $?
@@ -92,6 +99,33 @@ esac
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
+output=$("$root/m" "$driver" request 'temurin!linux-x86_64' 2> "$tmp/request-platform.err") || {
+  cat "$tmp/request-platform.err" >&2
+  fail 'platform request read failed'
+}
+expected='name=temurin
+version=
+osarch=linux-x86_64'
+[ "$output" = "$expected" ] || fail "platform request output is incorrect: $output"
+
+output=$("$root/m" "$driver" request 'foo' 2> "$tmp/request-generic.err") || {
+  cat "$tmp/request-generic.err" >&2
+  fail 'generic request read failed'
+}
+expected='name=foo
+version=
+osarch='
+[ "$output" = "$expected" ] || fail "generic request output is incorrect: $output"
+
+output=$("$root/m" "$driver" request 'foo@1.2' 2> "$tmp/request-version.err") || {
+  cat "$tmp/request-version.err" >&2
+  fail 'versioned request read failed'
+}
+expected='name=foo
+version=1.2
+osarch='
+[ "$output" = "$expected" ] || fail "versioned request output is incorrect: $output"
+
 output=$("$root/m" "$driver" read 'temurin@25.0.2+10!linux-x86_64' 2> "$tmp/platform.err") || {
   cat "$tmp/platform.err" >&2
   fail 'platform concrete read failed'
@@ -110,6 +144,10 @@ version=1.2
 osarch='
 [ "$output" = "$expected" ] || fail "generic concrete output is incorrect: $output"
 
+expect_status 0 request-unversioned "$root/m" "$driver" request foo
+expect_status 1 request-empty-version "$root/m" "$driver" request 'foo@'
+expect_status 1 request-invalid-name "$root/m" "$driver" request 'Bad'
+expect_status 1 request-invalid-osarch "$root/m" "$driver" request 'foo!other'
 expect_status 1 missing-version "$root/m" "$driver" read foo
 expect_status 1 empty-version "$root/m" "$driver" read 'foo@'
 expect_status 1 invalid-name "$root/m" "$driver" read 'Bad@1'
