@@ -1,0 +1,93 @@
+#!/bin/sh
+
+TEST_ID=external/geoserver/install-dependency-live.test
+
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+  case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  [ "${geoserver_installed-0}" -eq 0 ] || run_pkg uninstall geoserver >/dev/null 2>&1 || :
+  [ "${temurin_installed-0}" -eq 0 ] || run_pkg uninstall temurin >/dev/null 2>&1 || :
+  [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+test_script="$test_dir/${TEST_ID##*/}"
+rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error 'cannot re-enter test through target m bootstrap'
+
+tmp=${TMPDIR:-/tmp}/rumiai-geoserver-install-dependency-$$
+command -p -- mkdir "$tmp" || error 'cannot create temporary directory'
+
+PATH="$root/bin/sys:$PATH"
+export PATH
+
+for package in geoserver temurin
+do
+  run_pkg versions "$package" > "$tmp/$package.before.out" 2> "$tmp/$package.before.err"
+  case $? in
+    0) skip "$package is already installed in the supplied target" ;;
+    1) : ;;
+    *) cat "$tmp/$package.before.err" >&2; error "cannot inspect pre-existing $package state" ;;
+  esac
+done
+
+run_pkg install geoserver@3.0.1 > "$tmp/install.out" 2> "$tmp/install.err"
+install_status=$?
+
+run_pkg versions temurin > "$tmp/temurin.after.out" 2> "$tmp/temurin.after.err"
+temurin_status=$?
+[ "$temurin_status" -eq 0 ] && [ -s "$tmp/temurin.after.out" ] && temurin_installed=1
+
+run_pkg versions geoserver > "$tmp/geoserver.after.out" 2> "$tmp/geoserver.after.err"
+geoserver_status=$?
+[ "$geoserver_status" -eq 0 ] && [ -s "$tmp/geoserver.after.out" ] && geoserver_installed=1
+
+if [ "$install_status" -ne 0 ]
+then
+  cat "$tmp/install.out" >&2
+  cat "$tmp/install.err" >&2
+fi
+
+[ "${temurin_installed-0}" -eq 1 ] || fail 'pkg install geoserver did not install its Java dependency'
+[ "${geoserver_installed-0}" -eq 1 ] || {
+  cat "$tmp/install.out" >&2
+  cat "$tmp/install.err" >&2
+  fail 'pkg install geoserver installed Java but not GeoServer'
+}
+[ "$install_status" -eq 0 ] || fail "pkg install geoserver returned status $install_status"
+
+printf 'temurin=%s\n' "$(cat "$tmp/temurin.after.out")"
+printf 'geoserver=%s\n' "$(cat "$tmp/geoserver.after.out")"
+exit 0
