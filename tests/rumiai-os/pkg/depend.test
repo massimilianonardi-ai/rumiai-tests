@@ -1,0 +1,178 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg/depend.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+range()
+{
+  package=$1
+  anchor=$2
+  version=$3
+  mkdir -p "$catalog/pkg/$package/linux-x86_64/repository" "$catalog/pkg/$package/linux-x86_64/n$anchor=$version" || return 1
+  printf '%s\n' test > "$catalog/pkg/$package/linux-x86_64/repository/type" || return 1
+}
+
+plan()
+{
+  "$root/m" "$driver" "$@"
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+pkg_group=${test_dir%/*}
+tests_dir=${pkg_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+[ -f "$root/lib/sys/sh/pkg/pkg-depend.lib.sh" ] || fail 'pkg-depend library is missing'
+[ -f "$root/res/sys/manual/pkg-depend.lib.sh" ] || fail 'pkg-depend manual is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-depend-$$
+catalog=$tmp/catalog
+store=$tmp/store
+fakebin=$tmp/bin
+fakelib=$tmp/lib
+state=$tmp/state
+umask 077
+mkdir -p "$catalog/pkg" "$store" "$fakebin" "$fakelib/sys/sh/pkg/repository" "$state/sys-conf/provider/default" || error 'cannot create fixture roots'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+cat > "$fakebin/state-path" <<'EOF_STATE_PATH'
+#!/bin/sh
+case "$*" in
+  "system sys pkg conf") printf '%s\n' "$PKG_DEPEND_TEST_STATE/sys-conf" ;;
+  "system pkg "* " conf")
+    consumer=$3
+    printf '%s\n' "$PKG_DEPEND_TEST_STATE/package-$consumer"
+    ;;
+  *) exit 1 ;;
+esac
+EOF_STATE_PATH
+chmod 700 "$fakebin/state-path" || error 'cannot prepare state-path fixture'
+
+cat > "$fakelib/sys/sh/pkg/repository/pkg-repository-test.lib.sh" <<'EOF_ADAPTER'
+pkg_repository_resolve_version()
+(
+  [ "$#" -eq 1 ] || [ "$#" -eq 2 ] || return 2
+  if [ "$#" -eq 2 ]
+  then
+    requested=$2
+    case "$requested" in ""|*[!0-9]*) return 1 ;; esac
+    printf '%s\n' "$requested"
+  else
+    cat "$1/version"
+  fi
+)
+
+pkg_repository_compare_versions()
+(
+  [ "$#" -eq 3 ] || return 2
+  left=$2
+  right=$3
+  case "$left:$right" in *[!0-9:]*|:*|*:) return 1 ;; esac
+  if [ "$left" -lt "$right" ]
+  then
+    printf '%s\n' -1
+  elif [ "$left" -gt "$right" ]
+  then
+    printf '%s\n' 1
+  else
+    printf '%s\n' 0
+  fi
+)
+EOF_ADAPTER
+chmod 600 "$fakelib/sys/sh/pkg/repository/pkg-repository-test.lib.sh" || error 'cannot prepare repository adapter'
+
+driver=$tmp/driver
+cat > "$driver" <<'EOF_DRIVER'
+#!/usr/bin/env m
+loadsyslib "pkg/pkg-depend" || exit 3
+m_LIB_DIR=$PKG_DEPEND_TEST_LIB
+m_PKG_DIR=$PKG_DEPEND_TEST_STORE
+m_OSARCH=linux-x86_64
+catalog=$1
+shift
+pkg_depend_resolve "$catalog" "$@"
+EOF_DRIVER
+chmod 700 "$driver" || error 'cannot prepare driver'
+
+export PKG_DEPEND_TEST_LIB="$fakelib"
+export PKG_DEPEND_TEST_STORE="$store"
+export PKG_DEPEND_TEST_STATE="$state"
+PATH="$fakebin:$root/bin/sys:/usr/bin:/bin"
+export PATH
+
+range a 0001 1 || error 'cannot create package a'
+printf '%s\n' 1 > "$catalog/pkg/a/linux-x86_64/repository/version"
+printf '%s\n' 'java >=21' > "$catalog/pkg/a/linux-x86_64/n0001=1/dependency"
+
+range b 0001 1 || error 'cannot create package b'
+printf '%s\n' 1 > "$catalog/pkg/b/linux-x86_64/repository/version"
+printf '%s\n' 'java =25' > "$catalog/pkg/b/linux-x86_64/n0001=1/dependency"
+
+range temurin 0001 1 || error 'cannot create temurin range 1'
+mkdir -p "$catalog/pkg/temurin/linux-x86_64/n0002=2" || error 'cannot create temurin range 2'
+printf '%s\n' 2 > "$catalog/pkg/temurin/linux-x86_64/repository/version"
+printf '%s\n' 'java 21' > "$catalog/pkg/temurin/linux-x86_64/n0001=1/facility"
+printf '%s\n' 'java 25' > "$catalog/pkg/temurin/linux-x86_64/n0002=2/facility"
+printf '%s\n' 'crypto =1' > "$catalog/pkg/temurin/linux-x86_64/n0002=2/dependency"
+
+range openssl 0001 1 || error 'cannot create openssl'
+printf '%s\n' 1 > "$catalog/pkg/openssl/linux-x86_64/repository/version"
+printf '%s\n' 'crypto 1' > "$catalog/pkg/openssl/linux-x86_64/n0001=1/facility"
+
+result=$(plan "$catalog" a b 2>"$tmp/plan.err") || {
+  cat "$tmp/plan.err" >&2
+  fail 'dependency plan failed'
+}
+eval "set -- $result"
+[ "$#" -eq 4 ] || fail "expected 4 concretes, got $#"
+[ "$1" = 'openssl@1!linux-x86_64' ] || fail "unexpected first concrete: $1"
+[ "$2" = 'temurin@2!linux-x86_64' ] || fail "constraints were not unified onto java 25: $2"
+[ "$3" = 'a@1!linux-x86_64' ] || fail "unexpected third concrete: $3"
+[ "$4" = 'b@1!linux-x86_64' ] || fail "unexpected fourth concrete: $4"
+
+range graalvm 0001 1 || error 'cannot create graalvm'
+printf '%s\n' 1 > "$catalog/pkg/graalvm/linux-x86_64/repository/version"
+printf '%s\n' 'java 25' > "$catalog/pkg/graalvm/linux-x86_64/n0001=1/facility"
+
+plan "$catalog" a b >"$tmp/ambiguous.out" 2>"$tmp/ambiguous.err"
+[ "$?" -eq 1 ] || fail 'multiple catalog provider packages were not ambiguous'
+
+mkdir -p "$store/temurin@2!linux-x86_64" || error 'cannot create installed temurin'
+printf '%s\n' 'java 25' > "$store/temurin@2!linux-x86_64/facility"
+printf '%s\n' 'crypto =1' > "$store/temurin@2!linux-x86_64/dependency"
+
+result=$(plan "$catalog" a b 2>"$tmp/installed.err") || {
+  cat "$tmp/installed.err" >&2
+  fail 'installed compatible provider did not take precedence over catalog ambiguity'
+}
+eval "set -- $result"
+[ "$#" -eq 4 ] || fail "expected 4 concretes with installed provider, got $#"
+[ "$2" = 'temurin@2!linux-x86_64' ] || fail 'installed temurin was not selected'
+
+mkdir -p "$state/package-a/binding" || error 'cannot create binding fixture'
+printf '%s\n' graalvm > "$state/package-a/binding/java"
+plan "$catalog" a b >"$tmp/conflicting-selectors.out" 2>"$tmp/conflicting-selectors.err"
+[ "$?" -eq 1 ] || fail 'incompatible independent selector buckets did not fail the combined graph'
+
+exit 0
