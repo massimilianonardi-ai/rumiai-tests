@@ -1,0 +1,200 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg/catalog.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+expect_status()
+{
+  expected=$1
+  label=$2
+  shift 2
+  "$@" > "$tmp/$label.out" 2> "$tmp/$label.err"
+  actual=$?
+  [ "$actual" -eq "$expected" ] || {
+    cat "$tmp/$label.err" >&2
+    fail "$label returned $actual instead of $expected"
+  }
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+pkg_group=${test_dir%/*}
+tests_dir=${pkg_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+[ -f "$root/lib/sys/sh/pkg/pkg-catalog.lib.sh" ] || fail 'pkg-catalog library is missing'
+[ -f "$root/res/sys/manual/pkg-catalog.lib.sh" ] || fail 'pkg-catalog manual is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-catalog-$$
+umask 077
+mkdir -p "$tmp/source/pkg/demo/linux-x86_64/repository" "$tmp/source/pkg/demo/linux-x86_64/n0001=1" "$tmp/source/pkg/demo/linux-x86_64/n0002=3" "$tmp/source/pkg/generic/all/repository" "$tmp/source/pkg/generic/all/n0001=1" "$tmp/source/pkg/bad/linux-x86_64/repository" "$tmp/source/pkg/bad/linux-x86_64/n0002=1" "$tmp/conf" "$tmp/work" "$tmp/cache" "$tmp/lib/sys/sh/pkg/repository" || error 'cannot create fixture'
+
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+printf '%s\n' test > "$tmp/source/pkg/demo/linux-x86_64/repository/type"
+printf '%s\n' test > "$tmp/source/pkg/generic/all/repository/type"
+printf '%s\n' test > "$tmp/source/pkg/bad/linux-x86_64/repository/type"
+printf '%s\n' https://example.invalid/pkg-catalog.git > "$tmp/conf/catalog"
+printf '%s\n' snapshot > "$tmp/source/marker"
+
+cat > "$tmp/lib/sys/sh/pkg/repository/pkg-repository-test.lib.sh" <<'EOF_ADAPTER'
+pkg_repository_compare_versions()
+(
+  [ "$#" -eq 3 ] || return 2
+  left=$2
+  right=$3
+  case "$left:$right" in
+    *[!0123456789:]*|:*|*:) return 1 ;;
+  esac
+  if [ "$left" -lt "$right" ]
+  then
+    printf '%s\n' -1
+  elif [ "$left" -gt "$right" ]
+  then
+    printf '%s\n' 1
+  else
+    printf '%s\n' 0
+  fi
+)
+EOF_ADAPTER
+chmod 600 "$tmp/lib/sys/sh/pkg/repository/pkg-repository-test.lib.sh" || error 'cannot prepare repository adapter'
+
+driver=$tmp/driver
+cat > "$driver" <<'EOF_DRIVER'
+#!/usr/bin/env m
+loadsyslib "pkg/pkg-catalog" || exit 3
+
+state-path()
+{
+  [ "$#" -eq 4 ] || return 1
+  [ "$1" = system ] && [ "$2" = sys ] && [ "$3" = pkg ] && [ "$4" = conf ] || return 1
+  printf '%s\n' "$PKG_CATALOG_TEST_CONF"
+}
+
+git()
+{
+  case "$1" in
+    clone)
+      [ "$2" = -- ] && [ "$3" = https://example.invalid/pkg-catalog.git ] || return 1
+      mkdir -p "$4/.git" || return 1
+      ;;
+    -C)
+      shift 2
+      case "$1:$2" in
+        remote:set-url) return 0 ;;
+        pull:--ff-only) return 0 ;;
+        rev-parse:HEAD) printf '%s\n' test-head ;;
+        archive:test-head)
+          (CDPATH= cd -- "$PKG_CATALOG_TEST_SOURCE" && command -p tar -cf - .)
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+case "$1" in
+  init)
+    pkg_catalog_init test_catalog test_head "$PKG_CATALOG_TEST_WORK" "$PKG_CATALOG_TEST_CACHE" || exit $?
+    printf 'catalog=%s\n' "$test_catalog"
+    printf 'head=%s\n' "$test_head"
+    ;;
+  stream)
+    pkg_catalog_stream_resolve test_stream test_osarch "$2" "$3" "$4" || exit $?
+    printf 'stream=%s\n' "$test_stream"
+    printf 'osarch=%s\n' "$test_osarch"
+    ;;
+  range)
+    m_LIB_DIR=$PKG_CATALOG_TEST_LIB
+    pkg_catalog_range_resolve test_range "$2" "$3" || exit $?
+    printf 'range=%s\n' "$test_range"
+    ;;
+  invalid-output)
+    pkg_catalog_range_resolve bad-name "$2" "$3"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF_DRIVER
+chmod 700 "$driver" || error 'cannot prepare driver'
+
+export PKG_CATALOG_TEST_CONF="$tmp/conf"
+export PKG_CATALOG_TEST_SOURCE="$tmp/source"
+export PKG_CATALOG_TEST_WORK="$tmp/work"
+export PKG_CATALOG_TEST_CACHE="$tmp/cache"
+export PKG_CATALOG_TEST_LIB="$tmp/lib"
+
+output=$("$root/m" "$driver" init 2> "$tmp/init.err") || {
+  cat "$tmp/init.err" >&2
+  fail 'catalog init failed'
+}
+expected="catalog=$tmp/work/catalog
+head=test-head"
+[ "$output" = "$expected" ] || fail "catalog init output is incorrect: $output"
+[ -f "$tmp/work/catalog/marker" ] || fail 'catalog snapshot was not exported'
+[ -d "$tmp/cache/catalog/.git" ] || fail 'catalog cache was not initialized'
+
+catalog=$tmp/work/catalog
+
+output=$("$root/m" "$driver" stream "$catalog" demo linux-x86_64 2> "$tmp/stream-platform.err") || {
+  cat "$tmp/stream-platform.err" >&2
+  fail 'platform stream resolution failed'
+}
+expected="stream=$catalog/pkg/demo/linux-x86_64
+osarch=linux-x86_64"
+[ "$output" = "$expected" ] || fail "platform stream output is incorrect: $output"
+
+output=$("$root/m" "$driver" stream "$catalog" generic linux-x86_64 2> "$tmp/stream-all.err") || {
+  cat "$tmp/stream-all.err" >&2
+  fail 'all stream resolution failed'
+}
+expected="stream=$catalog/pkg/generic/all
+osarch="
+[ "$output" = "$expected" ] || fail "all stream output is incorrect: $output"
+
+output=$("$root/m" "$driver" range "$catalog" 'demo@2!linux-x86_64' 2> "$tmp/range-middle.err") || {
+  cat "$tmp/range-middle.err" >&2
+  fail 'range resolution failed'
+}
+[ "$output" = "range=$catalog/pkg/demo/linux-x86_64/n0001=1" ] || fail "middle version selected wrong range: $output"
+
+output=$("$root/m" "$driver" range "$catalog" 'demo@3!linux-x86_64' 2> "$tmp/range-anchor.err") || {
+  cat "$tmp/range-anchor.err" >&2
+  fail 'anchor range resolution failed'
+}
+[ "$output" = "range=$catalog/pkg/demo/linux-x86_64/n0002=3" ] || fail "anchor version selected wrong range: $output"
+
+output=$("$root/m" "$driver" range "$catalog" 'generic@2' 2> "$tmp/range-all.err") || {
+  cat "$tmp/range-all.err" >&2
+  fail 'all-stream range resolution failed'
+}
+[ "$output" = "range=$catalog/pkg/generic/all/n0001=1" ] || fail "all-stream range output is incorrect: $output"
+
+expect_status 1 bad-range "$root/m" "$driver" range "$catalog" 'bad@1!linux-x86_64'
+expect_status 1 below-first "$root/m" "$driver" range "$catalog" 'demo@0!linux-x86_64'
+expect_status 1 missing-stream "$root/m" "$driver" stream "$catalog" missing linux-x86_64
+expect_status 2 invalid-output "$root/m" "$driver" invalid-output "$catalog" 'demo@2!linux-x86_64'
+
+exit 0
