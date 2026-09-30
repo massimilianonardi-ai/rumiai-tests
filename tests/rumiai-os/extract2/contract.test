@@ -46,6 +46,12 @@ printf '%s\n' metadata > "$3/Distribution" || exit 9
 EOF_PKGUTIL
 chmod 700 "$fakebin/pkgutil" || error 'cannot prepare fake pkgutil'
 
+cat > "$fakebin/diskutil" <<'EOF_DISKUTIL'
+#!/bin/sh
+exit 1
+EOF_DISKUTIL
+chmod 700 "$fakebin/diskutil" || error 'cannot prepare fake diskutil'
+
 cat > "$fakebin/hdiutil" <<'EOF_HDIUTIL'
 #!/bin/sh
 case "$1" in
