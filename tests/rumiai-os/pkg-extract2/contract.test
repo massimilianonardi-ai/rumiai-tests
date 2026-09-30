@@ -48,8 +48,9 @@ destination=$3
 printf '%s\n' "$format" >> "$PKG_EXTRACT2_MARKER"
 case "$format" in
   tar)
-    mkdir -p "$destination/release/root/bin" || exit 1
+    mkdir -p "$destination/release/root/bin" "$destination/release/root/lib" || exit 1
     printf '%s\n' ordinary > "$destination/release/root/bin/tool" || exit 1
+    printf '%s\n' sibling > "$destination/release/root/lib/marker" || exit 1
     ;;
   dmg)
     : > "$destination/Installer.pkg" || exit 1
@@ -58,6 +59,7 @@ case "$format" in
   pkg)
     mkdir -p "$destination/Example.pkg/Payload/example/bin" "$destination/Overlay.pkg/Payload/pinentry-mac.app/Contents/MacOS" || exit 1
     printf '%s\n' primary > "$destination/Example.pkg/Payload/example/bin/tool" || exit 1
+    printf '%s\n' sibling > "$destination/Example.pkg/Payload/example/runtime-marker" || exit 1
     printf '%s\n' ignored > "$destination/Example.pkg/Payload/installer-only" || exit 1
     printf '%s\n' overlay > "$destination/Overlay.pkg/Payload/pinentry-mac.app/Contents/MacOS/pinentry-mac" || exit 1
     ;;
