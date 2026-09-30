@@ -172,7 +172,13 @@ eval "set -- $result"
 
 mkdir -p "$state/package-a/binding" || error 'cannot create binding fixture'
 printf '%s\n' graalvm > "$state/package-a/binding/java"
-plan "$catalog" a b >"$tmp/conflicting-selectors.out" 2>"$tmp/conflicting-selectors.err"
-[ "$?" -eq 1 ] || fail 'incompatible independent selector buckets did not fail the combined graph'
+result=$(plan "$catalog" a b 2>"$tmp/binding.err") || {
+  cat "$tmp/binding.err" >&2
+  fail 'explicit consumer binding was not preserved as a separate dependency bucket'
+}
+eval "set -- $result"
+[ "$#" -eq 5 ] || fail "expected both bound and implicit java providers, got $# concretes"
+case " $* " in *" graalvm@1!linux-x86_64 "*) : ;; *) fail 'bound graalvm provider is missing' ;; esac
+case " $* " in *" temurin@2!linux-x86_64 "*) : ;; *) fail 'implicit installed temurin provider is missing' ;; esac
 
 exit 0
