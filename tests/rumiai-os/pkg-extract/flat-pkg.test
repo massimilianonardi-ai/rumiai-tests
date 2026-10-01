@@ -59,12 +59,18 @@ productbuild --package "$tmp/Example.pkg" "$tmp/Product.pkg" >/dev/null ||
 driver=$tmp/pkg-extract-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-extract.lib.sh" || exit 3
+loadsyslib "pkg/pkg-extract" || exit 3
 pkg_extract "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
-"$root/m" "$driver" "$tmp/Product.pkg" flat-pkg "$tmp/stage" Example.pkg example ||
+range=$tmp/range-payload-root
+mkdir "$range" || error 'cannot create flat-pkg payload-root range'
+printf '%s\n' flat-pkg > "$range/format" || error 'cannot write flat-pkg format'
+printf '%s\n' Example.pkg > "$range/component" || error 'cannot write flat-pkg component'
+printf '%s\n' example > "$range/payload-root" || error 'cannot write flat-pkg payload root'
+
+"$root/m" "$driver" "$tmp/Product.pkg" "$range" "$tmp/stage" ||
   fail 'flat-pkg payload-root extraction failed'
 
 [ -x "$tmp/stage/bin/tool" ] || fail 'selected flat-pkg payload root did not expose tool'
@@ -77,7 +83,11 @@ chmod 700 "$driver" || error 'cannot prepare driver'
   fail 'flat-pkg materialization executed installer postinstall script'
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for complete payload'
-"$root/m" "$driver" "$tmp/Product.pkg" flat-pkg "$tmp/stage" Example.pkg ||
+range=$tmp/range-complete
+mkdir "$range" || error 'cannot create flat-pkg complete range'
+printf '%s\n' flat-pkg > "$range/format" || error 'cannot write flat-pkg complete format'
+printf '%s\n' Example.pkg > "$range/component" || error 'cannot write flat-pkg complete component'
+"$root/m" "$driver" "$tmp/Product.pkg" "$range" "$tmp/stage" ||
   fail 'flat-pkg complete payload extraction failed'
 [ -x "$tmp/stage/example/bin/tool" ] || fail 'complete flat-pkg payload lost tool'
 [ -f "$tmp/stage/installer-only/marker" ] || fail 'complete flat-pkg payload lost sibling'
@@ -85,13 +95,22 @@ rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for complet
   fail 'complete flat-pkg materialization executed installer script'
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for missing component'
-if "$root/m" "$driver" "$tmp/Product.pkg" flat-pkg "$tmp/stage" Missing.pkg >/dev/null 2>&1
+range=$tmp/range-missing
+mkdir "$range" || error 'cannot create flat-pkg missing-component range'
+printf '%s\n' flat-pkg > "$range/format" || error 'cannot write flat-pkg missing-component format'
+printf '%s\n' Missing.pkg > "$range/component" || error 'cannot write missing flat-pkg component'
+if "$root/m" "$driver" "$tmp/Product.pkg" "$range" "$tmp/stage" >/dev/null 2>&1
 then
   fail 'missing flat-pkg component was accepted'
 fi
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for invalid payload root'
-"$root/m" "$driver" "$tmp/Product.pkg" flat-pkg "$tmp/stage" Example.pkg ../escape >/dev/null 2>&1
+range=$tmp/range-invalid
+mkdir "$range" || error 'cannot create flat-pkg invalid range'
+printf '%s\n' flat-pkg > "$range/format" || error 'cannot write flat-pkg invalid format'
+printf '%s\n' Example.pkg > "$range/component" || error 'cannot write flat-pkg invalid component'
+printf '%s\n' ../escape > "$range/payload-root" || error 'cannot write invalid flat-pkg payload root'
+"$root/m" "$driver" "$tmp/Product.pkg" "$range" "$tmp/stage" >/dev/null 2>&1
 [ "$?" -eq 2 ] || fail 'invalid flat-pkg payload-root did not return invalid-invocation status'
 
 exit 0

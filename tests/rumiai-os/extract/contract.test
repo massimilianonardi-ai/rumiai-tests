@@ -1,6 +1,6 @@
 #!/bin/sh
 
-TEST_ID=rumiai-os/extract2/contract.test
+TEST_ID=rumiai-os/extract/contract.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
@@ -22,24 +22,24 @@ suite_root=${rumiai_os_group%/*}
 root=$(rumiai_test_target_rumiai_os_find "$suite_root"); status=$?
 case $status in 0) : ;; 1) skip 'rumiai-os target checkout not found' ;; 2) fail 'invalid explicit rumiai-os target' ;; *) error 'target discovery failed' ;; esac
 
-command_path="$root/bin/sys/extract2"
-[ -f "$command_path" ] && [ -x "$command_path" ] || fail 'extract2 command is missing or not executable'
+command_path="$root/bin/sys/extract"
+[ -f "$command_path" ] && [ -x "$command_path" ] || fail 'extract command is missing or not executable'
 command -v tar >/dev/null 2>&1 || skip 'tar is unavailable'
 command -v gzip >/dev/null 2>&1 || skip 'gzip is unavailable'
 
-tmp=${TMPDIR:-/tmp}/rumiai-extract2-contract-$$
+tmp=${TMPDIR:-/tmp}/rumiai-extract-contract-$$
 fakebin=$tmp/bin
 marker=$tmp/marker
 mount=$tmp/mount
 umask 077
 mkdir "$tmp" "$fakebin" "$mount" || error 'cannot create fixture directories'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
-export EXTRACT2_MARKER=$marker EXTRACT2_MOUNT=$mount
+export EXTRACT_MARKER=$marker EXTRACT_MOUNT=$mount
 
 cat > "$fakebin/pkgutil" <<'EOF_PKGUTIL'
 #!/bin/sh
 [ "$1" = --expand-full ] || exit 9
-printf '%s\n' pkg >> "$EXTRACT2_MARKER"
+printf '%s\n' pkg >> "$EXTRACT_MARKER"
 mkdir -p "$3/Example.pkg/Payload/bin" || exit 9
 printf '%s\n' raw-pkg > "$3/Example.pkg/Payload/bin/tool" || exit 9
 printf '%s\n' metadata > "$3/Distribution" || exit 9
@@ -56,14 +56,14 @@ cat > "$fakebin/hdiutil" <<'EOF_HDIUTIL'
 #!/bin/sh
 case "$1" in
   attach)
-    printf '%s\n' dmg-attach >> "$EXTRACT2_MARKER"
-    mkdir -p "$EXTRACT2_MOUNT" || exit 9
-    : > "$EXTRACT2_MOUNT/Installer.pkg"
-    printf '%s\n' readme > "$EXTRACT2_MOUNT/README"
+    printf '%s\n' dmg-attach >> "$EXTRACT_MARKER"
+    mkdir -p "$EXTRACT_MOUNT" || exit 9
+    : > "$EXTRACT_MOUNT/Installer.pkg"
+    printf '%s\n' readme > "$EXTRACT_MOUNT/README"
     printf '%s\n' '<plist/>'
     ;;
   detach)
-    printf '%s\n' dmg-detach >> "$EXTRACT2_MARKER"
+    printf '%s\n' dmg-detach >> "$EXTRACT_MARKER"
     ;;
   *) exit 9 ;;
 esac
@@ -75,7 +75,7 @@ cat > "$fakebin/plutil" <<'EOF_PLUTIL'
 case "$2" in
   system-entities) printf '%s\n' 1 ;;
   system-entities.0.dev-entry) printf '%s\n' /dev/fake ;;
-  system-entities.0.mount-point) printf '%s\n' "$EXTRACT2_MOUNT" ;;
+  system-entities.0.mount-point) printf '%s\n' "$EXTRACT_MOUNT" ;;
   *) exit 9 ;;
 esac
 EOF_PLUTIL
@@ -83,7 +83,7 @@ chmod 700 "$fakebin/plutil" || error 'cannot prepare fake plutil'
 
 cat > "$fakebin/ditto" <<'EOF_DITTO'
 #!/bin/sh
-printf '%s\n' dmg-copy >> "$EXTRACT2_MARKER"
+printf '%s\n' dmg-copy >> "$EXTRACT_MARKER"
 mkdir -p "$2" || exit 9
 cp -R "$1"/. "$2"/ || exit 9
 EOF_DITTO
@@ -133,7 +133,7 @@ for format in flat-pkg dmg-pkg
 do
   mkdir "$tmp/reject-$format" || error 'cannot create rejection destination'
   PATH="$runtime_path" "$command_path" "$format" "$artifact" "$tmp/reject-$format" >/dev/null 2>"$tmp/reject-$format.err"
-  [ "$?" -eq 2 ] || fail "extract2 accepted package-semantic format $format"
+  [ "$?" -eq 2 ] || fail "extract accepted package-semantic format $format"
 done
 
 exit 0

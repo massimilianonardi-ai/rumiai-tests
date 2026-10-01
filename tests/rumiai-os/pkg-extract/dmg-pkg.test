@@ -93,13 +93,19 @@ hdiutil create -quiet -srcfolder "$tmp/dmgsrc" "$tmp/GPG_Suite-test.dmg" || erro
 driver=$tmp/pkg-extract-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-extract.lib.sh" || exit 3
+loadsyslib "pkg/pkg-extract" || exit 3
 pkg_extract "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
-"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" \
-  MacGPG2.1_Core.pkg private/tmp/org.gpgtools/MacGPG2 "$tmp/overlay" ||
+range=$tmp/range-primary
+mkdir "$range" || error 'cannot create dmg-pkg primary range'
+printf '%s\n' dmg-pkg > "$range/format" || error 'cannot write dmg-pkg format'
+printf '%s\n' MacGPG2.1_Core.pkg > "$range/component" || error 'cannot write dmg-pkg component'
+printf '%s\n' private/tmp/org.gpgtools/MacGPG2 > "$range/payload-root" || error 'cannot write dmg-pkg payload root'
+mv "$tmp/overlay" "$range/overlay" || error 'cannot attach dmg-pkg overlay metadata'
+
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" "$range" "$tmp/stage" ||
   fail 'dmg-pkg payload-root/overlay extraction failed'
 [ -x "$tmp/stage/bin/gpg" ] || fail 'selected payload root did not expose gpg'
 [ -f "$tmp/stage/lib/runtime-marker" ] || fail 'selected payload-root sibling was not preserved'
@@ -109,17 +115,30 @@ chmod 700 "$driver" || error 'cannot prepare driver'
 [ ! -e "$tmp/stage/Library" ] || fail 'installer-only Payload sibling survived payload-root selection'
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for raw payload'
-"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" Raw.pkg || fail 'raw dmg-pkg extraction regressed'
+range=$tmp/range-raw
+mkdir "$range" || error 'cannot create raw dmg-pkg range'
+printf '%s\n' dmg-pkg > "$range/format" || error 'cannot write raw dmg-pkg format'
+printf '%s\n' Raw.pkg > "$range/component" || error 'cannot write raw dmg-pkg component'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" "$range" "$tmp/stage" || fail 'raw dmg-pkg extraction regressed'
 [ -x "$tmp/stage/bin/raw-tool" ] || fail 'raw cpio Payload was not materialized'
 [ -f "$tmp/stage/lib/runtime-marker" ] || fail 'raw cpio Payload sibling was not preserved'
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for missing component'
-if "$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" Missing.pkg >/dev/null 2>&1
+range=$tmp/range-missing
+mkdir "$range" || error 'cannot create missing-component dmg-pkg range'
+printf '%s\n' dmg-pkg > "$range/format" || error 'cannot write missing-component dmg-pkg format'
+printf '%s\n' Missing.pkg > "$range/component" || error 'cannot write missing dmg-pkg component'
+if "$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" "$range" "$tmp/stage" >/dev/null 2>&1
 then
   fail 'missing component was accepted'
 fi
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for invalid payload root'
-"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" dmg-pkg "$tmp/stage" MacGPG2.1_Core.pkg ../escape >/dev/null 2>&1
+range=$tmp/range-invalid
+mkdir "$range" || error 'cannot create invalid dmg-pkg range'
+printf '%s\n' dmg-pkg > "$range/format" || error 'cannot write invalid dmg-pkg format'
+printf '%s\n' MacGPG2.1_Core.pkg > "$range/component" || error 'cannot write invalid dmg-pkg component'
+printf '%s\n' ../escape > "$range/payload-root" || error 'cannot write invalid dmg-pkg payload root'
+"$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" "$range" "$tmp/stage" >/dev/null 2>&1
 [ "$?" -eq 2 ] || fail 'invalid payload-root did not return invalid-invocation status'
 exit 0
