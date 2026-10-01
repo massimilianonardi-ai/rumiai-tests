@@ -14,7 +14,7 @@ resolve_test_dir()
 }
 
 [ "$(uname -s 2>/dev/null)" = Darwin ] || skip 'dmg-pkg materialization is macOS-specific'
-for tool in hdiutil xar cpio gzip
+for tool in hdiutil pkgbuild productbuild pkgutil
 do
   command -v "$tool" >/dev/null 2>&1 || skip "$tool is unavailable"
 done
@@ -28,65 +28,70 @@ case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail '
 tmp=${TMPDIR:-/tmp}/rumiai-dmg-pkg-$$
 umask 077
 mkdir -p \
-  "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/bin" \
-  "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/lib" \
-  "$tmp/payload/Library/LaunchAgents" \
-  "$tmp/raw-payload/bin" \
-  "$tmp/raw-payload/lib" \
-  "$tmp/pinentry-payload/pinentry-mac.app/Contents/MacOS" \
-  "$tmp/component/MacGPG2.1_Core.pkg" \
-  "$tmp/component/pinentry_Core.pkg" \
-  "$tmp/component/Raw.pkg" \
+  "$tmp/primary-root/private/tmp/org.gpgtools/MacGPG2/bin" \
+  "$tmp/primary-root/private/tmp/org.gpgtools/MacGPG2/lib" \
+  "$tmp/primary-root/Library/LaunchAgents" \
+  "$tmp/raw-root/bin" \
+  "$tmp/raw-root/lib" \
+  "$tmp/pinentry-root/pinentry-mac.app/Contents/MacOS" \
   "$tmp/overlay/pinentry" \
   "$tmp/outer" "$tmp/dmgsrc" "$tmp/stage" || error 'cannot create fixture'
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
-cat > "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/bin/gpg" <<'EOF_GPG'
+cat > "$tmp/primary-root/private/tmp/org.gpgtools/MacGPG2/bin/gpg" <<'EOF_GPG'
 #!/bin/sh
 exit 0
 EOF_GPG
-chmod 755 "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/bin/gpg" || error 'cannot prepare payload command'
-printf '%s\n' fixture > "$tmp/payload/private/tmp/org.gpgtools/MacGPG2/lib/runtime-marker" || error 'cannot prepare useful-root sibling'
-printf '%s\n' installer-only > "$tmp/payload/Library/LaunchAgents/org.gpgtools.macgpg2.fix.plist" || error 'cannot prepare payload sibling'
-(
-  CDPATH= cd -- "$tmp/payload" || exit 1
-  find . -print | cpio -o -H odc > "$tmp/payload.cpio" 2>/dev/null
-) || error 'cannot create compressed component cpio'
-gzip -c < "$tmp/payload.cpio" > "$tmp/component/MacGPG2.1_Core.pkg/Payload" || error 'cannot compress component payload'
+chmod 755 "$tmp/primary-root/private/tmp/org.gpgtools/MacGPG2/bin/gpg" || error 'cannot prepare payload command'
+printf '%s\n' fixture > "$tmp/primary-root/private/tmp/org.gpgtools/MacGPG2/lib/runtime-marker" || error 'cannot prepare useful-root sibling'
+printf '%s\n' installer-only > "$tmp/primary-root/Library/LaunchAgents/org.gpgtools.macgpg2.fix.plist" || error 'cannot prepare payload sibling'
 
-cat > "$tmp/pinentry-payload/pinentry-mac.app/Contents/MacOS/pinentry-mac" <<'EOF_PINENTRY'
+cat > "$tmp/pinentry-root/pinentry-mac.app/Contents/MacOS/pinentry-mac" <<'EOF_PINENTRY'
 #!/bin/sh
 exit 0
 EOF_PINENTRY
-chmod 755 "$tmp/pinentry-payload/pinentry-mac.app/Contents/MacOS/pinentry-mac" ||
+chmod 755 "$tmp/pinentry-root/pinentry-mac.app/Contents/MacOS/pinentry-mac" ||
   error 'cannot prepare pinentry overlay executable'
-(
-  CDPATH= cd -- "$tmp/pinentry-payload" || exit 1
-  find . -print | cpio -o -H odc > "$tmp/pinentry.cpio" 2>/dev/null
-) || error 'cannot create pinentry component cpio'
-gzip -c < "$tmp/pinentry.cpio" > "$tmp/component/pinentry_Core.pkg/Payload" ||
-  error 'cannot compress pinentry component payload'
 
 printf '%s\n' pinentry_Core.pkg > "$tmp/overlay/pinentry/component" ||
   error 'cannot write pinentry overlay component'
 printf '%s\n' libexec > "$tmp/overlay/pinentry/target-root" ||
   error 'cannot write pinentry overlay target root'
 
-cat > "$tmp/raw-payload/bin/raw-tool" <<'EOF_RAW'
+cat > "$tmp/raw-root/bin/raw-tool" <<'EOF_RAW'
 #!/bin/sh
 exit 0
 EOF_RAW
-chmod 755 "$tmp/raw-payload/bin/raw-tool" || error 'cannot prepare raw payload command'
-printf '%s\n' raw > "$tmp/raw-payload/lib/runtime-marker" || error 'cannot prepare raw payload sibling'
-(
-  CDPATH= cd -- "$tmp/raw-payload" || exit 1
-  find . -print | cpio -o -H odc > "$tmp/component/Raw.pkg/Payload" 2>/dev/null
-) || error 'cannot create raw component payload'
+chmod 755 "$tmp/raw-root/bin/raw-tool" || error 'cannot prepare raw component command'
+printf '%s\n' raw > "$tmp/raw-root/lib/runtime-marker" || error 'cannot prepare raw component sibling'
 
-(
-  CDPATH= cd -- "$tmp/component" || exit 1
-  xar -cf "$tmp/outer/Install.pkg" MacGPG2.1_Core.pkg pinentry_Core.pkg Raw.pkg
-) || error 'cannot create outer flat package'
+pkgbuild \
+  --root "$tmp/primary-root" \
+  --identifier org.rumiai.test.macgpg.primary \
+  --version 1 \
+  --install-location / \
+  "$tmp/MacGPG2.1_Core.pkg" >/dev/null || error 'cannot build primary component package'
+
+pkgbuild \
+  --root "$tmp/pinentry-root" \
+  --identifier org.rumiai.test.macgpg.pinentry \
+  --version 1 \
+  --install-location / \
+  "$tmp/pinentry_Core.pkg" >/dev/null || error 'cannot build pinentry component package'
+
+pkgbuild \
+  --root "$tmp/raw-root" \
+  --identifier org.rumiai.test.macgpg.raw \
+  --version 1 \
+  --install-location / \
+  "$tmp/Raw.pkg" >/dev/null || error 'cannot build raw component package'
+
+productbuild \
+  --package "$tmp/MacGPG2.1_Core.pkg" \
+  --package "$tmp/pinentry_Core.pkg" \
+  --package "$tmp/Raw.pkg" \
+  "$tmp/outer/Install.pkg" >/dev/null || error 'cannot build outer product package'
+
 cp "$tmp/outer/Install.pkg" "$tmp/dmgsrc/Install.pkg" || error 'cannot stage outer package'
 hdiutil create -quiet -srcfolder "$tmp/dmgsrc" "$tmp/GPG_Suite-test.dmg" || error 'cannot create DMG fixture'
 
@@ -114,14 +119,14 @@ mv "$tmp/overlay" "$range/overlay" || error 'cannot attach dmg-pkg overlay metad
 [ ! -e "$tmp/stage/private" ] || fail 'payload staging prefix survived payload-root selection'
 [ ! -e "$tmp/stage/Library" ] || fail 'installer-only Payload sibling survived payload-root selection'
 
-rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for raw payload'
+rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for raw component'
 range=$tmp/range-raw
 mkdir "$range" || error 'cannot create raw dmg-pkg range'
 printf '%s\n' dmg-pkg > "$range/format" || error 'cannot write raw dmg-pkg format'
 printf '%s\n' Raw.pkg > "$range/component" || error 'cannot write raw dmg-pkg component'
 "$root/m" "$driver" "$tmp/GPG_Suite-test.dmg" "$range" "$tmp/stage" || fail 'raw dmg-pkg extraction regressed'
-[ -x "$tmp/stage/bin/raw-tool" ] || fail 'raw cpio Payload was not materialized'
-[ -f "$tmp/stage/lib/runtime-marker" ] || fail 'raw cpio Payload sibling was not preserved'
+[ -x "$tmp/stage/bin/raw-tool" ] || fail 'raw component did not expose tool'
+[ -f "$tmp/stage/lib/runtime-marker" ] || fail 'raw component sibling was not preserved'
 
 rm -rf "$tmp/stage"; mkdir "$tmp/stage" || error 'cannot reset stage for missing component'
 range=$tmp/range-missing
