@@ -133,7 +133,7 @@ cat > "$fakebin/pkgutil" <<'EOF_PKGUTIL'
 #!/bin/sh
 [ "$1" = --expand-full ] || exit 9
 printf -- '%s\n' pkgutil >> "$EXTRACT_MARKER"
-mkdir -p "$3/Example.pkg/Payload" || exit 9
+command -p mkdir -p "$3/Example.pkg/Payload" || exit 9
 printf -- '%s\n' payload > "$3/Example.pkg/Payload/file" || exit 9
 EOF_PKGUTIL
 chmod "700" "$fakebin/pkgutil"
