@@ -129,6 +129,14 @@ printf -- '%s\n' dpkg-deb >> "$EXTRACT_MARKER"
 exit 0
 EOF_DEB
 chmod "700" "$fakebin/dpkg-deb"
+cat > "$fakebin/pkgutil" <<'EOF_PKGUTIL'
+#!/bin/sh
+[ "$1" = --expand-full ] || exit 9
+printf -- '%s\n' pkgutil >> "$EXTRACT_MARKER"
+mkdir -p "$3/Example.pkg/Payload" || exit 9
+printf -- '%s\n' payload > "$3/Example.pkg/Payload/file" || exit 9
+EOF_PKGUTIL
+chmod "700" "$fakebin/pkgutil"
 cat > "$fakebin/hdiutil" <<'EOF_HDIUTIL'
 #!/bin/sh
 case "$1" in
@@ -208,6 +216,7 @@ check_dispatch 7z '7zz'
 check_dispatch 7zip '7zz'
 check_dispatch dmg 'hdiutil-attach ditto hdiutil-detach'
 check_dispatch deb 'dpkg-deb'
+check_dispatch pkg 'pkgutil'
 
 mv "$fakebin/7zz" "$tmp/7zz"
 check_dispatch 7z '7z'
@@ -257,9 +266,9 @@ do
   [ -f "$destination/payload" ] || fail "single-stream $format did not derive output filename"
 done
 
-m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" appimage "$artifact" "$destination" >/dev/null 2>"$tmp/err"
+m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" flat-pkg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
 status="$?"
-[ "$status" -eq 2 ] || fail "extract accepted package-specific appimage mode"
+[ "$status" -eq 2 ] || fail "extract accepted package-semantic flat-pkg mode"
 [ -s "$tmp/err" ] || fail "invalid extract invocation produced no diagnostic"
 
 exit "0"
