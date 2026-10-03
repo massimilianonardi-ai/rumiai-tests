@@ -126,6 +126,7 @@ case $action in
     pkg_integrate "$@"
     ;;
   deintegrate) pkg_deintegrate "$@";;
+  default-apply) pkg_default_apply "$@";;
   service-resolve) pkg_facility_service_start_resolve "$@";;
   *) exit 2;;
 esac
@@ -137,6 +138,17 @@ payload1=$tmp/payload-1
 mkdir "$range1" || error 'cannot create version 1 definition'
 make_payload "$payload1" one || error 'cannot create version 1 payload'
 
+payload_invalid_osarch=$tmp/payload-invalid-osarch
+make_payload "$payload_invalid_osarch" invalid-osarch || error 'cannot create invalid-osarch payload'
+if "$root/m" "$driver" integrate "$package" 99 "$range1" "$payload_invalid_osarch" linux-sparc64 > "$tmp/invalid-osarch-integrate.out" 2> "$tmp/invalid-osarch-integrate.err"
+then
+  fail 'pkg_integrate accepted an unsupported osarch'
+else
+  [ "$?" -eq 2 ] || fail 'invalid integration osarch did not return 2'
+fi
+[ -d "$payload_invalid_osarch" ] && [ -f "$payload_invalid_osarch/payload-marker" ] ||
+  fail 'invalid-osarch integration consumed caller-owned payload'
+
 integrate 1 "$range1" "$payload1" > "$tmp/integrate-1.out" 2> "$tmp/integrate-1.err" || {
   cat "$tmp/integrate-1.err" >&2
   fail 'valid package integration failed'
@@ -147,6 +159,20 @@ versions=$(run_pkg versions "$package" 2> "$tmp/versions-1.err") || {
   fail 'integrated package is not visible to pkg versions'
 }
 [ "$versions" = "$package@1" ] || fail "pkg versions returned unexpected result after integration: $versions"
+
+if "$root/m" "$driver" deintegrate "$package" 1 linux-sparc64 > "$tmp/invalid-osarch-deintegrate.out" 2> "$tmp/invalid-osarch-deintegrate.err"
+then
+  fail 'pkg_deintegrate accepted an unsupported osarch'
+else
+  [ "$?" -eq 2 ] || fail 'invalid deintegration osarch did not return 2'
+fi
+
+if "$root/m" "$driver" default-apply "$package" 1 linux-sparc64 > "$tmp/invalid-osarch-default.out" 2> "$tmp/invalid-osarch-default.err"
+then
+  fail 'pkg_default_apply accepted an unsupported osarch'
+else
+  [ "$?" -eq 2 ] || fail 'invalid default osarch did not return 2'
+fi
 
 duplicate=$tmp/payload-duplicate
 make_payload "$duplicate" duplicate || error 'cannot create duplicate payload'

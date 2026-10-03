@@ -62,6 +62,22 @@ cat > "$driver" <<'EOF_DRIVER'
 loadsyslib "pkg/pkg-common" || exit 3
 
 case "$1" in
+  name-valid)
+    shift
+    pkg_name_valid "$@"
+    ;;
+  version-valid)
+    shift
+    pkg_version_valid "$@"
+    ;;
+  osarch-valid)
+    shift
+    pkg_osarch_valid "$@"
+    ;;
+  identity-valid)
+    shift
+    pkg_name_version_osarch_valid "$@"
+    ;;
   request)
     shift
     pkg_request_read pkg_test_name pkg_test_version pkg_test_osarch "$1" || exit $?
@@ -98,6 +114,25 @@ case "$1" in
 esac
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
+
+expect_status 0 name-valid "$root/m" "$driver" name-valid foo
+expect_status 1 name-valid-arity "$root/m" "$driver" name-valid
+expect_status 2 name-valid-value "$root/m" "$driver" name-valid Bad
+
+expect_status 0 version-valid "$root/m" "$driver" version-valid 1.2
+expect_status 1 version-valid-arity "$root/m" "$driver" version-valid
+expect_status 2 version-valid-value "$root/m" "$driver" version-valid '1/2'
+
+expect_status 0 osarch-valid "$root/m" "$driver" osarch-valid linux-x86_64
+expect_status 1 osarch-valid-arity "$root/m" "$driver" osarch-valid
+expect_status 2 osarch-valid-value "$root/m" "$driver" osarch-valid linux-sparc64
+
+expect_status 0 identity-valid-two "$root/m" "$driver" identity-valid foo 1.2
+expect_status 0 identity-valid-three "$root/m" "$driver" identity-valid foo 1.2 linux-x86_64
+expect_status 1 identity-valid-arity "$root/m" "$driver" identity-valid foo
+expect_status 2 identity-valid-name "$root/m" "$driver" identity-valid Bad 1.2
+expect_status 3 identity-valid-version "$root/m" "$driver" identity-valid foo '1/2'
+expect_status 4 identity-valid-osarch "$root/m" "$driver" identity-valid foo 1.2 linux-sparc64
 
 output=$("$root/m" "$driver" request 'temurin!linux-x86_64' 2> "$tmp/request-platform.err") || {
   cat "$tmp/request-platform.err" >&2
