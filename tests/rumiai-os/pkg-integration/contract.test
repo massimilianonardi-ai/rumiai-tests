@@ -180,7 +180,7 @@ if integrate 1 "$range1" "$duplicate" > "$tmp/duplicate.out" 2> "$tmp/duplicate.
 then
   fail 'pkg_integrate replaced an existing concrete package'
 else
-  [ "$?" -eq 1 ] || fail 'duplicate concrete integration did not return 1'
+  [ "$?" -eq 9 ] || fail 'duplicate concrete integration did not return 9'
 fi
 [ -d "$duplicate" ] && [ -f "$duplicate/payload-marker" ] ||
   fail 'failed duplicate integration consumed caller-owned payload'
