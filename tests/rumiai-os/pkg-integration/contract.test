@@ -125,7 +125,7 @@ case $action in
     [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
     pkg_integrate "$@"
     ;;
-  deintegrate) pkg_deintegrate "$@";;
+  integrate-raw) shift; pkg_integrate "$@";;\n  deintegrate) pkg_deintegrate "$@";;
   default-apply) pkg_default_apply "$@";;
   service-resolve) pkg_facility_service_start_resolve "$@";;
   *) exit 2;;
@@ -137,6 +137,9 @@ range1=$tmp/range-1
 payload1=$tmp/payload-1
 mkdir "$range1" || error 'cannot create version 1 definition'
 make_payload "$payload1" one || error 'cannot create version 1 payload'
+
+"$root/m" "$driver" integrate-raw > "$tmp/integrate-arity.out" 2> "$tmp/integrate-arity.err"
+[ "$?" -eq 1 ] || fail 'pkg_integrate invalid arity did not return 1'
 
 payload_invalid_osarch=$tmp/payload-invalid-osarch
 make_payload "$payload_invalid_osarch" invalid-osarch || error 'cannot create invalid-osarch payload'
@@ -528,7 +531,7 @@ else
 fi
 
 "$root/m" "$driver" deintegrate > "$tmp/deintegrate-arity.out" 2> "$tmp/deintegrate-arity.err"
-[ "$?" -eq 2 ] || fail 'pkg_deintegrate invalid arity did not return 2'
+[ "$?" -eq 1 ] || fail 'pkg_deintegrate invalid arity did not return 1'
 
 printf 'runtime-dependency-not-install-gate=ok\n'
 printf 'legacy-provider-index-inert=ok\n'
