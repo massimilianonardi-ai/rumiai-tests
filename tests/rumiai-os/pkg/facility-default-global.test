@@ -271,6 +271,15 @@ status=$?
 if [ "$status" -ne 0 ]
 then
   cat "$tmp/integrate-1.err" >&2
+  if [ "$status" -eq 2 ]
+  then
+    printf 'diagnostic provider=%s version=%s\n' "$provider" 1 >&2
+    for diagnostic_entry in "$tmp/range-1"/* "$tmp/range-1"/.[!.]* "$tmp/range-1"/..?*
+    do
+      [ -e "$diagnostic_entry" ] || [ -L "$diagnostic_entry" ] || continue
+      printf 'diagnostic range-entry=%s\n' "${diagnostic_entry##*/}" >&2
+    done
+  fi
   fail "cannot integrate provider version 1: status=$status"
 fi
 make_provider 2 > "$tmp/integrate-2.out" 2> "$tmp/integrate-2.err"
