@@ -143,7 +143,8 @@ esac
 [ -x "$root/bin/sys/state-path" ] || fail 'state-path command is missing'
 [ -f "$root/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || fail 'pkg integration library is missing'
 
-tmp=${TMPDIR:-/tmp}/rumiai-pkg-facility-global-$
+test_suffix=$
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-facility-global-$test_suffix
 umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 
@@ -173,14 +174,14 @@ exit 0
 EOF_PATH_PROBE
 chmod 700 "$path_probe" || error 'cannot prepare PATH probe'
 
-provider=globalprovider$
-consumer=globalconsumer$$
-facility=globalfacility$$
-main_command=globalmain$$
-old_command=globalold$$
-new_command=globalnew$$
-collision_command=globalcollision$
-runtime_command=globalruntime$
+provider=globalprovider$test_suffix
+consumer=globalconsumer$test_suffix
+facility=globalfacility$test_suffix
+main_command=globalmain$test_suffix
+old_command=globalold$test_suffix
+new_command=globalnew$test_suffix
+collision_command=globalcollision$test_suffix
+runtime_command=globalruntime$test_suffix
 public_dir=$root/bin/ext
 main_public=$public_dir/$main_command
 old_public=$public_dir/$old_command
@@ -218,19 +219,6 @@ shift
 case $action in
   integrate)
     [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
-    pkg_name_version_osarch_valid "$1" "$2" "${5-}"
-    diagnostic_status=$?
-    if [ "$diagnostic_status" -ne 0 ]
-    then
-      printf 'diagnostic identity-status=%s package=<%s> version=<%s> osarch=<%s>\n' \
-        "$diagnostic_status" "$1" "$2" "${5-}" >&2
-    fi
-    _pkg_integration_validate_definition "$3" "$4"
-    diagnostic_status=$?
-    if [ "$diagnostic_status" -ne 0 ]
-    then
-      printf 'diagnostic definition-status=%s\n' "$diagnostic_status" >&2
-    fi
     pkg_integrate "$@"
     ;;
   deintegrate) pkg_deintegrate "$@" ;;
@@ -284,12 +272,6 @@ status=$?
 if [ "$status" -ne 0 ]
 then
   cat "$tmp/integrate-1.err" >&2
-  printf 'diagnostic provider=<%s> version=<%s>\n' "$provider" 1 >&2
-  for diagnostic_entry in "$tmp/range-1"/* "$tmp/range-1"/.[!.]* "$tmp/range-1"/..?*
-  do
-    [ -e "$diagnostic_entry" ] || [ -L "$diagnostic_entry" ] || continue
-    printf 'diagnostic range-entry=<%s>\n' "${diagnostic_entry##*/}" >&2
-  done
   fail "cannot integrate provider version 1: status=$status"
 fi
 make_provider 2 > "$tmp/integrate-2.out" 2> "$tmp/integrate-2.err"
