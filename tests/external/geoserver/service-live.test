@@ -434,7 +434,7 @@ pid_exists "$portable_pid" || fail 'GeoServer foreground process is not alive af
 command -p -- sleep 2
 pid_exists "$portable_pid" || fail 'GeoServer provider did not remain foreground after launch'
 
-missing_selector="geoserver@9.9.9!$osarch"
+missing_selector="geoserver@9.9.9"
 run_pkg provider default geoserver "$missing_selector" > "$tmp/geoserver-missing-default.out" 2> "$tmp/geoserver-missing-default.err" || {
   command -p -- cat "$tmp/geoserver-missing-default.err" >&2
   fail 'cannot change GeoServer selector intent while service is running'
