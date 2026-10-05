@@ -129,9 +129,9 @@ expect_failed_integration()
 
   "$root/m" "$driver" integrate "$name" 1 "$range" "$payload"     > "$tmp/$name.out" 2> "$tmp/$name.err"
   status=$?
-  [ "$status" -eq 1 ] || {
+  [ "$status" -eq 10 ] || {
     cat "$tmp/$name.err" >&2
-    fail "$name invalid state definition returned $status instead of 1"
+    fail "$name invalid state definition returned $status instead of 10"
   }
   [ -d "$payload" ] || fail "$name failed integration consumed caller-owned payload"
   [ ! -e "$root/pkg/$name@1" ] && [ ! -L "$root/pkg/$name@1" ] ||

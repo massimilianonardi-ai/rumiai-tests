@@ -266,14 +266,20 @@ EOF_RUNTIME
   "$root/m" "$driver" integrate "$provider" "$version" "$range" "$payload"
 }
 
-make_provider 1 > "$tmp/integrate-1.out" 2> "$tmp/integrate-1.err" || {
+make_provider 1 > "$tmp/integrate-1.out" 2> "$tmp/integrate-1.err"
+status=$?
+if [ "$status" -ne 0 ]
+then
   cat "$tmp/integrate-1.err" >&2
-  fail 'cannot integrate provider version 1'
-}
-make_provider 2 > "$tmp/integrate-2.out" 2> "$tmp/integrate-2.err" || {
+  fail "cannot integrate provider version 1: status=$status"
+fi
+make_provider 2 > "$tmp/integrate-2.out" 2> "$tmp/integrate-2.err"
+status=$?
+if [ "$status" -ne 0 ]
+then
   cat "$tmp/integrate-2.err" >&2
-  fail 'cannot integrate provider version 2'
-}
+  fail "cannot integrate provider version 2: status=$status"
+fi
 
 run_pkg default "$provider@1" > "$tmp/default-1.out" 2> "$tmp/default-1.err" || {
   cat "$tmp/default-1.err" >&2

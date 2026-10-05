@@ -125,7 +125,8 @@ case $action in
     [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
     pkg_integrate "$@"
     ;;
-  integrate-raw) shift; pkg_integrate "$@";;\n  deintegrate) pkg_deintegrate "$@";;
+  integrate-raw) pkg_integrate "$@";;
+  deintegrate) pkg_deintegrate "$@";;
   default-apply) pkg_default_apply "$@";;
   service-resolve) pkg_facility_service_start_resolve "$@";;
   *) exit 2;;
