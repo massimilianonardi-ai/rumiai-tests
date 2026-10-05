@@ -1,0 +1,219 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/pkg/facility-default-osarch-env.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+
+  [ -z "${facility-}" ] || run_pkg provider default -u -- "$facility" >/dev/null 2>&1 || :
+
+  if [ -n "${provider-}" ]
+  then
+    run_pkg default -u -- "$provider!linux-x86_64" >/dev/null 2>&1 || :
+    run_pkg default -u -- "$provider!linux-arm64" >/dev/null 2>&1 || :
+  fi
+
+  if [ -n "${root-}" ] && [ -n "${driver-}" ] && [ -n "${provider-}" ]
+  then
+    "$root/m" "$driver" deintegrate "$provider" 1 linux-x86_64 >/dev/null 2>&1 || :
+    "$root/m" "$driver" deintegrate "$provider" 1 linux-arm64 >/dev/null 2>&1 || :
+  fi
+
+  if [ -n "${root-}" ] && [ -x "${osarch_cmd-}" ]
+  then
+    "$root/m" "$osarch_cmd" update >/dev/null 2>&1 || :
+  fi
+
+  [ -z "${tmp-}" ] || rm -rf "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+pkg_group=${test_dir%/*}
+tests_dir=${pkg_group%/*}
+suite_root=${tests_dir%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'invalid explicit rumiai-os target';;
+  *) error 'target discovery failed';;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing'
+[ -x "$root/bin/sys/pkg" ] || fail 'pkg command is missing'
+osarch_cmd=$root/bin/sys/osarch
+[ -x "$osarch_cmd" ] || fail 'osarch command is missing'
+[ -f "$root/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || fail 'pkg integration library is missing'
+
+tmp=${TMPDIR:-/tmp}/rumiai-pkg-facility-osarch-env-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+"$root/m" "$osarch_cmd" update > "$tmp/osarch-update.out" 2> "$tmp/osarch-update.err" || {
+  cat "$tmp/osarch-update.err" >&2
+  fail 'cannot initialize osarch selectors'
+}
+
+provider=osarchprovider$$
+facility=osarchfacility$$
+runtime_command=osarchruntime$$
+marker=RUMIAI_TEST_OSARCH_ENV_$$
+cache=$root/state/system/current/sys/environment/cache
+
+driver=$tmp/integration-driver
+cat > "$driver" <<'EOF_DRIVER'
+#!/usr/bin/env m
+. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+action=$1
+shift
+case $action in
+  integrate)
+    [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
+    pkg_integrate "$@"
+    ;;
+  deintegrate)
+    pkg_deintegrate "$@"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+EOF_DRIVER
+chmod 700 "$driver" || error 'cannot prepare integration driver'
+
+probe=$tmp/probe
+cat > "$probe" <<'EOF_PROBE'
+#!/usr/bin/env m
+marker=$1
+runtime_name=$2
+eval "marker_value=\${$marker-<unset>}"
+runtime_path=$(command -v -- "$runtime_name" 2>/dev/null) || exit 1
+printf '%s\n' "$marker_value"
+printf '%s\n' "$runtime_path"
+"$runtime_path" || exit $?
+printf '%s\n' "$PATH"
+EOF_PROBE
+chmod 700 "$probe" || error 'cannot prepare environment probe'
+
+make_provider()
+{
+  osarch=$1
+  label=$2
+  range=$tmp/range-$osarch
+  payload=$tmp/payload-$osarch
+
+  mkdir -p "$range/facility-env" "$payload/runtime/bin" || return 1
+  printf '%s 1\n' "$facility" > "$range/facility" || return 1
+  tab=$(printf '\t')
+  {
+    printf 'PATH%sroot-path runtime/bin\n' "$tab"
+    printf '%s%sliteral %s\n' "$marker" "$tab" "$label"
+  } > "$range/facility-env/$facility" || return 1
+
+  cat > "$payload/runtime/bin/$runtime_command" <<EOF_RUNTIME
+#!/bin/sh
+printf '%s\\n' 'runtime=$label'
+EOF_RUNTIME
+  chmod 700 "$payload/runtime/bin/$runtime_command" || return 1
+
+  "$root/m" "$driver" integrate "$provider" 1 "$range" "$payload" "$osarch"
+}
+
+make_provider linux-x86_64 x86 > "$tmp/integrate-x86.out" 2> "$tmp/integrate-x86.err" || {
+  cat "$tmp/integrate-x86.err" >&2
+  fail 'cannot integrate x86 provider'
+}
+make_provider linux-arm64 arm > "$tmp/integrate-arm.out" 2> "$tmp/integrate-arm.err" || {
+  cat "$tmp/integrate-arm.err" >&2
+  fail 'cannot integrate arm provider'
+}
+
+run_pkg default "$provider@1!linux-x86_64" > "$tmp/default-x86.out" 2> "$tmp/default-x86.err" || {
+  cat "$tmp/default-x86.err" >&2
+  fail 'cannot select x86 package default'
+}
+run_pkg default "$provider@1!linux-arm64" > "$tmp/default-arm.out" 2> "$tmp/default-arm.err" || {
+  cat "$tmp/default-arm.err" >&2
+  fail 'cannot select arm package default'
+}
+
+run_pkg provider default "$facility" "$provider" > "$tmp/facility-default.out" 2> "$tmp/facility-default.err" || {
+  cat "$tmp/facility-default.err" >&2
+  fail 'cannot set facility default'
+}
+
+[ -f "$cache/env" ] && [ ! -L "$cache/env" ] || fail 'generic environment snapshot is missing'
+for osarch in linux-x86_64 linux-arm64
+do
+  [ -f "$cache/env-$osarch" ] && [ ! -L "$cache/env-$osarch" ] ||
+    fail "platform environment snapshot is missing: $osarch"
+done
+
+x86_checksum_before=$(command -p -- cksum < "$cache/env-linux-x86_64") || error 'cannot checksum x86 environment'
+arm_checksum_before=$(command -p -- cksum < "$cache/env-linux-arm64") || error 'cannot checksum arm environment'
+
+"$root/m" "$osarch_cmd" set linux-x86_64 > "$tmp/set-x86.out" 2> "$tmp/set-x86.err" || {
+  cat "$tmp/set-x86.err" >&2
+  fail 'cannot select linux-x86_64'
+}
+[ "$(readlink "$cache/env-osarch")" = env-linux-x86_64 ] ||
+  fail 'env-osarch did not select x86 snapshot'
+
+"$root/m" "$probe" "$marker" "$runtime_command" > "$tmp/probe-x86.out" 2> "$tmp/probe-x86.err" || {
+  cat "$tmp/probe-x86.err" >&2
+  fail 'x86 bootstrap probe failed'
+}
+[ "$(sed -n '1p' "$tmp/probe-x86.out")" = x86 ] || fail 'x86 marker is incorrect'
+[ "$(sed -n '2p' "$tmp/probe-x86.out")" = "$root/pkg/$provider@1!linux-x86_64/root/runtime/bin/$runtime_command" ] ||
+  fail 'x86 PATH resolved the wrong provider runtime'
+[ "$(sed -n '3p' "$tmp/probe-x86.out")" = 'runtime=x86' ] || fail 'x86 runtime output is incorrect'
+
+"$root/m" "$osarch_cmd" set linux-arm64 > "$tmp/set-arm.out" 2> "$tmp/set-arm.err" || {
+  cat "$tmp/set-arm.err" >&2
+  fail 'cannot select linux-arm64'
+}
+[ "$(readlink "$cache/env-osarch")" = env-linux-arm64 ] ||
+  fail 'env-osarch did not select arm snapshot'
+
+"$root/m" "$probe" "$marker" "$runtime_command" > "$tmp/probe-arm.out" 2> "$tmp/probe-arm.err" || {
+  cat "$tmp/probe-arm.err" >&2
+  fail 'arm bootstrap probe failed'
+}
+[ "$(sed -n '1p' "$tmp/probe-arm.out")" = arm ] || fail 'arm marker is incorrect'
+[ "$(sed -n '2p' "$tmp/probe-arm.out")" = "$root/pkg/$provider@1!linux-arm64/root/runtime/bin/$runtime_command" ] ||
+  fail 'arm PATH resolved the wrong provider runtime'
+[ "$(sed -n '3p' "$tmp/probe-arm.out")" = 'runtime=arm' ] || fail 'arm runtime output is incorrect'
+
+x86_checksum_after=$(command -p -- cksum < "$cache/env-linux-x86_64") || error 'cannot re-checksum x86 environment'
+arm_checksum_after=$(command -p -- cksum < "$cache/env-linux-arm64") || error 'cannot re-checksum arm environment'
+[ "$x86_checksum_after" = "$x86_checksum_before" ] ||
+  fail 'osarch switch rewrote the x86 environment snapshot'
+[ "$arm_checksum_after" = "$arm_checksum_before" ] ||
+  fail 'osarch switch rewrote the arm environment snapshot'
+
+printf 'osarch-selector-switch=ok\n'
+printf 'osarch-environment-precomputed=ok\n'
+printf 'osarch-provider-path=ok\n'
+exit 0
