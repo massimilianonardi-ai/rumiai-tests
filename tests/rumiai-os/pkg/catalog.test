@@ -47,7 +47,7 @@ esac
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-catalog-$$
 umask 077
-mkdir -p "$tmp/source/pkg/demo/linux-x86_64/repository" "$tmp/source/pkg/demo/linux-x86_64/n0001=1" "$tmp/source/pkg/demo/linux-x86_64/n0002=3" "$tmp/source/pkg/generic/all/repository" "$tmp/source/pkg/generic/all/n0001=1" "$tmp/source/pkg/bad/linux-x86_64/repository" "$tmp/source/pkg/bad/linux-x86_64/n0002=1" "$tmp/conf" "$tmp/work" "$tmp/cache" "$tmp/lib/sys/sh/pkg/repository" || error 'cannot create fixture'
+mkdir -p "$tmp/source/pkg/demo/linux-x86_64/repository" "$tmp/source/pkg/demo/linux-x86_64/n0001=1" "$tmp/source/pkg/demo/linux-x86_64/n0002=3" "$tmp/source/pkg/generic/all/repository" "$tmp/source/pkg/generic/all/n0001=1" "$tmp/source/pkg/bad/linux-x86_64/repository" "$tmp/source/pkg/bad/linux-x86_64/n0002=1" "$tmp/conf" "$tmp/work" "$tmp/cache" "$tmp/requirement-tmp" "$tmp/lib/sys/sh/pkg/repository" || error 'cannot create fixture'
 
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
@@ -56,6 +56,7 @@ printf '%s\n' test > "$tmp/source/pkg/generic/all/repository/type"
 printf '%s\n' test > "$tmp/source/pkg/bad/linux-x86_64/repository/type"
 printf '%s\n' 3 > "$tmp/source/pkg/demo/linux-x86_64/repository/version"
 printf '%s\n' 1 > "$tmp/source/pkg/generic/all/repository/version"
+printf '%s\n' 'java =25' > "$tmp/source/pkg/generic/all/n0001=1/dependency"
 printf '%s\n' 1 > "$tmp/source/pkg/bad/linux-x86_64/repository/version"
 printf '%s\n' https://example.invalid/pkg-catalog.git > "$tmp/conf/catalog"
 printf '%s\n' snapshot > "$tmp/source/marker"
@@ -97,12 +98,19 @@ driver=$tmp/driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
 loadsyslib "pkg/pkg-catalog" || exit 3
+loadsyslib "pkg/pkg-requirement" || exit 3
+m_OSARCH=linux-x86_64
 
 state-path()
 {
   [ "$#" -eq 4 ] || return 1
-  [ "$1" = system ] && [ "$2" = sys ] && [ "$3" = pkg ] && [ "$4" = conf ] || return 1
-  printf '%s\n' "$PKG_CATALOG_TEST_CONF"
+  [ "$1" = system ] && [ "$2" = sys ] && [ "$3" = pkg ] || return 1
+  case "$4" in
+    conf) printf '%s\n' "$PKG_CATALOG_TEST_CONF" ;;
+    tmp) printf '%s\n' "$PKG_CATALOG_TEST_REQUIREMENT_TMP" ;;
+    cache) printf '%s\n' "$PKG_CATALOG_TEST_CACHE" ;;
+    *) return 1 ;;
+  esac
 }
 
 git()
@@ -150,6 +158,10 @@ case "$1" in
     printf 'concrete=%s\n' "$test_concrete"
     printf 'target=%s\n' "$test_target"
     ;;
+  requirement)
+    m_LIB_DIR=$PKG_CATALOG_TEST_LIB
+    pkg_requirement list "$2"
+    ;;
   invalid-output)
     pkg_catalog_range_resolve bad-name "$2" "$3"
     ;;
@@ -164,6 +176,7 @@ export PKG_CATALOG_TEST_CONF="$tmp/conf"
 export PKG_CATALOG_TEST_SOURCE="$tmp/source"
 export PKG_CATALOG_TEST_WORK="$tmp/work"
 export PKG_CATALOG_TEST_CACHE="$tmp/cache"
+export PKG_CATALOG_TEST_REQUIREMENT_TMP="$tmp/requirement-tmp"
 export PKG_CATALOG_TEST_LIB="$tmp/lib"
 
 output=$("$root/m" "$driver" init 2> "$tmp/init.err") || {
@@ -227,6 +240,12 @@ output=$("$root/m" "$driver" request "$catalog" 'generic@1' linux-x86_64 2> "$tm
 expected="concrete=generic@1
 target=linux-x86_64"
 [ "$output" = "$expected" ] || fail "all-stream request output is incorrect: $output"
+
+output=$("$root/m" "$driver" requirement 'generic@1' 2> "$tmp/requirement.err") || {
+  cat "$tmp/requirement.err" >&2
+  fail 'PKG-86 requirement list failed'
+}
+[ "$output" = 'java =25' ] || fail "PKG-86 requirement list output is incorrect: $output"
 
 expect_status 1 bad-range "$root/m" "$driver" range "$catalog" 'bad@1!linux-x86_64'
 expect_status 1 below-first "$root/m" "$driver" range "$catalog" 'demo@0!linux-x86_64'
