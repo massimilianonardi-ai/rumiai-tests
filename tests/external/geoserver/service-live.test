@@ -228,11 +228,6 @@ osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
   command -p -- cat "$tmp/osarch-update.err" >&2
   fail 'cannot align runtime osarch selectors with the current host'
 }
-case "$osarch" in
-  linux-arm64|linux-x86_64|macos-arm64|macos-x86_64) :;;
-  *) skip "GeoServer is not declared for $osarch";;
-esac
-
 host_os=$(command -p -- uname -s) || error 'cannot identify host OS'
 uid=$(command -p -- id -u) || error 'cannot determine uid'
 case "$uid" in ""|*[!0123456789]*) error 'invalid host uid' ;; esac
@@ -327,6 +322,8 @@ done
 
 geoserver_system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver conf) ||
   error 'cannot resolve GeoServer system state'
+geoserver_system_data=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver data) ||
+  error 'cannot resolve GeoServer system data state'
 geoserver_user_home=$("$root/m" "$root/bin/sys/state-path" user pkg geoserver home) ||
   error 'cannot resolve GeoServer user state'
 temurin_system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg temurin conf) ||
@@ -386,6 +383,9 @@ geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") 
   fail 'GeoServer has no queryable package default'
 }
 [ -n "$geoserver_identity" ] || fail 'GeoServer concrete identity is empty'
+case "$geoserver_identity" in
+  *'!'*) fail "GeoServer platform-independent concrete unexpectedly carries osarch: $geoserver_identity" ;;
+esac
 [ "$(command -p -- cat "$root/pkg/$geoserver_identity/facility" 2>/dev/null)" = 'geoserver 1' ] ||
   fail 'installed GeoServer does not declare geoserver 1'
 [ "$(command -p -- cat "$root/pkg/$geoserver_identity/dependency" 2>/dev/null)" = 'java >=17 <22' ] ||
@@ -395,6 +395,12 @@ geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") 
 [ ! -e "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] &&
 [ ! -L "$root/pkg/$geoserver_identity/facility-cmd/geoserver" ] ||
   fail 'GeoServer internal service command was incorrectly published as a facility cmd part'
+[ -d "$geoserver_system_data/data_dir" ] && [ ! -L "$geoserver_system_data/data_dir" ] ||
+  fail 'GeoServer system data_dir state was not initialized'
+[ -L "$root/pkg/$geoserver_identity/root/data_dir" ] ||
+  fail 'GeoServer package root does not route data_dir to managed data state'
+[ -f "$geoserver_system_data/data_dir/global.xml" ] ||
+  fail 'GeoServer data_dir factory content is missing'
 
 temurin_identity=$(run_pkg default temurin 2> "$tmp/temurin-default.err") || {
   command -p -- cat "$tmp/temurin-default.err" >&2
