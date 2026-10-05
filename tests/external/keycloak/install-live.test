@@ -95,6 +95,8 @@ system_conf=$("$root/m" "$root/bin/sys/state-path" system pkg keycloak conf) ||
   error 'cannot resolve Keycloak system configuration state'
 system_data=$("$root/m" "$root/bin/sys/state-path" system pkg keycloak data) ||
   error 'cannot resolve Keycloak system data state'
+system_cache=$("$root/m" "$root/bin/sys/state-path" system pkg keycloak cache) ||
+  error 'cannot resolve Keycloak system cache state'
 user_home=$("$root/m" "$root/bin/sys/state-path" user pkg keycloak home) ||
   error 'cannot resolve Keycloak user state'
 keycloak_system_state=${system_conf%/conf}
@@ -184,6 +186,12 @@ printf '%s\n' "$versions" | grep -Fx "$identity" >/dev/null 2>&1 ||
   fail 'Keycloak system configuration state was not initialized'
 [ -d "$system_data/data" ] && [ ! -L "$system_data/data" ] ||
   fail 'Keycloak system data state was not initialized'
+[ -d "$system_cache/lib/quarkus" ] && [ ! -L "$system_cache/lib/quarkus" ] ||
+  fail 'Keycloak Quarkus build cache state was not initialized'
+[ -L "$root/pkg/$identity/root/lib/quarkus" ] ||
+  fail 'Keycloak package root does not route lib/quarkus to managed cache state'
+[ -f "$system_cache/lib/quarkus/quarkus-application.dat" ] ||
+  fail 'Keycloak Quarkus build cache factory content is missing'
 
 for item in   "$system_data/data"/*   "$system_data/data"/.[!.]*   "$system_data/data"/..?*
 do
@@ -202,6 +210,7 @@ printf 'installed=%s\n' "$identity"
 printf 'java-provider=%s\n' "$temurin_identity"
 printf 'conf-state=ok\n'
 printf 'data-state=ok\n'
+printf 'cache-state=ok\n'
 printf 'public-command=ok\n'
 printf 'implicit-java-provider=ok\n'
 printf 'requirement-list=ok\n'
