@@ -82,4 +82,22 @@ do
     fail "$name-osarch target directory is missing"
 done
 
+env_cache=$root/state/system/current/sys/environment/cache
+env_link=$env_cache/env-osarch
+env_target=$env_cache/env-$expected
+[ -L "$env_link" ] || fail 'env-osarch is not a symbolic link after update'
+[ "$(readlink "$env_link")" = "env-$expected" ] ||
+  fail 'env-osarch target is not the expected relative selector'
+[ -f "$env_target" ] && [ ! -L "$env_target" ] ||
+  fail 'selected osarch environment target is not a regular file'
+
+show_output="$("$root/m" "$osarch" show 2> "$tmp/show.err")" || {
+  cat "$tmp/show.err" >&2
+  fail 'osarch show failed after update'
+}
+printf '%s\n' "$show_output" | grep -F 'env-osarch:' >/dev/null ||
+  fail 'osarch show omitted env-osarch selector'
+printf '%s\n' "$show_output" | grep -F "  target: env-$expected" >/dev/null ||
+  fail 'osarch show reported the wrong environment selector target'
+
 exit 0
