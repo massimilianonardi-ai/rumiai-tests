@@ -211,6 +211,15 @@ make_valid || error 'cannot reset valid fixture'
 } > "$provider/facility-env/$facility" || error 'cannot prepare invalid literal PATH realization'
 expect_status 1 path-literal "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
 
+# PATH root-path must resolve to a directory, not merely an existing path.
+make_valid || error 'cannot reset valid fixture'
+: > "$payload/not-a-directory" || error 'cannot prepare non-directory PATH target'
+{
+  printf 'JAVA_HOME%sroot\n' "$tab"
+  printf 'PATH%sroot-path not-a-directory\n' "$tab"
+} > "$provider/facility-env/$facility" || error 'cannot prepare non-directory PATH realization'
+expect_status 1 path-not-directory "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
+
 # Service contract values are a closed trusted schema.
 make_valid || error 'cannot reset valid fixture'
 printf '%s\n' daemon > "$contract/service/process" ||
