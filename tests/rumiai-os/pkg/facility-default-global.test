@@ -218,6 +218,19 @@ shift
 case $action in
   integrate)
     [ -f "$3/format" ] || printf '%s\n' tar.gz > "$3/format" || exit 3
+    pkg_name_version_osarch_valid "$1" "$2" "${5-}"
+    diagnostic_status=$?
+    if [ "$diagnostic_status" -ne 0 ]
+    then
+      printf 'diagnostic identity-status=%s package=<%s> version=<%s> osarch=<%s>\n' \
+        "$diagnostic_status" "$1" "$2" "${5-}" >&2
+    fi
+    _pkg_integration_validate_definition "$3" "$4"
+    diagnostic_status=$?
+    if [ "$diagnostic_status" -ne 0 ]
+    then
+      printf 'diagnostic definition-status=%s\n' "$diagnostic_status" >&2
+    fi
     pkg_integrate "$@"
     ;;
   deintegrate) pkg_deintegrate "$@" ;;
