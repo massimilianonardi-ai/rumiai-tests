@@ -32,7 +32,7 @@ esac
 driver=${TMPDIR:-/tmp}/rumiai-pkg-install-order-$$
 marker=$driver.marker
 depend_marker=$driver.depend
-trap 'rm -rf "$driver" "$marker" "$depend_marker" "$driver.err" "$driver.invalid.err" "$driver.store" "$driver.installed" "$driver.installed.err"' 0 HUP INT TERM
+trap 'rm -rf "$driver" "$marker" "$depend_marker" "$driver.err" "$driver.invalid.err" "$driver.store" "$driver.installed" "$driver.installed.err" "$driver.dependency.err"' 0 HUP INT TERM
 
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
@@ -41,6 +41,16 @@ loadsyslib "pkg/pkg-install" || exit 3
 pkg_depend()
 {
   printf '%s\n' called >> "$PKG_INSTALL_DEPEND_MARKER"
+  if [ "${PKG_INSTALL_DEPEND_FAIL-}" = 1 ]
+  then
+    log error execution execution-failed operation pkg-depend \
+      reason provider-ambiguous \
+      facility java \
+      constraints '=25' \
+      target linux-x86_64 \
+      providers 'graalvm@1!linux-x86_64 temurin@2!linux-x86_64'
+    return 1
+  fi
   printf '%s\n' 'openssl@1!linux-x86_64' 'temurin@21!linux-x86_64'
 }
 
@@ -82,6 +92,21 @@ actual=$(cat "$marker") || error 'cannot read install order'
 [ "$actual" = "$expected" ] || fail "unexpected install order:
 $actual"
 [ "$(cat "$depend_marker")" = called ] || fail 'valid install did not call pkg_depend exactly once'
+
+: > "$depend_marker"
+export PKG_INSTALL_DEPEND_FAIL=1
+"$root/m" "$driver" keycloak > /dev/null 2>"$driver.dependency.err"
+dependency_status=$?
+unset PKG_INSTALL_DEPEND_FAIL
+[ "$dependency_status" -ne 0 ] || fail 'ambiguous dependency unexpectedly succeeded'
+grep -F 'reason="provider-ambiguous"' "$driver.dependency.err" >/dev/null ||
+  fail 'pkg install did not preserve pkg depend ambiguity diagnostic'
+grep -F '[execution.execution-failed]' "$driver.dependency.err" >/dev/null ||
+  fail 'pkg install dependency failure was not classified as execution failure'
+if grep -F '[execution.invalid-arguments]' "$driver.dependency.err" >/dev/null
+then
+  fail 'pkg install dependency failure was incorrectly classified as invalid arguments'
+fi
 
 installed_store=$driver.store
 mkdir -p "$installed_store/temurin@21!linux-x86_64" || error 'cannot prepare installed concrete fixture'
