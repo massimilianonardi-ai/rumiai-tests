@@ -25,6 +25,7 @@ cleanup()
   trap - 0 HUP INT TERM
   [ "${geoserver_installed-0}" -eq 0 ] || run_pkg uninstall geoserver >/dev/null 2>&1 || :
   [ "${temurin_installed-0}" -eq 0 ] || run_pkg uninstall temurin >/dev/null 2>&1 || :
+  [ -z "${geoserver_system_state-}" ] || command -p -- rm -rf -- "$geoserver_system_state" 2>/dev/null || :
   [ -z "${tmp-}" ] || command -p -- rm -rf -- "$tmp"
 }
 trap cleanup 0 HUP INT TERM
@@ -52,6 +53,14 @@ command -p -- mkdir "$tmp" || error 'cannot create temporary directory'
 
 PATH="$root/bin/sys:$PATH"
 export PATH
+
+geoserver_system_data=$("$root/m" "$root/bin/sys/state-path" system pkg geoserver data) ||
+  error 'cannot resolve GeoServer system data state'
+geoserver_system_state=${geoserver_system_data%/data}
+if [ -e "$geoserver_system_state" ] || [ -L "$geoserver_system_state" ]
+then
+  skip 'GeoServer package state already exists in the supplied target'
+fi
 
 for package in geoserver temurin
 do
@@ -97,6 +106,21 @@ fi
 }
 [ "$install_status" -eq 0 ] || fail "pkg install geoserver returned status $install_status"
 
+geoserver_identity=$(run_pkg default geoserver 2> "$tmp/geoserver-default.err") || {
+  cat "$tmp/geoserver-default.err" >&2
+  fail 'installed GeoServer has no queryable current default'
+}
+case "$geoserver_identity" in
+  *'!'*) fail "GeoServer platform-independent concrete unexpectedly carries osarch: $geoserver_identity" ;;
+esac
+[ -d "$geoserver_system_data/data_dir" ] && [ ! -L "$geoserver_system_data/data_dir" ] ||
+  fail 'GeoServer managed data_dir state was not initialized'
+[ -L "$root/pkg/$geoserver_identity/root/data_dir" ] ||
+  fail 'GeoServer package root does not route data_dir to managed data state'
+[ -f "$geoserver_system_data/data_dir/global.xml" ] ||
+  fail 'GeoServer data_dir factory content is missing'
+
 printf 'temurin=%s\n' "$(cat "$tmp/temurin.after.out")"
-printf 'geoserver=%s\n' "$(cat "$tmp/geoserver.after.out")"
+printf 'geoserver=%s\n' "$geoserver_identity"
+printf 'data-state=ok\n'
 exit 0
