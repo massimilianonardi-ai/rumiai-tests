@@ -107,11 +107,12 @@ make_valid()
   mkdir -p "$contract/cmd" "$contract/env" "$contract/service" \
     "$provider/facility-cmd/$facility" "$provider/facility-env" \
     "$provider/facility-service/$facility" "$provider/cmd" "$provider/link" \
-    "$payload/bin" || return 1
+    "$payload/bin" "$payload/tools/bin" || return 1
 
   : > "$contract/cmd/java" || return 1
   : > "$contract/cmd/javac" || return 1
   : > "$contract/env/JAVA_HOME" || return 1
+  : > "$contract/env/PATH" || return 1
   printf '%s\n' package-command > "$contract/service/start" || return 1
   printf '%s\n' foreground > "$contract/service/process" || return 1
   printf '%s\n' sigterm > "$contract/service/stop" || return 1
@@ -120,7 +121,11 @@ make_valid()
   tab=$(printf '\t')
   printf 'package-command%sservice-start\n' "$tab" > "$provider/facility-cmd/$facility/java" || return 1
   printf '%s\n' bin/javac > "$provider/facility-cmd/$facility/javac" || return 1
-  printf 'JAVA_HOME%sroot\n' "$tab" > "$provider/facility-env/$facility" || return 1
+  {
+    printf 'JAVA_HOME%sroot\n' "$tab"
+    printf 'PATH%sroot-path bin\n' "$tab"
+    printf 'PATH%sroot-path tools/bin\n' "$tab"
+  } > "$provider/facility-env/$facility" || return 1
 
   printf '%s\n' service-start > "$provider/facility-service/$facility/start" || return 1
   cat > "$provider/cmd/service-start" <<'EOF_SERVICE_COMMAND'
@@ -194,13 +199,17 @@ tab=$(printf '\t')
 {
   printf 'EXTRA%s%s\n' "$tab" 'literal extra'
   printf 'JAVA_HOME%s%s\n' "$tab" root
+  printf 'PATH%s%s\n' "$tab" 'root-path bin'
 } > "$provider/facility-env/$facility" || error 'cannot prepare extra environment realization'
 expect_status 1 extra-environment "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
 
-# PATH is not an environment facility member.
+# PATH is a special env member but cannot be a literal replacement.
 make_valid || error 'cannot reset valid fixture'
-: > "$contract/env/PATH" || error 'cannot prepare invalid PATH contract marker'
-expect_status 1 path-contract "$root/m" "$driver" contract "$contract"
+{
+  printf 'JAVA_HOME%sroot\n' "$tab"
+  printf 'PATH%sliteral /tmp/not-a-path-contribution\n' "$tab"
+} > "$provider/facility-env/$facility" || error 'cannot prepare invalid literal PATH realization'
+expect_status 1 path-literal "$root/m" "$driver" provider "$catalog" "$provider" "$payload"
 
 # Service contract values are a closed trusted schema.
 make_valid || error 'cannot reset valid fixture'
