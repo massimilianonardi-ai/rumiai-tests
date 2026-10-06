@@ -34,8 +34,6 @@ case $status in
 esac
 
 [ -x "$root/m" ] || fail 'technical m entrypoint is missing or not executable'
-[ -x "$root/rumiai-os" ] || fail 'rumiai-os branded entrypoint is missing or not executable'
-[ -x "$root/rumiai-os-sh" ] || fail 'rumiai-os-sh branded entrypoint is missing or not executable'
 
 [ -L "$root/bin/sys/m" ] || fail 'bin/sys/m is not a symlink'
 [ "$(readlink "$root/bin/sys/m")" = '../../m' ] || fail 'bin/sys/m target is not ../../m'

@@ -1,0 +1,85 @@
+#!/bin/sh
+# Protects: BOOT-18, ENTRY-10, ROOT-06.
+
+TEST_ID=rumiai-os/command/external-fallback.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+    self=$0
+    case $self in
+        */*) : ;;
+        *) self=$(command -v "$self" 2>/dev/null) || return 1 ;;
+    esac
+    self_dir=${self%/*}
+    [ "$self_dir" != "$self" ] || self_dir=.
+    CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+rumiai_os_group=${test_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=${tests_dir%/*}
+
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'rumiai-os target helper is unavailable'
+. "$target_library" || error 'cannot source rumiai-os target helper'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+[ -x "$root/m" ] || fail 'm bootstrap is missing or not executable'
+
+tmp=${TMPDIR:-/tmp}/rumiai-command-external-fallback-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+trap 'rm -rf "$tmp"' 0 HUP INT TERM
+
+external=$tmp/external-command
+observed=$tmp/observed
+cat > "$external" <<'EOF_EXTERNAL'
+#!/bin/sh
+{
+    printf 'argc=%s\n' "$#"
+    printf 'arg1=%s\n' "$1"
+    printf 'arg2=%s\n' "$2"
+    printf 'command-bin-set=%s\n' "${m_COMMAND_BIN+x}"
+} > "$OBSERVED_EXTERNAL" || exit 41
+exit 29
+EOF_EXTERNAL
+chmod 700 "$external" || error 'cannot prepare external command'
+
+OBSERVED_EXTERNAL=$observed
+export OBSERVED_EXTERNAL
+
+"$root/m" "$external" "alpha beta" "" > "$tmp/stdout" 2> "$tmp/stderr"
+status=$?
+[ "$status" -eq 29 ] || {
+    cat "$tmp/stderr" >&2
+    fail "external fallback returned $status instead of 29"
+}
+
+cat > "$tmp/expected" <<'EOF_EXPECTED'
+argc=2
+arg1=alpha beta
+arg2=
+command-bin-set=
+EOF_EXPECTED
+
+cmp -s "$tmp/expected" "$observed" || {
+    printf '%s\n' 'expected external observations:' >&2
+    cat "$tmp/expected" >&2
+    printf '%s\n' 'observed external observations:' >&2
+    cat "$observed" >&2
+    fail 'non-integrated command was not executed through the external fallback path'
+}
+
+exit 0

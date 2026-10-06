@@ -5,7 +5,7 @@ fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
 origin_ok() { origin=$(git -C "$1" config --get remote.origin.url 2>/dev/null) || return 1; case $origin in https://github.com/massimilianonardi-ai/rumiai-os.git|git@github.com:massimilianonardi-ai/rumiai-os.git|ssh://git@github.com/massimilianonardi-ai/rumiai-os.git) return 0;; esac; return 1; }
-validate_root() { [ -f "$1/m" ] && [ -f "$1/rumiai-os" ] && [ -f "$1/rumiai-os-sh" ] && origin_ok "$1"; }
+validate_root() { [ -f "$1/m" ] && origin_ok "$1"; }
 find_root() { start=$1; command -v git >/dev/null 2>&1 || return 3; if [ -n "${RUMIAI_TEST_RUMIAI_OS_ROOT-}" ]; then validate_root "$RUMIAI_TEST_RUMIAI_OS_ROOT" || return 2; (CDPATH= cd -- "$RUMIAI_TEST_RUMIAI_OS_ROOT" && pwd -P); return; fi; candidate=$(CDPATH= cd -- "$start" && pwd -P) || return 3; while :; do if validate_root "$candidate"; then printf '%s\n' "$candidate"; return 0; fi; [ "$candidate" != / ] || break; parent=${candidate%/*}; [ -n "$parent" ] || parent=/; candidate=$parent; done; return 1; }
 resolve_test_dir() { self=$0; case $self in */*) :;; *) self=$(command -v "$self") || return 1;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" && pwd -P; }
 
