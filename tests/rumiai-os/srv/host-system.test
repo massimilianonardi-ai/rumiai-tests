@@ -241,7 +241,7 @@ prepare_dependency_provider()
   dep_tab=$(printf '\t')
   printf 'DEPENDENCY_MARKER%sliteral dependency-ok\n' "$dep_tab" > "$dep_range/facility-env/$dep_facility" || return 1
 
-  ( umask 022; "$root/m" "$driver" integrate "$dep_package" 1 "$dep_range" "$dep_payload" )
+  "$root/m" "$driver" integrate "$dep_package" 1 "$dep_range" "$dep_payload"
 }
 
 prepare_service_provider()
@@ -288,7 +288,7 @@ EOF_TARGET
   } > "$provider_payload/bin/service-target"
   chmod 755 "$provider_payload/bin/service-target" || return 1
 
-  ( umask 022; "$root/m" "$driver" integrate "$package" "$provider_version" "$provider_range" "$provider_payload" )
+  "$root/m" "$driver" integrate "$package" "$provider_version" "$provider_range" "$provider_payload"
 }
 
 prepare_dependency_provider > "$tmp/integrate-dep.out" 2> "$tmp/integrate-dep.err" || {
@@ -382,6 +382,10 @@ binding_file=$package_system_conf/binding/$dep_facility
   fail 'service account cannot read prepared service facility default'
 "$sudo_bin" -n -u "$service_account" "$cat_bin" "$binding_file" >/dev/null 2>&1 ||
   fail 'service account cannot read prepared dependency binding'
+"$sudo_bin" -n -u "$service_account" "$cat_bin" "$root/pkg/$package@1/facility" >/dev/null 2>&1 ||
+  fail 'service account cannot read prepared provider runtime metadata'
+"$sudo_bin" -n -u "$service_account" "$cat_bin" "$root/pkg/$dep_package@1/facility-env/$dep_facility" >/dev/null 2>&1 ||
+  fail 'service account cannot read prepared dependency runtime metadata'
 
 if run_srv host system start "$facility" > "$tmp/nonadmin.out" 2> "$tmp/nonadmin.err"
 then
