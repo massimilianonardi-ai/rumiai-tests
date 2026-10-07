@@ -19,7 +19,7 @@ trap cleanup 0 HUP INT TERM
 self=$0
 case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || error 'cannot resolve self';; esac
 test_dir=$(CDPATH= cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P) || error 'cannot resolve test dir'
-suite_root=$(CDPATH= cd -- "$test_dir/../.." 2>/dev/null && pwd -P) || error 'cannot resolve suite root'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." 2>/dev/null && pwd -P) || error 'cannot resolve suite root'
 . "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
 root=$(rumiai_test_target_rumiai_os_find "$suite_root") || fail 'rumiai-os target not found'
 command -p -- mkdir "$tmp" || error 'cannot create tmp'
