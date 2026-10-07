@@ -1,0 +1,244 @@
+[2026-10-07|11:07:37] [fatal] [execution.execution-failed] Execution failed. [operation="srv"] [reason="exited-during-start"] [service="web-control"] [log="/tmp/rumiai-validate-env-1/target/state/user/default/sys/srv/log/web-control.log"]
+node:internal/modules/run_main:111
+    triggerUncaughtException(
+    ^
+
+browserType.launchPersistentContext: Target page, context or browser has been closed
+Browser logs:
+Chromium sandboxing failed!
+================================
+To avoid the sandboxing issue, do either of the following:
+  - (preferred): Configure your environment to support sandboxing
+  - (alternative): Launch Chromium without sandbox using 'chromiumSandbox: false' option
+================================
+
+Call log:
+  - <launching> /tmp/rumiai-validate-env-1/target/pkg/chromium@1713242!linux-x86_64/facility-cmd/chromium/chromium --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/default/pkg/rumiai-web-control/home/profiles/default --remote-debugging-pipe about:blank
+  - <launched> pid=14096
+  - [pid=14096][err] [14096:14096:1007/110736.632162:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:130] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md. Otherwise see https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md for more information on developing with the (older) SUID sandbox. If you want to live dangerously and need an immediate workaround, you can try using --no-sandbox.
+  - [pid=14096][err] #0 0x556f96b430f2 base::debug::CollectStackTrace()
+  - [pid=14096][err] #1 0x556f96b2d3ae base::debug::StackTrace::StackTrace()
+  - [pid=14096][err] #2 0x556f96a5f6ec logging::LogMessage::Flush()
+  - [pid=14096][err] #3 0x556f96a60289 logging::LogMessageFatal::~LogMessageFatal()
+  - [pid=14096][err] #4 0x556f93695b22 content::ZygoteHostImpl::Init()
+  - [pid=14096][err] #5 0x556f96a2bbf9 content::ContentMainRunnerImpl::Initialize()
+  - [pid=14096][err] #6 0x556f96a2929c content::RunContentProcess()
+  - [pid=14096][err] #7 0x556f96a296e7 content::ContentMain()
+  - [pid=14096][err] #8 0x556f8f75e37d ChromeMain
+  - [pid=14096][err] #9 0x7f9140e2a1ca (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9)
+  - [pid=14096][err] #10 0x7f9140e2a28b __libc_start_main
+  - [pid=14096][err] #11 0x556f8f75e02a _start
+  - [pid=14096][err] Crash keys:
+  - [pid=14096][err]   "switch-46" = "about:blank"
+  - [pid=14096][err]   "switch-45" = "--use-angle=swiftshader-webgl"
+  - [pid=14096][err]   "switch-44" = "--ozone-override-screen-size=800,600"
+  - [pid=14096][err]   "switch-43" = "--ozone-platform=headless"
+  - [pid=14096][err]   "switch-42" = "--noerrdialogs"
+  - [pid=14096][err]   "switch-41" = "--remote-debugging-pipe"
+  - [pid=14096][err]   "switch-40" = "--user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/def"
+  - [pid=14096][err]   "switch-39" = "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primar"
+  - [pid=14096][err]   "switch-38" = "--mute-audio"
+  - [pid=14096][err]   "switch-37" = "--hide-scrollbars"
+  - [pid=14096][err]   "switch-36" = "--headless"
+  - [pid=14096][err]   "switch-35" = "--enable-unsafe-swiftshader"
+  - [pid=14096][err]   "switch-34" = "--disable-sync"
+  - [pid=14096][err]   "switch-33" = "--disable-search-engine-choice-screen"
+  - [pid=14096][err]   "switch-32" = "--disable-infobars"
+  - [pid=14096][err]   "switch-31" = "--edge-skip-compat-layer-relaunch"
+  - [pid=14096][err]   "switch-30" = "--unsafely-disable-devtools-self-xss-warnings"
+  - [pid=14096][err]   "switch-29" = "--disable-search-engine-choice-screen"
+  - [pid=14096][err]   "switch-28" = "--export-tagged-pdf"
+  - [pid=14096][err]   "switch-27" = "--no-service-autorun"
+  - [pid=14096][err]   "switch-26" = "--use-mock-keychain"
+  - [pid=14096][err]   "switch-25" = "--password-store=basic"
+  - [pid=14096][err]   "switch-24" = "--no-first-run"
+  - [pid=14096][err]   "switch-23" = "--metrics-recording-only"
+  - [pid=14096][err]   "switch-22" = "--force-color-profile=srgb"
+  - [pid=14096][err]   "switch-21" = "--disable-updater-scheduler"
+  - [pid=14096][err]   "switch-20" = "--disable-renderer-backgrounding"
+  - [pid=14096][err]   "switch-19" = "--disable-prompt-on-repost"
+  - [pid=14096][err]   "switch-18" = "--disable-popup-blocking"
+  - [pid=14096][err]   "switch-17" = "--disable-ipc-flooding-protection"
+  - [pid=14096][err]   "switch-16" = "--disable-hang-monitor"
+  - [pid=14096][err]   "switch-15" = "--allow-pre-commit-input"
+  - [pid=14096][err]   "switch-14" = "--disable-extensions"
+  - [pid=14096][err]   "switch-13" = "--disable-edgeupdater"
+  - [pid=14096][err]   "switch-12" = "--disable-dev-shm-usage"
+  - [pid=14096][err]   "switch-11" = "--disable-default-apps"
+  - [pid=14096][err]   "switch-10" = "--no-default-browser-check"
+  - [pid=14096][err]   "switch-9" = "--disable-component-update"
+  - [pid=14096][err]   "switch-8" = "--disable-component-extensions-with-background-pages"
+  - [pid=14096][err]   "switch-7" = "--disable-client-side-phishing-detection"
+  - [pid=14096][err]   "switch-6" = "--disable-breakpad"
+  - [pid=14096][err]   "switch-5" = "--disable-back-forward-cache"
+  - [pid=14096][err]   "switch-4" = "--disable-backgrounding-occluded-windows"
+  - [pid=14096][err]   "switch-3" = "--disable-background-timer-throttling"
+  - [pid=14096][err]   "switch-2" = "--disable-background-networking"
+  - [pid=14096][err]   "switch-1" = "--disable-field-trial-config"
+  - [pid=14096][err]   "num-switches" = "48"
+  - [pid=14096][err]   "commandline-disabled-feature-15" = "msEdgeUpdateLaunchServicesPreferredVersion"
+  - [pid=14096][err]   "commandline-disabled-feature-14" = "msForceBrowserSignIn"
+  - [pid=14096][err]   "commandline-disabled-feature-13" = "OptimizationHints"
+  - [pid=14096][err]   "commandline-disabled-feature-12" = "AutoDeElevate"
+  - [pid=14096][err]   "commandline-disabled-feature-11" = "Translate"
+  - [pid=14096][err]   "commandline-disabled-feature-10" = "BlockOriginHeaderModificationOnRedirect"
+  - [pid=14096][err]   "commandline-disabled-feature-9" = "ThirdPartyStoragePartitioning"
+  - [pid=14096][err]   "commandline-disabled-feature-8" = "PaintHolding"
+  - [pid=14096][err]   "commandline-disabled-feature-7" = "MediaRouter"
+  - [pid=14096][err]   "commandline-disabled-feature-6" = "LensOverlay"
+  - [pid=14096][err]   "commandline-disabled-feature-5" = "HttpsUpgrades"
+  - [pid=14096][err]   "commandline-disabled-feature-4" = "GlobalMediaControls"
+  - [pid=14096][err]   "commandline-disabled-feature-3" = "DialMediaRouteProvider"
+  - [pid=14096][err]   "commandline-disabled-feature-2" = "DestroyProfileOnBrowserClose"
+  - [pid=14096][err]   "commandline-disabled-feature-1" = "AvoidUnnecessaryBeforeUnloadCheckSync"
+  - [pid=14096][err]   "commandline-enabled-feature-1" = "CDPScreenshotNewSurface"
+  - [pid=14096][err]   "osarch" = "x86_64"
+  - [pid=14096][err]   "pid" = "14096"
+  - [pid=14096][err]   "ptype" = "browser"
+  - [pid=14096][err]
+  - [pid=14096][err] [1007/110736.722162:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)
+  - [pid=14096][err] [1007/110736.722221:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)
+  - [pid=14096][err] Received signal 6
+  - [pid=14096][err] #0 0x556f96b430f2 base::debug::CollectStackTrace()
+  - [pid=14096][err] #1 0x556f96b2d3ae base::debug::StackTrace::StackTrace()
+  - [pid=14096][err] #2 0x556f96b42b58 base::debug::(anonymous namespace)::StackDumpSignalHandler()
+  - [pid=14096][err] #3 0x7f9140e45330 (/usr/lib/x86_64-linux-gnu/libc.so.6+0x4532f)
+  - [pid=14096][err] #4 0x7f9140e9ec0c pthread_kill
+  - [pid=14096][err] #5 0x7f9140e4527e gsignal
+  - [pid=14096][err] #6 0x7f9140e288ff abort
+  - [pid=14096][err] #7 0x556f96b1c1b5 base::debug::BreakDebuggerAsyncSafe()
+  - [pid=14096][err] #8 0x556f96a60233 base::RepeatingCallback<>::Run()
+  - [pid=14096][err] #9 0x556f96a600f5 logging::LogMessage::HandleFatal()
+  - [pid=14096][err] #10 0x556f96a5fce7 logging::LogMessage::Flush()
+  - [pid=14096][err] #11 0x556f96a60289 logging::LogMessageFatal::~LogMessageFatal()
+  - [pid=14096][err] #12 0x556f93695b22 content::ZygoteHostImpl::Init()
+  - [pid=14096][err] #13 0x556f96a2bbf9 content::ContentMainRunnerImpl::Initialize()
+  - [pid=14096][err] #14 0x556f96a2929c content::RunContentProcess()
+  - [pid=14096][err] #15 0x556f96a296e7 content::ContentMain()
+  - [pid=14096][err] #16 0x556f8f75e37d ChromeMain
+  - [pid=14096][err] #17 0x7f9140e2a1ca (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9)
+  - [pid=14096][err] #18 0x7f9140e2a28b __libc_start_main
+  - [pid=14096][err] #19 0x556f8f75e02a _start
+  - [pid=14096][err]   r8: 00002d1000078265  r9: 0000000000000ecd r10: 0000000000000008 r11: 0000000000000246
+  - [pid=14096][err]  r12: 0000000000000006 r13: 0000000000001132 r14: 0000000000000016 r15: 00007ffc25a84700
+  - [pid=14096][err]   di: 0000000000003710  si: 0000000000003710  bp: 00007ffc25a845b0  bx: 0000000000003710
+  - [pid=14096][err]   dx: 0000000000000006  ax: 0000000000000000  cx: 00007f9140e9ec0c  sp: 00007ffc25a84570
+  - [pid=14096][err]   ip: 00007f9140e9ec0c efl: 0000000000000246 cgf: 002b000000000033 erf: 0000000000000000
+  - [pid=14096][err]  trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000
+  - [pid=14096][err] [end of stack trace]
+  - [pid=14096] <gracefully close start>
+  - [pid=14096] <kill>
+  - [pid=14096] <will force kill>
+  - [pid=14096] <process did exit: exitCode=null, signal=SIGABRT>
+  - [pid=14096] starting temporary directories cleanup
+  - [pid=14096] finished temporary directories cleanup
+  - [pid=14096] <gracefully close end>
+
+    at async file:///tmp/rumiai-validate-env-1/target/pkg/rumiai-web-control@v0.1.2/root/src/controller.mjs:51:17 {
+  log: [
+    '  - <launching> /tmp/rumiai-validate-env-1/target/pkg/chromium@1713242!linux-x86_64/facility-cmd/chromium/chromium --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/default/pkg/rumiai-web-control/home/profiles/default --remote-debugging-pipe about:blank',
+    '  - <launched> pid=14096',
+    '  - [pid=14096][err] [14096:14096:1007/110736.632162:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:130] No usable sandbox! If you are running on Ubuntu 23.10+ or another Linux distro that has disabled unprivileged user namespaces with AppArmor, see https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md. Otherwise see https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md for more information on developing with the (older) SUID sandbox. If you want to live dangerously and need an immediate workaround, you can try using --no-sandbox.',
+    '  - [pid=14096][err] #0 0x556f96b430f2 base::debug::CollectStackTrace()',
+    '  - [pid=14096][err] #1 0x556f96b2d3ae base::debug::StackTrace::StackTrace()',
+    '  - [pid=14096][err] #2 0x556f96a5f6ec logging::LogMessage::Flush()',
+    '  - [pid=14096][err] #3 0x556f96a60289 logging::LogMessageFatal::~LogMessageFatal()',
+    '  - [pid=14096][err] #4 0x556f93695b22 content::ZygoteHostImpl::Init()',
+    '  - [pid=14096][err] #5 0x556f96a2bbf9 content::ContentMainRunnerImpl::Initialize()',
+    '  - [pid=14096][err] #6 0x556f96a2929c content::RunContentProcess()',
+    '  - [pid=14096][err] #7 0x556f96a296e7 content::ContentMain()',
+    '  - [pid=14096][err] #8 0x556f8f75e37d ChromeMain',
+    '  - [pid=14096][err] #9 0x7f9140e2a1ca (/usr/lib/x86_64-linux-gnu/libc.so.6+0x2a1c9)',
+    '  - [pid=14096][err] #10 0x7f9140e2a28b __libc_start_main',
+    '  - [pid=14096][err] #11 0x556f8f75e02a _start',
+    '  - [pid=14096][err] Crash keys:',
+    '  - [pid=14096][err]   "switch-46" = "about:blank"',
+    '  - [pid=14096][err]   "switch-45" = "--use-angle=swiftshader-webgl"',
+    '  - [pid=14096][err]   "switch-44" = "--ozone-override-screen-size=800,600"',
+    '  - [pid=14096][err]   "switch-43" = "--ozone-platform=headless"',
+    '  - [pid=14096][err]   "switch-42" = "--noerrdialogs"',
+    '  - [pid=14096][err]   "switch-41" = "--remote-debugging-pipe"',
+    '  - [pid=14096][err]   "switch-40" = "--user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/def"',
+    '  - [pid=14096][err]   "switch-39" = "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primar"',
+    '  - [pid=14096][err]   "switch-38" = "--mute-audio"',
+    '  - [pid=14096][err]   "switch-37" = "--hide-scrollbars"',
+    '  - [pid=14096][err]   "switch-36" = "--headless"',
+    '  - [pid=14096][err]   "switch-35" = "--enable-unsafe-swiftshader"',
+    '  - [pid=14096][err]   "switch-34" = "--disable-sync"',
+    '  - [pid=14096][err]   "switch-33" = "--disable-search-engine-choice-screen"',
+    '  - [pid=14096][err]   "switch-32" = "--disable-infobars"',
+    '  - [pid=14096][err]   "switch-31" = "--edge-skip-compat-layer-relaunch"',
+    '  - [pid=14096][err]   "switch-30" = "--unsafely-disable-devtools-self-xss-warnings"',
+    '  - [pid=14096][err]   "switch-29" = "--disable-search-engine-choice-screen"',
+    '  - [pid=14096][err]   "switch-28" = "--export-tagged-pdf"',
+    '  - [pid=14096][err]   "switch-27" = "--no-service-autorun"',
+    '  - [pid=14096][err]   "switch-26" = "--use-mock-keychain"',
+    '  - [pid=14096][err]   "switch-25" = "--password-store=basic"',
+    '  - [pid=14096][err]   "switch-24" = "--no-first-run"',
+    '  - [pid=14096][err]   "switch-23" = "--metrics-recording-only"',
+    '  - [pid=14096][err]   "switch-22" = "--force-color-profile=srgb"',
+    '  - [pid=14096][err]   "switch-21" = "--disable-updater-scheduler"',
+    '  - [pid=14096][err]   "switch-20" = "--disable-renderer-backgrounding"',
+    '  - [pid=14096][err]   "switch-19" = "--disable-prompt-on-repost"',
+    '  - [pid=14096][err]   "switch-18" = "--disable-popup-blocking"',
+    '  - [pid=14096][err]   "switch-17" = "--disable-ipc-flooding-protection"',
+    '  - [pid=14096][err]   "switch-16" = "--disable-hang-monitor"',
+    '  - [pid=14096][err]   "switch-15" = "--allow-pre-commit-input"',
+    '  - [pid=14096][err]   "switch-14" = "--disable-extensions"',
+    '  - [pid=14096][err]   "switch-13" = "--disable-edgeupdater"',
+    '  - [pid=14096][err]   "switch-12" = "--disable-dev-shm-usage"',
+    '  - [pid=14096][err]   "switch-11" = "--disable-default-apps"',
+    '  - [pid=14096][err]   "switch-10" = "--no-default-browser-check"',
+    '  - [pid=14096][err]   "switch-9" = "--disable-component-update"',
+    '  - [pid=14096][err]   "switch-8" = "--disable-component-extensions-with-background-pages"',
+    '  - [pid=14096][err]   "switch-7" = "--disable-client-side-phishing-detection"',
+    '  - [pid=14096][err]   "switch-6" = "--disable-breakpad"',
+    '  - [pid=14096][err]   "switch-5" = "--disable-back-forward-cache"',
+    '  - [pid=14096][err]   "switch-4" = "--disable-backgrounding-occluded-windows"',
+    '  - [pid=14096][err]   "switch-3" = "--disable-background-timer-throttling"',
+    '  - [pid=14096][err]   "switch-2" = "--disable-background-networking"',
+    '  - [pid=14096][err]   "switch-1" = "--disable-field-trial-config"',
+    '  - [pid=14096][err]   "num-switches" = "48"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-15" = "msEdgeUpdateLaunchServicesPreferredVersion"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-14" = "msForceBrowserSignIn"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-13" = "OptimizationHints"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-12" = "AutoDeElevate"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-11" = "Translate"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-10" = "BlockOriginHeaderModificationOnRedirect"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-9" = "ThirdPartyStoragePartitioning"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-8" = "PaintHolding"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-7" = "MediaRouter"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-6" = "LensOverlay"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-5" = "HttpsUpgrades"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-4" = "GlobalMediaControls"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-3" = "DialMediaRouteProvider"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-2" = "DestroyProfileOnBrowserClose"',
+    '  - [pid=14096][err]   "commandline-disabled-feature-1" = "AvoidUnnecessaryBeforeUnloadCheckSync"',
+    '  - [pid=14096][err]   "commandline-enabled-feature-1" = "CDPScreenshotNewSurface"',
+    '  - [pid=14096][err]   "osarch" = "x86_64"',
+    '  - [pid=14096][err]   "pid" = "14096"',
+    '  - [pid=14096][err]   "ptype" = "browser"',
+    '  - [pid=14096][err]',
+    '  - [pid=14096][err] [1007/110736.722162:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)',
+    '  - [pid=14096][err] [1007/110736.722221:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)',
+    '  - [pid=14096][err] Received signal 6',
+    '  - [pid=14096][err] #0 0x556f96b430f2 base::debug::CollectStackTrace()',
+    '  - [pid=14096][err] #1 0x556f96b2d3ae base::debug::StackTrace::StackTrace()',
+    '  - [pid=14096][err] #2 0x556f96b42b58 base::debug::(anonymous namespace)::StackDumpSignalHandler()',
+    '  - [pid=14096][err] #3 0x7f9140e45330 (/usr/lib/x86_64-linux-gnu/libc.so.6+0x4532f)',
+    '  - [pid=14096][err] #4 0x7f9140e9ec0c pthread_kill',
+    '  - [pid=14096][err] #5 0x7f9140e4527e gsignal',
+    '  - [pid=14096][err] #6 0x7f9140e288ff abort',
+    '  - [pid=14096][err] #7 0x556f96b1c1b5 base::debug::BreakDebuggerAsyncSafe()',
+    '  - [pid=14096][err] #8 0x556f96a60233 base::RepeatingCallback<>::Run()',
+    '  - [pid=14096][err] #9 0x556f96a600f5 logging::LogMessage::HandleFatal()',
+    '  - [pid=14096][err] #10 0x556f96a5fce7 logging::LogMessage::Flush()',
+    '  - [pid=14096][err] #11 0x556f96a60289 logging::LogMessageFatal::~LogMessageFatal()',
+    '  - [pid=14096][err] #12 0x556f93695b22 content::ZygoteHostImpl::Init()',
+    '  - [pid=14096][err] #13 0x556f96a2bbf9 content::ContentMainRunnerImpl::Initialize()',
+    ... 20 more items
+  ]
+}
+
+Node.js v26.10.0
+external/rumiai-web-control/install-live.test: srv start web-control failed
