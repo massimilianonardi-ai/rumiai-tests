@@ -1,0 +1,77 @@
+#!/bin/sh
+TEST_ID=external/rumiai-web-control/install-live.test
+fail(){ printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error(){ printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+run_pkg(){ "$root/m" "$root/bin/sys/pkg" "$@"; }
+run_srv(){ "$root/m" "$root/bin/sys/srv" "$@"; }
+
+service_started=0
+provider_set=0
+tmp=/tmp/rumiai-web-control-live-$$
+cleanup(){
+  trap - 0 HUP INT TERM
+  [ "$service_started" -eq 0 ] || run_srv stop -f web-control >/dev/null 2>&1 || :
+  [ "$provider_set" -eq 0 ] || run_pkg provider default -u -- web-control >/dev/null 2>&1 || :
+  command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+self=$0
+case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || error 'cannot resolve self';; esac
+test_dir=$(CDPATH= cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P) || error 'cannot resolve test dir'
+suite_root=$(CDPATH= cd -- "$test_dir/../.." 2>/dev/null && pwd -P) || error 'cannot resolve suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root") || fail 'rumiai-os target not found'
+command -p -- mkdir "$tmp" || error 'cannot create tmp'
+
+"$root/m" "$root/bin/sys/osarch" update >/dev/null 2>"$tmp/osarch.err" || {
+  command -p -- cat "$tmp/osarch.err" >&2
+  fail 'osarch update failed'
+}
+
+run_pkg install rumiai-web-control >"$tmp/install.out" 2>"$tmp/install.err" || {
+  command -p -- cat "$tmp/install.out" >&2
+  command -p -- cat "$tmp/install.err" >&2
+  fail 'pkg install rumiai-web-control failed'
+}
+
+web_identity=$(run_pkg default rumiai-web-control) || fail 'missing web-control package default'
+run_pkg default chromium >/dev/null || fail 'missing chromium dependency default'
+run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
+
+run_pkg provider default web-control "$web_identity" >"$tmp/provider.out" 2>"$tmp/provider.err" || {
+  command -p -- cat "$tmp/provider.err" >&2
+  fail 'cannot select web-control facility provider'
+}
+provider_set=1
+
+public="$root/bin/ext/web-control"
+[ -L "$public" ] || fail 'web-control facility command missing'
+
+conf=$("$root/m" "$root/bin/sys/state-path" user pkg rumiai-web-control conf) || error 'cannot resolve package conf'
+command -p -- mkdir -p -- "$conf/.m" || error 'cannot create package conf'
+printf '%s\n' 'WEB_CONTROL_HEADLESS=1' 'export WEB_CONTROL_HEADLESS' >"$conf/.m/env" || error 'cannot configure headless mode'
+
+run_srv start web-control >"$tmp/start.out" 2>"$tmp/start.err" || {
+  command -p -- cat "$tmp/start.err" >&2
+  logdir=$("$root/m" "$root/bin/sys/state-path" user sys srv log 2>/dev/null) || logdir=
+  [ -z "$logdir" ] || [ ! -f "$logdir/web-control.log" ] || command -p -- cat "$logdir/web-control.log" >&2
+  fail 'srv start web-control failed'
+}
+service_started=1
+
+"$root/m" "$public" status >"$tmp/status.json" 2>"$tmp/status.err" || fail 'web-control status failed'
+grep -F '"headless": true' "$tmp/status.json" >/dev/null || fail 'headless state not observed'
+
+"$root/m" "$public" page new >"$tmp/page.json" 2>"$tmp/page.err" || fail 'page new failed'
+page_id=$(command -p -- awk -F'"' '/"id": "page-/{print $4; exit}' "$tmp/page.json")
+[ -n "$page_id" ] || fail 'cannot parse page id'
+
+url='data:text/html,<body>ready</body>'
+"$root/m" "$public" page navigate "$page_id" "$url" >/dev/null 2>"$tmp/nav.err" || fail 'page navigate failed'
+"$root/m" "$public" page inspect "$page_id" text >"$tmp/inspect.json" 2>"$tmp/inspect.err" || fail 'page inspect failed'
+grep -F ready "$tmp/inspect.json" >/dev/null || fail 'rendered page text missing'
+
+run_srv stop -f web-control >"$tmp/stop.out" 2>"$tmp/stop.err" || fail 'srv stop web-control failed'
+service_started=0
+printf '%s\n' 'web-control-package-live=ok'
