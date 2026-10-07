@@ -32,7 +32,7 @@ esac
 driver=${TMPDIR:-/tmp}/rumiai-pkg-install-order-$$
 marker=$driver.marker
 depend_marker=$driver.depend
-trap 'rm -rf "$driver" "$marker" "$depend_marker" "$driver.err" "$driver.invalid.err" "$driver.store" "$driver.installed" "$driver.installed.err" "$driver.dependency.err"' 0 HUP INT TERM
+trap 'rm -rf "$driver" "$marker" "$depend_marker" "$driver.err" "$driver.invalid.err" "$driver.installed" "$driver.installed.err" "$driver.dependency.err" "${installed_concrete-}"; [ "${installed_pkg_store_created-0}" -eq 0 ] || rmdir "$root/pkg" 2>/dev/null || :' 0 HUP INT TERM
 
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
@@ -124,24 +124,27 @@ then
   fail 'pkg install dependency failure was incorrectly classified as invalid arguments'
 fi
 
-installed_store=$driver.store
-mkdir -p "$installed_store/temurin@21!linux-x86_64" || error 'cannot prepare installed concrete fixture'
+installed_pkg_store_created=0
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  mkdir "$root/pkg" || error 'cannot prepare package store fixture'
+  installed_pkg_store_created=1
+fi
+installed_concrete="$root/pkg/testinstalled@21!linux-x86_64"
+mkdir "$installed_concrete" || error 'cannot prepare installed concrete fixture'
 installed_driver=$driver.installed
 cat > "$installed_driver" <<'EOF_INSTALLED_DRIVER'
 #!/usr/bin/env m
 loadsyslib "pkg/pkg-install" || exit 3
-
-m_PKG_DIR=$PKG_INSTALL_ORDER_STORE
 
 pkg_catalog_request_resolve()
 {
   exit 99
 }
 
-pkg_install_one 'temurin@21!linux-x86_64'
+pkg_install_one 'testinstalled@21!linux-x86_64'
 EOF_INSTALLED_DRIVER
 chmod 700 "$installed_driver" || error 'cannot prepare installed concrete driver'
-export PKG_INSTALL_ORDER_STORE=$installed_store
 "$root/m" "$installed_driver" > /dev/null 2>"$installed_driver.err" || {
   cat "$installed_driver.err" >&2
   fail 'already-installed dependency concrete was resolved through catalog instead of reused directly'
