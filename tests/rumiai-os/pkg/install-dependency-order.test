@@ -59,6 +59,17 @@ _pkg_install_init()
   :
 }
 
+pkg_install_resolve()
+{
+  separator=
+  for operand
+  do
+    quoted=$(quote "$operand") || return 1
+    printf '%s' "$separator$quoted"
+    separator=' '
+  done
+}
+
 pkg_install_one()
 {
   printf '%s\n' "$1" >> "$PKG_INSTALL_ORDER_MARKER"
