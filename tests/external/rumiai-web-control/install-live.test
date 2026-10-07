@@ -62,6 +62,7 @@ service_started=1
 
 "$root/m" "$public" status >"$tmp/status.json" 2>"$tmp/status.err" || fail 'web-control status failed'
 grep -F '"headless": true' "$tmp/status.json" >/dev/null || fail 'headless state not observed'
+grep -F '"browserRunning": true' "$tmp/status.json" >/dev/null || fail 'browser running state not observed'
 
 "$root/m" "$public" page new >"$tmp/page.json" 2>"$tmp/page.err" || fail 'page new failed'
 page_id=$(command -p -- awk -F'"' '/"id": "page-/{print $4; exit}' "$tmp/page.json")
@@ -75,17 +76,15 @@ grep -F ready "$tmp/inspect.json" >/dev/null || fail 'rendered page text missing
 "$root/m" "$public" debug cdp "$page_id" Browser.close '{}' >"$tmp/browser-close.out" 2>"$tmp/browser-close.err" &
 browser_close_pid=$!
 
-restart_started=0
-restart_attempt=0
-while [ "$restart_attempt" -lt 20 ]
+browser_absent=0
+browser_attempt=0
+while [ "$browser_attempt" -lt 40 ]
 do
-  restart_attempt=$((restart_attempt + 1))
-  : >"$tmp/restart.out"
-  : >"$tmp/restart.err"
-  run_srv start web-control >"$tmp/restart.out" 2>"$tmp/restart.err" || :
-  if grep -F ' started pid=' "$tmp/restart.out" >/dev/null
+  browser_attempt=$((browser_attempt + 1))
+  if "$root/m" "$public" status >"$tmp/browser-absent-status.json" 2>"$tmp/browser-absent-status.err" &&
+     grep -F '"browserRunning": false' "$tmp/browser-absent-status.json" >/dev/null
   then
-    restart_started=1
+    browser_absent=1
     break
   fi
   sleep 1
@@ -94,14 +93,31 @@ done
 kill "$browser_close_pid" 2>/dev/null || :
 wait "$browser_close_pid" 2>/dev/null || :
 
-[ "$restart_started" -eq 1 ] || {
-  command -p -- cat "$tmp/restart.out" >&2
-  command -p -- cat "$tmp/restart.err" >&2
-  fail 'web-control service remained active after browser closure'
+[ "$browser_absent" -eq 1 ] || {
+  command -p -- cat "$tmp/browser-absent-status.err" >&2
+  fail 'web-control did not detect browser closure while keeping controller available'
 }
 
-"$root/m" "$public" status >"$tmp/restart-status.json" 2>"$tmp/restart-status.err" || fail 'web-control status failed after browser-driven service restart'
-grep -F '"headless": true' "$tmp/restart-status.json" >/dev/null || fail 'headless state missing after browser-driven service restart'
+run_srv start web-control >"$tmp/still-running.out" 2>"$tmp/still-running.err" || {
+  command -p -- cat "$tmp/still-running.err" >&2
+  fail 'srv start failed while checking existing controller'
+}
+grep -F ' already running pid=' "$tmp/still-running.out" >/dev/null || {
+  command -p -- cat "$tmp/still-running.out" >&2
+  fail 'web-control controller did not remain active after browser closure'
+}
+
+"$root/m" "$public" page new >"$tmp/relaunch-page.json" 2>"$tmp/relaunch-page.err" || fail 'page new failed to relaunch browser'
+relaunch_page_id=$(command -p -- awk -F'"' '/"id": "page-/{print $4; exit}' "$tmp/relaunch-page.json")
+[ -n "$relaunch_page_id" ] || fail 'cannot parse relaunched page id'
+
+"$root/m" "$public" status >"$tmp/relaunch-status.json" 2>"$tmp/relaunch-status.err" || fail 'web-control status failed after browser relaunch'
+grep -F '"browserRunning": true' "$tmp/relaunch-status.json" >/dev/null || fail 'browser was not relaunched on demand'
+
+relaunch_url='data:text/html,<body>relaunched</body>'
+"$root/m" "$public" page navigate "$relaunch_page_id" "$relaunch_url" >/dev/null 2>"$tmp/relaunch-nav.err" || fail 'relaunched page navigate failed'
+"$root/m" "$public" page inspect "$relaunch_page_id" text >"$tmp/relaunch-inspect.json" 2>"$tmp/relaunch-inspect.err" || fail 'relaunched page inspect failed'
+grep -F relaunched "$tmp/relaunch-inspect.json" >/dev/null || fail 'relaunched browser page text missing'
 
 run_srv stop -f web-control >"$tmp/stop.out" 2>"$tmp/stop.err" || fail 'srv stop web-control failed'
 service_started=0
