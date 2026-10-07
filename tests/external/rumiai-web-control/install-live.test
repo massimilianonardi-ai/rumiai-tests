@@ -72,6 +72,37 @@ url='data:text/html,<body>ready</body>'
 "$root/m" "$public" page inspect "$page_id" text >"$tmp/inspect.json" 2>"$tmp/inspect.err" || fail 'page inspect failed'
 grep -F ready "$tmp/inspect.json" >/dev/null || fail 'rendered page text missing'
 
+"$root/m" "$public" debug cdp "$page_id" Browser.close '{}' >"$tmp/browser-close.out" 2>"$tmp/browser-close.err" &
+browser_close_pid=$!
+
+restart_started=0
+restart_attempt=0
+while [ "$restart_attempt" -lt 20 ]
+do
+  restart_attempt=$((restart_attempt + 1))
+  : >"$tmp/restart.out"
+  : >"$tmp/restart.err"
+  run_srv start web-control >"$tmp/restart.out" 2>"$tmp/restart.err" || :
+  if grep -F ' started pid=' "$tmp/restart.out" >/dev/null
+  then
+    restart_started=1
+    break
+  fi
+  sleep 1
+done
+
+kill "$browser_close_pid" 2>/dev/null || :
+wait "$browser_close_pid" 2>/dev/null || :
+
+[ "$restart_started" -eq 1 ] || {
+  command -p -- cat "$tmp/restart.out" >&2
+  command -p -- cat "$tmp/restart.err" >&2
+  fail 'web-control service remained active after browser closure'
+}
+
+"$root/m" "$public" status >"$tmp/restart-status.json" 2>"$tmp/restart-status.err" || fail 'web-control status failed after browser-driven service restart'
+grep -F '"headless": true' "$tmp/restart-status.json" >/dev/null || fail 'headless state missing after browser-driven service restart'
+
 run_srv stop -f web-control >"$tmp/stop.out" 2>"$tmp/stop.err" || fail 'srv stop web-control failed'
 service_started=0
 printf '%s\n' 'web-control-package-live=ok'
