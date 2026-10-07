@@ -38,8 +38,13 @@ cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
 loadsyslib "pkg/pkg-install" || exit 3
 
-pkg_depend()
+pkg()
 {
+  [ "$#" -ge 1 ] || return 2
+  action=$1
+  shift
+  [ "$action" = depend ] || return 2
+
   printf '%s\n' called >> "$PKG_INSTALL_DEPEND_MARKER"
   if [ "${PKG_INSTALL_DEPEND_FAIL-}" = 1 ]
   then
@@ -88,7 +93,7 @@ invalid_status=$?
   cat "$driver.invalid.err" >&2
   fail "invalid request returned $invalid_status instead of 2"
 }
-[ ! -e "$depend_marker" ] || fail 'pkg_depend was called before install request validation'
+[ ! -e "$depend_marker" ] || fail 'pkg depend was called before install request validation'
 
 "$root/m" "$driver" geoserver 'demo@3!linux-x86_64' > /dev/null 2>"$driver.err" || {
   cat "$driver.err" >&2
@@ -102,7 +107,7 @@ demo@3!linux-x86_64"
 actual=$(cat "$marker") || error 'cannot read install order'
 [ "$actual" = "$expected" ] || fail "unexpected install order:
 $actual"
-[ "$(cat "$depend_marker")" = called ] || fail 'valid install did not call pkg_depend exactly once'
+[ "$(cat "$depend_marker")" = called ] || fail 'valid install did not call pkg depend exactly once'
 
 : > "$depend_marker"
 export PKG_INSTALL_DEPEND_FAIL=1
