@@ -22,7 +22,15 @@ permissions:
 
 jobs:
   formal-validation:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-26.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
 
     steps:
@@ -65,7 +73,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: web-control-package-${{ github.run_id }}-${{ github.run_attempt }}
+          name: web-control-package-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             rumiai-tests/sessions
             rumiai-tests/validations
