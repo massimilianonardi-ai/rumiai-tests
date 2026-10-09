@@ -62,7 +62,10 @@ printf '%s\n' "$m_OSARCH"
 EOF_PROBE
 chmod 700 "$probe" || error 'cannot prepare osarch probe'
 osarch=$("$root/m" "$probe") || fail 'cannot determine RumiAI osarch'
-[ "$osarch" = linux-x86_64 ] || skip "Chromium sandbox environment validation is linux-x86_64-only; target is $osarch"
+case "$osarch" in
+  linux-arm64|linux-x86_64) :;;
+  *) skip "Chromium sandbox environment validation is Linux-only; target is $osarch";;
+esac
 
 run_pkg versions chromium > "$tmp/preexisting.out" 2> "$tmp/preexisting.err"
 status=$?
