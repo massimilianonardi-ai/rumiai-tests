@@ -40,6 +40,21 @@ then
   exit 2
 fi
 
+# Reproduce the normal provider-substitution scenario: a first provider is
+# already installed, and its package-specific service command is published.
+run_pkg install pwc-web-control >"$tmp/pwc-install.out" 2>"$tmp/pwc-install.err" || {
+  command -p -- cat "$tmp/pwc-install.out" >&2
+  command -p -- cat "$tmp/pwc-install.err" >&2
+  fail 'cannot install existing Playwright provider before Electron'
+}
+pwc_identity=$(run_pkg default pwc-web-control) ||
+  fail 'Playwright provider package default missing'
+previous_service=$root/bin/ext/web-control-service
+[ -L "$previous_service" ] ||
+  fail 'Playwright provider service command projection missing'
+previous_service_target=$(command -p -- readlink "$previous_service") ||
+  fail 'cannot identify original provider command target'
+
 run_pkg install electron-web-control >"$tmp/install.out" 2>"$tmp/install.err" || {
   command -p -- cat "$tmp/install.out" >&2
   command -p -- cat "$tmp/install.err" >&2
@@ -47,9 +62,16 @@ run_pkg install electron-web-control >"$tmp/install.out" 2>"$tmp/install.err" ||
 }
 
 web_identity=$(run_pkg default electron-web-control) || fail 'missing web-control package default'
+[ -L "$previous_service" ] || fail 'existing Playwright service projection removed'
+[ "$(command -p -- readlink "$previous_service")" = "$previous_service_target" ] ||
+  fail 'existing Playwright service projection overwritten'
+[ -L "$root/bin/ext/electron-web-control-service" ] ||
+  fail 'Electron provider-specific service projection missing'
+
 run_pkg default electron >/dev/null || fail 'missing electron dependency default'
 run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
 
+# Distinct provider packages must coexist; select Electron only after install.
 run_pkg provider default web-control "$web_identity" >"$tmp/provider.out" 2>"$tmp/provider.err" || {
   command -p -- cat "$tmp/provider.err" >&2
   fail 'cannot select web-control facility provider'
