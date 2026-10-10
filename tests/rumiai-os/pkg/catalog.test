@@ -47,15 +47,17 @@ esac
 
 tmp=${TMPDIR:-/tmp}/rumiai-pkg-catalog-$$
 umask 077
-mkdir -p "$tmp/source/pkg/demo/linux-x86_64/repository" "$tmp/source/pkg/demo/linux-x86_64/n0001=1" "$tmp/source/pkg/demo/linux-x86_64/n0002=3" "$tmp/source/pkg/generic/all/repository" "$tmp/source/pkg/generic/all/n0001=1" "$tmp/source/pkg/bad/linux-x86_64/repository" "$tmp/source/pkg/bad/linux-x86_64/n0002=1" "$tmp/conf" "$tmp/work" "$tmp/cache" "$tmp/requirement-tmp" "$tmp/lib/sys/sh/pkg/repository" || error 'cannot create fixture'
+mkdir -p "$tmp/source/pkg/demo/linux-x86_64/repository" "$tmp/source/pkg/demo/linux-x86_64/n0001=1" "$tmp/source/pkg/demo/linux-x86_64/n0002=3" "$tmp/source/pkg/generic/all/repository" "$tmp/source/pkg/generic/all/n0001=1" "$tmp/source/pkg/budget/linux-x86_64/repository" "$tmp/source/pkg/budget/linux-x86_64/n0001=1" "$tmp/source/pkg/budget/linux-x86_64/n0002=2" "$tmp/source/pkg/budget/linux-x86_64/n0003=3" "$tmp/source/pkg/budget/linux-x86_64/n0004=4" "$tmp/source/pkg/bad/linux-x86_64/repository" "$tmp/source/pkg/bad/linux-x86_64/n0002=1" "$tmp/conf" "$tmp/work" "$tmp/cache" "$tmp/requirement-tmp" "$tmp/lib/sys/sh/pkg/repository" || error 'cannot create fixture'
 
 trap 'rm -rf "$tmp"' 0 HUP INT TERM
 
 printf '%s\n' test > "$tmp/source/pkg/demo/linux-x86_64/repository/type"
 printf '%s\n' test > "$tmp/source/pkg/generic/all/repository/type"
+printf '%s\n' test > "$tmp/source/pkg/budget/linux-x86_64/repository/type"
 printf '%s\n' test > "$tmp/source/pkg/bad/linux-x86_64/repository/type"
 printf '%s\n' 3 > "$tmp/source/pkg/demo/linux-x86_64/repository/version"
 printf '%s\n' 1 > "$tmp/source/pkg/generic/all/repository/version"
+printf '%s\n' 4 > "$tmp/source/pkg/budget/linux-x86_64/repository/version"
 printf '%s\n' 'java =25' > "$tmp/source/pkg/generic/all/n0001=1/dependency"
 printf '%s\n' 1 > "$tmp/source/pkg/bad/linux-x86_64/repository/version"
 printf '%s\n' https://example.invalid/pkg-catalog.git > "$tmp/conf/catalog"
@@ -78,6 +80,7 @@ pkg_repository_compare_versions()
   [ "$#" -eq 3 ] || return 2
   left=$2
   right=$3
+  [ -z "${PKG_CATALOG_TEST_COMPARE_LOG-}" ] || printf '%s\t%s\n' "$left" "$right" >> "$PKG_CATALOG_TEST_COMPARE_LOG"
   case "$left:$right" in
     *[!0123456789:]*|:*|*:) return 1 ;;
   esac
@@ -178,6 +181,7 @@ export PKG_CATALOG_TEST_WORK="$tmp/work"
 export PKG_CATALOG_TEST_CACHE="$tmp/cache"
 export PKG_CATALOG_TEST_REQUIREMENT_TMP="$tmp/requirement-tmp"
 export PKG_CATALOG_TEST_LIB="$tmp/lib"
+export PKG_CATALOG_TEST_COMPARE_LOG="$tmp/compare.log"
 
 output=$("$root/m" "$driver" init 2> "$tmp/init.err") || {
   cat "$tmp/init.err" >&2
@@ -224,6 +228,20 @@ output=$("$root/m" "$driver" range "$catalog" 'generic@2' 2> "$tmp/range-all.err
   fail 'all-stream range resolution failed'
 }
 [ "$output" = "range=$catalog/pkg/generic/all/n0001=1" ] || fail "all-stream range output is incorrect: $output"
+
+: > "$PKG_CATALOG_TEST_COMPARE_LOG"
+output=$("$root/m" "$driver" range "$catalog" 'budget@4!linux-x86_64' 2> "$tmp/range-budget.err") || {
+  cat "$tmp/range-budget.err" >&2
+  fail 'newest-anchor range resolution failed'
+}
+[ "$output" = "range=$catalog/pkg/budget/linux-x86_64/n0004=4" ] || fail "newest-anchor selected wrong range: $output"
+expected_compare_log="1	2
+2	3
+3	4
+4	4"
+actual_compare_log=$(cat "$PKG_CATALOG_TEST_COMPARE_LOG") || error 'cannot read compare log'
+[ "$actual_compare_log" = "$expected_compare_log" ] ||
+  fail "newest-anchor range resolution used unexpected comparisons: $actual_compare_log"
 
 output=$("$root/m" "$driver" request "$catalog" demo linux-x86_64 2> "$tmp/request-latest.err") || {
   cat "$tmp/request-latest.err" >&2
