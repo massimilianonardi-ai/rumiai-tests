@@ -97,6 +97,10 @@ do
   url=$arg
 done
 [ -z "${GITHUB_HTTP_LOG-}" ] || printf '%s\n' "$url" >> "$GITHUB_HTTP_LOG"
+if [ -n "${GITHUB_HTTP_FAIL_URL-}" ] && [ "$url" = "$GITHUB_HTTP_FAIL_URL" ]
+then
+  exit "${GITHUB_HTTP_FAIL_STATUS:-22}"
+fi
 
 case "$url" in
   *'/repos/acme/ambiguous/releases?per_page=100&page=1')
@@ -216,6 +220,19 @@ pkg_repository_compare_versions "$repository_dir" "v1" >/dev/null 2>&1
 
 latest="$(pkg_repository_resolve_version "$repository_dir")" || fail "latest version resolution failed"
 [ "$latest" = "v2" ] || fail "latest version resolution returned $latest instead of v2"
+
+GITHUB_HTTP_FAIL_URL=https://api.github.com/repos/acme/demo/releases/latest
+GITHUB_HTTP_FAIL_STATUS=22
+export GITHUB_HTTP_FAIL_URL GITHUB_HTTP_FAIL_STATUS
+pkg_repository_resolve_version "$repository_dir" >"$tmp/upstream.out" 2>"$tmp/upstream.err"
+status=$?
+unset GITHUB_HTTP_FAIL_URL GITHUB_HTTP_FAIL_STATUS
+[ "$status" -eq 1 ] || fail "GitHub upstream failure returned status $status instead of 1"
+grep -F 'operation="pkg-repository-github"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not identify adapter"
+grep -F 'reason="upstream-request-failed"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not identify upstream request failure"
+grep -F 'function="pkg_repository_resolve_version"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not identify resolve-version function"
+grep -F 'url="https://api.github.com/repos/acme/demo/releases/latest"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not preserve endpoint"
+grep -F 'status="22"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not preserve http-fetch status"
 
 exact="$(pkg_repository_resolve_version "$repository_dir" "v1")" || fail "exact version resolution failed"
 [ "$exact" = "v1" ] || fail "exact version resolution returned $exact instead of v1"

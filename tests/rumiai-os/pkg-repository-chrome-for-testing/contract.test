@@ -42,6 +42,10 @@ cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
 #!/bin/sh
 for url do :; done
 printf -- '%s\n' "$url" >> "$CFT_HTTP_LOG"
+if [ -n "${CFT_HTTP_FAIL_URL-}" ] && [ "$url" = "$CFT_HTTP_FAIL_URL" ]
+then
+  exit "${CFT_HTTP_FAIL_STATUS:-22}"
+fi
 
 case "$url" in
   https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE)
@@ -117,6 +121,18 @@ latest="$(pkg_repository_resolve_version "$repository_dir")" || fail "latest Chr
 [ "$latest" = 155.0.8059.39 ] || fail "latest Chrome for Testing version is incorrect"
 grep -Fx 'https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE' "$CFT_HTTP_LOG" >/dev/null 2>&1 || fail "latest resolution did not use LATEST_RELEASE_STABLE"
 grep -F '155.0.8059.39%2Flinux-arm64%2Fchrome-linux-arm64.zip?fields=name%2Csize%2Cmd5Hash%2Ccrc32c' "$CFT_HTTP_LOG" >/dev/null 2>&1 || fail "latest resolution did not validate Google Storage metadata"
+
+CFT_HTTP_FAIL_URL=https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE
+CFT_HTTP_FAIL_STATUS=22
+export CFT_HTTP_FAIL_URL CFT_HTTP_FAIL_STATUS
+pkg_repository_resolve_version "$repository_dir" >"$tmp/upstream.out" 2>"$tmp/upstream.err"
+status=$?
+unset CFT_HTTP_FAIL_URL CFT_HTTP_FAIL_STATUS
+[ "$status" -eq 1 ] || fail "Chrome for Testing upstream failure returned status $status instead of 1"
+grep -F 'operation="pkg-repository-chrome-for-testing"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Chrome for Testing failure diagnostic does not identify adapter"
+grep -F 'function="pkg_repository_resolve_version"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Chrome for Testing failure diagnostic does not identify resolve-version function"
+grep -F 'url="https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Chrome for Testing failure diagnostic does not preserve endpoint"
+grep -F 'status="22"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Chrome for Testing failure diagnostic does not preserve http-fetch status"
 
 [ "$(pkg_repository_resolve_version "$repository_dir" 153.0.8010.12)" = 153.0.8010.12 ] || fail "exact Chrome for Testing version was rejected"
 if pkg_repository_resolve_version "$repository_dir" 999.0.0.0 >/dev/null 2>&1; then fail "missing exact Chrome for Testing artifact was accepted"; fi

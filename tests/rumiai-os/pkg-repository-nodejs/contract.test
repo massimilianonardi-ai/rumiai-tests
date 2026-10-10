@@ -43,6 +43,10 @@ if [ "${1-}" = -l ]; then mode=length; shift; fi
 [ "${1-}" = -- ] && shift
 url=${1-}
 printf -- '%s\t%s\n' "$mode" "$url" >> "$NODEJS_HTTP_LOG"
+if [ -n "${NODEJS_HTTP_FAIL_URL-}" ] && [ "$url" = "$NODEJS_HTTP_FAIL_URL" ]
+then
+  exit "${NODEJS_HTTP_FAIL_STATUS:-22}"
+fi
 case "$mode:$url" in
   body:https://nodejs.org/dist/index.json)
     printf '%s\n' '[{"version":"v26.11.1"},{"version":"v26.10.0"},{"version":"v25.9.0"},{"version":"v26.8.2"}]'
@@ -79,6 +83,18 @@ printf '%s\n' "$versions" | grep -Fx v25.9.0 >/dev/null 2>&1 && fail "wrong majo
 [ "$(pkg_repository_resolve_version "$tmp/repository")" = v26.11.1 ] || fail "latest Node.js version resolution failed"
 [ "$(pkg_repository_resolve_version "$tmp/repository" v26.8.2)" = v26.8.2 ] || fail "exact Node.js version resolution failed"
 if pkg_repository_resolve_version "$tmp/repository" v26.9.9 >/dev/null 2>&1; then fail "missing exact release was accepted"; fi
+
+NODEJS_HTTP_FAIL_URL=https://nodejs.org/dist/index.json
+NODEJS_HTTP_FAIL_STATUS=22
+export NODEJS_HTTP_FAIL_URL NODEJS_HTTP_FAIL_STATUS
+pkg_repository_resolve_version "$tmp/repository" >"$tmp/upstream.out" 2>"$tmp/upstream.err"
+status=$?
+unset NODEJS_HTTP_FAIL_URL NODEJS_HTTP_FAIL_STATUS
+[ "$status" -eq 1 ] || fail "Node.js upstream failure returned status $status instead of 1"
+grep -F 'operation="pkg-repository-nodejs"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Node.js failure diagnostic does not identify adapter"
+grep -F 'function="pkg_repository_resolve_version"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Node.js failure diagnostic does not identify resolve-version function"
+grep -F 'url="https://nodejs.org/dist/index.json"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Node.js failure diagnostic does not preserve endpoint"
+grep -F 'status="22"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "Node.js failure diagnostic does not preserve http-fetch status"
 
 : > "$NODEJS_HTTP_LOG"
 [ "$(pkg_repository_compare_versions "$tmp/repository" v26.9.0 v26.10.0)" = -1 ] || fail "numeric comparison failed"

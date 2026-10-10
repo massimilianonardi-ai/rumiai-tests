@@ -103,11 +103,17 @@ PATH="$runtime_path" "$command_path" -- "https://example.test/fail" >"$tmp/stdou
 status="$?"
 [ "$status" -eq "1" ] || fail "curl transfer failure returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl transfer with wget"
+grep -F 'operation="http-fetch"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl failure diagnostic does not identify http-fetch"
+grep -F 'reason="transfer-failed"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl failure diagnostic does not identify transfer-failed"
+grep -F 'backend="curl"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl failure diagnostic does not identify curl"
+grep -F 'status="23"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl failure diagnostic does not preserve backend status 23"
 
 PATH="$runtime_path" "$command_path" -l -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
 status="$?"
 [ "$status" -eq "1" ] || fail "curl Content-Length probe failure returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl Content-Length probe with wget"
+grep -F 'backend="curl"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl Content-Length failure diagnostic does not identify curl"
+grep -F 'status="23"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl Content-Length failure diagnostic does not preserve backend status 23"
 
 cat > "$fakebin/curl" <<'EOF_CURL_UNAVAILABLE'
 #!/bin/sh
@@ -188,6 +194,23 @@ grep -F -x -e '--spider' "$wget_args" >/dev/null 2>&1 || fail "GNU Wget Content-
 grep -F -x -e '--server-response' "$wget_args" >/dev/null 2>&1 || fail "GNU Wget Content-Length probe did not request response headers"
 if grep -F -x -e '--output-document=-' "$wget_args" >/dev/null 2>&1; then fail "GNU Wget Content-Length probe unexpectedly requested a body"; fi
 
+cat > "$fakebin/wget" <<'EOF_WGET_FAIL'
+#!/bin/sh
+if [ "${1-}" = "--version" ]
+then
+  printf -- '%s\n' 'GNU Wget 1.21.4'
+  exit 0
+fi
+exit 47
+EOF_WGET_FAIL
+chmod "700" "$fakebin/wget" || error "cannot replace fake wget with failing GNU Wget"
+
+PATH="$runtime_path" "$command_path" -- "https://example.test/wget-fail" >"$tmp/stdout" 2>"$tmp/stderr"
+status="$?"
+[ "$status" -eq "1" ] || fail "GNU Wget transfer failure returned status $status instead of 1"
+grep -F 'backend="wget"' "$tmp/stderr" >/dev/null 2>&1 || fail "wget failure diagnostic does not identify wget"
+grep -F 'status="47"' "$tmp/stderr" >/dev/null 2>&1 || fail "wget failure diagnostic does not preserve backend status 47"
+
 cat > "$fakebin/wget" <<'EOF_WGET_BUSYBOX'
 #!/bin/sh
 if [ "${1-}" = "--version" ]
@@ -205,5 +228,6 @@ PATH="$runtime_path" "$command_path" -- "https://example.test/busybox" >"$tmp/st
 status="$?"
 [ "$status" -eq "1" ] || fail "unsupported BusyBox Wget case returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "BusyBox Wget was used as a transfer backend"
+grep -F 'reason="backend-unavailable"' "$tmp/stderr" >/dev/null 2>&1 || fail "unsupported backend diagnostic does not identify backend-unavailable"
 
 exit "0"

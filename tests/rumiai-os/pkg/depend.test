@@ -167,6 +167,18 @@ range openssl 0001 1 || error 'cannot create openssl'
 printf '%s\n' 1 > "$source/pkg/openssl/linux-x86_64/repository/version"
 printf '%s\n' 'crypto 1' > "$source/pkg/openssl/linux-x86_64/n0001=1/facility"
 
+range unresolved 0001 1 || error 'cannot create unresolved root'
+plan unresolved >"$tmp/unresolved.out" 2>"$tmp/unresolved.err"
+[ "$?" -eq 1 ] || fail 'unresolvable original request did not return status 1'
+grep -F 'reason="request-unresolvable"' "$tmp/unresolved.err" >/dev/null ||
+  fail 'unresolvable original request diagnostic does not identify request-unresolvable'
+grep -F 'request="unresolved"' "$tmp/unresolved.err" >/dev/null ||
+  fail 'unresolvable original request diagnostic does not preserve the request'
+grep -F 'default-target="linux-x86_64"' "$tmp/unresolved.err" >/dev/null ||
+  fail 'unresolvable original request diagnostic does not identify the default target'
+grep -F 'status="1"' "$tmp/unresolved.err" >/dev/null ||
+  fail 'unresolvable original request diagnostic does not preserve the internal status'
+
 result=$(plan a b 2>"$tmp/plan.err") || {
   cat "$tmp/plan.err" >&2
   fail 'dependency plan failed'
