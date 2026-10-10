@@ -60,18 +60,26 @@ run_pkg provider default web-control "$pwc_identity" >"$tmp/pwc-provider.out" 2>
   fail 'cannot select existing Playwright provider'
 provider_set=1
 
-# Reproduce recovery from a failed v0.1.0 default-selection install. The
-# older release may remain materialized even when its default was rejected.
-# Should its metadata be repaired later, a successful old install is valid too.
+# Reproduce the physical regression: immutable v0.1.0 materializes
+# but its ordinary service command collides with Playwright at default selection.
 if run_pkg install electron-web-control@v0.1.0 >"$tmp/legacy.out" 2>"$tmp/legacy.err"
 then
-  :
-else
-  grep -F 'stage="default-selection"' "$tmp/legacy.err" >/dev/null ||
-    fail 'unexpected failure installing legacy Electron version'
+  fail 'legacy Electron v0.1.0 unexpectedly selected without command collision'
 fi
+grep -F 'stage="default-selection"' "$tmp/legacy.err" >/dev/null ||
+  fail 'legacy Electron v0.1.0 failed outside default selection'
+[ -d "$root/pkg/electron-web-control@v0.1.0" ] ||
+  fail 'legacy Electron v0.1.0 did not remain materialized after default-selection failure'
+if run_pkg default electron-web-control >"$tmp/legacy-default.out" 2>"$tmp/legacy-default.err"
+then
+  fail 'legacy Electron v0.1.0 became package default despite command collision'
+fi
+[ -L "$previous_service" ] ||
+  fail 'legacy Electron v0.1.0 removed the Playwright service projection'
+[ "$(command -p -- readlink "$previous_service")" = "$previous_service_target" ] ||
+  fail 'legacy Electron v0.1.0 replaced the Playwright service projection'
 
-# Explicit version verifies recovery even when v0.1.0 was only partially installed.
+# Explicit version verifies recovery with v0.1.0 already materialized.
 run_pkg install electron-web-control@v0.1.1 >"$tmp/install.out" 2>"$tmp/install.err" || {
   command -p -- cat "$tmp/install.out" >&2
   command -p -- cat "$tmp/install.err" >&2
