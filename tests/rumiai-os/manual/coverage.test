@@ -1,0 +1,55 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/manual/coverage.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+
+self=$0
+case "$self" in */*) : ;; *) self=$(command -v "$self") || error "cannot resolve test pathname" ;; esac
+test_dir=$(CDPATH= cd -- "${self%/*}" && pwd -P) || error "cannot resolve test directory"
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error "cannot resolve test suite root"
+. "$suite_root/lib/rumiai-os-target.lib" || error "target discovery library missing"
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+    0) : ;;
+    1) skip 'rumiai-os target checkout not found' ;;
+    2) fail 'invalid explicit rumiai-os target' ;;
+    *) error 'target discovery failed' ;;
+esac
+
+manual="$root/res/sys/manual"
+[ -d "$manual" ] && [ ! -L "$manual" ] || fail 'sys manual tree is missing/invalid'
+
+# One owner-local manual topic per directly executable m-owned command
+# identity. The root-level m exposure is represented by bin/sys/m.
+for path in "$root"/bin/sys/*
+do
+    [ -f "$path" ] || continue
+    [ ! -L "$path" ] || continue
+    [ -x "$path" ] || fail "command is not executable: $path"
+    name=${path##*/}
+    [ -f "$manual/$name" ] && [ ! -L "$manual/$name" ] ||
+        fail "missing sys manual topic for command: $name"
+done
+
+# Recursive owner-local mapping of each runtime-qualified library *leaf* to
+# res/sys/manual/<name>.lib.<runtime>, regardless of physical grouping.
+(
+    find "$root/lib/sys" -type f \\( -name '*.lib.sh' -o -name '*.lib.js' \\) -print |
+    while IFS= read -r path
+    do
+        name=${path##*/}
+        [ -f "$manual/$name" ] && [ ! -L "$manual/$name" ] || {
+            printf '%s\n' "$TEST_ID: missing sys library manual topic: $name" >&2
+            exit 1
+        }
+        [ ! -x "$path" ] || {
+            printf '%s\n' "$TEST_ID: internal library is executable: $path" >&2
+            exit 1
+        }
+    done
+) || fail 'recursive library manual coverage mismatch'
+
+exit 0
