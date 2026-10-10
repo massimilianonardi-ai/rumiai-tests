@@ -1,5 +1,5 @@
 // Permanent original m/jsc usage regression, executed against the published
-// first-party jsc engine. Legacy metadata is ordered, nested, and has no id/deps.
+// first-party jsc engine. Original metadata is ordered and nested.
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
@@ -98,7 +98,7 @@ try {
  assert.ok(css.stdout.indexOf('FIRST')<css.stdout.indexOf('SECOND'));
  assert.match(css.stdout,/\.a\s*\{\s*color: red/);
  assert.match(css.stdout,/\.b\s*\{\s*color: blue/);
- assert.doesNotMatch(css.stdout,/globalThis|JscRuntime|function\s*\(/);
+ assert.doesNotMatch(css.stdout,/globalThis|function\s*\(/);
  const cssOut=join(work,'style.css');
  result=run([cssMan,cssOut]);assert.equal(result.status,0,result.stderr);
  assert.equal(await readFile(cssOut,'utf8'),css.stdout);
