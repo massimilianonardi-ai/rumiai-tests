@@ -101,7 +101,7 @@ try {
     counter:'    Create counter.js:',
     application:'    Create application.js:',
     manifest:'    Create modules.json in the SAME directory:',
-    html:'    then create public/index.html:'
+    html:'    Then create public/index.html:'
   });
   await runSample('loader',manualLoader,{
     counter:'    First create counter.js:',
