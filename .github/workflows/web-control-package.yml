@@ -72,8 +72,8 @@ jobs:
         run: |
           # The ARM64 Chromium SUID helper must not reside on a nosuid /tmp mount.
           # Use the isolated workspace filesystem without relaxing browser sandboxing.
-          mkdir -p "$GITHUB_WORKSPACE/validation-tmp"
-          export TMPDIR="$GITHUB_WORKSPACE/validation-tmp"
+          mkdir -p "$HOME/.rv"
+          export TMPDIR="$HOME/.rv"
           cd rumiai-tests
           ./rumiai-validate web-control-package
 
