@@ -103,7 +103,59 @@ async function runSample(label,doc,names) {
   }
 }
 
+async function runOriginalNamespaceManual() {
+  const sourceNames=[
+    ['m/srv/data/MyClass.js','    Contents of m/srv/data/MyClass.js:'],
+    ['m/srv/data/Other.js','    Contents of m/srv/data/Other.js:'],
+    ['m/srv/Facade.js','    Contents of m/srv/Facade.js:']
+  ];
+  const manifest=exampleBlock(manualJsc,'    Contents of modules-js.json (order matters):');
+  const html=exampleBlock(manualJsc,'    In a browser, load bundle.js:');
+  const parsed=JSON.parse(manifest);
+  assert.ok(parsed.modules[0]?.name==='m','original manual must use namespace descriptor');
+  const dir=join(scratch,'original');
+  const {mkdir}=await import('node:fs/promises');
+  await mkdir(dir,{recursive:true});
+  for(const [name,heading] of sourceNames){
+    const file=join(dir,name);
+    await mkdir(resolve(file,'..'),{recursive:true});
+    await writeFile(file,exampleBlock(manualJsc,heading));
+  }
+  const manifestPath=join(dir,'modules-js.json');
+  await writeFile(manifestPath,manifest);
+  const built=spawnSync(process.execPath,[engine,manifestPath],
+    {encoding:'utf8',timeout:12000});
+  assert.equal(built.status,0,'original manifest build failed '+built.stderr);
+  assert.doesNotMatch(built.stdout,/JscRuntime|installBatch/,'original output must be independent of registry loader');
+  const assets=new Map([
+    ['/index.html',{type:'text/html',body:html}],
+    ['/bundle.js',{type:'text/javascript',body:built.stdout}]
+  ]);
+  const visited=new Set();
+  const server=http.createServer((req,res)=>{
+    const path=new URL(req.url,'http://localhost').pathname;
+    const asset=assets.get(path);
+    if(!asset){res.writeHead(404);res.end('missing');return;}
+    visited.add(path);
+    res.setHeader('Content-Type',asset.type);
+    res.end(asset.body);
+  });
+  try{
+    await new Promise(ok=>server.listen(0,'127.0.0.1',ok));
+    const result=await browser('http://127.0.0.1:'+server.address().port+'/index.html','chrome-original');
+    assert.equal(result.code,0,result.stderr.slice(-900));
+    assert.match(result.stdout,/<div id="result">42<\/div>/,
+      'original namespace manual example failed in browser: '+result.stdout.slice(-1800));
+    assert.ok(visited.has('/bundle.js'),'original browser example did not fetch classic assembly');
+    assert.equal(visited.size,2,'original namespace must not require separate loader');
+  }finally{
+    server.closeAllConnections();
+    await new Promise(ok=>server.close(ok));
+  }
+}
+
 try {
+  await runOriginalNamespaceManual();
   await runSample('jsc',manualJsc,{
     counter:'    Create counter.js:',
     application:'    Create application.js:',
@@ -116,7 +168,7 @@ try {
     manifest:'    Create modules.json:',
     html:'    then create index.html in the same web-served directory:'
   });
-  console.log('PASS product manual examples: extracted JSON/source/HTML from both manuals, compiled by actual jsc engine and displayed 42 with published loader in real Chrome');
+  console.log('PASS original and optional jsc manuals: namespace JSON/source/HTML and two id/deps quickstarts compiled by real jsc and displayed 42 in real Chrome');
 }finally{
   await rm(scratch,{recursive:true,force:true});
 }
