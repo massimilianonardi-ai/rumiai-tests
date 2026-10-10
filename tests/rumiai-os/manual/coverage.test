@@ -37,10 +37,11 @@ done
 # Recursive owner-local mapping of each runtime-qualified library *leaf* to
 # res/sys/manual/<name>.lib.<runtime>, regardless of physical grouping.
 (
-    find "$root/lib/sys" -type f \\( -name '*.lib.sh' -o -name '*.lib.js' \\) -print |
+    find "$root/lib/sys" -type f -print |
     while IFS= read -r path
     do
         name=${path##*/}
+        case "$name" in *.lib.sh|*.lib.js) : ;; *) continue ;; esac
         [ -f "$manual/$name" ] && [ ! -L "$manual/$name" ] || {
             printf '%s\n' "$TEST_ID: missing sys library manual topic: $name" >&2
             exit 1
