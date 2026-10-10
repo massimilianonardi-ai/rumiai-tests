@@ -38,6 +38,16 @@ do
     fail "missing operational manual: $topic"
 done
 
+# Exercise the actual m/bootstrap command entrypoint before probing the Node engine.
+# Invalid operands are rejected by m's fatal logger, before pkg/runtime lookup.
+diagnostic=$("$root/m" "$command_file" 2>&1)
+status=$?
+[ "$status" -eq 1 ] || fail "m launcher invalid-arguments status: $status"
+case "$diagnostic" in
+  *'[fatal] [jsc.invalid-arguments]'*) : ;;
+  *) fail "m launcher did not emit its branch-specific fatal diagnostic: $diagnostic" ;;
+esac
+
 command -v node >/dev/null 2>&1 || skip 'Node.js unavailable for actual JavaScript compiler/loader execution'
 node "$test_dir/.support/compiler-loader.mjs" "$root" || fail 'real compiler/loader behavior mismatched'
 exit 0
