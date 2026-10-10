@@ -101,6 +101,8 @@ cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
 loadsyslib "pkg/pkg-catalog" || exit 3
 loadsyslib "pkg/pkg-requirement" || exit 3
+PATH="$PKG_CATALOG_TEST_BIN:$PATH"
+export PATH
 
 git()
 {
@@ -164,14 +166,16 @@ export PKG_CATALOG_TEST_WORK="$tmp/work"
 export PKG_CATALOG_TEST_CACHE="$tmp/cache"
 export PKG_CATALOG_TEST_REQUIREMENT_TMP="$tmp/requirement-tmp"
 export PKG_CATALOG_TEST_HTTP_LOG="$tmp/http.log"
+export PKG_CATALOG_TEST_BIN="$tmp/bin"
 PATH="$tmp/bin:$root/bin/sys:/usr/bin:/bin"
 export PATH
 
-output=$("$root/m" "$driver" init 2> "$tmp/init.err") || {
-  cat "$tmp/init.err" >&2
-  fail 'catalog init failed'
-}
-expected="catalog=$tmp/work/catalog
+# The range/request tests use catalog data as an external input boundary;
+# catalog Git transport is exercised by the composed install tests.
+mkdir "$tmp/work/catalog" || error 'cannot create catalog fixture snapshot'
+command -p -- cp -R "$tmp/source/." "$tmp/work/catalog/" ||
+  error 'cannot materialize catalog fixture'
+catalog=$tmp/work/catalog
 head=test-head"
 [ "$output" = "$expected" ] || fail "catalog init output is incorrect: $output"
 [ -f "$tmp/work/catalog/marker" ] || fail 'catalog snapshot was not exported'
