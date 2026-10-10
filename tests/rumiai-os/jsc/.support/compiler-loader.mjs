@@ -71,6 +71,28 @@ try{
  result=invoke(manifest,out);
  assert.equal(result.status,3);
  assert.deepEqual(await readFile(out),previous);
+ // Distinct diagnostic branches must not collapse under generic status/identity.
+ await writeFile(manifest,'{ this is not JSON');
+ result=invoke(manifest,out);
+ assert.equal(result.status,11);
+ assert.match(result.stderr,/\[error\] \[jsc\.manifest-invalid-json\]/);
+ assert.deepEqual(await readFile(out),previous);
+
+ await writeFile(manifest,JSON.stringify({version:1,modules:[
+  {id:'counter',file:'counter.js',deps:['not-present']}
+ ]}));
+ result=invoke(manifest,out);
+ assert.equal(result.status,22);
+ assert.match(result.stderr,/\[error\] \[jsc\.missing-dependency\]/);
+ assert.deepEqual(await readFile(out),previous);
+
+ await writeFile(manifest,JSON.stringify({version:1,modules:[
+  {id:'counter',file:'counter.js',deps:[],format:'esm'}
+ ]}));
+ result=invoke(manifest,out);
+ assert.equal(result.status,15);
+ assert.match(result.stderr,/\[error\] \[jsc\.unsupported-source-format\]/);
+ assert.deepEqual(await readFile(out),previous);
  // Registry does not keep stale versions merely as a side effect of churn.
  for(let i=0;i<1000;i++){
   ctx.JscRuntime.install('counter',[],(_r,m)=>{m.exports.next=()=>i;});
@@ -80,5 +102,5 @@ try{
  assert.equal(ctx.JscRuntime.state().active,3);
  ctx.JscRuntime.invalidate('counter');
  assert.equal(ctx.JscRuntime.state().active,1);
- console.log('PASS published jsc engine + independent loader: classic compile, lazy loading, manual install, replacement disposal, stale export, rejected ESM/invalid graph, bounded registry');
+ console.log('PASS published jsc engine + independent loader: classic compile, lazy loading, manual install, replacement disposal, stale export, rejected ESM/invalid graph, distinct error identities, bounded registry');
 }finally{await rm(work,{recursive:true,force:true});}
