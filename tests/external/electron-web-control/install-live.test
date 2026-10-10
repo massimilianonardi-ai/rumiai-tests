@@ -55,7 +55,24 @@ previous_service=$root/bin/ext/web-control-service
 previous_service_target=$(command -p -- readlink "$previous_service") ||
   fail 'cannot identify original provider command target'
 
-run_pkg install electron-web-control >"$tmp/install.out" 2>"$tmp/install.err" || {
+# The original provider may already be selected when installing another provider.
+run_pkg provider default web-control "$pwc_identity" >"$tmp/pwc-provider.out" 2>"$tmp/pwc-provider.err" ||
+  fail 'cannot select existing Playwright provider'
+provider_set=1
+
+# Reproduce recovery from a failed v0.1.0 default-selection install. The
+# older release may remain materialized even when its default was rejected.
+# Should its metadata be repaired later, a successful old install is valid too.
+if run_pkg install electron-web-control@v0.1.0 >"$tmp/legacy.out" 2>"$tmp/legacy.err"
+then
+  :
+else
+  grep -F 'stage="default-selection"' "$tmp/legacy.err" >/dev/null ||
+    fail 'unexpected failure installing legacy Electron version'
+fi
+
+# Explicit version verifies recovery even when v0.1.0 was only partially installed.
+run_pkg install electron-web-control@v0.1.1 >"$tmp/install.out" 2>"$tmp/install.err" || {
   command -p -- cat "$tmp/install.out" >&2
   command -p -- cat "$tmp/install.err" >&2
   fail 'pkg install electron-web-control failed'
