@@ -255,6 +255,24 @@ grep -F 'function="pkg_repository_resolve_version"' "$tmp/upstream.err" >/dev/nu
 grep -F 'url="https://api.github.com/repos/acme/demo/releases/latest"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not preserve endpoint"
 grep -F 'status="22"' "$tmp/upstream.err" >/dev/null 2>&1 || fail "GitHub failure diagnostic does not preserve http-fetch status"
 
+# The catalog must not silently substitute its historical maximum for latest.
+loadsyslib "pkg/pkg-catalog" || error "cannot load package catalog library"
+stream="$tmp/catalog/pkg/demo/all"
+mkdir -p "$stream" || error "cannot create indexed stream fixture"
+cp -R "$repository_dir" "$stream/repository" || error "cannot copy indexed repository descriptor"
+GITHUB_HTTP_FAIL_URL=https://api.github.com/repos/acme/demo/releases/latest
+GITHUB_HTTP_FAIL_STATUS=22
+export GITHUB_HTTP_FAIL_URL GITHUB_HTTP_FAIL_STATUS
+pkg_catalog_version_resolve suggestion_version "$stream" >"$tmp/latest-hint.out" 2>"$tmp/latest-hint.err"
+hint_status=$?
+unset GITHUB_HTTP_FAIL_URL GITHUB_HTTP_FAIL_STATUS
+[ "$hint_status" -eq 1 ] || fail "failed latest discovery returned status $hint_status instead of 1"
+[ ! -s "$tmp/latest-hint.out" ] || fail "failed latest discovery emitted an implicit version"
+grep -F 'last_known_version="v2"' "$tmp/latest-hint.err" >/dev/null ||
+  fail "failed latest discovery did not identify last known release"
+grep -F 'pkg install demo@v2' "$tmp/latest-hint.err" >/dev/null ||
+  fail "failed latest discovery omitted explicit install suggestion"
+
 exact="$(pkg_repository_resolve_version "$repository_dir" "v1")" || fail "exact version resolution failed"
 [ "$exact" = "v1" ] || fail "exact version resolution returned $exact instead of v1"
 
