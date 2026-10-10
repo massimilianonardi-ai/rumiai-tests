@@ -62,6 +62,8 @@ run_pkg install electron-web-control >"$tmp/install.out" 2>"$tmp/install.err" ||
 }
 
 web_identity=$(run_pkg default electron-web-control) || fail 'missing web-control package default'
+[ "$web_identity" = 'electron-web-control@v0.1.1' ] ||
+  fail "the current v0.1.1 coexistence fix was not selected: $web_identity"
 [ -L "$previous_service" ] || fail 'existing Playwright service projection removed'
 [ "$(command -p -- readlink "$previous_service")" = "$previous_service_target" ] ||
   fail 'existing Playwright service projection overwritten'
