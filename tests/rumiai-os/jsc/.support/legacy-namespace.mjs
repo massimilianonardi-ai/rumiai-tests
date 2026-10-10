@@ -76,6 +76,17 @@ try {
  vm.runInContext(extensionBuild.stdout,oldSandbox);
  assert.equal(oldSandbox.m.srv.Extension(),52);
  assert.equal(oldSandbox.m.srv.data.MyClass(),42,'existing scope preserved by augmentation');
+ // A newly declared export must win over an older namespace property.
+ await src('m/srv/data/Revised.js','function MyClass(){ return 77; }\n');
+ const revised={modules:[{name:'m',modules:[{name:'srv',modules:[
+  {name:'data',modules:[{file:'m/srv/data/Revised.js',symbols:'MyClass'}]}
+ ]}]}]};
+ const patchManifest=join(work,'revision.json');
+ await writeFile(patchManifest,JSON.stringify(revised));
+ const patch=run([patchManifest]);
+ assert.equal(patch.status,0,patch.stderr);
+ vm.runInContext(patch.stdout,oldSandbox);
+ assert.equal(oldSandbox.m.srv.data.MyClass(),77,'reopened namespace must use new declaration');
  // Legacy stylesheet manifest concatenates order, without JS runtime wrapping.
  await src('css/first.css','/* FIRST */\n.a { color: red; }\n');
  await src('css/second.css','/* SECOND */\n.b { color: blue; }\n');
