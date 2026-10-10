@@ -1,0 +1,119 @@
+#!/bin/sh
+TEST_ID=external/electron-web-control/install-live.test
+fail(){ printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error(){ printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+run_pkg(){ "$root/m" "$root/bin/sys/pkg" "$@"; }
+run_srv(){ "$root/m" "$root/bin/sys/srv" "$@"; }
+
+service_started=0
+provider_set=0
+tmp=/tmp/electron-web-control-live-$$
+cleanup(){
+  trap - 0 HUP INT TERM
+  [ "$service_started" -eq 0 ] || run_srv stop -f web-control >/dev/null 2>&1 || :
+  [ "$provider_set" -eq 0 ] || run_pkg provider default -u -- web-control >/dev/null 2>&1 || :
+  command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+self=$0
+case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || error 'cannot resolve self';; esac
+test_dir=$(CDPATH= cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P) || error 'cannot resolve test dir'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." 2>/dev/null && pwd -P) || error 'cannot resolve suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot source target discovery'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root") || fail 'rumiai-os target not found'
+command -p -- mkdir "$tmp" || error 'cannot create tmp'
+
+"$root/m" "$root/bin/sys/osarch" update >/dev/null 2>"$tmp/osarch.err" || {
+  command -p -- cat "$tmp/osarch.err" >&2
+  fail 'osarch update failed'
+}
+
+run_pkg install electron-web-control >"$tmp/install.out" 2>"$tmp/install.err" || {
+  command -p -- cat "$tmp/install.out" >&2
+  command -p -- cat "$tmp/install.err" >&2
+  fail 'pkg install electron-web-control failed'
+}
+
+web_identity=$(run_pkg default electron-web-control) || fail 'missing web-control package default'
+run_pkg default electron >/dev/null || fail 'missing electron dependency default'
+run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
+
+run_pkg provider default web-control "$web_identity" >"$tmp/provider.out" 2>"$tmp/provider.err" || {
+  command -p -- cat "$tmp/provider.err" >&2
+  fail 'cannot select web-control facility provider'
+}
+provider_set=1
+
+public="$root/bin/ext/web-control"
+[ -L "$public" ] || fail 'web-control facility command missing'
+
+conf=$("$root/m" "$root/bin/sys/state-path" user pkg electron-web-control conf) || error 'cannot resolve package conf'
+command -p -- mkdir -p -- "$conf/.m" || error 'cannot create package conf'
+printf '%s\n' 'WEB_CONTROL_HEADLESS=1' 'export WEB_CONTROL_HEADLESS' 'ELECTRON_WEB_CONTROL_SOFTWARE_RENDERING=1' 'export ELECTRON_WEB_CONTROL_SOFTWARE_RENDERING' >"$conf/.m/env" || error 'cannot configure headless mode'
+
+run_srv start web-control >"$tmp/start.out" 2>"$tmp/start.err" || {
+  command -p -- cat "$tmp/start.err" >&2
+  logdir=$("$root/m" "$root/bin/sys/state-path" user sys srv log 2>/dev/null) || logdir=
+  [ -z "$logdir" ] || [ ! -f "$logdir/web-control.log" ] || command -p -- cat "$logdir/web-control.log" >&2
+  fail 'srv start web-control failed'
+}
+service_started=1
+
+"$root/m" "$public" status >"$tmp/status.json" 2>"$tmp/status.err" || fail 'web-control status failed'
+grep -F '"headless": true' "$tmp/status.json" >/dev/null || fail 'headless state not observed'
+grep -F '"browserRunning": true' "$tmp/status.json" >/dev/null || fail 'browser running state not observed'
+
+"$root/m" "$public" page new >"$tmp/page.json" 2>"$tmp/page.err" || fail 'page new failed'
+page_id=$(command -p -- awk -F'"' '/"id": "page-/{print $4; exit}' "$tmp/page.json")
+[ -n "$page_id" ] || fail 'cannot parse page id'
+
+url='data:text/html,<body>ready</body>'
+"$root/m" "$public" page navigate "$page_id" "$url" >/dev/null 2>"$tmp/nav.err" || fail 'page navigate failed'
+"$root/m" "$public" page inspect "$page_id" text >"$tmp/inspect.json" 2>"$tmp/inspect.err" || fail 'page inspect failed'
+grep -F ready "$tmp/inspect.json" >/dev/null || fail 'rendered page text missing'
+
+"$root/m" "$public" page capture "$page_id" "$tmp/capture" html text screenshot >"$tmp/capture.json" 2>"$tmp/capture.err" || {
+  command -p -- cat "$tmp/capture.err" >&2
+  fail 'electron capture failed'
+}
+[ -s "$tmp/capture/page.html" ] || fail 'HTML capture missing'
+[ -s "$tmp/capture/page.txt" ] || fail 'text capture missing'
+[ -s "$tmp/capture/page.png" ] || fail 'PNG capture missing'
+
+
+"$root/m" "$public" page list >"$tmp/page-list.json" 2>"$tmp/page-list.err" ||
+  fail 'cannot enumerate Electron browser windows'
+page_ids=$(command -p -- awk -F'"' '/"id": "page-/{print $4}' "$tmp/page-list.json")
+[ -n "$page_ids" ] || fail 'browser window listing unexpectedly empty'
+for current_page in $page_ids
+do
+  "$root/m" "$public" page close "$current_page" >"$tmp/close.out" 2>"$tmp/close.err" ||
+    fail 'cannot close Electron window'
+done
+
+"$root/m" "$public" status >"$tmp/browser-absent-status.json" 2>"$tmp/browser-absent-status.err" ||
+  fail 'controller unavailable after closing browser windows'
+grep -F '"browserRunning": false' "$tmp/browser-absent-status.json" >/dev/null ||
+  fail 'controller did not report absence of browser windows'
+
+run_srv start web-control >"$tmp/still-running.out" 2>"$tmp/still-running.err" ||
+  fail 'controller process stopped after closing browser windows'
+grep -F ' already running pid=' "$tmp/still-running.out" >/dev/null ||
+  fail 'Electron controller did not remain active'
+
+"$root/m" "$public" page new >"$tmp/relaunch-page.json" 2>"$tmp/relaunch-page.err" || fail 'page new failed to relaunch browser'
+relaunch_page_id=$(command -p -- awk -F'"' '/"id": "page-/{print $4; exit}' "$tmp/relaunch-page.json")
+[ -n "$relaunch_page_id" ] || fail 'cannot parse relaunched page id'
+
+"$root/m" "$public" status >"$tmp/relaunch-status.json" 2>"$tmp/relaunch-status.err" || fail 'web-control status failed after browser relaunch'
+grep -F '"browserRunning": true' "$tmp/relaunch-status.json" >/dev/null || fail 'Electron window was not recreated on demand'
+
+relaunch_url='data:text/html,<body>relaunched</body>'
+"$root/m" "$public" page navigate "$relaunch_page_id" "$relaunch_url" >/dev/null 2>"$tmp/relaunch-nav.err" || fail 'relaunched page navigate failed'
+"$root/m" "$public" page inspect "$relaunch_page_id" text >"$tmp/relaunch-inspect.json" 2>"$tmp/relaunch-inspect.err" || fail 'relaunched page inspect failed'
+grep -F relaunched "$tmp/relaunch-inspect.json" >/dev/null || fail 'relaunched browser page text missing'
+
+run_srv stop -f web-control >"$tmp/stop.out" 2>"$tmp/stop.err" || fail 'srv stop web-control failed'
+service_started=0
+printf '%s\n' 'web-control-package-live=ok'
