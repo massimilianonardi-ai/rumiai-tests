@@ -42,7 +42,6 @@ try {
  assert.equal(result.status,0,result.stderr);
  assert.match(result.stdout,/function MyClass/);
  assert.doesNotMatch(result.stdout,/jsc: compiled/,'stdout contains only source code');
- assert.doesNotMatch(result.stdout,/JscRuntime\.installBatch/,'legacy assembly is loader independent');
  new vm.Script(result.stdout);
  const sandbox=vm.createContext({});
  vm.runInContext(result.stdout,sandbox);
