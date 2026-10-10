@@ -114,7 +114,7 @@ try {
  await writeFile(manifest,JSON.stringify(malformed));
  result=run([manifest,output]);
  assert.equal(result.status,23,result.stderr);
- assert.match(result.stderr,/legacy-invalid-name/);
+ assert.match(result.stderr,/invalid-namespace-identifier/);
  assert.deepEqual(await readFile(output),before);
  // Reject path escape even for symlinked paths.
  await writeFile(manifest,JSON.stringify({modules:[{file:'../outside.js'}]}));
