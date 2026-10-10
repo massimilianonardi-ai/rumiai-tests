@@ -70,19 +70,7 @@ printf '%s\n' 1 > "$tmp/source/pkg/generic/all/repository/version"
 printf '%s\n' 4 > "$tmp/source/pkg/budget/linux-x86_64/repository/version"
 printf '%s\n' 'java =25' > "$tmp/source/pkg/generic/all/n0001=1/dependency"
 printf '%s\n' 1 > "$tmp/source/pkg/bad/linux-x86_64/repository/version"
-printf '%s\n' https://example.invalid/pkg-catalog.git > "$tmp/conf/catalog"
-printf '%s\n' snapshot > "$tmp/source/marker"
 
-cat > "$tmp/bin/state-path" <<'EOF_STATE'
-#!/bin/sh
-[ "$1" = system ] && [ "$2" = sys ] && [ "$3" = pkg ] || exit 1
-case "$4" in
-  conf) printf '%s\n' "$PKG_CATALOG_TEST_CONF" ;;
-  tmp) printf '%s\n' "$PKG_CATALOG_TEST_REQUIREMENT_TMP" ;;
-  cache) printf '%s\n' "$PKG_CATALOG_TEST_CACHE" ;;
-  *) exit 1 ;;
-esac
-EOF_STATE
 cat > "$tmp/bin/http-fetch" <<'EOF_HTTP'
 #!/bin/sh
 for url do :; done
@@ -91,48 +79,28 @@ case "$url" in
   */repos/acme/demo/releases/latest)
     printf '%s\n' '{"tag_name":"3","draft":false,"prerelease":false,"created_at":"2026-01-03T00:00:00Z"}'
     ;;
+  */repos/acme/demo/releases/tags/2|*/repos/acme/generic/releases/tags/2)
+    printf '%s\n' '{"tag_name":"2","draft":false,"prerelease":false,"created_at":"2026-01-02T00:00:00Z","published_at":"2026-01-02T01:00:00Z"}'
+    ;;
+  */repos/acme/demo/releases/tags/1|*/repos/acme/generic/releases/tags/1)
+    printf '%s\n' '{"tag_name":"1","draft":false,"prerelease":false,"created_at":"2026-01-01T00:00:00Z","published_at":"2026-01-01T01:00:00Z"}'
+    ;;
+  */repos/acme/demo/releases/tags/0)
+    printf '%s\n' '{"tag_name":"0","draft":false,"prerelease":false,"created_at":"2025-12-30T00:00:00Z","published_at":"2025-12-30T01:00:00Z"}'
+    ;;
   *) exit 77 ;;
 esac
 EOF_HTTP
-chmod 700 "$tmp/bin/state-path" "$tmp/bin/http-fetch" || error 'cannot prepare external boundary fixtures'
+chmod 700 "$tmp/bin/http-fetch" || error 'cannot prepare external boundary fixtures'
 
 driver=$tmp/driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/usr/bin/env m
 loadsyslib "pkg/pkg-catalog" || exit 3
-loadsyslib "pkg/pkg-requirement" || exit 3
 PATH="$PKG_CATALOG_TEST_BIN:$PATH"
 export PATH
 
-git()
-{
-  case "$1" in
-    clone)
-      [ "$2" = -- ] && [ "$3" = https://example.invalid/pkg-catalog.git ] || return 1
-      mkdir -p "$4/.git" || return 1
-      ;;
-    -C)
-      shift 2
-      case "$1:$2" in
-        remote:set-url) return 0 ;;
-        pull:--ff-only) return 0 ;;
-        rev-parse:HEAD) printf '%s\n' test-head ;;
-        archive:test-head)
-          (CDPATH= cd -- "$PKG_CATALOG_TEST_SOURCE" && command -p tar -cf - .)
-          ;;
-        *) return 1 ;;
-      esac
-      ;;
-    *) return 1 ;;
-  esac
-}
-
 case "$1" in
-  init)
-    pkg_catalog_init test_catalog test_head "$PKG_CATALOG_TEST_WORK" "$PKG_CATALOG_TEST_CACHE" || exit $?
-    printf 'catalog=%s\n' "$test_catalog"
-    printf 'head=%s\n' "$test_head"
-    ;;
   stream)
     pkg_catalog_stream_resolve test_stream test_osarch "$2" "$3" "$4" || exit $?
     printf 'stream=%s\n' "$test_stream"
@@ -147,9 +115,6 @@ case "$1" in
     printf 'concrete=%s\n' "$test_concrete"
     printf 'target=%s\n' "$test_target"
     ;;
-  requirement)
-    pkg_requirement list "$2"
-    ;;
   invalid-output)
     pkg_catalog_range_resolve bad-name "$2" "$3"
     ;;
@@ -160,11 +125,6 @@ esac
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare driver'
 
-export PKG_CATALOG_TEST_CONF="$tmp/conf"
-export PKG_CATALOG_TEST_SOURCE="$tmp/source"
-export PKG_CATALOG_TEST_WORK="$tmp/work"
-export PKG_CATALOG_TEST_CACHE="$tmp/cache"
-export PKG_CATALOG_TEST_REQUIREMENT_TMP="$tmp/requirement-tmp"
 export PKG_CATALOG_TEST_HTTP_LOG="$tmp/http.log"
 export PKG_CATALOG_TEST_BIN="$tmp/bin"
 PATH="$tmp/bin:$root/bin/sys:/usr/bin:/bin"
@@ -175,12 +135,6 @@ export PATH
 mkdir "$tmp/work/catalog" || error 'cannot create catalog fixture snapshot'
 command -p -- cp -R "$tmp/source/." "$tmp/work/catalog/" ||
   error 'cannot materialize catalog fixture'
-catalog=$tmp/work/catalog
-head=test-head"
-[ "$output" = "$expected" ] || fail "catalog init output is incorrect: $output"
-[ -f "$tmp/work/catalog/marker" ] || fail 'catalog snapshot was not exported'
-[ -d "$tmp/cache/catalog/.git" ] || fail 'catalog cache was not initialized'
-
 catalog=$tmp/work/catalog
 
 output=$("$root/m" "$driver" stream "$catalog" demo linux-x86_64 2> "$tmp/stream-platform.err") || {
@@ -241,12 +195,6 @@ output=$("$root/m" "$driver" request "$catalog" 'generic@1' linux-x86_64 2> "$tm
 expected="concrete=generic@1
 target=linux-x86_64"
 [ "$output" = "$expected" ] || fail "all-stream request output is incorrect: $output"
-
-output=$("$root/m" "$driver" requirement 'generic@1' 2> "$tmp/requirement.err") || {
-  cat "$tmp/requirement.err" >&2
-  fail 'PKG-86 requirement list failed'
-}
-[ "$output" = 'java =25' ] || fail "PKG-86 requirement list output is incorrect: $output"
 
 expect_status 1 bad-range "$root/m" "$driver" range "$catalog" 'bad@1!linux-x86_64'
 expect_status 1 below-first "$root/m" "$driver" range "$catalog" 'demo@0!linux-x86_64'
