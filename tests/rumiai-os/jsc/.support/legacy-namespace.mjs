@@ -6,6 +6,8 @@ import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
 import vm from 'node:vm';
+import {gunzipSync} from 'node:zlib';
+import {stat} from 'node:fs/promises';
 
 const root=resolve(process.argv[2]),engine=join(root,'lib/sys/js/jsc.lib.js');
 const work=await mkdtemp(join(tmpdir(),'jsc-legacy-namespaces-'));
@@ -51,6 +53,14 @@ try {
  const loaded=run([manifest,output]);
  assert.equal(loaded.status,0,loaded.stderr);
  assert.equal(await readFile(output,'utf8'),result.stdout,'output file and stdout source equivalent');
+ // The legacy file-output path produces a compressed release artifact offline,
+ // with minified bytes when a compatible minifier is already installed.
+ const rawGzip=output+'.gz',minGzip=output.replace(/\.js$/,'.min.js.gz');
+ let archive,material;
+ try{archive=await readFile(minGzip); material=await readFile(output.replace(/\.js$/,'.min.js'));}
+ catch(error){if(error.code!=='ENOENT')throw error;archive=await readFile(rawGzip);material=await readFile(output);}
+ assert.deepEqual(gunzipSync(archive),material);
+ assert.ok((await stat(output)).size>0);
  const oldSandbox=vm.createContext({});
  vm.runInContext(await readFile(output,'utf8'),oldSandbox);
  assert.equal(oldSandbox.m.srv.Facade(),42);
@@ -82,6 +92,10 @@ try {
  const cssOut=join(work,'style.css');
  result=run([cssMan,cssOut]);assert.equal(result.status,0,result.stderr);
  assert.equal(await readFile(cssOut,'utf8'),css.stdout);
+ let cssArchive,cssMaterial;
+ try{cssArchive=await readFile(cssOut.replace(/\.css$/,'.min.css.gz'));cssMaterial=await readFile(cssOut.replace(/\.css$/,'.min.css'));}
+ catch(error){if(error.code!=='ENOENT')throw error;cssArchive=await readFile(cssOut+'.gz');cssMaterial=await readFile(cssOut);}
+ assert.deepEqual(gunzipSync(cssArchive),cssMaterial);
  // Reject invalid user-provided symbols before writing the prior output.
  const before=await readFile(output);
  const malformed={modules:[{name:'m',modules:[
