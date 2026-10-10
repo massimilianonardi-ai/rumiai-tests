@@ -63,7 +63,7 @@ try{
  assert.deepEqual(await readFile(out),previous);
  // Bad manifest graph must preserve previously compiled output.
  await writeFile(src,"module.exports.next=()=>1;\n");
- await writeFile(manifest,JSON.stringify({version:1,modules:[{id:'cycle',deps:['cycle'],file:'counter.js'}]}));
+ await writeFile(manifest,JSON.stringify({version:1,modules:[{id:'a',deps:['b'],file:'counter.js'},{id:'b',deps:['a'],file:'application.js'}]}));
  result=invoke(manifest,out);
  assert.equal(result.status,6);
  assert.deepEqual(await readFile(out),previous);
