@@ -20,9 +20,16 @@ function exampleBlock(doc,heading) {
   assert.ok(index>=0,'manual section not found: '+heading);
   const lines=doc.slice(index+needle.length).split('\n');
   const code=[];
-  for (const line of lines) {
-    if (!line.startsWith('        ')) break;
-    code.push(line.slice(8));
+  for (let i=0;i<lines.length;i++) {
+    const line=lines[i];
+    if (line.startsWith('        ')) {
+      code.push(line.slice(8));
+    } else if (line === '' && lines[i+1]?.startsWith('        ')) {
+      // An empty line INSIDE a code sample is not the end of the sample.
+      code.push('');
+    } else {
+      break;
+    }
   }
   assert.ok(code.length,'manual has no executable code after '+heading);
   return code.join('\n')+'\n';
