@@ -218,6 +218,27 @@ fi
 pkg_repository_compare_versions "$repository_dir" "v1" >/dev/null 2>&1
 [ "$?" -eq 2 ] || fail "invalid compare argument count did not return status 2"
 
+# A Git snapshot containing chronology must eliminate historical discovery calls.
+printf '%s\n' v1 v1a v1b v2 > "$repository_dir/versions"
+: > "$GITHUB_HTTP_LOG" || error "cannot reset HTTP log"
+compare="$(pkg_repository_compare_versions "$repository_dir" "v1" "v2")" ||
+  fail "indexed historical comparison failed"
+[ "$compare" = -1 ] || fail "indexed comparison returned incorrect order"
+compare="$(pkg_repository_compare_versions "$repository_dir" "v2" "v1a")" ||
+  fail "indexed reverse comparison failed"
+[ "$compare" = 1 ] || fail "indexed reverse comparison returned incorrect order"
+exact="$(pkg_repository_resolve_version "$repository_dir" "v1")" ||
+  fail "indexed exact version resolution failed"
+[ "$exact" = v1 ] || fail "indexed exact version returned incorrect tag"
+[ ! -s "$GITHUB_HTTP_LOG" ] || fail "indexed history or exact version made unexpected HTTP requests"
+
+printf '%s\n' v1 v1 > "$repository_dir/versions"
+if pkg_repository_compare_versions "$repository_dir" v1 v2 >/dev/null 2>&1
+then
+  fail "duplicate known version did not fail closed"
+fi
+printf '%s\n' v1 v1a v1b v2 > "$repository_dir/versions"
+
 latest="$(pkg_repository_resolve_version "$repository_dir")" || fail "latest version resolution failed"
 [ "$latest" = "v2" ] || fail "latest version resolution returned $latest instead of v2"
 
