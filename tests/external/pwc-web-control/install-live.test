@@ -1,5 +1,5 @@
 #!/bin/sh
-TEST_ID=external/rumiai-web-control/install-live.test
+TEST_ID=external/pwc-web-control/install-live.test
 fail(){ printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
 error(){ printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
 run_pkg(){ "$root/m" "$root/bin/sys/pkg" "$@"; }
@@ -7,7 +7,7 @@ run_srv(){ "$root/m" "$root/bin/sys/srv" "$@"; }
 
 service_started=0
 provider_set=0
-tmp=/tmp/rumiai-web-control-live-$$
+tmp=/tmp/pwc-web-control-live-$$
 cleanup(){
   trap - 0 HUP INT TERM
   [ "$service_started" -eq 0 ] || run_srv stop -f web-control >/dev/null 2>&1 || :
@@ -29,13 +29,13 @@ command -p -- mkdir "$tmp" || error 'cannot create tmp'
   fail 'osarch update failed'
 }
 
-run_pkg install rumiai-web-control >"$tmp/install.out" 2>"$tmp/install.err" || {
+run_pkg install pwc-web-control >"$tmp/install.out" 2>"$tmp/install.err" || {
   command -p -- cat "$tmp/install.out" >&2
   command -p -- cat "$tmp/install.err" >&2
-  fail 'pkg install rumiai-web-control failed'
+  fail 'pkg install pwc-web-control failed'
 }
 
-web_identity=$(run_pkg default rumiai-web-control) || fail 'missing web-control package default'
+web_identity=$(run_pkg default pwc-web-control) || fail 'missing web-control package default'
 run_pkg default chromium >/dev/null || fail 'missing chromium dependency default'
 run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
 
@@ -48,7 +48,7 @@ provider_set=1
 public="$root/bin/ext/web-control"
 [ -L "$public" ] || fail 'web-control facility command missing'
 
-conf=$("$root/m" "$root/bin/sys/state-path" user pkg rumiai-web-control conf) || error 'cannot resolve package conf'
+conf=$("$root/m" "$root/bin/sys/state-path" user pkg pwc-web-control conf) || error 'cannot resolve package conf'
 command -p -- mkdir -p -- "$conf/.m" || error 'cannot create package conf'
 printf '%s\n' 'WEB_CONTROL_HEADLESS=1' 'export WEB_CONTROL_HEADLESS' >"$conf/.m/env" || error 'cannot configure headless mode'
 
