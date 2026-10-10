@@ -95,6 +95,25 @@ web_identity=$(run_pkg default electron-web-control) || fail 'missing web-contro
 [ -L "$root/bin/ext/electron-web-control-service" ] ||
   fail 'Electron provider-specific service projection missing'
 
+# Upgrade the corrected provider using the real versioned package release.
+# The v0.1.2 desktop navigation UI must not reintroduce an ordinary command
+# collision or disturb the existing Playwright service projection.
+run_pkg install electron-web-control@v0.1.2 >"$tmp/desktop-install.out" 2>"$tmp/desktop-install.err" || {
+  command -p -- cat "$tmp/desktop-install.out" >&2
+  command -p -- cat "$tmp/desktop-install.err" >&2
+  fail 'pkg install electron-web-control@v0.1.2 failed'
+}
+web_identity=$(run_pkg default electron-web-control) ||
+  fail 'desktop-enabled Electron version did not become package default'
+[ "$web_identity" = 'electron-web-control@v0.1.2' ] ||
+  fail "the desktop-enabled Electron version was not selected: $web_identity"
+[ -L "$previous_service" ] ||
+  fail 'Electron v0.1.2 removed the Playwright service projection'
+[ "$(command -p -- readlink "$previous_service")" = "$previous_service_target" ] ||
+  fail 'Electron v0.1.2 overwrote the Playwright service projection'
+[ -L "$root/bin/ext/electron-web-control-service" ] ||
+  fail 'Electron v0.1.2 service projection missing'
+
 run_pkg default electron >/dev/null || fail 'missing electron dependency default'
 run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
 
