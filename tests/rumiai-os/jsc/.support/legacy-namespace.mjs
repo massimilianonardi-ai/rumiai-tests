@@ -111,12 +111,5 @@ try {
  result=run([manifest,output]);
  assert.notEqual(result.status,0);
  assert.deepEqual(await readFile(output),before);
- // Flat explicit manifest remains an independent compatibility path.
- await writeFile(manifest,JSON.stringify({version:1,modules:[{
-  id:'base',file:'m/Base.js',deps:[],format:'classic'
- }]}));
- result=run([manifest,output]);
- assert.equal(result.status,0,result.stderr);
- assert.match(await readFile(output,'utf8'),/JscRuntime\.installBatch/);
- console.log('PASS ORIGINAL JSC: ordered legacy JSON, stdout/file, m.srv.data aliases at all levels, augmentation, CSS source order, invalid symbols/paths preserve output, optional id/deps');
+ console.log('PASS ORIGINAL JSC: ordered legacy JSON, stdout/file, m.srv.data aliases at all levels, augmentation, CSS source order, invalid symbols/paths preserve output, original source model only');
 }finally{await rm(work,{recursive:true,force:true});}
