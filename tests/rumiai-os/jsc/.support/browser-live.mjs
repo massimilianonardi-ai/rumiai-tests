@@ -61,7 +61,7 @@ try {
   child.once('close',code=>{clearTimeout(timeout);ok({code,stdout,stderr});});
  });
  assert.equal(result.code,0,result.stderr.slice(-1000));
- assert.match(result.stdout,/PASS ORIGINAL DYNAMIC LOADER/,result.stdout.slice(-2200));
+ assert.match(result.stdout,/<div id="result">PASS ORIGINAL DYNAMIC LOADER<\/div>/,result.stdout.slice(-4000));
  for(const file of ['/demo/modules-js.json','/demo/modules-css.json',
     '/demo/patch.json','/demo/patch-css.json','/demo/data/MyClass.js',
     '/demo/data/Patch.js','/demo/css/initial.css','/demo/css/patch.css'])
