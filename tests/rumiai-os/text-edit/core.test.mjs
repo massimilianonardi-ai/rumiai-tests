@@ -46,6 +46,15 @@ for(const Doc of [FlatDocument,PieceDocument]){
   assert.throws(()=>projection.replace(emoji+1,emoji+2,'?'),/grapheme/);
   assert.throws(()=>projection.replace(combining+1,combining+2,'?'),/grapheme/);
   assert.throws(()=>projection.replace(crlf+1,crlf+2,'?'),/grapheme/);
+  assert.throws(()=>projection.project(emoji+1,emoji+1),/grapheme/);
+  assert.throws(()=>projection.project(combining+1,combining+1),/grapheme/);
+  const collapsed=new TextEditRepresentation(source);
+  collapsed.replace(from,to,'');
+  assert.deepEqual(collapsed.viewToSource(from),{
+    kind:'replaced-region',source:{start:from,end:to},
+    view:{start:from,end:from}
+  });
+  assert.equal(collapsed.project(0,source.length).segments[1].text,'');
 
   projection.setAnnotations([
     {id:'first',at:0,text:'annotation',affinity:'after'},
@@ -101,6 +110,14 @@ for(const Doc of [FlatDocument,PieceDocument]){
   assert.equal(result.representation.unresolved.length,0);
   assert.equal(editor.representation.replacements[0].start,4);
   assert.equal(editor.document.slice(0,editor.document.length),'ab\nXcd\nef');
+  // A future transparent history wrapper can be injected without changing
+  // the lower layers or the external advanced-selection surface.
+  const base=new PieceDocument('hello');
+  const inner=new TextEditSelections(base);
+  const facade=new TextEdit('',{document:base,selections:inner});
+  facade.advancedSelections.lineSelection(0,0);
+  facade.replace('HELLO');
+  assert.equal(base.toString(),'HELLO');
   tests++;
 }
 {
@@ -114,6 +131,11 @@ for(const Doc of [FlatDocument,PieceDocument]){
   ]);
   editor.replace(['XX','YY']);
   assert.equal(editor.document.toString(),'aXXd\neYYh');
+  const folded=new TextEdit('abcd\nefgh');
+  folded.representation.replace(1,3,'{hidden}');
+  assert.throws(()=>folded.advancedSelections.rectangularSelection([
+    {lineFrom:0,lineTo:1,columnFrom:0,columnTo:4}
+  ],{widthOf:()=>1}),/intersects representation replacement/);
   tests++;
 }
 {
