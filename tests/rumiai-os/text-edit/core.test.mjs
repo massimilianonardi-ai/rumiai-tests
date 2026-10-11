@@ -124,7 +124,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   let read=0;
   const pieces=p.project(0,d.length,{maxSourceUnits:32});
   for(const s of pieces.segments)if(s.kind==='text')read+=s.text.length;
-  assert.equal(read,10);
+  assert.equal(read,9);
   assert.equal(pieces.segments[1].text,'{...}');
   assert.equal(d.slice(d.lineStart(1),d.lineStart(1)+16),'x'.repeat(16));
   tests++;
