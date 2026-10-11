@@ -114,6 +114,25 @@ web_identity=$(run_pkg default electron-web-control) ||
 [ -L "$root/bin/ext/electron-web-control-service" ] ||
   fail 'Electron v0.1.2 service projection missing'
 
+# The native-input implementation is released independently as v0.1.3.
+# This asserts real installed concrete selection and provider coexistence,
+# not that automated actions have been tried against a live Gmail account.
+run_pkg install electron-web-control@v0.1.3 >"$tmp/input-install.out" 2>"$tmp/input-install.err" || {
+  command -p -- cat "$tmp/input-install.out" >&2
+  command -p -- cat "$tmp/input-install.err" >&2
+  fail 'pkg install electron-web-control@v0.1.3 failed'
+}
+web_identity=$(run_pkg default electron-web-control) ||
+  fail 'native-input Electron version did not become package default'
+[ "$web_identity" = 'electron-web-control@v0.1.3' ] ||
+  fail "the native-input Electron version was not selected: $web_identity"
+[ -L "$previous_service" ] ||
+  fail 'Electron v0.1.3 removed the Playwright service projection'
+[ "$(command -p -- readlink "$previous_service")" = "$previous_service_target" ] ||
+  fail 'Electron v0.1.3 overwrote the Playwright service projection'
+[ -L "$root/bin/ext/electron-web-control-service" ] ||
+  fail 'Electron v0.1.3 service projection missing'
+
 run_pkg default electron >/dev/null || fail 'missing electron dependency default'
 run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
 
