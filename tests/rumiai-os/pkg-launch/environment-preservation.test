@@ -56,6 +56,7 @@ if (process.env.RUMIAI_OVERRIDE_TEST_EMPTY !== "" ||
     Object.prototype.hasOwnProperty.call(process.env, "m_ENV_DO_NOT_OVERRIDE")) process.exit(1);
 ' >/dev/null 2>&1 || fail 'multi-variable or empty-value preservation'
 
+check_failure 7 env m_ENV_DO_NOT_OVERRIDE='HOME HOME' "$m_cmd" node -e 'process.exit(0)'
 check_failure 3 env m_ENV_DO_NOT_OVERRIDE='HOME  HOME' "$m_cmd" node -e 'process.exit(0)'
 check_failure 3 env m_ENV_DO_NOT_OVERRIDE='HOME ' "$m_cmd" node -e 'process.exit(0)'
 check_failure 3 env m_ENV_DO_NOT_OVERRIDE='HOME;echo bad' "$m_cmd" node -e 'process.exit(0)'
