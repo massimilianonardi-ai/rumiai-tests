@@ -36,6 +36,18 @@ preserved=$(m_ENV_DO_NOT_OVERRIDE=HOME "$m_cmd" node -e 'process.stdout.write(pr
 [ "$preserved" = "$HOME" ] || fail 'HOME was not inherited by child runtime'
 [ "$normal" != "$preserved" ] || fail 'baseline did not select a different package HOME'
 
+# The same managed command, launched again by the child, must not inherit the
+# previous request. It receives its own normal package HOME.
+m_ENV_DO_NOT_OVERRIDE=HOME "$m_cmd" node -e '
+const { spawnSync } = require("node:child_process");
+if (Object.prototype.hasOwnProperty.call(process.env, "m_ENV_DO_NOT_OVERRIDE"))
+  process.exit(1);
+const result = spawnSync(process.argv[1],
+  ["node", "-e", "process.stdout.write(process.env.HOME || \"\")"],
+  { encoding: "utf8" });
+if (result.status !== 0 || result.stdout === process.env.HOME) process.exit(2);
+' "$m_cmd" >/dev/null 2>&1 || fail 'one-shot request reached a nested managed launch'
+
 RUMIAI_OVERRIDE_TEST_EMPTY=''
 export RUMIAI_OVERRIDE_TEST_EMPTY
 m_ENV_DO_NOT_OVERRIDE='HOME RUMIAI_OVERRIDE_TEST_EMPTY' "$m_cmd" node -e '
