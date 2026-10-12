@@ -141,10 +141,10 @@ for(const Doc of [FlatDocument,PieceDocument]){
   }
   {
     const document=new Doc('abc'),selections=new TextEditSelections(document);
-    selections.setSelections([S(0,1)]);
+    selections.setSelections([S(C(0,0),C(0,1))]);
     selections.addSelections([]);
-    equal(selections.getSelections(),[S(0,1)],
-      prefix+' empty legacy append remains a no-op');
+    equal(selections.getSelections(),[S(C(0,0),C(0,1))],
+      prefix+' empty physical append remains a no-op');
     selections.dispose();
   }
   {
