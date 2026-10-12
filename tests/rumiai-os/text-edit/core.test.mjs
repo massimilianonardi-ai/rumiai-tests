@@ -131,7 +131,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   assert.equal(editor.document.toString(),'aXXd\neYYh');
   const folded=new TextEdit('abcd\nefgh');
   folded.representation.replace(1,3,'{hidden}');
-  assert.throws(()=>folded.advancedSelections.rectangularSelection({row:0,col:0},{row:1,col:3}),/replaced/);
+  assert.throws(()=>folded.advancedSelections.rectangularSelection({row:0,col:0},{row:1,col:3}),/overlay/);
   tests++;
 }
 {
