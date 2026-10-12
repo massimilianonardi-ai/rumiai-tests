@@ -67,7 +67,8 @@ for(const Doc of [FlatDocument,PieceDocument]){
   same(p.sourceToColumn(0),{kind:'column',row:0,col:0},'offset to column');
   same(p.sourceToColumn(2),{kind:'column',row:0,col:4},'source after tab');
   assert.equal(p.sourceToColumn(3).kind,'inside-grapheme');
-  assert.throws(()=>p.sourceToColumn(5),/separator/);
+  same(p.sourceToColumn(5),{kind:'column',row:0,col:7},'start of terminator equals line-end boundary');
+  assert.throws(()=>p.sourceToColumn(8),/separator/);
   same(p.columnToSource(1,1),{kind:'offset',offset:7},'lone CR not display content');
   same(p.columnToSource(2,1),{kind:'offset',offset:10},'CRLF not display content');
   same(p.columnToSource(3,0),{kind:'offset',offset:11},'final empty row');
