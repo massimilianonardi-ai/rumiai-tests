@@ -192,5 +192,43 @@ for(const Doc of [FlatDocument,PieceDocument]) {
   one.representation.dispose();two.representation.dispose();
   one.selections.dispose();two.selections.dispose();
 }
+// Keep the large-document viewport budget meaningful for ASCII text.
+// Source boundary validation must not materialize a multi-megabyte line.
+{
+  const core=new PieceDocument('A'.repeat(4*1024*1024)+'\nend');
+  let maxRead=0,totalRead=0;
+  const source={
+    get length(){return core.length;},
+    get lineCount(){return core.lineCount;},
+    get revision(){return core.revision;},
+    lineStart:n=>core.lineStart(n),
+    lineAt:n=>core.lineAt(n),
+    slice(a,b){
+      maxRead=Math.max(maxRead,b-a);totalRead+=b-a;
+      return core.slice(a,b);
+    },
+    subscribe:fn=>core.subscribe(fn)
+  };
+  const rep=new TextEditRepresentation(source);
+  rep.replace(3000000,3000010,'{collapsed}');
+  const part=rep.project(2999980,3000030,{maxSourceUnits:40});
+  assert.equal(part.readUnits,40);
+  assert.ok(maxRead<=40,'boundary test must not read the full ASCII line');
+  assert.ok(totalRead<512,'bounded projection must not scan entire huge line');
+  rep.dispose();
+}
+// A malicious user-supplied metadata getter may mutate the real source.
+// Such an update must not overwrite the already-rebased representation.
+{
+  const doc=new PieceDocument('abcdef');
+  const rep=new TextEditRepresentation(doc);
+  rep.setAnnotations([annotation('prior',3,'after')]);
+  const race={id:'new',at:2,affinity:'after',
+    get text(){doc.replace(0,0,'!');return 'new';}};
+  assert.throws(()=>rep.setAnnotations([race]),/document changed/);
+  check(rep.annotations,[annotation('prior',4,'after')],
+    'source notification survives hostile metadata getter');
+  rep.dispose();
+}
 console.log(JSON.stringify({pass:true,test:'TextEditRepresentation',
   backends:['FlatDocument','PieceDocument'],assertions:cases}));
