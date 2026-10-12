@@ -6,23 +6,10 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.3.0');
+assert.equal(VERSION,'0.4.0');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
-
-// The representation still has an explicit legacy rebase(changes) adapter.
-// New TextEditSelections deliberately does not return old text/change records.
-function replaceAndRebaseOne(document,selections,representation,text) {
-  const [selection]=selections.getSelections();
-  const removed=document.slice(selection.start,selection.end);
-  selections.replace(text);
-  return representation.rebase([{
-    selectionId:0,start:selection.start,end:selection.end,
-    removed,inserted:text,inverseStart:selection.start,
-    inverseEnd:selection.start+text.length
-  }]);
-}
 
 let tests=0;
 for(const Doc of [FlatDocument,PieceDocument]){
@@ -76,7 +63,8 @@ for(const Doc of [FlatDocument,PieceDocument]){
   projection.replace(from,to,'any arbitrary placeholder\nincluding lines');
   const editor=new TextEditSelections(source);
   editor.setSelections([{start:0,end:0,forward:true}]);
-  const info=replaceAndRebaseOne(source,editor,projection,'/*intro*/');
+  editor.replace('/*intro*/');
+  const info={unresolved:projection.unresolved};
   assert.deepEqual(info.unresolved,[]);
   assert.equal(projection.replacements[0].start,from+9);
   assert.equal(projection.annotations.find(x=>x.id==='first').at,9);
@@ -91,7 +79,8 @@ for(const Doc of [FlatDocument,PieceDocument]){
   rep.replace(a,b,'{...}');
   const edit=new TextEditSelections(source);
   edit.setSelections([{start:a+1,end:a+2,forward:true}]);
-  const result=replaceAndRebaseOne(source,edit,rep,'X');
+  edit.replace('X');
+  const result={unresolved:rep.unresolved};
   assert.equal(result.unresolved.length,1);
   assert.equal(result.unresolved[0].kind,'replacement');
   assert.equal(rep.replacements.length,0,'edited folded content invalidates overlay');
@@ -103,7 +92,8 @@ for(const Doc of [FlatDocument,PieceDocument]){
   rep.setAnnotations([{id:'n',at:2,text:'note'}]);
   const edit=new TextEditSelections(source);
   edit.setSelections([{start:2,end:2,forward:true}]);
-  const rebased=replaceAndRebaseOne(source,edit,rep,'!');
+  edit.replace('!');
+  const rebased={unresolved:rep.unresolved};
   assert.equal(rebased.unresolved.length,1);
   assert.equal(rep.annotations.length,0,'do not invent ambiguous affinity');
   tests++;
