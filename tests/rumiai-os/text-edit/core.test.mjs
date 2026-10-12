@@ -6,7 +6,7 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.1.0');
+assert.equal(VERSION,'0.2.0');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
