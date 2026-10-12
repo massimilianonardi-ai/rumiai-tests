@@ -203,6 +203,65 @@ for(const Doc of [FlatDocument,PieceDocument]){
     documentUTF16:doc.length,ownMs:Math.round(ownMs),
     externalMs:Math.round(externalMs)}));
 }
+// Reference mapping deliberately scans each edit rather than using the
+// production binary-search index. Seeded mixed edits cover subtle boundaries.
+let seed=0xbad4cafe;
+function random(){seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;}
+function simpleMap(position,right,sorted){
+  let shift=0;
+  for(const edit of sorted){
+    if(position<edit.start)break;
+    if(edit.start===edit.end){
+      if(position===edit.start&&!right)return position+shift;
+      shift+=edit.text.length;continue;
+    }
+    if(position===edit.start)return position+shift;
+    if(position<edit.end)return edit.start+shift+(right?edit.text.length:0);
+    shift+=edit.text.length-(edit.end-edit.start);
+  }
+  return position+shift;
+}
+function referenceTransform(selections,edits){
+  const sorted=edits.slice().sort((a,b)=>a.start-b.start||
+    Number(a.start!==a.end)-Number(b.start!==b.end));
+  return selections.map(s=>{
+    const a=simpleMap(s.start,true,sorted);
+    const b=simpleMap(s.end,s.start===s.end,sorted);
+    return R(a,a>b?a:b,s.forward);
+  });
+}
+const payloads=['','X','abc','\r\n','😀','\r'];
+for(const Doc of [FlatDocument,PieceDocument]){
+  const doc=new Doc('abcdefghijk\n0123456789\r\nXYZ');
+  const view=new TextEditSelections(doc);
+  for(let step=0;step<1200;step++){
+    if(step%7===0){
+      const values=Array.from({length:11},()=>{
+        const a=random()%(doc.length+1);
+        const b=a+random()%(doc.length-a+1);
+        return R(a,b,(random()%2)===0);
+      });
+      view.setSelections(values);
+    }
+    const batch=[];
+    let at=0;
+    for(let j=0;j<4&&at<=doc.length;j++){
+      at+=random()%Math.min(5,doc.length-at+1);
+      if(at>doc.length)break;
+      const width=random()%Math.min(3,doc.length-at+1);
+      if(width>0&&random()%5===0)
+        batch.push({start:at,end:at,text:payloads[random()%payloads.length]});
+      batch.push({start:at,end:at+width,text:payloads[random()%payloads.length]});
+      at+=width+1;
+    }
+    if(!batch.length)batch.push({start:0,end:0,text:''});
+    if(random()%2)batch.reverse();
+    const expected=referenceTransform(view.getSelections(),batch);
+    doc.replace(batch);
+    equal(view.getSelections(),expected,Doc.name+' reference transform '+step);
+  }
+  view.dispose();
+}
 console.log(JSON.stringify({pass:true,test:'TextEditSelections',
   backends:['FlatDocument','PieceDocument'],scenarioCases:scenarios.length,
   checked:assertions}));
