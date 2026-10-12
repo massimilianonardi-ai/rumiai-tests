@@ -195,5 +195,37 @@ const randomElapsed=performance.now()-started;
   console.log(JSON.stringify({hugeUTF16:huge.length,appendEdits:2000,
     elapsedMs:Math.round(elapsed),stats:d.stats()}));
 }
+// A subscription is owned by each subscribe() call, even for the same function.
+for(const Doc of [FlatDocument,PieceDocument]){
+  const d=new Doc('x');let hits=0;const callback=()=>hits++;
+  const u1=d.subscribe(callback),u2=d.subscribe(callback);
+  d.replace(0,0,'');assert.equal(hits,2);
+  u1();u1();d.replace(0,0,'');assert.equal(hits,3);
+  u2();d.replace(0,0,'');assert.equal(hits,3);
+}
+// Nonempty and empty multi-range edits, not just insertion-only batches.
+let mixedText='x\r\ny\nz\r';
+const mixed=new PieceDocument(mixedText);
+for(let step=0;step<3000;step++){
+  const batch=[],len=mixedText.length;
+  let at=0;
+  for(let j=0;j<5&&at<=len;j++){
+    at+=rand()%Math.min(4,len-at+1);
+    if(at>len)break;
+    const width=rand()%Math.min(4,len-at+1);
+    batch.push({start:at,end:at+width,text:pool[rand()%pool.length]});
+    at+=width+1;
+  }
+  if(!batch.length)batch.push({start:0,end:0,text:''});
+  if(rand()%2)batch.reverse();
+  mixed.replace(batch);
+  for(const e of batch.slice().sort((a,b)=>b.start-a.start||
+     Number(a.start===a.end)-Number(b.start===b.end))){
+    mixedText=mixedText.slice(0,e.start)+e.text+mixedText.slice(e.end);
+  }
+  assert.equal(mixed.toString(),mixedText,'mixed atomic batch '+step);
+  if(step%37===0)verify(mixed,mixedText,'multi-range index '+step);
+}
+assert.equal(mixed.revision,3000);
 console.log(JSON.stringify({pass:true,test:'TextEditBase',backends:['FlatDocument','PieceDocument'],
   differentialEdits:3800,randomElapsedMs:Math.round(randomElapsed)}));
