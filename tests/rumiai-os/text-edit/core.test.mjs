@@ -6,7 +6,7 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.5.0');
+assert.equal(VERSION,'0.6.0');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
@@ -102,7 +102,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   const editor=new TextEdit('ab\ncd\nef');
   editor.advancedSelections.lineSelection({row:1,col:0},{row:2,col:0});
   assert.deepEqual(editor.selections.getSelections(),
-    [{start:3,end:8,forward:true}]);
+    [{start:{row:1,col:0},end:{row:2,col:2},forward:true}]);
   editor.selections.setSelections([{start:3,end:3,forward:true}]);
   editor.representation.replace(3,5,'{F}');
   assert.equal(editor.representation.project(0,8).segments[1].text,'{F}');
@@ -124,8 +124,8 @@ for(const Doc of [FlatDocument,PieceDocument]){
   const editor=new TextEdit('abcd\nefgh');
   editor.advancedSelections.rectangularSelection({row:0,col:1},{row:1,col:2});
   assert.deepEqual(editor.selections.getSelections(),[
-    {start:1,end:3,forward:true},
-    {start:6,end:8,forward:true}
+    {start:{row:0,col:1},end:{row:0,col:3},forward:true},
+    {start:{row:1,col:1},end:{row:1,col:3},forward:true}
   ]);
   editor.replace(['XX','YY']);
   assert.equal(editor.document.toString(),'aXXd\neYYh');
