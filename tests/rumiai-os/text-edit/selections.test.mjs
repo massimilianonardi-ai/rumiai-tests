@@ -128,6 +128,31 @@ for(const Doc of [FlatDocument,PieceDocument]){
     view.dispose();
   }
 }
+// Hostile accessors cannot publish selection positions based on a source
+// revision superseded while caller-controlled input is being inspected.
+for(const Doc of [FlatDocument,PieceDocument]){
+  const doc=new Doc('abcdef'),view=new TextEditSelections(doc);
+  view.setSelections([R(2,3)]);
+  let didEdit=false;
+  const getter={get start(){
+    if(!didEdit){didEdit=true;doc.replace(0,0,'X');}
+    return 2;
+  },end:3,forward:true};
+  assert.throws(()=>view.setSelections([getter]),/document changed/);
+  equal(view.getSelections(),[R(3,4)],'external event wins over input getter');
+  didEdit=false;
+  assert.throws(()=>view.addSelections([getter]),/document changed/);
+  equal(view.getSelections(),[R(4,5)],'addSelections cannot append stale input');
+  const texts=['Q'];
+  didEdit=false;
+  Object.defineProperty(texts,0,{get(){
+    if(!didEdit){didEdit=true;doc.replace(0,0,'X');}
+    return 'Q';
+  }});
+  assert.throws(()=>view.replace(texts),/document changed/);
+  equal(view.getSelections(),[R(5,6)],'replace cannot commit stale targets');
+  view.dispose();
+}
 // An intentionally lossy but otherwise valid notification adapter verifies
 // recovery from an actual skipped edit, without altering the base engines.
 {
