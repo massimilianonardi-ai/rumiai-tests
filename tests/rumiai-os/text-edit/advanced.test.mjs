@@ -120,5 +120,36 @@ for(const Doc of [FlatDocument,PieceDocument]){
   assert.throws(()=>p.columnToSource(0,2),/document changed/);
   p.dispose();
 }
+// A family emoji crosses the fixed read-chunk boundary. Grapheme boundaries
+// must survive streaming, not accidentally split at 2048 UTF-16 code units.
+{
+  const glyph='👩‍👩‍👧‍👦';
+  const doc=new PieceDocument('x'.repeat(2047)+glyph+'Z');
+  const rep=new TextEditRepresentation(doc);
+  rep.setColumnMetrics({widthOf:g=>g===glyph?2:1});
+  const interior=rep.columnToSource(0,2048);
+  assert.equal(interior.kind,'inside-grapheme');
+  assert.equal(interior.cell.start,2047);
+  assert.equal(interior.cell.end,2047+glyph.length);
+  assert.deepEqual(rep.columnToSource(0,2049),
+    {kind:'offset',offset:2047+glyph.length});
+  assert.deepEqual(rep.sourceToColumn(2047+glyph.length),
+    {kind:'column',row:0,col:2049});
+  rep.dispose();
+}
+// Adjacent overlays must not disappear in a rectangle intersection test,
+// even when many unrelated overlays precede the selected source rows.
+{
+  const source=new PieceDocument('a'.repeat(8000));
+  const editor=new TextEdit('',{document:source});
+  editor.representation.setReplacements(Array.from({length:250},(_,i)=>({
+    start:2+i*28,end:4+i*28,text:'{fold}'
+  })));
+  const rejected=editor.advancedSelections.resolveRectangles(C(0,0),C(0,7999));
+  assert.equal(rejected.unresolved.length,1);
+  assert.equal(rejected.unresolved[0].reason,'representation-replacement');
+  assert.throws(()=>editor.advancedSelections.rectangularSelection(C(0,0),C(0,7999)),RangeError);
+  editor.representation.dispose();editor.selections.dispose();
+}
 console.log(JSON.stringify({pass:true,test:'TextEditAdvancedSelections/column geometry',
   assertions}));
