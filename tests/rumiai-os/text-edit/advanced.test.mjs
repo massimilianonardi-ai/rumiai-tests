@@ -120,6 +120,34 @@ for(const Doc of [FlatDocument,PieceDocument]){
     selections.dispose();
   }
   {
+    const document=new Doc('abc\r'),selections=new TextEditSelections(document);
+    selections.setSelections([S(C(3,2),C(3,2))]);
+    selections.replace('Z');
+    assert.equal(document.lineCount,4,
+      prefix+' an appended LF must not merge with the original trailing CR');
+    equal(selections.getSelections(),[S(C(3,3),C(3,3))],
+      prefix+' far-future row remains exact after CR-terminated growth');
+    selections.dispose();
+  }
+  {
+    const document=new Doc('abc\nx'),selections=new TextEditSelections(document);
+    selections.setSelections([S(C(0,3),C(0,3))]);
+    selections.replace('\r');
+    assert.equal(document.toString(),'abc\r\nx',
+      prefix+' inserted CR joins existing LF without source normalization');
+    equal(selections.getSelections(),[S(C(1,0),C(1,0))],
+      prefix+' caret cannot remain inside newly formed CRLF');
+    selections.dispose();
+  }
+  {
+    const document=new Doc('abc'),selections=new TextEditSelections(document);
+    selections.setSelections([S(0,1)]);
+    selections.addSelections([]);
+    equal(selections.getSelections(),[S(0,1)],
+      prefix+' empty legacy append remains a no-op');
+    selections.dispose();
+  }
+  {
     const document=new Doc('abc\ndef'),selections=new TextEditSelections(document);
     selections.setSelections([S(C(1,2),C(1,2)),S(C(1,8),C(1,8))]);
     document.replace(0,0,'P\n');
