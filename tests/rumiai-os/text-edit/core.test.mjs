@@ -6,7 +6,7 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.4.0');
+assert.equal(VERSION,'0.5.0');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
@@ -100,7 +100,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
 }
 {
   const editor=new TextEdit('ab\ncd\nef');
-  editor.advancedSelections.lineSelection(1,2);
+  editor.advancedSelections.lineSelection({row:1,col:0},{row:2,col:0});
   assert.deepEqual(editor.selections.getSelections(),
     [{start:3,end:8,forward:true}]);
   editor.selections.setSelections([{start:3,end:3,forward:true}]);
@@ -115,16 +115,14 @@ for(const Doc of [FlatDocument,PieceDocument]){
   const base=new PieceDocument('hello');
   const inner=new TextEditSelections(base);
   const facade=new TextEdit('',{document:base,selections:inner});
-  facade.advancedSelections.lineSelection(0,0);
+  facade.advancedSelections.lineSelection({row:0,col:0},{row:0,col:0});
   facade.replace('HELLO');
   assert.equal(base.toString(),'HELLO');
   tests++;
 }
 {
   const editor=new TextEdit('abcd\nefgh');
-  editor.advancedSelections.rectangularSelection([
-    {lineFrom:0,lineTo:1,columnFrom:1,columnTo:3}
-  ],{widthOf:()=>1});
+  editor.advancedSelections.rectangularSelection({row:0,col:1},{row:1,col:2});
   assert.deepEqual(editor.selections.getSelections(),[
     {start:1,end:3,forward:true},
     {start:6,end:8,forward:true}
@@ -133,9 +131,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   assert.equal(editor.document.toString(),'aXXd\neYYh');
   const folded=new TextEdit('abcd\nefgh');
   folded.representation.replace(1,3,'{hidden}');
-  assert.throws(()=>folded.advancedSelections.rectangularSelection([
-    {lineFrom:0,lineTo:1,columnFrom:0,columnTo:4}
-  ],{widthOf:()=>1}),/intersects representation replacement/);
+  assert.throws(()=>folded.advancedSelections.rectangularSelection({row:0,col:0},{row:1,col:3}),/intersects representation replacement/);
   tests++;
 }
 {
