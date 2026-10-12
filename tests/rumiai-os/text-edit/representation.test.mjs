@@ -157,6 +157,7 @@ for(const Doc of [FlatDocument,PieceDocument]) {
     get revision(){return inner.revision;},
     lineStart:n=>inner.lineStart(n),
     lineAt:n=>inner.lineAt(n),
+    lineInfo:n=>inner.lineInfo(n),
     slice:(a,b)=>inner.slice(a,b),
     subscribe:fn=>inner.subscribe((...args)=>{if(!suppress)fn(...args);})
   };
@@ -203,6 +204,7 @@ for(const Doc of [FlatDocument,PieceDocument]) {
     get revision(){return core.revision;},
     lineStart:n=>core.lineStart(n),
     lineAt:n=>core.lineAt(n),
+    lineInfo:n=>core.lineInfo(n),
     slice(a,b){
       maxRead=Math.max(maxRead,b-a);totalRead+=b-a;
       return core.slice(a,b);
