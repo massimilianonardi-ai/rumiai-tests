@@ -23,3 +23,4 @@ esac
 command -v node >/dev/null 2>&1 || skip 'Node.js is not installed'
 [ -f "$root/lib/sys/js/text-edit.lib.js" ] || fail 'TextEdit library unavailable in target'
 RUMIAI_OS_ROOT="$root" node "$test_dir/core.test.mjs" || fail 'TextEdit behavioral checks failed'
+RUMIAI_OS_ROOT="$root" node "$test_dir/base.test.mjs" || fail 'TextEditBase behavioral and stress checks failed'
