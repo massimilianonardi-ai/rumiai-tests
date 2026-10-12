@@ -11,6 +11,19 @@ assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
 
+// The representation still has an explicit legacy rebase(changes) adapter.
+// New TextEditSelections deliberately does not return old text/change records.
+function replaceAndRebaseOne(document,selections,representation,text) {
+  const [selection]=selections.getSelections();
+  const removed=document.slice(selection.start,selection.end);
+  selections.replace(text);
+  return representation.rebase([{
+    selectionId:0,start:selection.start,end:selection.end,
+    removed,inserted:text,inverseStart:selection.start,
+    inverseEnd:selection.start+text.length
+  }]);
+}
+
 let tests=0;
 for(const Doc of [FlatDocument,PieceDocument]){
   const source=new Doc('function foo(){\r\n  return "😀 e\u0301";\r\n}\r\nfoo();');
@@ -63,8 +76,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   projection.replace(from,to,'any arbitrary placeholder\nincluding lines');
   const editor=new TextEditSelections(source);
   editor.setSelections([{start:0,end:0,forward:true}]);
-  const result=editor.replace('/*intro*/');
-  const info=projection.rebase(result.changes);
+  const info=replaceAndRebaseOne(source,editor,projection,'/*intro*/');
   assert.deepEqual(info.unresolved,[]);
   assert.equal(projection.replacements[0].start,from+9);
   assert.equal(projection.annotations.find(x=>x.id==='first').at,9);
@@ -79,8 +91,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   rep.replace(a,b,'{...}');
   const edit=new TextEditSelections(source);
   edit.setSelections([{start:a+1,end:a+2,forward:true}]);
-  const change=edit.replace('X');
-  const result=rep.rebase(change.changes);
+  const result=replaceAndRebaseOne(source,edit,rep,'X');
   assert.equal(result.unresolved.length,1);
   assert.equal(result.unresolved[0].kind,'replacement');
   assert.equal(rep.replacements.length,0,'edited folded content invalidates overlay');
@@ -92,8 +103,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   rep.setAnnotations([{id:'n',at:2,text:'note'}]);
   const edit=new TextEditSelections(source);
   edit.setSelections([{start:2,end:2,forward:true}]);
-  const info=edit.replace('!');
-  const rebased=rep.rebase(info.changes);
+  const rebased=replaceAndRebaseOne(source,edit,rep,'!');
   assert.equal(rebased.unresolved.length,1);
   assert.equal(rep.annotations.length,0,'do not invent ambiguous affinity');
   tests++;
