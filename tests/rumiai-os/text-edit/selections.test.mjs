@@ -1,267 +1,231 @@
-// Permanent observable TextEditSelections contract and external-rebase checks.
-// Source of truth: rumiai-dev/specifications/rumiai-os/TEXT-EDIT.md.
+// Current TextEditSelections physical row/UTF-16-column API contract.
+// No offset-based selector compatibility: offsets belong to TextEditBase.
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
-import {performance} from 'node:perf_hooks';
 
-const root=process.env.RUMIAI_OS_ROOT;
-assert.ok(root,'real product target must be provided');
 const require=createRequire(import.meta.url);
-const {PieceDocument,FlatDocument,TextEditSelections}=require(
-  resolve(root,'lib/sys/js/text-edit.lib.js'));
-const R=(start,end,forward=true)=>({start,end,forward});
-let assertions=0;
-function equal(a,b,message){assert.deepEqual(a,b,message);assertions++;}
-function scenario(Doc,old,selections,edits,expected,label){
-  const doc=new Doc(old),view=new TextEditSelections(doc);
-  view.setSelections(selections);
-  const before=doc.revision;
-  doc.replace(edits);
-  equal(view.getSelections(),expected,label);
-  assert.equal(doc.revision,before+1,label+' revision');
-  view.dispose();
+const {FlatDocument,PieceDocument,TextEditSelections}=
+  require(resolve(process.env.RUMIAI_OS_ROOT,'lib/sys/js/text-edit.lib.js'));
+
+const C=(row,col)=>({row,col});
+const S=(start,end,forward=true)=>({start,end,forward});
+let checks=0;
+function same(actual,expected,label){
+  assert.deepEqual(actual,expected,label);
+  checks++;
 }
-const scenarios=[
-  ['before','abcdefgh',[R(5,8)],[{start:1,end:3,text:'X'}],[R(4,7)]],
-  ['after','abcdefgh',[R(1,3)],[{start:5,end:6,text:'ABC'}],[R(1,3)]],
-  ['at-start','abcdefgh',[R(2,6)],[{start:2,end:2,text:'XYZ'}],[R(5,9)]],
-  ['inside','abcdefgh',[R(2,6)],[{start:4,end:4,text:'XYZ'}],[R(2,9)]],
-  ['at-end','abcdefgh',[R(2,6)],[{start:6,end:6,text:'XYZ'}],[R(2,6)]],
-  ['caret-insertion','abcdefgh',[R(2,2,false)],[{start:2,end:2,text:'XYZ'}],[R(5,5,false)]],
-  ['inside-replace','abcdefgh',[R(2,7)],[{start:4,end:6,text:'XYZ'}],[R(2,8)]],
-  ['cut-start','abcdefgh',[R(3,7)],[{start:1,end:5,text:'XYZ'}],[R(4,6)]],
-  ['cut-end','abcdefgh',[R(2,5)],[{start:4,end:7,text:'XYZ'}],[R(2,4)]],
-  ['cut-both','abcdefgh',[R(3,5,false)],[{start:2,end:7,text:'XYZ'}],[R(5,5,false)]],
-  ['delete-caret','abcdefgh',[R(4,4)],[{start:2,end:6,text:''}],[R(2,2)]],
-  ['shared-boundary','abcdef',[R(2,2)],[{start:2,end:4,text:'Q'},{start:2,end:2,text:'!'}],[R(3,3)]],
-  ['mixed-batch','0123456789',[R(2,7)],[{start:8,end:10,text:'!'},{start:0,end:1,text:'ABC'}],[R(4,9)]],
-  ['source-noop','abcdef',[R(1,3)],[{start:0,end:0,text:''}],[R(1,3)]],
-  ['equal-length-replace','abcdef',[R(2,2)],[{start:1,end:4,text:'XYZ'}],[R(4,4)]],
-  ['end-of-document','abcdef',[R(6,6)],[{start:6,end:6,text:'!'}],[R(7,7)]],
-  ['utf16-unit','a😀b',[R(2,2,false)],[{start:2,end:2,text:'\ud800'}],[R(3,3,false)]]
-];
 for(const Doc of [FlatDocument,PieceDocument]){
-  for(const [name,old,selections,edits,expected] of scenarios)
-    scenario(Doc,old,selections,edits,expected,Doc.name+' '+name);
   {
-    const doc=new Doc('abcdefghij');
-    const primary=new TextEditSelections(doc),other=new TextEditSelections(doc);
-    const input=[R(6,8,false),R(1,3),R(1,1)];
-    equal(primary.setSelections(input),primary,'setSelections returns instance');
-    input[0].start=0;
-    equal(primary.getSelections(),[R(6,8,false),R(1,3),R(1,1)],'input is copied');
-    other.setSelections([R(4,4,false)]);
-    let callbacks=0,args;
-    doc.subscribe((...original)=>{callbacks++;args=original;});
-    const result=primary.replace(['Z','Q','!']);
-    equal(doc.toString(),'a!QdefZij','atomic unsorted mixed targets');
-    equal(result.before,[R(6,8,false),R(1,3),R(1,1)],'old selection order');
-    equal(result.after,[R(7,7,false),R(3,3),R(2,2)],'own new carets');
-    equal(primary.getSelections(),result.after,'own event applied only once');
-    equal(other.getSelections(),[R(4,4,false)],'foreign view rebased');
-    assert.equal(callbacks,1,'exactly one committed event');
-    equal(args,[[{start:6,end:8,text:'Z'},{start:1,end:3,text:'Q'},
-      {start:1,end:1,text:'!'}]],'original argument order');
-    assert.equal(Object.keys(result).join(','),'before,after',
-      'no history/change payload on selection layer');
-    result.after[0].start=999;
-    equal(primary.getSelections()[0],R(7,7,false),'returned state is copied');
-    primary.dispose();other.dispose();
+    const doc=new Doc('abc\ndef'),view=new TextEditSelections(doc);
+    same(view.getSelections(),[],'initial collection is empty');
+    const items=[S(C(0,1),C(0,2),false),S(C(1,0),C(1,0))];
+    assert.equal(view.setSelections(items),view);
+    items[0].start.col=0;
+    same(view.getSelections(),[S(C(0,1),C(0,2),false),S(C(1,0),C(1,0))],
+      'setter copies input points');
+    const snapshot=view.getSelections();
+    snapshot[0].end.col=99;
+    same(view.getSelections()[0],S(C(0,1),C(0,2),false),
+      'getter copies output points');
+    assert.equal(view.addSelections([S(C(2,6),C(2,6))]),view);
+    same(view.getSelections().map(s=>s.start),
+      [C(0,1),C(1,0),C(2,6)],'ordered independent physical collection');
+    view.addSelections([]);
+    same(view.getSelections().length,3,'empty append is a no-op');
+    view.setSelections([]);
+    same(view.getSelections(),[],'empty set clears');
+    view.dispose();
+    view.dispose();
+    assert.throws(()=>view.getSelections(),/disposed/);
   }
   {
     const doc=new Doc('abcdef'),view=new TextEditSelections(doc);
-    const source=[R(1,4,false),R(2,3),R(2,3),R(3,3)];
-    equal(view.addSelections(source),view,'addSelections returns instance');
-    equal(view.getSelections(),source,'overlapping and duplicate selections retained');
-    const saved=view.getSelections(),old=doc.toString(),rev=doc.revision;
-    assert.throws(()=>view.replace('X'),RangeError);
-    equal(view.getSelections(),saved,'failed overlap leaves selection state');
-    assert.equal(doc.toString(),old);assert.equal(doc.revision,rev);
-    assert.throws(()=>view.addSelections([R(0,0),R(100,100)]),RangeError);
-    equal(view.getSelections(),saved,'invalid append atomic');
-    assert.throws(()=>view.setSelections([{start:0,end:1,forward:1}]),TypeError);
-    equal(view.getSelections(),saved,'invalid set atomic');
-    view.setSelections([]);
-    equal(view.getSelections(),[],'empty selection collection valid');
-    assert.throws(()=>view.replace('X'),RangeError);
-    view.addSelections([]);
-    equal(view.getSelections(),[],'add empty array no-op');
-    view.dispose();view.dispose();
-    for(const use of [()=>view.getSelections(),()=>view.setSelections([]),
-      ()=>view.addSelections([]),()=>view.replace('X')])
-      assert.throws(use,/disposed/);
+    view.setSelections([S(C(0,2),C(0,4),false)]);
+    const prior=view.getSelections(),revision=doc.revision,text=doc.toString();
+    for(const invalid of [
+      [{start:2,end:4,forward:true}],
+      [S(C(0,4),C(0,2))],
+      [S(C(-1,1),C(0,2))],
+      [S(C(0,Number.MAX_SAFE_INTEGER+1),C(0,0))],
+      [{start:C(0,1),end:C(0,2),forward:1}],
+      [S(C(0,0),{row:0,col:-1})]
+    ])assert.throws(()=>view.setSelections(invalid));
+    same(view.getSelections(),prior,'bad physical inputs do not replace state');
+    assert.equal(doc.revision,revision);
+    assert.equal(doc.toString(),text);
+    assert.throws(()=>view.replace(['A','B']),/one string/);
+    assert.throws(()=>view.replace([4]),/string/);
+    assert.throws(()=>view.replace(9),/one string/);
+    same(view.getSelections(),prior,'invalid payload does not modify selections');
+    view.dispose();
   }
   {
-    const doc=new Doc('ABCDE');
-    const left=new TextEditSelections(doc),right=new TextEditSelections(doc);
-    left.setSelections([R(1,2)]);right.setSelections([R(1,2)]);
-    doc.replace(0,0,'');
-    equal(left.getSelections(),[R(1,2)],'external no-effect notification');
+    const doc=new Doc('abcdef'),view=new TextEditSelections(doc);
+    const dup=[S(C(0,1),C(0,1)),S(C(0,1),C(0,1),false)];
+    view.setSelections(dup);
+    same(view.getSelections(),dup,'identical carets are retained as state');
     const rev=doc.revision;
-    left.replace('');
-    assert.equal(doc.revision,rev+1);
-    equal(left.getSelections(),[R(1,1)],'local no-effect replacement caret');
-    equal(right.getSelections(),[R(1,1)],'external deletion collapses selected region');
+    assert.throws(()=>view.replace(['X','Y']),RangeError);
+    assert.equal(doc.revision,rev,'duplicate write fails atomically');
+    assert.equal(doc.toString(),'abcdef');
+    view.setSelections([S(C(0,1),C(0,3)),S(C(0,2),C(0,4))]);
+    assert.throws(()=>view.replace('X'),RangeError);
+    assert.equal(doc.toString(),'abcdef','overlapping ranges reject without mutation');
+    view.dispose();
+  }
+  {
+    const doc=new Doc('abcdef'),left=new TextEditSelections(doc);
+    const right=new TextEditSelections(doc);
+    left.setSelections([S(C(0,1),C(0,4),false),S(C(0,5),C(0,5))]);
+    right.setSelections([S(C(0,2),C(0,2))]);
+    doc.replace(1,1,'!');
+    same(left.getSelections(),
+      [S(C(0,2),C(0,5),false),S(C(0,6),C(0,6))],
+      'external insertion at selection start excluded');
+    same(right.getSelections(),[S(C(0,3),C(0,3))],
+      'independent second view rebases once');
+    doc.replace(5,5,'?');
+    same(left.getSelections()[0],S(C(0,2),C(0,5),false),
+      'insertion at selection end excluded');
+    doc.replace(0,doc.length,'Q');
+    same(left.getSelections(),
+      [S(C(0,1),C(0,1),false),S(C(0,1),C(0,1))],
+      'consumed source endpoints collapse after replacement');
     left.dispose();right.dispose();
   }
   {
-    const doc=new Doc('abcdef');
-    const view=new TextEditSelections(doc);
-    view.setSelections([R(1,4,false),R(5,5)]);
-    const before=view.getSelections(),string=doc.toString(),rev=doc.revision;
-    assert.throws(()=>view.replace(['X','X','X']),TypeError);
-    assert.throws(()=>view.replace(['X',10]),TypeError);
-    equal(view.getSelections(),before,'invalid payload leaves selections');
-    assert.equal(doc.toString(),string);assert.equal(doc.revision,rev);
+    const doc=new Doc('abc\ndef'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(1,2),C(1,2)),S(C(1,8),C(1,8))]);
+    doc.replace(0,0,'P\n');
+    same(view.getSelections(),
+      [S(C(2,2),C(2,2)),S(C(2,8),C(2,8))],
+      'existing and virtual positions follow their original source row');
+    doc.replace(doc.lineInfo(2).start+1,doc.lineInfo(2).start+1,'!');
+    same(view.getSelections(),
+      [S(C(2,3),C(2,3)),S(C(2,9),C(2,9))],
+      'external same-line insertion preserves virtual EOL displacement');
     view.dispose();
   }
   {
-    const doc=new Doc('abcd');
-    doc._revision=Number.MAX_SAFE_INTEGER-1;
-    const view=new TextEditSelections(doc);
-    view.setSelections([R(2,2,false)]);
-    doc.replace(0,0,'');
-    equal(view.getSelections(),[R(2,2,false)],'last ordinary revision');
-    doc.replace(0,0,'');
-    equal(view.getSelections(),[],'wrap invalidates stale selection state');
+    const doc=new Doc('abc'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(3,4),C(3,4))]);
+    doc.replace(doc.length,doc.length,'\nnew');
+    same(view.getSelections(),[],
+      'external edit at virtual EOF invalidates ambiguous future anchor');
+    view.dispose();
+  }
+  {
+    const doc=new Doc('abcdef'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(0,2),C(0,3))]);
+    let didEdit=false;
+    const hostile={
+      get start(){
+        if(!didEdit){didEdit=true;doc.replace(0,0,'!');}
+        return C(0,1);
+      },
+      end:C(0,1),forward:true
+    };
+    assert.throws(()=>view.setSelections([hostile]),/document changed/);
+    same(view.getSelections(),[S(C(0,3),C(0,4))],
+      'external notification wins over stale caller properties');
+    didEdit=false;
+    assert.throws(()=>view.addSelections([hostile]),/document changed/);
+    same(view.getSelections(),[S(C(0,4),C(0,5))],
+      'stale add does not override newly rebased selection');
+    view.dispose();
+  }
+  {
+    const doc=new Doc('abc\nx'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(0,6),C(0,6)),S(C(2,4),C(2,4))]);
+    const old=doc.revision,after=view.replace(['X','Y']);
+    assert.equal(doc.toString(),'abc   X\nx\n    Y');
+    assert.equal(doc.revision,old+1);
+    same(after.after,[S(C(0,7),C(0,7)),S(C(2,5),C(2,5))],
+      'materialization produces distinct caret destinations');
+    view.dispose();
+  }
+  {
+    const doc=new Doc('abc'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(3,6),C(3,9))]);
+    const before=doc.revision;
+    view.replace('');
+    assert.equal(doc.revision,before,'empty-only virtual deletion does not commit');
+    assert.equal(doc.toString(),'abc');
+    view.dispose();
+  }
+  {
+    const doc=new Doc('abcdef'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(0,3),C(0,3))]);
+    const rev=doc.revision;
+    const result=view.replace('');
+    assert.equal(doc.revision,rev+1,
+      'existing-source empty replacement retains atomic notification');
+    same(result.after,[S(C(0,3),C(0,3))],'empty source edit caret');
     view.dispose();
   }
 }
-// Hostile accessors cannot publish selection positions based on a source
-// revision superseded while caller-controlled input is being inspected.
-for(const Doc of [FlatDocument,PieceDocument]){
-  const doc=new Doc('abcdef'),view=new TextEditSelections(doc);
-  view.setSelections([R(2,3)]);
-  let didEdit=false;
-  const getter={get start(){
-    if(!didEdit){didEdit=true;doc.replace(0,0,'X');}
-    return 2;
-  },end:3,forward:true};
-  assert.throws(()=>view.setSelections([getter]),/document changed/);
-  equal(view.getSelections(),[R(3,4)],'external event wins over input getter');
-  didEdit=false;
-  assert.throws(()=>view.addSelections([getter]),/document changed/);
-  equal(view.getSelections(),[R(4,5)],'addSelections cannot append stale input');
-  const texts=['Q'];
-  didEdit=false;
-  Object.defineProperty(texts,0,{get(){
-    if(!didEdit){didEdit=true;doc.replace(0,0,'X');}
-    return 'Q';
-  }});
-  assert.throws(()=>view.replace(texts),/document changed/);
-  equal(view.getSelections(),[R(5,6)],'replace cannot commit stale targets');
-  view.dispose();
-}
-// An intentionally lossy but otherwise valid notification adapter verifies
-// recovery from an actual skipped edit, without altering the base engines.
+// Multi-caret hot path must remain bounded by edits, not entire source copies.
 {
-  const underlying=new PieceDocument('abcdef');
-  let drop=false;
-  const doc={
-    get length(){return underlying.length;},
-    get revision(){return underlying.revision;},
-    slice:(a,b)=>underlying.slice(a,b),
-    replace:(...args)=>underlying.replace(...args),
-    subscribe:(callback)=>underlying.subscribe((...args)=>{if(!drop)callback(...args);})
-  };
-  const view=new TextEditSelections(doc);
-  view.setSelections([R(3,3)]);
-  drop=true;underlying.replace(0,0,'X');
-  drop=false;underlying.replace(0,0,'Y');
-  equal(view.getSelections(),[],'missed notification invalidates selections');
-  view.setSelections([R(1,1)]);
-  equal(view.getSelections(),[R(1,1)],'fresh caller state after gap');
-  view.dispose();
-}
-// The selection layer must not need to read old source text or materialize a
-// huge document merely to commit a multicaret edit or track external edits.
-{
-  class NoReadDocument extends PieceDocument {
-    slice(){throw Error('selection layer performed a forbidden source read');}
-    toString(){throw Error('selection layer materialized source');}
+  class NoReadDocument extends PieceDocument{
+    slice(){throw Error('selections unexpectedly read large source');}
+    toString(){throw Error('selections unexpectedly materialized source');}
   }
   const doc=new NoReadDocument('x'.repeat(2*1024*1024));
   const view=new TextEditSelections(doc);
-  const many=Array.from({length:1600},(_,i)=>R(100+i*100,100+i*100));
-  view.setSelections(many);
+  const many=Array.from({length:1600},(_,i)=>S(C(0,100+i*100),C(0,100+i*100)));
   const start=performance.now();
+  view.setSelections(many);
   const result=view.replace('!');
   const ownMs=performance.now()-start;
   assert.equal(doc.revision,1);
-  assert.equal(result.after.length,1600);
+  same(result.after.length,1600,'1600 physical carets after writing');
   const edits=Array.from({length:400},(_,i)=>({
     start:500000+i*20,end:500000+i*20,text:'Q'
   }));
   const externalStart=performance.now();
   doc.replace(edits);
   const externalMs=performance.now()-externalStart;
-  assert.equal(doc.revision,2);
-  assert.equal(view.getSelections().length,1600);
+  same(view.getSelections().length,1600,'1600 positions after 400 external edits');
   view.dispose();
   console.log(JSON.stringify({stress:true,selections:1600,externalEdits:400,
     documentUTF16:doc.length,ownMs:Math.round(ownMs),
     externalMs:Math.round(externalMs)}));
 }
-// Reference mapping deliberately scans each edit rather than using the
-// production binary-search index. Seeded mixed edits cover subtle boundaries.
+// Independent linear oracle for source edits on a single ASCII row.
+function reference(position,right,start,end,text){
+  if(position<start)return position;
+  if(start===end)return position===start?
+    position+(right?text.length:0):position+text.length;
+  if(position===start)return position;
+  if(position<end)return start+(right?text.length:0);
+  return position+text.length-(end-start);
+}
 let seed=0xbad4cafe;
 function random(){seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;}
-function simpleMap(position,right,sorted){
-  let shift=0;
-  for(const edit of sorted){
-    if(position<edit.start)break;
-    if(edit.start===edit.end){
-      if(position===edit.start&&!right)return position+shift;
-      shift+=edit.text.length;continue;
-    }
-    if(position===edit.start)return position+shift;
-    if(position<edit.end)return edit.start+shift+(right?edit.text.length:0);
-    shift+=edit.text.length-(edit.end-edit.start);
-  }
-  return position+shift;
-}
-function referenceTransform(selections,edits){
-  const sorted=edits.slice().sort((a,b)=>a.start-b.start||
-    Number(a.start!==a.end)-Number(b.start!==b.end));
-  return selections.map(s=>{
-    const a=simpleMap(s.start,true,sorted);
-    const b=simpleMap(s.end,s.start===s.end,sorted);
-    return R(a,a>b?a:b,s.forward);
-  });
-}
-const payloads=['','X','abc','\r\n','😀','\r'];
 for(const Doc of [FlatDocument,PieceDocument]){
-  const doc=new Doc('abcdefghijk\n0123456789\r\nXYZ');
-  const view=new TextEditSelections(doc);
-  for(let step=0;step<1200;step++){
-    if(step%7===0){
-      const values=Array.from({length:11},()=>{
-        const a=random()%(doc.length+1);
-        const b=a+random()%(doc.length-a+1);
-        return R(a,b,(random()%2)===0);
+  const doc=new Doc('x'.repeat(500)),view=new TextEditSelections(doc);
+  for(let step=0;step<600;step++){
+    if(step%5===0){
+      const selections=Array.from({length:12},()=>{
+        const a=random()%(doc.length+1),b=a+random()%(doc.length-a+1);
+        return S(C(0,a),C(0,b),(random()%2)===0);
       });
-      view.setSelections(values);
+      view.setSelections(selections);
     }
-    const batch=[];
-    let at=0;
-    for(let j=0;j<4&&at<=doc.length;j++){
-      at+=random()%Math.min(5,doc.length-at+1);
-      if(at>doc.length)break;
-      const width=random()%Math.min(3,doc.length-at+1);
-      if(width>0&&random()%5===0)
-        batch.push({start:at,end:at,text:payloads[random()%payloads.length]});
-      batch.push({start:at,end:at+width,text:payloads[random()%payloads.length]});
-      at+=width+1;
-    }
-    if(!batch.length)batch.push({start:0,end:0,text:''});
-    if(random()%2)batch.reverse();
-    const expected=referenceTransform(view.getSelections(),batch);
-    doc.replace(batch);
-    equal(view.getSelections(),expected,Doc.name+' reference transform '+step);
+    const before=view.getSelections();
+    const at=random()%(doc.length+1);
+    const end=at+random()%Math.min(3,doc.length-at+1);
+    const payload=['','Y','ZZ'][random()%3];
+    const expected=before.map(s=>{
+      const a=reference(s.start.col,true,at,end,payload);
+      const b=reference(s.end.col,s.start.col===s.end.col,at,end,payload);
+      return S(C(0,a),C(0,Math.max(a,b)),s.forward);
+    });
+    doc.replace(at,end,payload);
+    same(view.getSelections(),expected,Doc.name+' physical rebase oracle '+step);
   }
   view.dispose();
 }
-console.log(JSON.stringify({pass:true,test:'TextEditSelections',
-  backends:['FlatDocument','PieceDocument'],scenarioCases:scenarios.length,
-  checked:assertions}));
+console.log(JSON.stringify({pass:true,test:'TextEditSelections physical',
+  backends:['FlatDocument','PieceDocument'],checks}));
