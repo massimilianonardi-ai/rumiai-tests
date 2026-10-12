@@ -62,7 +62,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   ]);
   projection.replace(from,to,'any arbitrary placeholder\nincluding lines');
   const editor=new TextEditSelections(source);
-  editor.setSelections([{start:0,end:0,forward:true}]);
+  editor.setSelections([{start:{row:0,col:0},end:{row:0,col:0},forward:true}]);
   editor.replace('/*intro*/');
   const info={unresolved:projection.unresolved};
   assert.deepEqual(info.unresolved,[]);
@@ -78,7 +78,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   const a=source.lineStart(1),b=source.lineStart(2);
   rep.replace(a,b,'{...}');
   const edit=new TextEditSelections(source);
-  edit.setSelections([{start:a+1,end:a+2,forward:true}]);
+  edit.setSelections([{start:{row:1,col:1},end:{row:1,col:2},forward:true}]);
   edit.replace('X');
   const result={unresolved:rep.unresolved};
   assert.equal(result.unresolved.length,1);
@@ -91,7 +91,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   const rep=new TextEditRepresentation(source);
   rep.setAnnotations([{id:'n',at:2,text:'note'}]);
   const edit=new TextEditSelections(source);
-  edit.setSelections([{start:2,end:2,forward:true}]);
+  edit.setSelections([{start:{row:0,col:2},end:{row:0,col:2},forward:true}]);
   edit.replace('!');
   const rebased={unresolved:rep.unresolved};
   assert.equal(rebased.unresolved.length,1);
@@ -103,7 +103,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
   editor.advancedSelections.lineSelection({row:1,col:0},{row:2,col:0});
   assert.deepEqual(editor.selections.getSelections(),
     [{start:{row:1,col:0},end:{row:2,col:2},forward:true}]);
-  editor.selections.setSelections([{start:3,end:3,forward:true}]);
+  editor.selections.setSelections([{start:{row:1,col:0},end:{row:1,col:0},forward:true}]);
   editor.representation.replace(3,5,'{F}');
   assert.equal(editor.representation.project(0,8).segments[1].text,'{F}');
   const result=editor.replace('X');
