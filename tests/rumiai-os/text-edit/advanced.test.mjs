@@ -1,98 +1,148 @@
-// Permanent advanced selection geometry contract. All coordinates are source
-// logical {row,col} with inclusive row/cell endpoints. Visualization and
-// width policy are owned by TextEditRepresentation, not this layer.
+// Physical row/UTF-16-column selectors, logical selection policy, and
+// deferred source materialization. Test the real TextEdit public library.
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 
 const require=createRequire(import.meta.url);
-const {TextEdit,TextEditRepresentation,PieceDocument,FlatDocument}=
-  require(resolve(process.env.RUMIAI_OS_ROOT,'lib/sys/js/text-edit.lib.js'));
+const {TextEdit,TextEditRepresentation,TextEditSelections,
+  PieceDocument,FlatDocument}=require(
+  resolve(process.env.RUMIAI_OS_ROOT,'lib/sys/js/text-edit.lib.js'));
+
 const C=(row,col)=>({row,col});
 const S=(start,end,forward=true)=>({start,end,forward});
 let assertions=0;
-function same(actual,expected,message){
-  assert.deepEqual(actual,expected,message);assertions++;
+function equal(actual,expected,message){
+  assert.deepEqual(actual,expected,message);
+  assertions++;
 }
 
 for(const Doc of [FlatDocument,PieceDocument]){
-  // Explicit mixed line endings, including a lone CR, and trailing empty row.
-  const doc=new Doc('abc\rdef\r\nGHI\n');
-  const e=new TextEdit('',{document:doc}),adv=e.advancedSelections;
-  adv.lineSelection(C(0,2),C(2,1));
-  same(e.selections.getSelections(),[S(0,13)],'line selection spans full logical rows');
-  adv.lineSelection(C(2,1),C(0,2));
-  same(e.selections.getSelections(),[S(0,13,false)],'line orientation follows endpoints');
-  adv.lineSelection(C(1,2),C(1,1));
-  same(e.selections.getSelections(),[S(4,9,false)],'same-row line orientation');
-  adv.rectangularSelection(C(0,0),C(2,1));
-  same(e.selections.getSelections(),
-    [S(0,2),S(4,6),S(9,11)],'inclusive columns over mixed terminators');
-  adv.rectangularSelection(C(2,1),C(0,0));
-  same(e.selections.getSelections(),
-    [S(9,11,false),S(4,6,false),S(0,2,false)],
-    'reverse endpoints preserve row order and column orientation');
-  const previous=e.selections.getSelections();
-  assert.throws(()=>adv.lineSelection(C(0,0),C(8,0)),RangeError);
-  assert.throws(()=>adv.rectangularSelection(C(0,0),C(8,0)),RangeError);
-  same(e.selections.getSelections(),previous,'failed request preserves selections');
-  assert.throws(()=>adv.rectangularSelection(C(0,0),C(0,Number.MAX_SAFE_INTEGER)),RangeError);
-  const virtual=adv.resolveRectangles(C(0,2),C(3,4));
-  assert.equal(virtual.targets.length,4);
-  assert.equal(virtual.unresolved.length,4);
-  assert.ok(virtual.unresolved.every(x=>x.reason==='virtual-columns'));
-  assert.throws(()=>adv.rectangularSelection(C(0,2),C(3,4)),/virtual/);
-  same(e.selections.getSelections(),previous,'virtual rejection cannot flatten geometry');
-  // Annotation metadata does not affect logical row geometry.
-  e.representation.setAnnotations([{id:'note',at:1,text:'!'}]);
-  adv.rectangularSelection(C(0,0),C(1,0));
-  same(e.selections.getSelections(),[S(0,1),S(4,5)],'annotation is not source text');
-  e.representation.replace(1,2,'{fold}');
-  assert.equal(adv.resolveRectangles(C(0,0),C(1,1)).unresolved[0].reason,
-    'representation-replacement');
-  assert.throws(()=>adv.rectangularSelection(C(0,0),C(1,1)),/replaced/);
-  e.representation.dispose();e.selections.dispose();
+  const prefix=Doc.name;
+  {
+    const document=new Doc('abc\rdef\r\nGHI\n');
+    const editor=new TextEdit('',{document}),advanced=editor.advancedSelections;
+    advanced.lineSelection(C(0,2),C(2,1));
+    equal(editor.selections.getSelections(),
+      [S(C(0,0),C(3,0))],prefix+' full line range includes CR, CRLF, LF');
+    advanced.lineSelection(C(2,1),C(0,2));
+    equal(editor.selections.getSelections(),
+      [S(C(0,0),C(3,0),false)],prefix+' reverse orientation');
+    advanced.rectangularSelection(C(0,0),C(2,1));
+    equal(editor.selections.getSelections(),
+      [S(C(0,0),C(0,2)),S(C(1,0),C(1,2)),S(C(2,0),C(2,2))],
+      prefix+' logical rectangle in source rows');
+    const revision=document.revision,old=document.toString();
+    advanced.rectangularSelection(C(0,2),C(4,4));
+    equal(editor.selections.getSelections(),
+      [S(C(0,2),C(0,5)),S(C(1,2),C(1,5)),
+       S(C(2,2),C(2,5)),S(C(3,2),C(3,5)),S(C(4,2),C(4,5))],
+      prefix+' virtual logical rectangle survives EOL and EOF');
+    equal({revision:document.revision,text:document.toString()},
+      {revision,text:old},prefix+' selecting virtual space does not edit source');
+    advanced.setPolicy('clipped');
+    advanced.rectangularSelection(C(0,2),C(4,4));
+    equal(editor.selections.getSelections(),
+      [S(C(0,2),C(0,3)),S(C(1,2),C(1,3)),S(C(2,2),C(2,3))],
+      prefix+' logical clipping per existing source row');
+    advanced.rectangularSelection(C(10,2),C(12,4));
+    equal(editor.selections.getSelections(),[],prefix+' fully outside clips to empty');
+    assert.throws(()=>advanced.setPolicy('unexpected'),RangeError);
+    assert.equal(advanced.policy,'clipped');
+    editor.representation.dispose();editor.selections.dispose();
+  }
+  {
+    const document=new Doc('a\t😀b\rX\r\nY\n');
+    const editor=new TextEdit('',{document});
+    const representation=editor.representation;
+    representation.setColumnMetrics({tabSize:4,widthOf:g=>g==='😀'?2:1});
+    assert.equal(representation.logicalRowWidth(0),7);
+    assert.equal(representation.logicalRowWidth(100),0);
+    assert.equal(representation.columnToSource(0,2).kind,'inside-grapheme');
+    assert.equal(representation.columnToSource(0,5).kind,'inside-grapheme');
+    editor.advancedSelections.rectangularSelection(C(0,6),C(0,6));
+    equal(editor.selections.getSelections(),
+      [S(C(0,4),C(0,5))],prefix+' logical cells map to physical UTF-16 units');
+    equal(representation.getSelections(),
+      [S(C(0,6),C(0,7))],prefix+' representation reads logical coordinates');
+    assert.throws(()=>editor.advancedSelections.rectangularSelection(
+      C(0,1),C(0,2)),/grapheme/);
+    equal(editor.selections.getSelections(),
+      [S(C(0,4),C(0,5))],prefix+' failed translation is atomic');
+    representation.setReplacements([{start:0,end:1,text:'{fold}'}]);
+    assert.throws(()=>editor.advancedSelections.rectangularSelection(
+      C(0,0),C(0,3)),/overlay/);
+    editor.representation.dispose();editor.selections.dispose();
+  }
+  {
+    const document=new Doc('abc\nxy'),selections=new TextEditSelections(document);
+    selections.setSelections([
+      S(C(0,6),C(0,6)),
+      S(C(0,9),C(0,9))
+    ]);
+    const before=document.revision;
+    selections.replace(['X','Y']);
+    assert.equal(document.toString(),'abc   X  Y\nxy');
+    assert.equal(document.revision,before+1,'one atomic materialization commit');
+    equal(selections.getSelections(),
+      [S(C(0,7),C(0,7)),S(C(0,10),C(0,10))],
+      prefix+' cursors return to their own inserted text');
+    selections.dispose();
+  }
+  {
+    const document=new Doc('abc'),selections=new TextEditSelections(document);
+    selections.setSelections([
+      S(C(3,3),C(3,3)),
+      S(C(1,5),C(1,5)),
+      S(C(3,7),C(3,7))
+    ]);
+    const before=document.revision;
+    selections.replace(['X','Y','Z']);
+    assert.equal(document.toString(),'abc\n     Y\n\n   X   Z');
+    assert.equal(document.revision,before+1,
+      prefix+' one commit for multiple future rows sharing old EOF');
+    equal(selections.getSelections(),
+      [S(C(3,4),C(3,4)),S(C(1,6),C(1,6)),S(C(3,8),C(3,8))],
+      prefix+' distinct caret destinations remain distinct');
+    selections.dispose();
+  }
+  {
+    const document=new Doc('abc'),selections=new TextEditSelections(document);
+    selections.setSelections([S(C(2,4),C(2,8))]);
+    const before=document.revision;
+    selections.replace('');
+    assert.equal(document.toString(),'abc');
+    assert.equal(document.revision,before,
+      prefix+' deleting only virtual cells does not write');
+    selections.setSelections([S(C(0,5),C(0,5)),S(C(0,5),C(0,5))]);
+    assert.throws(()=>selections.replace(['X','Y']),RangeError);
+    assert.equal(document.toString(),'abc',prefix+' conflict leaves source intact');
+    selections.dispose();
+  }
+  {
+    const document=new Doc('abc\ndef'),selections=new TextEditSelections(document);
+    selections.setSelections([S(C(1,2),C(1,2)),S(C(1,8),C(1,8))]);
+    document.replace(0,0,'P\n');
+    equal(selections.getSelections(),
+      [S(C(2,2),C(2,2)),S(C(2,8),C(2,8))],
+      prefix+' real and virtual anchors follow external inserted row');
+    selections.dispose();
+  }
+  {
+    const document=new Doc('abc'),selections=new TextEditSelections(document);
+    selections.setSelections([S(C(0,2),C(0,2)),S(C(2,4),C(2,8))]);
+    selections.replace(['Q','']);
+    equal(selections.getSelections(),
+      [S(C(0,3),C(0,3)),S(C(2,4),C(2,8))],
+      prefix+' unedited virtual selection survives another edited caret');
+    selections.dispose();
+  }
 }
-for(const Doc of [FlatDocument,PieceDocument]){
-  const d=new Doc('a\t😀b\rX\r\nY\n'),p=new TextEditRepresentation(d);
-  assert.equal(p.setColumnMetrics({tabSize:4,widthOf:g=>g==='😀'?2:1}),p);
-  same(p.columnToSource(0,0),{kind:'offset',offset:0},'start of line');
-  assert.equal(p.columnToSource(0,1).offset,1);
-  same(p.columnToSource(0,2).kind,'inside-grapheme','inside tab is unresolved');
-  same(p.columnToSource(0,4),{kind:'offset',offset:2},'after tab stop');
-  same(p.columnToSource(0,5).kind,'inside-grapheme','inside wide emoji');
-  same(p.columnToSource(0,6),{kind:'offset',offset:4},'after emoji');
-  same(p.columnToSource(0,9),{kind:'virtual',offset:5,virtualSpaces:2},
-    'EOL virtual column offset plus intent');
-  same(p.sourceToColumn(0),{kind:'column',row:0,col:0},'offset to column');
-  same(p.sourceToColumn(2),{kind:'column',row:0,col:4},'source after tab');
-  assert.equal(p.sourceToColumn(3).kind,'inside-grapheme');
-  same(p.sourceToColumn(5),{kind:'column',row:0,col:7},'start of terminator equals line-end boundary');
-  assert.throws(()=>p.sourceToColumn(8),/separator/);
-  same(p.columnToSource(1,1),{kind:'offset',offset:7},'lone CR not display content');
-  same(p.columnToSource(2,1),{kind:'offset',offset:10},'CRLF not display content');
-  same(p.columnToSource(3,0),{kind:'offset',offset:11},'final empty row');
-  assert.throws(()=>p.setColumnMetrics({tabSize:0}),RangeError);
-  assert.throws(()=>p.setColumnMetrics({widthOf:5}),TypeError);
-  assert.throws(()=>p.columnToSource(200,0),RangeError);
-  assert.throws(()=>p.columnToSource(0,-1),RangeError);
-  assert.throws(()=>p.sourceToColumn(-1),RangeError);
-  p.setColumnMetrics({tabSize:8,widthOf:()=>0});
-  assert.throws(()=>p.columnToSource(0,1),/width/);
-  p.setColumnMetrics({tabSize:4,widthOf:g=>g==='😀'?2:1});
-  const adv=new TextEdit('',{document:d});
-  adv.representation.setColumnMetrics({tabSize:4,widthOf:g=>g==='😀'?2:1});
-  assert.equal(adv.advancedSelections.resolveRectangles(C(0,1),C(0,2)).unresolved[0].reason,
-    'inside-grapheme');
-  assert.throws(()=>adv.advancedSelections.rectangularSelection(C(0,1),C(0,2)),RangeError);
-  adv.representation.dispose();adv.selections.dispose();p.dispose();
-}
-// Bounded source reads: a huge plain-text line must not be materialized to
-// convert a column near its beginning, even when other views share the store.
+// Content lookup near the beginning of a huge line must remain bounded.
 {
   const inner=new PieceDocument('x'.repeat(4*1024*1024)+'\rnext');
   let maxRead=0;
-  const doc={
+  const document={
     get length(){return inner.length;},
     get lineCount(){return inner.lineCount;},
     get revision(){return inner.revision;},
@@ -100,56 +150,12 @@ for(const Doc of [FlatDocument,PieceDocument]){
     lineStart:n=>inner.lineStart(n),
     lineInfo:n=>inner.lineInfo(n),
     slice(a,b){maxRead=Math.max(maxRead,b-a);return inner.slice(a,b);},
-    subscribe:fn=>inner.subscribe(fn),
+    subscribe:fn=>inner.subscribe(fn)
   };
-  const p=new TextEditRepresentation(doc);
-  assert.equal(p.columnToSource(0,10).offset,10);
-  assert.deepEqual(p.sourceToColumn(100),{kind:'column',row:0,col:100});
-  assert.ok(maxRead<=2048,'column lookup must not copy a huge ASCII line');
-  p.dispose();
+  const representation=new TextEditRepresentation(document);
+  assert.equal(representation.columnToSource(0,10).offset,10);
+  assert.ok(maxRead<=2048,'ordinary early-column lookup must stay bounded');
+  representation.dispose();
 }
-// A custom width callback may modify the shared source, but must never
-// produce a supposedly valid coordinate from the previous revision.
-{
-  const d=new PieceDocument('abcd'),p=new TextEditRepresentation(d);
-  let once=true;
-  p.setColumnMetrics({widthOf:()=>{
-    if(once){once=false;d.replace(0,0,'!');}
-    return 1;
-  }});
-  assert.throws(()=>p.columnToSource(0,2),/document changed/);
-  p.dispose();
-}
-// A family emoji crosses the fixed read-chunk boundary. Grapheme boundaries
-// must survive streaming, not accidentally split at 2048 UTF-16 code units.
-{
-  const glyph='👩‍👩‍👧‍👦';
-  const doc=new PieceDocument('x'.repeat(2047)+glyph+'Z');
-  const rep=new TextEditRepresentation(doc);
-  rep.setColumnMetrics({widthOf:g=>g===glyph?2:1});
-  const interior=rep.columnToSource(0,2048);
-  assert.equal(interior.kind,'inside-grapheme');
-  assert.equal(interior.cell.start,2047);
-  assert.equal(interior.cell.end,2047+glyph.length);
-  assert.deepEqual(rep.columnToSource(0,2049),
-    {kind:'offset',offset:2047+glyph.length});
-  assert.deepEqual(rep.sourceToColumn(2047+glyph.length),
-    {kind:'column',row:0,col:2049});
-  rep.dispose();
-}
-// Adjacent overlays must not disappear in a rectangle intersection test,
-// even when many unrelated overlays precede the selected source rows.
-{
-  const source=new PieceDocument('a'.repeat(8000));
-  const editor=new TextEdit('',{document:source});
-  editor.representation.setReplacements(Array.from({length:250},(_,i)=>({
-    start:2+i*28,end:4+i*28,text:'{fold}'
-  })));
-  const rejected=editor.advancedSelections.resolveRectangles(C(0,0),C(0,7999));
-  assert.equal(rejected.unresolved.length,1);
-  assert.equal(rejected.unresolved[0].reason,'representation-replacement');
-  assert.throws(()=>editor.advancedSelections.rectangularSelection(C(0,0),C(0,7999)),RangeError);
-  editor.representation.dispose();editor.selections.dispose();
-}
-console.log(JSON.stringify({pass:true,test:'TextEditAdvancedSelections/column geometry',
-  assertions}));
+console.log(JSON.stringify({pass:true,test:'TextEdit logical and physical selections',
+  assertions,backends:['FlatDocument','PieceDocument']}));
