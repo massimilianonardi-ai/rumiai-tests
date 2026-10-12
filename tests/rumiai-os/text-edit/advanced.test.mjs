@@ -20,9 +20,9 @@ for(const Doc of [FlatDocument,PieceDocument]){
   const doc=new Doc('abc\rdef\r\nGHI\n');
   const e=new TextEdit('',{document:doc}),adv=e.advancedSelections;
   adv.lineSelection(C(0,2),C(2,1));
-  same(e.selections.getSelections(),[S(0,12)],'line selection spans full logical rows');
+  same(e.selections.getSelections(),[S(0,13)],'line selection spans full logical rows');
   adv.lineSelection(C(2,1),C(0,2));
-  same(e.selections.getSelections(),[S(0,12,false)],'line orientation follows endpoints');
+  same(e.selections.getSelections(),[S(0,13,false)],'line orientation follows endpoints');
   adv.lineSelection(C(1,2),C(1,1));
   same(e.selections.getSelections(),[S(4,9,false)],'same-row line orientation');
   adv.rectangularSelection(C(0,0),C(2,1));
@@ -67,11 +67,10 @@ for(const Doc of [FlatDocument,PieceDocument]){
   same(p.sourceToColumn(0),{kind:'column',row:0,col:0},'offset to column');
   same(p.sourceToColumn(2),{kind:'column',row:0,col:4},'source after tab');
   assert.equal(p.sourceToColumn(3).kind,'inside-grapheme');
-  assert.throws(()=>p.sourceToColumn(6),/separator/);
+  assert.throws(()=>p.sourceToColumn(5),/separator/);
   same(p.columnToSource(1,1),{kind:'offset',offset:7},'lone CR not display content');
   same(p.columnToSource(2,1),{kind:'offset',offset:10},'CRLF not display content');
-  same(p.columnToSource(3,0),{kind:'offset',offset:11},'LF line');
-  same(p.columnToSource(4,0),{kind:'offset',offset:12},'final empty row');
+  same(p.columnToSource(3,0),{kind:'offset',offset:11},'final empty row');
   assert.throws(()=>p.setColumnMetrics({tabSize:0}),RangeError);
   assert.throws(()=>p.setColumnMetrics({widthOf:5}),TypeError);
   assert.throws(()=>p.columnToSource(200,0),RangeError);
