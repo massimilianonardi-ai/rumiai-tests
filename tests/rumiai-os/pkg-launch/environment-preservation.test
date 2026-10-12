@@ -1,0 +1,59 @@
+#!/bin/sh
+# PACKAGE-MODEL.md: one-shot m_ENV_DO_NOT_OVERRIDE preserves delivered process
+# environment only; malformed, missing and control-variable requests fail.
+set -u
+
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 3
+tests_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd) || exit 3
+if [ -n "${m_ROOT-}" ] && [ -x "$m_ROOT/m" ]; then
+  m_cmd=$m_ROOT/m
+elif [ -x "$tests_root/../rumiai-os/m" ]; then
+  m_cmd=$tests_root/../rumiai-os/m
+else
+  printf '%s\n' 'SKIP: real rumiai-os target not discoverable' >&2
+  exit 2
+fi
+
+# This test exercises an actual managed Node provider, never a stand-in launcher.
+if ! "$m_cmd" node -e 'process.exit(0)' >/dev/null 2>&1; then
+  printf '%s\n' 'SKIP: managed node command unavailable' >&2
+  exit 2
+fi
+
+fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+check_failure() {
+  expected=$1
+  shift
+  "$@" >/dev/null 2>&1
+  actual=$?
+  [ "$actual" -eq "$expected" ] || fail "expected failure status $expected, got $actual"
+}
+
+[ "${HOME+x}" = x ] || { printf '%s\n' 'ERROR: inherited HOME absent' >&2; exit 3; }
+unset m_ENV_DO_NOT_OVERRIDE
+normal=$("$m_cmd" node -e 'process.stdout.write(process.env.HOME || "")') || fail 'baseline node launch'
+preserved=$(m_ENV_DO_NOT_OVERRIDE=HOME "$m_cmd" node -e 'process.stdout.write(process.env.HOME || "")') || fail 'preserved HOME launch'
+[ "$preserved" = "$HOME" ] || fail 'HOME was not inherited by child runtime'
+[ "$normal" != "$preserved" ] || fail 'baseline did not select a different package HOME'
+
+RUMIAI_OVERRIDE_TEST_EMPTY=''
+export RUMIAI_OVERRIDE_TEST_EMPTY
+m_ENV_DO_NOT_OVERRIDE='HOME RUMIAI_OVERRIDE_TEST_EMPTY' "$m_cmd" node -e '
+if (process.env.RUMIAI_OVERRIDE_TEST_EMPTY !== "" ||
+    !process.env.HOME ||
+    Object.prototype.hasOwnProperty.call(process.env, "m_ENV_DO_NOT_OVERRIDE")) process.exit(1);
+' >/dev/null 2>&1 || fail 'multi-variable or empty-value preservation'
+
+check_failure 3 env m_ENV_DO_NOT_OVERRIDE='HOME  HOME' "$m_cmd" node -e 'process.exit(0)'
+check_failure 3 env m_ENV_DO_NOT_OVERRIDE='HOME ' "$m_cmd" node -e 'process.exit(0)'
+check_failure 3 env m_ENV_DO_NOT_OVERRIDE='HOME;echo bad' "$m_cmd" node -e 'process.exit(0)'
+check_failure 3 env m_ENV_DO_NOT_OVERRIDE='' "$m_cmd" node -e 'process.exit(0)'
+check_failure 5 env m_ENV_DO_NOT_OVERRIDE='m_PKG_LAUNCH_CONTEXT' "$m_cmd" node -e 'process.exit(0)'
+check_failure 5 env m_ENV_DO_NOT_OVERRIDE='m_ENV_DO_NOT_OVERRIDE' "$m_cmd" node -e 'process.exit(0)'
+(
+  unset RUMIAI_OVERRIDE_TEST_DOES_NOT_EXIST
+  check_failure 4 env m_ENV_DO_NOT_OVERRIDE='RUMIAI_OVERRIDE_TEST_DOES_NOT_EXIST' "$m_cmd" node -e 'process.exit(0)'
+) || exit $?
+
+printf '%s\n' 'PASS: one-shot environment preservation through managed node'
+exit 0
