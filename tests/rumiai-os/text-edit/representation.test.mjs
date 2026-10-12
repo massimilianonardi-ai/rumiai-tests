@@ -181,12 +181,12 @@ for(const Doc of [FlatDocument,PieceDocument]) {
   const two=new TextEdit('',{document:doc});
   one.representation.replace(1,3,'{A}');
   two.representation.setAnnotations([annotation('shared',7,'after')]);
-  two.selections.setSelections([{start:0,end:0,forward:true}]);
+  two.selections.setSelections([{start:{row:0,col:0},end:{row:0,col:0},forward:true}]);
   two.replace('!');
   check(one.representation.replacements,[replacement(2,4,'{A}')],
     'other facade automatically rebases representation');
   check(two.representation.annotations[0].at,8,'origin view automatically rebases once');
-  one.selections.setSelections([{start:8,end:8,forward:true}]);
+  one.selections.setSelections([{start:{row:1,col:2},end:{row:1,col:2},forward:true}]);
   const result=one.replace('X');
   assert.equal('changes' in result,false,'no explicit old-text facade adapter');
   assert.equal(result.representation.unresolved.length,0);
