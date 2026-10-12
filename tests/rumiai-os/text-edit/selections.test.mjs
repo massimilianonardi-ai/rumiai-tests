@@ -102,7 +102,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
     left.replace('');
     assert.equal(doc.revision,rev+1);
     equal(left.getSelections(),[R(1,1)],'local no-effect replacement caret');
-    equal(right.getSelections(),[R(1,2)],'external no-effect replacement geometry');
+    equal(right.getSelections(),[R(1,1)],'external deletion collapses selected region');
     left.dispose();right.dispose();
   }
   {
