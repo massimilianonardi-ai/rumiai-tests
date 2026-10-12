@@ -230,5 +230,87 @@ for(const Doc of [FlatDocument,PieceDocument]) {
     'source notification survives hostile metadata getter');
   rep.dispose();
 }
+// Compare indexed source/view queries with a simple linear reference
+// implementation under seeded non-overlapping and adjacent substitution
+// arrangements, including empty virtual strings and shared view offsets.
+function naiveSourceToView(offset,ranges) {
+  let delta=0;
+  for(const r of ranges){
+    if(offset<=r.start)break;
+    if(offset<r.end)return {kind:'replaced-region',
+      source:{start:r.start,end:r.end},
+      view:{start:r.start+delta,end:r.start+delta+r.text.length}};
+    delta+=r.text.length-(r.end-r.start);
+  }
+  return {kind:'offset',offset:offset+delta};
+}
+function naiveViewToSource(offset,ranges){
+  let source=0,view=0;
+  for(const r of ranges){
+    const original=r.start-source;
+    if(r.text.length===0&&offset===view+original)
+      return {kind:'replaced-region',
+        source:{start:r.start,end:r.end},
+        view:{start:view+original,end:view+original}};
+    if(offset<=view+original)return {kind:'offset',offset:source+offset-view};
+    view+=original;
+    if(offset<view+r.text.length)return {kind:'replaced-region',
+      source:{start:r.start,end:r.end},
+      view:{start:view,end:view+r.text.length}};
+    source=r.end;view+=r.text.length;
+  }
+  return {kind:'offset',offset:source+offset-view};
+}
+{
+  let seed=0x5e1ec701;
+  const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return seed>>>0;};
+  const base=new PieceDocument('a'.repeat(80)),rep=new TextEditRepresentation(base);
+  const insertions=['','X','ABCDE','abc','🐟'];
+  for(let step=0;step<300;step++){
+    const ranges=[];
+    let at=0;
+    while(at<base.length){
+      at+=random()%5;
+      if(at>=base.length)break;
+      const end=Math.min(base.length,at+1+random()%3);
+      ranges.push(replacement(at,end,insertions[random()%insertions.length]));
+      at=end;
+    }
+    rep.setReplacements(ranges);
+    const current=rep.replacements;
+    for(let pos=0;pos<=base.length;pos++){
+      assert.deepEqual(rep.sourceToView(pos),naiveSourceToView(pos,current),
+        'source map differential '+step+':'+pos);
+    }
+    for(let pos=0;pos<=rep.length;pos++){
+      assert.deepEqual(rep.viewToSource(pos),naiveViewToSource(pos,current),
+        'view map differential '+step+':'+pos);
+    }
+    cases++;
+  }
+  rep.dispose();
+}
+// Many dispersed overlays and annotations must support repeated small
+// projections and mappings without any full-source materialization.
+{
+  const n=5000,doc=new PieceDocument('A'.repeat(n*20+20));
+  const rep=new TextEditRepresentation(doc);
+  rep.setReplacements(Array.from({length:n},(_,i)=>
+    replacement(10+i*20,13+i*20,'X')));
+  rep.setAnnotations(Array.from({length:n},(_,i)=>
+    annotation('mark'+i,15+i*20,'after')));
+  assert.equal(rep.length,doc.length-n*2);
+  for(let i=0;i<n;i++){
+    const source=15+i*20;
+    assert.equal(rep.sourceToView(source).offset,source-(i+1)*2);
+  }
+  for(let i=0;i<1000;i++){
+    const start=20+i*20;
+    const win=rep.project(start,start+8,{maxSourceUnits:12});
+    assert.equal(win.source.start,start);
+    assert.ok(win.readUnits<=12);
+  }
+  rep.dispose();cases++;
+}
 console.log(JSON.stringify({pass:true,test:'TextEditRepresentation',
   backends:['FlatDocument','PieceDocument'],assertions:cases}));
