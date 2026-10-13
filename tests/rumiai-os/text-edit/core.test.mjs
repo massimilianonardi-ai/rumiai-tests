@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {runInNewContext} from 'node:vm';
 import {createRequire} from 'node:module';
 import {resolve} from 'node:path';
 
@@ -6,10 +8,17 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.8.0');
+assert.equal(VERSION,'0.8.1');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
+assert.equal(Object.prototype.hasOwnProperty.call(globalThis,'TextEdit'),false,
+  'CommonJS load must not publish TextEdit on the Node global');
+const browserContext={};
+runInNewContext(readFileSync(library,'utf8'),browserContext);
+assert.equal(browserContext.TextEdit.VERSION,'0.8.1',
+  'classic browser-script global export remains supported');
+
 
 let tests=0;
 {
@@ -27,6 +36,31 @@ let tests=0;
   assert.equal(result.before.length,3);
   assert.equal(result.after.length,3);
   editor.representation.dispose();editor.selections.dispose();
+  tests++;
+}
+{
+  // Disposing a composed editor releases only resources it owns.
+  const editor=new TextEdit('abc');
+  editor.selections.setSelections([
+    {start:{row:0,col:0},end:{row:0,col:1},forward:true}
+  ]);
+  editor.dispose();editor.dispose();
+  assert.equal(editor.document.toString(),'abc','source survives view disposal');
+  assert.throws(()=>editor.replace('X'),/disposed/);
+  assert.throws(()=>editor.selections.getSelections(),/disposed/);
+  assert.throws(()=>editor.representation.project(0,0),/disposed/);
+  const document=new FlatDocument('abc');
+  const selections=new TextEditSelections(document);
+  selections.setSelections([
+    {start:{row:0,col:0},end:{row:0,col:1},forward:true}
+  ]);
+  const external=new TextEdit('',{document,selections});
+  external.dispose();external.dispose();
+  assert.throws(()=>external.replace('X'),/disposed/);
+  selections.replace('Z');
+  assert.equal(document.toString(),'Zbc',
+    'injected physical selector remains caller-owned');
+  selections.dispose();
   tests++;
 }
 for(const Doc of [FlatDocument,PieceDocument]){
