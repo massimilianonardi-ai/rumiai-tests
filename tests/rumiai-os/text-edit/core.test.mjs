@@ -6,12 +6,29 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.7.0');
+assert.equal(VERSION,'0.8.0');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
 
 let tests=0;
+{
+  // The public TextEdit facade inherits scalar and array normalization.
+  const editor=new TextEdit('ab\ncd\nef');
+  editor.selections.setSelections([
+    {start:{row:0,col:0},end:{row:0,col:1},forward:true},
+    {start:{row:1,col:0},end:{row:1,col:1},forward:true},
+    {start:{row:2,col:0},end:{row:2,col:1},forward:true}
+  ]);
+  const revision=editor.document.revision;
+  const result=editor.replace([7,false]);
+  assert.equal(editor.document.toString(),'7b\nfalsed\nf');
+  assert.equal(editor.document.revision,revision+1);
+  assert.equal(result.before.length,3);
+  assert.equal(result.after.length,3);
+  editor.representation.dispose();editor.selections.dispose();
+  tests++;
+}
 for(const Doc of [FlatDocument,PieceDocument]){
   const source=new Doc('function foo(){\r\n  return "😀 e\u0301";\r\n}\r\nfoo();');
   const old=source.slice(0,source.length);
