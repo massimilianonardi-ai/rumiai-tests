@@ -54,10 +54,58 @@ for(const Doc of [FlatDocument,PieceDocument]){
     same(view.getSelections(),prior,'bad physical inputs do not replace state');
     assert.equal(doc.revision,revision);
     assert.equal(doc.toString(),text);
-    assert.throws(()=>view.replace(['A','B']),/one string/);
-    assert.throws(()=>view.replace([4]),/string/);
-    assert.throws(()=>view.replace(9),/one string/);
+    assert.throws(()=>view.replace(['A','B']),/more replacement values/);
+    for(const invalid of [[{}],[[1]],[1n],[Symbol('bad')],[()=>{}]])
+      assert.throws(()=>view.replace(invalid),TypeError);
+    assert.throws(()=>view.replace({}),TypeError);
     same(view.getSelections(),prior,'invalid payload does not modify selections');
+    view.dispose();
+  }
+  {
+    // Nullish, absent, numeric and boolean values are normalized before one
+    // atomic selected edit. Missing array entries mean deletion, not no-op.
+    const examples=[
+      {value:null,want:'b\\nd\\nf'},
+      {value:undefined,want:'b\\nd\\nf'},
+      {value:[],want:'b\\nd\\nf'},
+      {value:['X'],want:'Xb\\nd\\nf'},
+      {value:[true,null,false],want:'trueb\\nd\\falsef'},
+      {value:[42,undefined,3.14],want:'42b\\nd\\3.14f'},
+      {value:[,'Y'],want:'b\\nYd\\nf'},
+      {value:0,want:'0b\\n0d\\n0f'},
+      {value:-0,want:'0b\\n0d\\n0f'},
+      {value:NaN,want:'NaNb\\nNaNd\\nNaNf'},
+      {value:Infinity,want:'Infinityb\\nInfinityd\\nInfinityf'},
+      {value:-Infinity,want:'-Infinityb\\n-Infinityd\\n-Infinityf'},
+      {value:false,want:'falseb\\nfalsed\\nfalsef'}
+    ];
+    for(const {value,want} of examples){
+      const doc=new Doc('ab\\ncd\\nef'),view=new TextEditSelections(doc);
+      view.setSelections([
+        S(C(0,0),C(0,1)),S(C(1,0),C(1,1),false),
+        S(C(2,0),C(2,1))
+      ]);
+      const original=view.getSelections(),revision=doc.revision;
+      let commits=0;const unsubscribe=doc.subscribe(()=>commits++);
+      const result=view.replace(value);
+      same(doc.toString(),want,Doc.name+' normalized input '+String(value));
+      same(result.before,original,'one-action before snapshot');
+      same(result.after,view.getSelections(),'one-action after snapshot');
+      same(doc.revision,revision+1,'exactly one revision for selected action');
+      same(commits,1,'exactly one source notification for selected action');
+      unsubscribe();view.dispose();
+    }
+  }
+  {
+    // Removing exclusively virtual space never materializes document rows.
+    const doc=new Doc('ab'),view=new TextEditSelections(doc);
+    const points=[S(C(0,8),C(0,11)),S(C(3,1),C(3,3))];
+    view.setSelections(points);
+    const before=doc.revision;
+    const result=view.replace([undefined]);
+    same(doc.toString(),'ab','short nullish delete preserves virtual source');
+    same(doc.revision,before,'virtual-only delete does not commit');
+    same(result.after,points,'virtual-only deletion retains positions');
     view.dispose();
   }
   {
