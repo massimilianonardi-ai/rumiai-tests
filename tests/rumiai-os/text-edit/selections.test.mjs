@@ -65,22 +65,22 @@ for(const Doc of [FlatDocument,PieceDocument]){
     // Nullish, absent, numeric and boolean values are normalized before one
     // atomic selected edit. Missing array entries mean deletion, not no-op.
     const examples=[
-      {value:null,want:'b\\nd\\nf'},
-      {value:undefined,want:'b\\nd\\nf'},
-      {value:[],want:'b\\nd\\nf'},
-      {value:['X'],want:'Xb\\nd\\nf'},
-      {value:[true,null,false],want:'trueb\\nd\\falsef'},
-      {value:[42,undefined,3.14],want:'42b\\nd\\3.14f'},
-      {value:[,'Y'],want:'b\\nYd\\nf'},
-      {value:0,want:'0b\\n0d\\n0f'},
-      {value:-0,want:'0b\\n0d\\n0f'},
-      {value:NaN,want:'NaNb\\nNaNd\\nNaNf'},
-      {value:Infinity,want:'Infinityb\\nInfinityd\\nInfinityf'},
-      {value:-Infinity,want:'-Infinityb\\n-Infinityd\\n-Infinityf'},
-      {value:false,want:'falseb\\nfalsed\\nfalsef'}
+      {value:null,want:'b\nd\nf'},
+      {value:undefined,want:'b\nd\nf'},
+      {value:[],want:'b\nd\nf'},
+      {value:['X'],want:'Xb\nd\nf'},
+      {value:[true,null,false],want:'trueb\nd\\falsef'},
+      {value:[42,undefined,3.14],want:'42b\nd\\3.14f'},
+      {value:[,'Y'],want:'b\nYd\nf'},
+      {value:0,want:'0b\n0d\n0f'},
+      {value:-0,want:'0b\n0d\n0f'},
+      {value:NaN,want:'NaNb\nNaNd\nNaNf'},
+      {value:Infinity,want:'Infinityb\nInfinityd\nInfinityf'},
+      {value:-Infinity,want:'-Infinityb\n-Infinityd\n-Infinityf'},
+      {value:false,want:'falseb\nfalsed\nfalsef'}
     ];
     for(const {value,want} of examples){
-      const doc=new Doc('ab\\ncd\\nef'),view=new TextEditSelections(doc);
+      const doc=new Doc('ab\ncd\nef'),view=new TextEditSelections(doc);
       view.setSelections([
         S(C(0,0),C(0,1)),S(C(1,0),C(1,1),false),
         S(C(2,0),C(2,1))
