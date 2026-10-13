@@ -192,6 +192,8 @@ const randomElapsed=performance.now()-started;
   assert.equal(d.slice(d.length-2,d.length),'!!');
   assert.equal(d.revision,2000);
   assert.ok(d.stats().maxDepth<110,'treap depth must remain balanced');
+  assert.ok(Number.isSafeInteger(d.stats().sources)&&d.stats().sources>0,
+    'piece diagnostic reports actual retained source count');
   console.log(JSON.stringify({hugeUTF16:huge.length,appendEdits:2000,
     elapsedMs:Math.round(elapsed),stats:d.stats()}));
 }
