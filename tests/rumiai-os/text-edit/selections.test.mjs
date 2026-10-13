@@ -69,7 +69,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
       {value:undefined,want:'b\nd\nf'},
       {value:[],want:'b\nd\nf'},
       {value:['X'],want:'Xb\nd\nf'},
-      {value:[true,null,false],want:'trueb\nd\\falsef'},
+      {value:[true,null,false],want:'trueb\nd\nfalsef'},
       {value:[42,undefined,3.14],want:'42b\nd\\3.14f'},
       {value:[,'Y'],want:'b\nYd\nf'},
       {value:0,want:'0b\n0d\n0f'},
