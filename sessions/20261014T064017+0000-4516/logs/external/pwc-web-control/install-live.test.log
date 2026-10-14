@@ -1,0 +1,130 @@
+[2026-10-14|06:43:39] [fatal] [execution.execution-failed] Execution failed. [operation="srv"] [reason="exited-during-start"] [service="web-control"] [log="/tmp/rumiai-validate-env-1/target/state/user/default/sys/srv/log/web-control.log"]
+The setuid sandbox is not running as root. Common causes:
+  * An unprivileged process using ptrace on it, like a debugger.
+  * A parent process set prctl(PR_SET_NO_NEW_PRIVS, ...)
+Failed to move to new namespace: PID namespaces supported, Network namespace supported, but failed: errno = Operation not permitted
+[32526:1014/064112.744763:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:213] Zygote process exited prematurely with exit code 1
+node:internal/modules/run_main:111
+    triggerUncaughtException(
+    ^
+
+browserType.launchPersistentContext: Target page, context or browser has been closed
+Browser logs:
+
+<launching> /tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/facility-cmd/chromium/chromium --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/default/pkg/pwc-web-control/home/profiles/default --remote-debugging-pipe about:blank
+<launched> pid=76935
+[pid=76935][err] The setuid sandbox is not running as root. Common causes:
+[pid=76935][err]   * An unprivileged process using ptrace on it, like a debugger.
+[pid=76935][err]   * A parent process set prctl(PR_SET_NO_NEW_PRIVS, ...)
+[pid=76935][err] Failed to move to new namespace: PID namespaces supported, Network namespace supported, but failed: errno = Operation not permitted
+[pid=76935][err] [76935:76935:1014/064338.639438:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:228] Zygote process exited prematurely with exit code 1
+[pid=76935][err] [1014/064338.643646:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)
+[pid=76935][err] [1014/064338.643697:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)
+[pid=76935][err] Received signal 6
+[pid=76935][err] #0 0xb44d0ad41c48 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x8451c47)
+[pid=76935][err] #1 0xf4bc425bfa1c ([vdso]+0xa1b)
+[pid=76935][err] #2 0xf4bc412ce0e4 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x8e0e3)
+[pid=76935][err] #3 0xf4bc412785f8 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x385f7)
+[pid=76935][err] #4 0xf4bc4126271c (/usr/lib/aarch64-linux-gnu/libc.so.6+0x2271b)
+[pid=76935][err] #5 0xb44d0ad35ec8 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x8445ec7)
+[pid=76935][err] #6 0xb44d0ace5400 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x83f53ff)
+[pid=76935][err] #7 0xb44d0ace5318 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x83f5317)
+[pid=76935][err] #8 0xb44d0b023920 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x873391f)
+[pid=76935][err] #9 0xb44d0ca1c3f0 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa12c3ef)
+[pid=76935][err] #10 0xb44d0c978ca8 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088ca7)
+[pid=76935][err] #11 0xb44d0c978ae4 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088ae3)
+[pid=76935][err] #12 0xb44d0c978a8c (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088a8b)
+[pid=76935][err] #13 0xb44d09fe0634 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76f0633)
+[pid=76935][err] #14 0xb44d09fe000c (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76f000b)
+[pid=76935][err] #15 0xb44d09fdd6c4 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76ed6c3)
+[pid=76935][err] #16 0xb44d0d22cc94 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa93cc93)
+[pid=76935][err] #17 0xf4bc41262f18 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x22f17)
+[pid=76935][err] #18 0xf4bc41263058 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x23057)
+[pid=76935][err] #19 0xb44d057e0030 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x2ef002f)
+[pid=76935][err] [end of stack trace]
+Call log:
+  - <launching> /tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/facility-cmd/chromium/chromium --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/default/pkg/pwc-web-control/home/profiles/default --remote-debugging-pipe about:blank
+  - <launched> pid=76935
+  - [pid=76935][err] The setuid sandbox is not running as root. Common causes:
+  - [pid=76935][err]   * An unprivileged process using ptrace on it, like a debugger.
+  - [pid=76935][err]   * A parent process set prctl(PR_SET_NO_NEW_PRIVS, ...)
+  - [pid=76935][err] Failed to move to new namespace: PID namespaces supported, Network namespace supported, but failed: errno = Operation not permitted
+  - [pid=76935][err] [76935:76935:1014/064338.639438:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:228] Zygote process exited prematurely with exit code 1
+  - [pid=76935][err] [1014/064338.643646:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)
+  - [pid=76935][err] [1014/064338.643697:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)
+  - [pid=76935][err] Received signal 6
+  - [pid=76935][err] #0 0xb44d0ad41c48 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x8451c47)
+  - [pid=76935][err] #1 0xf4bc425bfa1c ([vdso]+0xa1b)
+  - [pid=76935][err] #2 0xf4bc412ce0e4 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x8e0e3)
+  - [pid=76935][err] #3 0xf4bc412785f8 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x385f7)
+  - [pid=76935][err] #4 0xf4bc4126271c (/usr/lib/aarch64-linux-gnu/libc.so.6+0x2271b)
+  - [pid=76935][err] #5 0xb44d0ad35ec8 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x8445ec7)
+  - [pid=76935][err] #6 0xb44d0ace5400 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x83f53ff)
+  - [pid=76935][err] #7 0xb44d0ace5318 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x83f5317)
+  - [pid=76935][err] #8 0xb44d0b023920 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x873391f)
+  - [pid=76935][err] #9 0xb44d0ca1c3f0 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa12c3ef)
+  - [pid=76935][err] #10 0xb44d0c978ca8 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088ca7)
+  - [pid=76935][err] #11 0xb44d0c978ae4 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088ae3)
+  - [pid=76935][err] #12 0xb44d0c978a8c (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088a8b)
+  - [pid=76935][err] #13 0xb44d09fe0634 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76f0633)
+  - [pid=76935][err] #14 0xb44d09fe000c (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76f000b)
+  - [pid=76935][err] #15 0xb44d09fdd6c4 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76ed6c3)
+  - [pid=76935][err] #16 0xb44d0d22cc94 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa93cc93)
+  - [pid=76935][err] #17 0xf4bc41262f18 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x22f17)
+  - [pid=76935][err] #18 0xf4bc41263058 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x23057)
+  - [pid=76935][err] #19 0xb44d057e0030 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x2ef002f)
+  - [pid=76935][err] [end of stack trace]
+  - [pid=76935] <gracefully close start>
+  - [pid=76935] <kill>
+  - [pid=76935] <will force kill>
+  - [pid=76935] <process did exit: exitCode=null, signal=SIGABRT>
+  - [pid=76935] starting temporary directories cleanup
+  - [pid=76935] finished temporary directories cleanup
+  - [pid=76935] <gracefully close end>
+
+    at async launchBrowser (/tmp/rumiai-validate-env-1/target/pkg/pwc-web-control@v0.1.5/root/src/controller.mjs:68:27)
+    at async file:///tmp/rumiai-validate-env-1/target/pkg/pwc-web-control@v0.1.5/root/src/controller.mjs:123:1 {
+  log: [
+    '  - <launching> /tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/facility-cmd/chromium/chromium --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-edgeupdater --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,BlockOriginHeaderModificationOnRedirect,Translate,AutoDeElevate,OptimizationHints,msForceBrowserSignIn,msEdgeUpdateLaunchServicesPreferredVersion --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --disable-updater-scheduler --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --headless --hide-scrollbars --mute-audio --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 --user-data-dir=/tmp/rumiai-validate-env-1/target/state/user/default/pkg/pwc-web-control/home/profiles/default --remote-debugging-pipe about:blank',
+    '  - <launched> pid=76935',
+    '  - [pid=76935][err] The setuid sandbox is not running as root. Common causes:',
+    '  - [pid=76935][err]   * An unprivileged process using ptrace on it, like a debugger.',
+    '  - [pid=76935][err]   * A parent process set prctl(PR_SET_NO_NEW_PRIVS, ...)',
+    '  - [pid=76935][err] Failed to move to new namespace: PID namespaces supported, Network namespace supported, but failed: errno = Operation not permitted',
+    '  - [pid=76935][err] [76935:76935:1014/064338.639438:FATAL:content/browser/zygote_host/zygote_host_impl_linux.cc:228] Zygote process exited prematurely with exit code 1',
+    '  - [pid=76935][err] [1014/064338.643646:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: No such file or directory (2)',
+    '  - [pid=76935][err] [1014/064338.643697:ERROR:third_party/crashpad/crashpad/util/file/file_io_posix.cc:145] open /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: No such file or directory (2)',
+    '  - [pid=76935][err] Received signal 6',
+    '  - [pid=76935][err] #0 0xb44d0ad41c48 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x8451c47)',
+    '  - [pid=76935][err] #1 0xf4bc425bfa1c ([vdso]+0xa1b)',
+    '  - [pid=76935][err] #2 0xf4bc412ce0e4 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x8e0e3)',
+    '  - [pid=76935][err] #3 0xf4bc412785f8 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x385f7)',
+    '  - [pid=76935][err] #4 0xf4bc4126271c (/usr/lib/aarch64-linux-gnu/libc.so.6+0x2271b)',
+    '  - [pid=76935][err] #5 0xb44d0ad35ec8 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x8445ec7)',
+    '  - [pid=76935][err] #6 0xb44d0ace5400 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x83f53ff)',
+    '  - [pid=76935][err] #7 0xb44d0ace5318 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x83f5317)',
+    '  - [pid=76935][err] #8 0xb44d0b023920 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x873391f)',
+    '  - [pid=76935][err] #9 0xb44d0ca1c3f0 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa12c3ef)',
+    '  - [pid=76935][err] #10 0xb44d0c978ca8 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088ca7)',
+    '  - [pid=76935][err] #11 0xb44d0c978ae4 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088ae3)',
+    '  - [pid=76935][err] #12 0xb44d0c978a8c (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa088a8b)',
+    '  - [pid=76935][err] #13 0xb44d09fe0634 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76f0633)',
+    '  - [pid=76935][err] #14 0xb44d09fe000c (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76f000b)',
+    '  - [pid=76935][err] #15 0xb44d09fdd6c4 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x76ed6c3)',
+    '  - [pid=76935][err] #16 0xb44d0d22cc94 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0xa93cc93)',
+    '  - [pid=76935][err] #17 0xf4bc41262f18 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x22f17)',
+    '  - [pid=76935][err] #18 0xf4bc41263058 (/usr/lib/aarch64-linux-gnu/libc.so.6+0x23057)',
+    '  - [pid=76935][err] #19 0xb44d057e0030 (/tmp/rumiai-validate-env-1/target/pkg/chromium@155.0.8059.79!linux-arm64/root/chrome+0x2ef002f)',
+    '  - [pid=76935][err] [end of stack trace]',
+    '  - [pid=76935] <gracefully close start>',
+    '  - [pid=76935] <kill>',
+    '  - [pid=76935] <will force kill>',
+    '  - [pid=76935] <process did exit: exitCode=null, signal=SIGABRT>',
+    '  - [pid=76935] starting temporary directories cleanup',
+    '  - [pid=76935] finished temporary directories cleanup',
+    '  - [pid=76935] <gracefully close end>'
+  ]
+}
+
+Node.js v26.11.1
+external/pwc-web-control/install-live.test: srv start web-control failed
