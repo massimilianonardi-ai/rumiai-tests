@@ -46,4 +46,8 @@ command -v node >/dev/null 2>&1 || skip "Node.js unavailable for the core compil
 [ -f "$root/lib/sys/js/jsc.lib.js" ] || fail "jsc compiler engine missing"
 
 node "$test_dir/.support/compile.mjs" "$root" || fail "compiled core does not meet browser/CommonJS smoke behavior"
+if [ -n "${CHROMIUM:-}" ]
+then
+  node "$test_dir/.support/browser-live.mjs" "$root" || fail "compiled core does not load in real Chrome"
+fi
 exit 0
