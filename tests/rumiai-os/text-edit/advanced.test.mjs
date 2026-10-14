@@ -27,7 +27,7 @@ for(const Doc of [FlatDocument,PieceDocument]){
       [S(C(0,0),C(3,0))],prefix+' full line range includes CR, CRLF, LF');
     advanced.lineSelection(C(2,1),C(0,2));
     equal(editor.selections.getSelections(),
-      [S(C(0,0),C(3,0),false)],prefix+' reverse orientation');
+      [S(C(0,0),C(3,0))],prefix+' line selection always forward');
     advanced.rectangularSelection(C(0,0),C(2,1));
     equal(editor.selections.getSelections(),
       [S(C(0,0),C(0,2)),S(C(1,0),C(1,2)),S(C(2,0),C(2,2))],
