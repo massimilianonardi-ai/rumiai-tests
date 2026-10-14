@@ -9,7 +9,7 @@ import vm from 'node:vm';
 import {stat} from 'node:fs/promises';
 
 const root=resolve(process.argv[2]),engine=join(root,'lib/sys/js/jsc.lib.js');
-const work=await mkdtemp(join(tmpdir(),'jsc-legacy-namespaces-'));
+const work=await mkdtemp(join(tmpdir(),'jsc-namespaces-'));
 const src=async(name,value)=>{
  const path=join(work,name);
  await mkdir(resolve(path,'..'),{recursive:true});
@@ -56,9 +56,9 @@ try {
  // The public launcher, not this direct compiler library entrypoint,
  // owns minification and gzip; a direct output writes the raw assembly only.
  assert.ok((await stat(output)).size>0);
- const oldSandbox=vm.createContext({});
- vm.runInContext(await readFile(output,'utf8'),oldSandbox);
- assert.equal(oldSandbox.m.srv.Facade(),42);
+ const reopenedSandbox=vm.createContext({});
+ vm.runInContext(await readFile(output,'utf8'),reopenedSandbox);
+ assert.equal(reopenedSandbox.m.srv.Facade(),42);
  // Additional bundles acquire prior namespace references via declared aliases.
  await src('m/srv/Extension.js','function Extension(){ return data.MyClass()+Base(); }\n');
  const extension={modules:[{name:'m',modules:[{name:'srv',modules:[
@@ -68,9 +68,9 @@ try {
  await writeFile(extMan,JSON.stringify(extension));
  const extensionBuild=run([extMan]);
  assert.equal(extensionBuild.status,0,extensionBuild.stderr);
- vm.runInContext(extensionBuild.stdout,oldSandbox);
- assert.equal(oldSandbox.m.srv.Extension(),52);
- assert.equal(oldSandbox.m.srv.data.MyClass(),42,'existing scope preserved by augmentation');
+ vm.runInContext(extensionBuild.stdout,reopenedSandbox);
+ assert.equal(reopenedSandbox.m.srv.Extension(),52);
+ assert.equal(reopenedSandbox.m.srv.data.MyClass(),42,'existing scope preserved by augmentation');
  // A subsequently declared export replaces the namespace property.
  await src('m/srv/data/Revised.js','function MyClass(){ return 77; }\n');
  const revised={modules:[{name:'m',modules:[{name:'srv',modules:[
@@ -80,8 +80,8 @@ try {
  await writeFile(patchManifest,JSON.stringify(revised));
  const patch=run([patchManifest]);
  assert.equal(patch.status,0,patch.stderr);
- vm.runInContext(patch.stdout,oldSandbox);
- assert.equal(oldSandbox.m.srv.data.MyClass(),77,'reopened namespace must use new declaration');
+ vm.runInContext(patch.stdout,reopenedSandbox);
+ assert.equal(reopenedSandbox.m.srv.data.MyClass(),77,'reopened namespace must use new declaration');
  // CommonJS defaults to independent modules even with an existing global m.
  const isolated=vm.createContext({module:{exports:{}},m:{unrelated:77}});
  vm.runInContext(await readFile(output,'utf8'),isolated);
@@ -108,7 +108,7 @@ try {
  assert.equal(shared.m,provider);
  assert.equal(shared.m.srv.Extension(),52);
 
- // Legacy stylesheet manifest concatenates order, without JS runtime wrapping.
+ // CSS source assembly preserves order without any JS runtime wrapper.
  await src('css/first.css','/* FIRST */\n.a { color: red; }\n');
  await src('css/second.css','/* SECOND */\n.b { color: blue; }\n');
  const cssMan=join(work,'modules-css.json');
@@ -140,5 +140,5 @@ try {
  result=run([manifest,output]);
  assert.notEqual(result.status,0);
  assert.deepEqual(await readFile(output),before);
- console.log('PASS ORIGINAL JSC: ordered legacy JSON, stdout/file, m.srv.data aliases at all levels, augmentation, CSS source order, invalid exports/paths preserve output, strict browser and Node library publication');
+ console.log('PASS JSC: strict namespaces, imports/exports, Node sharing, CSS order and invalid input');
 }finally{await rm(work,{recursive:true,force:true});}
