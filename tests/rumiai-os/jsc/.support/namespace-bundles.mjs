@@ -87,7 +87,7 @@ try {
  vm.runInContext(await readFile(output,'utf8'),isolated);
  assert.notEqual(isolated.module.exports,isolated.m);
  assert.equal(isolated.m.unrelated,77);
- assert.equal(isolated.m.srv.data,undefined);
+ assert.equal(isolated.m.srv,undefined);
  assert.equal(isolated.module.exports.srv.data.MyClass(),42);
 
  // Opt-in enables independently assembled bundles to reuse one Node namespace.
