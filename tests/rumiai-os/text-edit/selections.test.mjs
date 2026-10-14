@@ -212,6 +212,65 @@ for(const Doc of [FlatDocument,PieceDocument]){
     same(result.after,[S(C(0,3),C(0,3))],'empty source edit caret');
     view.dispose();
   }
+  {
+    // Physical insertion uses each selection's retained orientation to
+    // position its caret. This is independent of the API that created it.
+    const doc=new Doc('abcd\nefgh\nijkl'),view=new TextEditSelections(doc);
+    view.setSelections([
+      S(C(2,1),C(2,3),false),
+      S(C(0,1),C(0,3),true),
+      S(C(1,1),C(1,3),false)
+    ]);
+    const result=view.replace(['XY','Z','123']);
+    same(doc.toString(),'aZd\ne123h\niXYl',
+      'one atomic edit distributes payloads in collection order');
+    same(result.after,[
+      S(C(2,1),C(2,1),false),
+      S(C(0,2),C(0,2),true),
+      S(C(1,1),C(1,1),false)
+    ],'every result caret retains direction and original array ordering');
+    same(view.getSelections(),result.after,'physical selection snapshot is the edit result');
+    const again=view.replace(['A','B','C']);
+    same(doc.toString(),'aZBd\neC123h\niAXYl',
+      'new input inserts to the left of reverse carets and after forward carets');
+    same(again.after,[
+      S(C(2,1),C(2,1),false),
+      S(C(0,3),C(0,3),true),
+      S(C(1,1),C(1,1),false)
+    ],'consecutive insertion preserves selected caret orientation');
+    view.dispose();
+  }
+  {
+    // Virtual row/column padding stays before the requested caret, even
+    // when that caret is reverse oriented.
+    const doc=new Doc('a\nb'),view=new TextEditSelections(doc);
+    view.setSelections([
+      S(C(1,4),C(1,4),false),
+      S(C(0,1),C(0,1),true)
+    ]);
+    const result=view.replace(['X','Y']);
+    same(doc.toString(),'aY\nb   X','virtual reverse insertion materializes only required padding');
+    same(result.after,[
+      S(C(1,4),C(1,4),false),
+      S(C(0,2),C(0,2),true)
+    ],'reverse caret remains at virtual insertion start, not at line end');
+    view.replace(['Z','Q']);
+    same(doc.toString(),'aYQ\nb   ZX','repeated reverse insertion targets same preceding column');
+    view.dispose();
+  }
+  {
+    // Unicode UTF-16 text and CR/LF boundaries: reverse caret attaches to
+    // replacement start, forward to inserted-text end.
+    const doc=new Doc('abc\r\nz'),view=new TextEditSelections(doc);
+    view.setSelections([S(C(0,1),C(0,2),false)]);
+    const result=view.replace('😀\r\nX');
+    same(doc.toString(),'a😀\r\nXc\r\nz','multiline payload is preserved verbatim');
+    same(result.after,[S(C(0,1),C(0,1),false)],
+      'reverse caret is before multiline inserted text');
+    view.replace('B');
+    same(doc.toString(),'aB😀\r\nXc\r\nz','second reverse insert precedes earlier multiline input');
+    view.dispose();
+  }
 }
 // Multi-caret hot path must remain bounded by edits, not entire source copies.
 {
