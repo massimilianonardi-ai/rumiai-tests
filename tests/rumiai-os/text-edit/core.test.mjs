@@ -8,7 +8,7 @@ const library=resolve(process.env.RUMIAI_OS_ROOT||'.','lib/sys/js/text-edit.lib.
 const require=createRequire(import.meta.url);
 const {VERSION,TextEdit,TextEditRepresentation,TextEditSelections,
   TextEditAdvancedSelections,FlatDocument,PieceDocument}=require(library);
-assert.equal(VERSION,'0.8.1');
+assert.equal(VERSION,'0.8.2');
 assert.equal(typeof TextEdit,'function');
 assert.equal(typeof TextEditRepresentation,'function');
 assert.equal(typeof TextEditAdvancedSelections,'function');
@@ -16,7 +16,7 @@ assert.equal(Object.prototype.hasOwnProperty.call(globalThis,'TextEdit'),false,
   'CommonJS load must not publish TextEdit on the Node global');
 const browserContext={};
 runInNewContext(readFileSync(library,'utf8'),browserContext);
-assert.equal(browserContext.TextEdit.VERSION,'0.8.1',
+assert.equal(browserContext.TextEdit.VERSION,'0.8.2',
   'classic browser-script global export remains supported');
 
 
