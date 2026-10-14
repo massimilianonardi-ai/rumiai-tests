@@ -49,5 +49,5 @@ case "$diagnostic" in
 esac
 
 command -v node >/dev/null 2>&1 || skip 'Node.js unavailable for actual JavaScript compiler/loader execution'
-node "$test_dir/.support/legacy-namespace.mjs" "$root" || fail 'original jsc ordered namespace/CSS behavior mismatched'
+node "$test_dir/.support/namespace-bundles.mjs" "$root" || fail 'jsc strict namespace/CSS behavior mismatched'
 exit 0
