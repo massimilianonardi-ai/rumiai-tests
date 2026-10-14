@@ -19,6 +19,8 @@ try
 {
   const ok = typeof m.Class === 'function' &&
     m.util.environment() === 'browser' &&
+    Number.isFinite(m.util.timestamp()) &&
+    m.util.deviceMobility() === 'fixed' &&
     m.json.path('.group[0]["value"]', {group: [{value: 42}]}) === 42 &&
     m.global === m.g &&
     m.root === '' &&

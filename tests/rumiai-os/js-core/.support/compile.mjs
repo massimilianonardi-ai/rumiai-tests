@@ -18,6 +18,7 @@ assert.equal(built.status, 0, 'real core compilation failed: ' + built.stderr);
 assert.ok(built.stdout.length > 0, 'compiled core source is empty');
 new vm.Script(built.stdout);
 
+const clock = {tick: 42, now() { return this.tick; }};
 const browser = vm.createContext
 (
   {
@@ -25,11 +26,18 @@ const browser = vm.createContext
     navigator: {userAgent: 'Mozilla/5.0'},
     document: {currentScript: {src: 'https://example.test/assets/core.js'}},
     location: {origin: 'https://example.test', pathname: '/app'},
-    console
+    console,
+    performance: clock
   }
 );
 vm.runInContext(built.stdout, browser, {timeout: 15000});
 assert.equal(browser.m.util.environment(), 'browser');
+assert.equal(browser.m.util.timestamp(), 42, 'timestamp must use the correctly bound host clock');
+assert.equal(browser.m.util.deviceMobility(), 'fixed');
+assert.equal(browser.m.util.isMobile(), false);
+browser.navigator.userAgent = 'Android';
+assert.equal(browser.m.util.deviceMobility(), 'mobile');
+assert.equal(browser.m.util.isMobile(), true);
 assert.equal(browser.m.root, '/assets');
 assert.equal(browser.m.path, '/assets/core.js');
 assert.equal(browser.m.global, browser.m.g);
@@ -54,6 +62,9 @@ const commonjs = vm.createContext
 vm.runInContext(built.stdout, commonjs, {timeout: 15000});
 assert.equal(commonjs.m, undefined, 'default Node compilation must not publish global m');
 assert.equal(commonjs.module.exports.util.environment(), 'nodejs');
+assert.equal(commonjs.module.exports.util.deviceMobility(), 'fixed');
+assert.equal(commonjs.module.exports.util.isMobile(), false);
+assert.ok(Number.isFinite(commonjs.module.exports.util.timestamp()));
 assert.equal(commonjs.module.exports.json.path('["value"]', {value: 42}), 42);
 assert.equal(typeof commonjs.module.exports.Class, 'function');
 
