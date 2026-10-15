@@ -133,6 +133,16 @@ web_identity=$(run_pkg default electron-web-control) ||
 [ -L "$root/bin/ext/electron-web-control-service" ] ||
   fail 'Electron v0.1.3 service projection missing'
 
+# Install the released provider with the common persistent debugger contract.
+run_pkg install electron-web-control@v0.1.6 >"$tmp/debug-install.out" 2>"$tmp/debug-install.err" || {
+  command -p -- cat "$tmp/debug-install.err" >&2
+  fail 'cannot install Electron v0.1.6'
+}
+web_identity=$(run_pkg default electron-web-control) ||
+  fail 'missing Electron v0.1.6 package default'
+[ "$web_identity" = 'electron-web-control@v0.1.6' ] ||
+  fail "expected v0.1.6 after upgrade, got $web_identity"
+
 run_pkg default electron >/dev/null || fail 'missing electron dependency default'
 run_pkg default nodejs >/dev/null || fail 'missing nodejs dependency default'
 
@@ -170,6 +180,20 @@ url='data:text/html,<body>ready</body>'
 "$root/m" "$public" page navigate "$page_id" "$url" >/dev/null 2>"$tmp/nav.err" || fail 'page navigate failed'
 "$root/m" "$public" page inspect "$page_id" text >"$tmp/inspect.json" 2>"$tmp/inspect.err" || fail 'page inspect failed'
 grep -F ready "$tmp/inspect.json" >/dev/null || fail 'rendered page text missing'
+
+"$root/m" "$public" debug session open "$page_id" >"$tmp/debug-open.json" 2>"$tmp/debug-open.err" ||
+  fail 'compatibility-3 debugger session open failed'
+debug_session=$(command -p -- awk -F'"' '/"session": "debug-/{print $4; exit}' "$tmp/debug-open.json")
+[ -n "$debug_session" ] || fail 'missing debugger session handle'
+"$root/m" "$public" debug session send "$debug_session" Runtime.enable >"$tmp/debug-enable.json" 2>"$tmp/debug-enable.err" ||
+  fail 'debugger enable failed'
+"$root/m" "$public" debug session send "$debug_session" Runtime.evaluate '{"expression":"2+3","returnByValue":true}' >"$tmp/debug-eval.json" 2>"$tmp/debug-eval.err" ||
+  fail 'debugger evaluation failed'
+grep -F '"value": 5' "$tmp/debug-eval.json" >/dev/null || fail 'incorrect debugger evaluation result'
+"$root/m" "$public" debug session events "$debug_session" 0 20 0 >"$tmp/debug-events.json" 2>"$tmp/debug-events.err" ||
+  fail 'debugger events command failed'
+"$root/m" "$public" debug session close "$debug_session" >"$tmp/debug-close.json" 2>"$tmp/debug-close.err" ||
+  fail 'debugger close failed'
 
 "$root/m" "$public" page capture "$page_id" "$tmp/capture" html text screenshot >"$tmp/capture.json" 2>"$tmp/capture.err" || {
   command -p -- cat "$tmp/capture.err" >&2
