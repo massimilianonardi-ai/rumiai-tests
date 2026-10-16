@@ -66,7 +66,9 @@ for(const value of [null, undefined, 0, [], {}])
   assert.throws(() => canonicalize(value), {name: 'TypeError'});
 }
 
-const data = {value: 42, target: "@ref:$['value']"};
-assert.equal(m.json.resolve(data), data);
-assert.equal(data.target, 42, 'resolve must use the compatible canonicalizer');
+const data = {value: 42, target: ['@ref', '$["value"]']};
+const resolved = m.json.resolve(data);
+assert.notEqual(resolved, data);
+assert.equal(resolved.target, 42, 'resolve must read static JSON property paths');
+assert.deepEqual(data.target, ['@ref', '$["value"]']);
 console.log('PASS real jsc m.object.canonicalize and legacy m.json alias');
