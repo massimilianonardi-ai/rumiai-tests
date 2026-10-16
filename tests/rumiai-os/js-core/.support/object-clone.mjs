@@ -44,6 +44,7 @@ function exercise(clone, legacy, assert, foreign)
   assert.throws(() => clone({}, -1), TypeError);
   assert.throws(() => clone({}, NaN), TypeError);
   assert.throws(() => clone({}, true, 64), TypeError);
+  assert.throws(() => clone({}, true, 2 ** 32), TypeError);
   assert.equal(clone(null, true), null);
   const functionValue = () => 42;
   assert.equal(clone(functionValue, true), functionValue);
@@ -75,6 +76,10 @@ function exercise(clone, legacy, assert, foreign)
   assert.equal(arrayClone.hidden, 42);
   assert.notEqual(arrayClone[2], array[2]);
   assert.equal(Array.isArray(clone(array, 0, clone.value)), true);
+  const restricted = [1];
+  Object.defineProperty(restricted, 'length', {writable: false});
+  const restrictedClone = clone(restricted, true, clone.enum | clone.value);
+  assert.equal(Object.getOwnPropertyDescriptor(restrictedClone, 'length').writable, false);
 
   const symbol = Symbol('own-key');
   let getterCalls = 0;
