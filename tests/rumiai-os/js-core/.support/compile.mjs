@@ -45,6 +45,7 @@ assert.equal(typeof browser.m.Class, 'function');
 assert.equal(typeof browser.m.log.Log, 'function');
 assert.equal(typeof browser.m.util.clone, 'function');
 assert.equal(typeof browser.m.object.clone, 'function');
+assert.equal(typeof browser.m.object.merge, 'function');
 assert.equal(browser.m.json.path('.group[0]["value"]', {group: [{value: 42}]}), 42);
 
 const classValue = vm.runInContext
@@ -69,5 +70,6 @@ assert.ok(Number.isFinite(commonjs.module.exports.util.timestamp()));
 assert.equal(commonjs.module.exports.json.path('["value"]', {value: 42}), 42);
 assert.equal(typeof commonjs.module.exports.Class, 'function');
 assert.equal(typeof commonjs.module.exports.object.clone, 'function');
+assert.equal(typeof commonjs.module.exports.object.merge, 'function');
 
 console.log('PASS real jsc core assembly: classic browser and independent CommonJS runtime');
