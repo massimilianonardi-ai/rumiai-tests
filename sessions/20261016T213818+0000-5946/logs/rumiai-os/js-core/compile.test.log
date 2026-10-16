@@ -1,0 +1,42 @@
+PASS real jsc core assembly: classic browser and independent CommonJS runtime
+PASS real jsc m.object.canonicalize and legacy m.json alias
+PASS real jsc m.object.clone graph, descriptors, flags, native objects and legacy API
+PASS real jsc m.object.merge depth, arrays, graph, safety and legacy behavior
+PASS real jsc object read-through, deep shells, cycles and legacy link
+PASS real jsc m.object.traverse identity, inherited props, advanced callbacks and json alias
+node:assert:604
+    throw err;
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /local path missing/. Input:
+
+'ReferenceError: resolve: $: circular directive dependency'
+
+    at exercise (evalmachine.<anonymous>:104:10)
+    at evalmachine.<anonymous>:180:3
+    at Script.runInContext (node:vm:149:12)
+    at Object.runInContext (node:vm:301:6)
+    at file:///Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/js-core/.support/json-resolve.mjs:204:4
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: ReferenceError: resolve: $: circular directive dependency
+      at _value (evalmachine.<anonymous>:2991:15)
+      at _local (evalmachine.<anonymous>:2972:49)
+      at _value (evalmachine.<anonymous>:3007:13)
+      at resolve (evalmachine.<anonymous>:3040:10)
+      at evalmachine.<anonymous>:104:23
+      at getActual (node:assert:611:5)
+      at strict.throws (node:assert:759:24)
+      at exercise (evalmachine.<anonymous>:104:10)
+      at evalmachine.<anonymous>:180:3
+      at Script.runInContext (node:vm:149:12),
+  expected: /local path missing/,
+  operator: 'throws',
+  diff: 'simple'
+}
+
+Node.js v24.21.0
+rumiai-os/js-core/compile.test: compiled m.json.resolve JSON-only behavior regression
