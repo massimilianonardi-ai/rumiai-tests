@@ -163,12 +163,14 @@ function exercise(traverse, legacy, resolve, assert)
   const config =
   {
     rootValue: 7,
-    alias: '@ref:$.rootValue',
-    nested: {local: 12, alias: '@ref:^.local'}
+    alias: ['@ref', '$.rootValue'],
+    nested: {local: 12, alias: ['@ref', '^.local']}
   };
-  assert.equal(resolve(config), config);
-  assert.equal(config.alias, 7);
-  assert.equal(config.nested.alias, 12);
+  const resolved = resolve(config);
+  assert.notEqual(resolved, config);
+  assert.equal(resolved.alias, 7);
+  assert.equal(resolved.nested.alias, 12);
+  assert.deepEqual(config.alias, ['@ref', '$.rootValue']);
 }
 
 vm.runInContext
