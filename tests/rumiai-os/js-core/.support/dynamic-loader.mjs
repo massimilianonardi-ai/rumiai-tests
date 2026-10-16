@@ -84,13 +84,13 @@ const fixtures = new Map
     ['/demo/css-patch.json', ['application/json', cssPatch]],
     ['/demo/missing-source.json', ['application/json', missingSource]],
     ['/demo/bad.json', ['application/json', '{invalid JSON']],
-    ['/demo/A.js', ['text/javascript', 'function A(){return 20;}\\n']],
-    ['/demo/B.js', ['text/javascript', 'function B(){return A()+20;}\\n']],
-    ['/demo/C.js', ['text/javascript', 'function C(){return B()+2;}\\n']],
-    ['/demo/patch.js', ['text/javascript', 'function C(){return m.demo.B()+33;}\\n']],
-    ['/demo/base.css', ['text/css', '#target{color:rgb(0,128,0);}\\n']],
-    ['/demo/extra.css', ['text/css', '#target{font-weight:bold;}\\n']],
-    ['/demo/patch.css', ['text/css', '#target{color:blue;}\\n']]
+    ['/demo/A.js', ['text/javascript', 'function A(){return 20;}\n']],
+    ['/demo/B.js', ['text/javascript', 'function B(){return A()+20;}\n']],
+    ['/demo/C.js', ['text/javascript', 'function C(){return B()+2;}\n']],
+    ['/demo/patch.js', ['text/javascript', 'function C(){return m.demo.B()+33;}\n']],
+    ['/demo/base.css', ['text/css', '#target{color:rgb(0,128,0);}\n']],
+    ['/demo/extra.css', ['text/css', '#target{font-weight:bold;}\n']],
+    ['/demo/patch.css', ['text/css', '#target{color:blue;}\n']]
   ]
 );
 const page =
