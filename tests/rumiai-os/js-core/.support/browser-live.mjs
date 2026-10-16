@@ -22,6 +22,8 @@ try
     Number.isFinite(m.util.timestamp()) &&
     m.util.deviceMobility() === 'fixed' &&
     m.json.path('.group[0]["value"]', {group: [{value: 42}]}) === 42 &&
+    typeof m.object.clone === 'function' &&
+    Array.isArray(m.object.clone([1, 2], true)) &&
     m.global === m.g &&
     m.root === '' &&
     m.path === '/core.js';
