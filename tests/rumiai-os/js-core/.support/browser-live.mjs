@@ -24,6 +24,9 @@ try
     m.json.path('.group[0]["value"]', {group: [{value: 42}]}) === 42 &&
     typeof m.object.clone === 'function' &&
     typeof m.object.merge === 'function' &&
+    typeof m.object.traverse === 'function' &&
+    m.object.traverse === m.json.traverse &&
+    m.object.traverse({x: 1}).paths.length === 2 &&
     m.object.merge({a: 1}, {b: 2}).b === 2 &&
     Array.isArray(m.object.clone([1, 2], true)) &&
     m.global === m.g &&
