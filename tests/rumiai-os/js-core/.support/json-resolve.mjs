@@ -178,6 +178,20 @@ function exercise(m, assert)
   {
     assert.throws(() => resolve(item), /resolve:/, 'non-JSON input must be rejected');
   }
+  let getterCalls = 0;
+  const getterArray = ['@ref', '$.value'];
+  Object.defineProperty(getterArray, '0',
+  {
+    configurable: true,
+    enumerable: true,
+    get()
+    {
+      getterCalls++;
+      return '@ref';
+    }
+  });
+  assert.throws(() => resolve(getterArray), /non-JSON property/);
+  assert.equal(getterCalls, 0, 'invalid array accessors must not execute during validation');
 
   // A sibling dependency can be resolved before its textual order.
   const forward = resolve(JSON.parse('{"a":["@ref","$.b"],"b":["@call","join",["3"]]}'), registry);
