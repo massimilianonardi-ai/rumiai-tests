@@ -1,0 +1,31 @@
+PASS real jsc core assembly: classic browser and independent CommonJS runtime
+PASS real jsc m.object.canonicalize and legacy m.json alias
+PASS real jsc m.object.clone graph, descriptors, flags, native objects and legacy API
+node:assert:152
+  throw new AssertionError(obj);
+  ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'undefined'
+- 'function'
+
+    at verify (evalmachine.<anonymous>:3:10)
+    at evalmachine.<anonymous>:151:3
+    at Script.runInContext (node:vm:149:12)
+    at Object.runInContext (node:vm:301:6)
+    at file:///Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/js-core/.support/object-merge.mjs:173:4
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'undefined',
+  expected: 'function',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.21.0
+rumiai-os/js-core/compile.test: compiled m.object.merge behavior regression
