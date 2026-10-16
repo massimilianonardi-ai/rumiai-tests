@@ -123,7 +123,7 @@ function exercise(m, assert)
   );
   delete globalThis.JsonResolveTestGlobal;
 
-  assert.throws(() => resolve(JSON.parse('["@ref","$.missing"]')), /local path missing/);
+  assert.throws(() => resolve(JSON.parse('{"child":["@ref","$.missing"]}')), /local path missing/);
   assert.throws(() => resolve(JSON.parse('["@ref","missing"]')), /unknown external/);
   assert.throws(() => resolve(JSON.parse('["@ref","$.items[index]"]')), /dynamic property/);
   assert.throws(() => resolve(JSON.parse('["@ref","$.items[0+1]"]')), /dynamic property/);
