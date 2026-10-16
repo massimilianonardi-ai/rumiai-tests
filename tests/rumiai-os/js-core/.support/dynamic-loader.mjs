@@ -59,38 +59,42 @@ const jsTree = files =>
     ]
   }
 );
-const fixtures = new Map
+const jsSources = json
 (
-  [
-    ['/demo/js.json', ['application/json', json(jsTree([
+  jsTree
+  (
+    [
       {file: 'A.js', exports: 'A'},
       {file: 'B.js', exports: 'B'},
       {file: 'C.js', exports: 'C'}
-    ]))]],
-    ['/demo/js-patch.json', ['application/json', json(jsTree([
-      {file: 'patch.js', exports: 'C'}
-    ]))]],
-    ['/demo/css.json', ['application/json', json({modules: [
-      {file: 'base.css'},
-      {file: 'extra.css'}
-    ]})]],
-    ['/demo/css-patch.json', ['application/json', json({modules: [
-      {file: 'patch.css'}
-    ]})]],
-    ['/demo/missing-source.json', ['application/json', json(jsTree([
-      {file: 'absent.js', exports: 'Absent'}
-    ]))]],
+    ]
+  )
+);
+const jsPatch = json(jsTree([{file: 'patch.js', exports: 'C'}]));
+const cssSources = json({modules: [{file: 'base.css'}, {file: 'extra.css'}]});
+const cssPatch = json({modules: [{file: 'patch.css'}]});
+const missingSource = json(jsTree([{file: 'absent.js', exports: 'Absent'}]));
+
+const fixtures = new Map
+(
+  [
+    ['/demo/js.json', ['application/json', jsSources]],
+    ['/demo/js-patch.json', ['application/json', jsPatch]],
+    ['/demo/css.json', ['application/json', cssSources]],
+    ['/demo/css-patch.json', ['application/json', cssPatch]],
+    ['/demo/missing-source.json', ['application/json', missingSource]],
     ['/demo/bad.json', ['application/json', '{invalid JSON']],
-    ['/demo/A.js', ['text/javascript', 'function A(){return 20;}\n']],
-    ['/demo/B.js', ['text/javascript', 'function B(){return A()+20;}\n']],
-    ['/demo/C.js', ['text/javascript', 'function C(){return B()+2;}\n']],
-    ['/demo/patch.js', ['text/javascript', 'function C(){return m.demo.B()+33;}\n']],
-    ['/demo/base.css', ['text/css', '#target{color:rgb(0,128,0);}\n']],
-    ['/demo/extra.css', ['text/css', '#target{font-weight:bold;}\n']],
-    ['/demo/patch.css', ['text/css', '#target{color:blue;}\n']]
+    ['/demo/A.js', ['text/javascript', 'function A(){return 20;}\\n']],
+    ['/demo/B.js', ['text/javascript', 'function B(){return A()+20;}\\n']],
+    ['/demo/C.js', ['text/javascript', 'function C(){return B()+2;}\\n']],
+    ['/demo/patch.js', ['text/javascript', 'function C(){return m.demo.B()+33;}\\n']],
+    ['/demo/base.css', ['text/css', '#target{color:rgb(0,128,0);}\\n']],
+    ['/demo/extra.css', ['text/css', '#target{font-weight:bold;}\\n']],
+    ['/demo/patch.css', ['text/css', '#target{color:blue;}\\n']]
   ]
 );
-const page = [
+const page =
+[
   '<!doctype html><html><head><meta charset="utf-8">',
   '<script src="/loader.js"></script></head>',
   '<body><div id="target">CSS</div><div id="result">PENDING</div>',
@@ -118,8 +122,7 @@ const page = [
   '    const patch = await loader.load("/demo/js-patch.json", {replace: js, nonce: "test-nonce"});',
   '    assert(patch.isConnected && !js.isConnected && m.demo.C() === 73, "JS replacement");',
   '    let failures = 0;',
-  '    for(const source of ["/demo/bad.json", "/demo/missing-source.json",',
-  '                         "/demo/missing.json", "https://example.test/x"])',
+  '    for(const source of ["/demo/bad.json", "/demo/missing-source.json", "/demo/missing.json", "https://example.test/x"])',
   '    {',
   '      try { await loader.compose(source); }',
   '      catch(error) { if(error instanceof Error) failures++; }',
@@ -256,16 +259,20 @@ try
   const first = sent.indexOf('/demo/C.js');
   const second = sent.indexOf('/demo/B.js');
   const third = sent.indexOf('/demo/A.js');
-  assert.ok(first >= 0 && second > first && third > second,
-    'fixture HTTP completions did not occur out of manifest order: ' + sent.join(', '));
-  for(const pathname of
+  assert.ok
+  (
+    first >= 0 && second > first && third > second,
+    'fixture HTTP completions did not occur out of manifest order: ' + sent.join(', ')
+  );
+  const requiredPaths =
   [
     '/loader.js', '/demo/js.json', '/demo/js-patch.json',
     '/demo/css.json', '/demo/css-patch.json',
     '/demo/A.js', '/demo/B.js', '/demo/C.js',
     '/demo/base.css', '/demo/extra.css', '/demo/patch.css',
     '/demo/missing-source.json', '/demo/absent.js'
-  ])
+  ];
+  for(const pathname of requiredPaths)
   {
     assert.ok(requested.has(pathname), 'HTTP source not requested: ' + pathname);
   }
