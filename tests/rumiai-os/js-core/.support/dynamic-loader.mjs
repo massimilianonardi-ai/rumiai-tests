@@ -115,7 +115,7 @@ const page = [
   '    const replacement = await loader.load("/demo/css-patch.json", {replace: css});',
   '    assert(replacement.isConnected && !css.isConnected, "CSS replacement");',
   '    assert(getComputedStyle(document.getElementById("target")).color === "rgb(0, 0, 255)", "updated CSS");',
-  '    const patch = await loader.load("/demo/js-patch.json", {replace: js});',
+  '    const patch = await loader.load("/demo/js-patch.json", {replace: js, nonce: "test-nonce"});',
   '    assert(patch.isConnected && !js.isConnected && m.demo.C() === 73, "JS replacement");',
   '    let failures = 0;',
   '    for(const source of ["/demo/bad.json", "/demo/missing-source.json",',
