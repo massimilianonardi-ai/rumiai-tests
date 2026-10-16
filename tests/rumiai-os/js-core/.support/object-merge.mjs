@@ -166,7 +166,7 @@ function verify(merge, legacy, assert)
     get() {tags++; return 'surprise';}, enumerable: true
   });
   merge({}, tagSource, true, true);
-  assert.equal(tags, 0);
+  assert.equal(tags, 1, 'an enumerable source accessor is read once in merge mode');
 
   assert.equal(legacy({a: 0}, {b: 1}).b, 1);
 }
