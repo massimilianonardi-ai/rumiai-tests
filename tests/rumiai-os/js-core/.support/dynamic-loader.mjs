@@ -94,7 +94,7 @@ const page = [
   '<!doctype html><html><head><meta charset="utf-8">',
   '<script src="/loader.js"></script></head>',
   '<body><div id="target">CSS</div><div id="result">PENDING</div>',
-  '<script>',
+  '<script nonce="test-nonce">',
   '(async function ()',
   '{',
   '  const result = document.getElementById("result");',
@@ -148,9 +148,16 @@ const server = http.createServer
     const pathname = new URL(req.url, 'http://localhost').pathname;
     requested.add(pathname);
 
-    if(pathname === '/' || pathname === '/index.html')
+    if(pathname === '/' || pathname === '/index.html' || pathname === '/csp.html')
     {
-      res.writeHead(200, {'Content-Type': 'text/html'});
+      const headers = {'Content-Type': 'text/html'};
+      if(pathname === '/csp.html')
+      {
+        headers['Content-Security-Policy'] =
+          "default-src 'self'; script-src 'self' 'nonce-test-nonce'; " +
+          "style-src 'unsafe-inline'; connect-src 'self'";
+      }
+      res.writeHead(200, headers);
       res.end(page);
       return;
     }
@@ -262,7 +269,19 @@ try
   {
     assert.ok(requested.has(pathname), 'HTTP source not requested: ' + pathname);
   }
+  const csp = await browser
+  (
+    'http://127.0.0.1:' + server.address().port + '/csp.html'
+  );
+  assert.equal(csp.code, 0, csp.stderr.slice(-1000));
+  assert.match
+  (
+    csp.stdout,
+    /<div id="result">PASS NEW DYNAMIC LOADER<\/div>/,
+    'nonce/CSP scenario: ' + csp.stdout.slice(-3500)
+  );
   console.log('PASS real Chromium JS/CSS assemble/load/replace and failure behavior');
+  console.log('PASS real Chromium nonce + restrictive script CSP');
 }
 finally
 {
