@@ -91,6 +91,13 @@ function exercise(clone, legacy, assert, foreign)
   described[symbol] = {x: 3};
   const describedClone = clone(described, true);
   assert.equal(getterCalls, 0);
+  let tagCalls = 0;
+  const tagSource = {};
+  Object.defineProperty(tagSource, Symbol.toStringTag,
+    {get() {tagCalls++; return 'spoofed';}, enumerable: true});
+  const tagCopy = clone(tagSource, true);
+  assert.equal(tagCalls, 0);
+  assert.notEqual(tagCopy, tagSource);
   assert.notEqual(describedClone.locked, described.locked);
   assert.equal(Object.getOwnPropertyDescriptor(describedClone, 'locked').writable, false);
   assert.notEqual(describedClone[symbol], described[symbol]);
