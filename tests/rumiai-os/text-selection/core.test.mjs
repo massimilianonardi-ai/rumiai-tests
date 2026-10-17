@@ -40,6 +40,38 @@ finally
 
 assert.equal(typeof m.text.selection.TextEditSelections,'function');
 assert.deepEqual(Object.keys(m.text.selection),['TextEditSelections']);
+
+// The new core selector requires NOMINAL Document membership. An object with
+// identical method names, or a store from standalone 0.8.2, is not that class.
+const Document=m.text.document.Document;
+const CoreSelections=m.text.selection.TextEditSelections;
+const source=new m.text.document.FlatDocument('abc');
+const duck=
+{
+  length:source.length,
+  revision:source.revision,
+  lineCount:source.lineCount,
+  lineInfo:source.lineInfo.bind(source),
+  lineAt:source.lineAt.bind(source),
+  replace:source.replace.bind(source),
+  subscribe:source.subscribe.bind(source)
+};
+
+assert.equal(source instanceof Document,true);
+assert.equal(duck instanceof Document,false);
+assert.throws
+(
+  () => new CoreSelections(duck),
+  {name:'TypeError',message:'Document with source rows required'}
+);
+assert.throws
+(
+  () => new CoreSelections(new original.FlatDocument('abc')),
+  {name:'TypeError',message:'Document with source rows required'}
+);
+const admitted=new CoreSelections(source);
+admitted.dispose();
+
 const point=(row,col)=>({row,col});
 const select=(a,b,forward=true)=>({start:point(...a),end:point(...b),forward});
 

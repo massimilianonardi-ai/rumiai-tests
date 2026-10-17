@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['FlatDocument','PieceDocument']);
+  assert.deepEqual(Object.keys(extracted).sort(),['Document','FlatDocument','PieceDocument']);
 }
 finally
 {
@@ -40,6 +40,64 @@ finally
 }
 assert.equal(typeof extracted.FlatDocument,'function');
 assert.equal(typeof extracted.PieceDocument,'function');
+
+assert.equal(typeof extracted.Document,'function');
+
+// Document defines a nominal, abstract runtime identity in the NEW core.
+// The unchanged standalone 0.8.2 constructors deliberately do not inherit it.
+assert.throws
+(
+  () => new extracted.Document(),
+  {name:'TypeError',message:'Document is abstract'}
+);
+
+class IncompleteDocument extends extracted.Document
+{
+}
+
+const incomplete=new IncompleteDocument();
+assert.equal(incomplete instanceof extracted.Document,true);
+
+for(const property of ['length','revision','lineCount'])
+{
+  assert.throws
+  (
+    () => incomplete[property],
+    /must be implemented/
+  );
+}
+
+for(const method of ['slice','lineStart','lineAt','lineInfo','toString','replace','subscribe'])
+{
+  assert.equal
+  (
+    typeof extracted.Document.prototype[method],
+    'function',
+    'Document defines '+method
+  );
+  assert.throws
+  (
+    () => incomplete[method](),
+    /must be implemented/
+  );
+}
+
+for(const name of ['FlatDocument','PieceDocument'])
+{
+  const instance=new extracted[name]('check');
+  assert.equal(instance instanceof extracted.Document,true,name+' is a Document');
+  assert.equal(instance instanceof extracted[name],true,name+' concrete identity');
+  assert.equal(new legacy[name]('check') instanceof extracted.Document,false,
+    'standalone TextEdit 0.8.2 is deliberately independent');
+
+  // Both concrete classes share the same intermediate private store.
+  assert.strictEqual
+  (
+    Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(instance))),
+    extracted.Document.prototype
+  );
+}
+
 
 const fixtures=
 [
