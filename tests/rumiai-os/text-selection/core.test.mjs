@@ -70,7 +70,7 @@ assert.throws
   {name:'TypeError',message:'Document with source rows required'}
 );
 const admitted=new CoreSelections(source);
-admitted.dispose();
+admitted.destroy();
 
 const point=(row,col)=>({row,col});
 const select=(a,b,forward=true)=>({start:point(...a),end:point(...b),forward});
@@ -86,8 +86,6 @@ function scenario(name,initial,operations,backend)
   const newDocument=new m.text.document[backend](initial);
   const oldSelection=new original.TextEditSelections(oldDocument);
   const newSelection=new m.text.selection.TextEditSelections(newDocument);
-  let disposed=false;
-
   try
   {
     for(const [operation,argument] of operations)
@@ -102,7 +100,6 @@ function scenario(name,initial,operations,backend)
           else if(operation==='add')result=selector.addSelections(argument);
           else if(operation==='replace')result=selector.replace(argument);
           else if(operation==='external')result=document.replace(...argument);
-          else if(operation==='dispose')result=selector.dispose();
           else if(operation==='get')result=selector.getSelections();
           else throw new Error('invalid test operation');
 
@@ -123,19 +120,15 @@ function scenario(name,initial,operations,backend)
       assert.equal(newDocument.revision,oldDocument.revision,
         name+' '+operation+' revision');
 
-      if(operation==='dispose')disposed=true;
-      if(!disposed)
-      {
-        assert.deepEqual(newSelection.getSelections(),
-          oldSelection.getSelections(),name+' '+operation+' physical state');
-      }
+      assert.deepEqual(newSelection.getSelections(),
+        oldSelection.getSelections(),name+' '+operation+' physical state');
       successfulOperations++;
     }
   }
   finally
   {
     oldSelection.dispose();
-    newSelection.dispose();
+    newSelection.destroy();
   }
   successfulScenarios++;
 }
@@ -220,7 +213,6 @@ const scenarios=
       ['set',[select([0,1],[0,1])]],
       ['replace',[undefined]],
       ['replace',[Infinity]],
-      ['dispose'],
       ['get']
     ]
   }
@@ -234,6 +226,103 @@ for(const backend of ['FlatDocument','PieceDocument'])
   }
 }
 
+// The core-only explicit destructor makes the selector unusable without
+// repeated #alive checks, while leaving its shared document unmodified.
+for(const backend of ['FlatDocument','PieceDocument'])
+{
+  const doc=new m.text.document[backend]('before');
+  const selector=new CoreSelections(doc);
+  const caret=select([0,3],[0,3]);
+  selector.setSelections([caret]);
+  const prior=selector.getSelections();
+  const savedGet=selector.getSelections;
+  const savedSet=selector.setSelections;
+  const savedAdd=selector.addSelections;
+  const savedReplace=selector.replace;
+
+  const originalText=doc.toString();
+  const originalRevision=doc.revision;
+
+  selector.destroy();
+  assert.equal(typeof selector.destroy,'function');
+  assert.equal(selector instanceof CoreSelections,true);
+  assert.equal(doc.toString(),originalText);
+  assert.equal(doc.revision,originalRevision);
+  assert.deepEqual(prior,[caret]);
+  assert.equal(selector.destroy(),undefined,'destroy is idempotent');
+
+  const afterDestroyActions =
+  [
+    () => selector.getSelections(),
+    () => selector.setSelections([caret]),
+    () => selector.addSelections([caret]),
+    () => selector.replace('X'),
+    () => savedGet.call(selector),
+    () => savedSet.call(selector,[caret]),
+    () => savedAdd.call(selector,[caret]),
+    () => savedReplace.call(selector,'X')
+  ];
+
+  for(const action of afterDestroyActions)
+  {
+    assert.throws(action,Error,backend+' use after destroy fails');
+  }
+
+  // The abandoned selector is no longer subscribed. The source can mutate.
+  doc.replace(0,0,'+');
+  assert.equal(doc.toString(),'+before');
+}
+
+// A captured notification callback can still execute AFTER it was removed
+// from the subscription set. It must return silently after destruction.
+{
+  const doc=new m.text.document.FlatDocument('abc');
+  const subscribe=doc.subscribe.bind(doc);
+  let callback;
+  let unsubscribed=0;
+  doc.subscribe=(listener)=>
+  {
+    callback=listener;
+    const unsubscribe=subscribe(listener);
+    return ()=>
+    {
+      unsubscribed++;
+      unsubscribe();
+    };
+  };
+
+  const selector=new CoreSelections(doc);
+  selector.setSelections([select([0,1],[0,1])]);
+  selector.destroy();
+  assert.equal(unsubscribed,1);
+  assert.doesNotThrow
+  (
+    () => callback(0,0,'Z'),
+    'a captured callback must silently ignore late delivery'
+  );
+  assert.equal(unsubscribed,1);
+}
+
+// Source publication snapshots all listeners BEFORE calling the first.
+// A prior listener may destroy this selector while its replace() is committing.
+for(const backend of ['FlatDocument','PieceDocument'])
+{
+  const doc=new m.text.document[backend]('abc');
+  let selector;
+  doc.subscribe(() => selector.destroy());
+
+  selector=new CoreSelections(doc);
+  selector.setSelections([select([0,1],[0,1])]);
+  const snapshot=selector.replace('X');
+
+  assert.deepEqual(snapshot.before,[select([0,1],[0,1])]);
+  assert.deepEqual(snapshot.after,[]);
+  assert.equal(doc.toString(),'aXbc');
+  assert.equal(doc.revision,1);
+  assert.throws(() => selector.getSelections(),Error);
+  assert.doesNotThrow(() => selector.destroy());
+}
+
 console.log(JSON.stringify({
   pass:true,
   reference:original.VERSION,
@@ -243,6 +332,6 @@ console.log(JSON.stringify({
     'source-ordered-physical-snapshots','reverse-oriented-cursors',
     'array-distribution','duplicate-conflict','virtual-eol',
     'future-rows','mixed-line-endings','external-rebase',
-    'type-normalization','failure-preserves-source','dispose'
+    'type-normalization','failure-preserves-source','destroy'
   ]
 }));
