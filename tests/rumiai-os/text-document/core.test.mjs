@@ -30,7 +30,7 @@ try
 {
   const output=join(temp,'compiled-core.cjs');
   writeFileSync(output,compilation.stdout);
-  extracted=require(output).m?.text?.document;
+  extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
   assert.deepEqual(Object.keys(extracted).sort(),['FlatDocument','PieceDocument']);
 }
