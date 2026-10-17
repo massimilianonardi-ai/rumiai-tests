@@ -1,0 +1,26 @@
+#!/bin/sh
+TEST_ID=rumiai-os/text-selection/core.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+
+self=$0
+case "$self" in */*) : ;; *) self=$(command -v "$self") || error "cannot resolve test pathname" ;; esac
+test_dir=$(CDPATH= cd -- "${self%/*}" && pwd -P) || error "cannot resolve test directory"
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error "cannot resolve suite root"
+target_library="$suite_root/lib/rumiai-os-target.lib"
+[ -f "$target_library" ] || error "target discovery library missing"
+. "$target_library" || error "target discovery unavailable"
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit product target checkout' ;;
+  *) error 'product target discovery failed' ;;
+esac
+command -v node >/dev/null 2>&1 || skip 'Node.js is not installed'
+[ -f "$root/lib/sys/js/core/modules-js.json" ] || fail 'core JavaScript descriptor unavailable'
+[ -f "$root/lib/sys/js/text-edit.lib.js" ] || fail 'unchanged TextEdit reference unavailable'
+RUMIAI_OS_ROOT="$root" node "$test_dir/core.test.mjs" || fail 'selection extraction/real core compilation checks failed'

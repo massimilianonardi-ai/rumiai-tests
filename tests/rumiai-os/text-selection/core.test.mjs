@@ -1,0 +1,216 @@
+// Differential permanent test: m.text.selection.TextEditSelections is a
+// behavior-preserving extraction of the genuine TextEdit 0.8.2 selector.
+// Exercise the real jsc descriptor and both actual document backends.
+import assert from 'node:assert/strict';
+import {spawnSync} from 'node:child_process';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {createRequire} from 'node:module';
+
+const root=process.env.RUMIAI_OS_ROOT;
+assert.ok(root,'target checkout required');
+const require=createRequire(import.meta.url);
+const original=require(resolve(root,'lib/sys/js/text-edit.lib.js'));
+assert.equal(original.VERSION,'0.8.2');
+
+const compile=spawnSync
+(
+  process.execPath,
+  [
+    resolve(root,'lib/sys/js/jsc.lib.js'),
+    resolve(root,'lib/sys/js/core/modules-js.json')
+  ],
+  {encoding:'utf8',maxBuffer:16*1024*1024}
+);
+assert.equal(compile.status,0,compile.stderr||'real jsc compilation failed');
+
+const directory=mkdtempSync(join(tmpdir(),'rumiai-text-selection-'));
+let m;
+try
+{
+  const target=join(directory,'core.cjs');
+  writeFileSync(target,compile.stdout);
+  m=require(target);
+}
+finally
+{
+  rmSync(directory,{recursive:true,force:true});
+}
+
+assert.equal(typeof m.text.selection.TextEditSelections,'function');
+assert.deepEqual(Object.keys(m.text.selection),['TextEditSelections']);
+const point=(row,col)=>({row,col});
+const select=(a,b,forward=true)=>({start:point(...a),end:point(...b),forward});
+
+let successfulScenarios=0;
+let successfulOperations=0;
+
+// Compare every observable step against a fresh original selector. Both
+// instances use their own real document; neither imitates or patches a method.
+function scenario(name,initial,operations,backend)
+{
+  const oldDocument=new original[backend](initial);
+  const newDocument=new m.text.document[backend](initial);
+  const oldSelection=new original.TextEditSelections(oldDocument);
+  const newSelection=new m.text.selection.TextEditSelections(newDocument);
+  let disposed=false;
+
+  try
+  {
+    for(const [operation,argument] of operations)
+    {
+      function execute(document,selector)
+      {
+        try
+        {
+          let result;
+
+          if(operation==='set')result=selector.setSelections(argument);
+          else if(operation==='add')result=selector.addSelections(argument);
+          else if(operation==='replace')result=selector.replace(argument);
+          else if(operation==='external')result=document.replace(...argument);
+          else if(operation==='dispose')result=selector.dispose();
+          else if(operation==='get')result=selector.getSelections();
+          else throw new Error('invalid test operation');
+
+          return {ok:true,value:result===selector?'this':result};
+        }
+        catch(error)
+        {
+          return {ok:false,name:error.name,message:error.message};
+        }
+      }
+
+      const expected=execute(oldDocument,oldSelection);
+      const actual=execute(newDocument,newSelection);
+      assert.deepEqual(actual,expected,name+' '+operation+' result');
+
+      assert.equal(newDocument.toString(),oldDocument.toString(),
+        name+' '+operation+' document bytes');
+      assert.equal(newDocument.revision,oldDocument.revision,
+        name+' '+operation+' revision');
+
+      if(operation==='dispose')disposed=true;
+      if(!disposed)
+      {
+        assert.deepEqual(newSelection.getSelections(),
+          oldSelection.getSelections(),name+' '+operation+' physical state');
+      }
+      successfulOperations++;
+    }
+  }
+  finally
+  {
+    oldSelection.dispose();
+    newSelection.dispose();
+  }
+  successfulScenarios++;
+}
+
+const scenarios=
+[
+  {
+    name:'ordinary reverse / out-of-order array payload',
+    initial:'0123456789\nabcdefghij',
+    operations:
+    [
+      ['set',
+        [
+          select([1,1],[1,4],false),
+          select([0,2],[0,5],true)
+        ]
+      ],
+      ['replace',['X','YY']],
+      ['replace',['Q',true]],
+      ['get']
+    ]
+  },
+  {
+    name:'duplicate and overlapping selections retain identity',
+    initial:'abcdefghij',
+    operations:
+    [
+      ['set',[select([0,2],[0,4]),select([0,2],[0,4],false)]],
+      ['get'],
+      ['replace',['X','Y']],
+      ['set',[select([0,1],[0,3]),select([0,5],[0,7])]],
+      ['replace',[null]]
+    ]
+  },
+  {
+    name:'virtual columns and no-materialization deletion',
+    initial:'ab\ncd',
+    operations:
+    [
+      ['set',[select([0,6],[0,6],false)]],
+      ['replace',null],
+      ['replace','X'],
+      ['set',[select([1,4],[1,4])]],
+      ['replace',['Y']],
+      ['get']
+    ]
+  },
+  {
+    name:'future rows, CR and mixed terminators',
+    initial:'hello\r',
+    operations:
+    [
+      ['set',[select([3,2],[3,2],false)]],
+      ['replace',[42]],
+      ['replace',['!']],
+      ['get']
+    ]
+  },
+  {
+    name:'external edits and rebasing of physical positions',
+    initial:'alpha\r\nbeta\ngamma',
+    operations:
+    [
+      ['set',[select([1,1],[1,3]),select([2,2],[2,2],false)]],
+      ['external',[0,0,'XX']],
+      ['get'],
+      ['external',[[{start:3,end:4,text:'?'},{start:1,end:1,text:'Z'}]]],
+      ['get']
+    ]
+  },
+  {
+    name:'input normalization and rejection',
+    initial:'abcdef',
+    operations:
+    [
+      ['set',[select([0,1],[0,2]),select([0,3],[0,4])]],
+      ['replace',[NaN,false]],
+      ['replace',[{}]],
+      ['replace',['x','y','z']],
+      ['set',[]],
+      ['replace','x'],
+      ['set',[select([0,1],[0,1])]],
+      ['replace',[undefined]],
+      ['replace',[Infinity]],
+      ['dispose'],
+      ['get']
+    ]
+  }
+];
+
+for(const backend of ['FlatDocument','PieceDocument'])
+{
+  for(const spec of scenarios)
+  {
+    scenario(backend+' '+spec.name,spec.initial,spec.operations,backend);
+  }
+}
+
+console.log(JSON.stringify({
+  pass:true,
+  reference:original.VERSION,
+  scenarios:successfulScenarios,
+  operations:successfulOperations,
+  covers:[
+    'source-ordered-physical-snapshots','reverse-oriented-cursors',
+    'array-distribution','duplicate-conflict','virtual-eol',
+    'future-rows','mixed-line-endings','external-rebase',
+    'type-normalization','failure-preserves-source','dispose'
+  ]
+}));
