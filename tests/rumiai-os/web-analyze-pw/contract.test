@@ -46,19 +46,15 @@ case "$status" in
   *) error 'target resolution failed' ;;
 esac
 
-command_file=$root/bin/sys/web-analyze-pw
 library=$root/lib/sys/js/web-analyze-pw.lib.js
-command_manual=$root/res/sys/manual/web-analyze-pw
 library_manual=$root/res/sys/manual/web-analyze-pw.lib.js
 
-[ -f "$command_file" ] && [ -x "$command_file" ] ||
-  fail 'missing executable command'
-[ "$(sed -n '1p' "$command_file")" = '#!/usr/bin/env m' ] ||
-  fail 'wrong command bootstrap identity'
+[ ! -e "$root/bin/sys/web-analyze-pw" ] ||
+  fail 'unrequested standalone command exists'
+[ ! -e "$root/res/sys/manual/web-analyze-pw" ] ||
+  fail 'obsolete standalone command manual exists'
 [ -f "$library" ] && [ ! -L "$library" ] && [ ! -x "$library" ] ||
   fail 'missing or executable JS library'
-[ -f "$command_manual" ] && [ ! -L "$command_manual" ] ||
-  fail 'missing command manual'
 [ -f "$library_manual" ] && [ ! -L "$library_manual" ] ||
   fail 'missing library manual'
 
@@ -74,7 +70,11 @@ node -e '
  api.webAnalyzePwMain([]).then(status =>
  {
    assert.equal(status, 1);
-   return api.webAnalyzePwMain(["file:///tmp/not-http"]);
+   return api.webAnalyzePwMain(["file:///tmp/not-http", "./analysis"]);
+ }).then(status =>
+ {
+   assert.equal(status, 1);
+   return api.webAnalyzePwMain(["https://example.com/"]);
  }).then(status => assert.equal(status, 1)).catch(error =>
  {
    console.error(error);
