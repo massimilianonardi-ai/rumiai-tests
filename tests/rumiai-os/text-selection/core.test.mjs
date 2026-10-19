@@ -39,7 +39,31 @@ finally
 }
 
 assert.equal(typeof m.text.selection.TextEditSelections,'function');
-assert.deepEqual(Object.keys(m.text.selection),['TextEditSelections']);
+assert.equal(typeof m.text.selection.Selections,'function');
+assert.deepEqual(Object.keys(m.text.selection),['Selections','TextEditSelections']);
+
+// Selections is the independent, nominal contract for future selectable
+// strategies. The extracted physical editor is not silently adapted to it.
+const Selections=m.text.selection.Selections;
+assert.throws
+(
+  () => new Selections(),
+  {name:'TypeError',message:'Selections is abstract'}
+);
+class IncompleteSelections extends Selections
+{
+}
+const incompleteSelections=new IncompleteSelections();
+assert.equal(incompleteSelections instanceof Selections,true);
+for(const method of ['getSelections','setSelections','addSelection','remSelection'])
+{
+  assert.equal(typeof Selections.prototype[method],'function');
+  assert.throws
+  (
+    () => incompleteSelections[method](),
+    {name:'Error',message:'Selections.'+method+' must be implemented'}
+  );
+}
 
 // The new core selector requires NOMINAL Document membership. An object with
 // identical method names, or a store from standalone 0.8.2, is not that class.
@@ -332,6 +356,7 @@ console.log(JSON.stringify({
     'source-ordered-physical-snapshots','reverse-oriented-cursors',
     'array-distribution','duplicate-conflict','virtual-eol',
     'future-rows','mixed-line-endings','external-rebase',
-    'type-normalization','failure-preserves-source','destroy'
+    'type-normalization','failure-preserves-source','destroy',
+    'abstract-selections-interface'
   ]
 }));
