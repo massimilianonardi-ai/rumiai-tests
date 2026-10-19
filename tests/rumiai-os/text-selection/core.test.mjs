@@ -395,12 +395,33 @@ for(const backend of ['FlatDocument','PieceDocument'])
   rectangle.remSelection(point(0,0));
   assert.deepEqual(owner.getSelections(),rect);
 
+  rectangle.setSelections([]);
+  rectangle.addSelection(point(2,3));
+  rectangle.addSelection(point(0,1));
+  assert.deepEqual
+  (
+    rectangle.getSelections(),
+    [S(2,1,2,4,false),S(1,1,1,4,false),S(0,1,0,4,false)]
+  );
+  rectangle.setSelections(rect);
+
   const snapshot=rectangle.getSelections();
   snapshot[0].start.col=9;
   assert.deepEqual(owner.getSelections(),rect,'selection snapshots are isolated');
   free.setSelections(mixed);
   assert.deepEqual(line.getSelections(),mixed);
   assert.deepEqual(free.setSelections(free.getSelections()).getSelections(),mixed);
+
+  free.setSelections([]);
+  free.addSelection(point(0,0));
+  owner.setSelections([S(1,8,1,8)]);
+  free.addSelection(point(2,8));
+  assert.deepEqual
+  (
+    owner.getSelections(),
+    [S(1,8,1,8),S(2,8,2,8)],
+    'external owner writes reset the previously active gesture'
+  );
 
   free.setSelections([]);
   free.addSelection(point(0,0));
