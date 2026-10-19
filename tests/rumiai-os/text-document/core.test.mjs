@@ -313,8 +313,7 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   view.setSelections([range(2,0,2,0),range(2,1,2,1)]);
   view.insertMode='csv';
   view.insert('"a,b",c');
-  assert.equal(source.toString().endsWith('a,bgcamma'),false);
-  assert.ok(source.toString().includes('a,b'));
+  assert.equal(source.toString(),'Xalpha!\r\nYbeta\na,bgcamma');
   view.insertMode='tsv';
   assert.throws(()=>{view.insertMode='unknown';},RangeError);
 
