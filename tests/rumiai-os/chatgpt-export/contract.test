@@ -174,7 +174,8 @@ server.on('upgrade', (request, socket) =>
           params: {scriptId: '1', url: 'app://-/app-initial.js'}});
       if (message.method === 'Runtime.evaluate' &&
           message.params.expression.includes('({href: location.href'))
-        result = {result: {value: {href: 'https://chatgpt.com/share/contract',
+        result = {result: {value: {href: shareMode === 'redirect' ?
+          'https://chatgpt.com/auth/login' : 'https://chatgpt.com/share/contract',
           state: 'complete'}}};
       if (message.method === 'Runtime.evaluate' &&
           message.params.expression.includes('const sources ='))
@@ -268,6 +269,10 @@ server.on('upgrade', (request, socket) =>
     assert.match(transcript, /hello share/);
     assert.doesNotMatch(transcript, /not in transcript/);
   }
+  shareMode = 'redirect';
+  await assert.rejects(() => chatgptExport('127.0.0.1', server.address().port,
+    {url: 'https://chatgpt.com/share/contract', outputDir: tmp, onEvent: () => {}}),
+    error => error.code === 'chatgpt-export.navigation-unexpected-document');
   console.log('chatgpt-export unit and CDP WebSocket integration PASS');
 })().then(() => server.close(), error =>
 {
