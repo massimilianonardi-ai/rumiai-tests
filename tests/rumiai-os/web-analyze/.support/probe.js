@@ -47,6 +47,10 @@ function _cdp(url) {
       res.setHeader('Content-Type', 'text/css');
       return res.end('body { padding: 4px; }');
     }
+    if (pathname === '/slow.json') {
+      res.setHeader('Content-Type', 'application/json');
+      return setTimeout(() => res.end('{"late":"captured-before-shutdown"}'), 500);
+    }
     if (pathname === '/data.json') {
       res.setHeader('Content-Type', 'application/json');
       return res.end('{"fixture":"network-body-captured"}');
@@ -75,6 +79,10 @@ function _cdp(url) {
       returnByValue:true}, sessionId);
     assert.equal(result.result?.value?.ok, true);
     await pause(600);
+    const delayed = await external.send('Runtime.evaluate',
+      {expression: 'fetch("/slow.json"); true', returnByValue: true}, sessionId);
+    assert.equal(delayed.result?.value, true);
+    await pause(100);
     const summary = await session.stop();
     assert(fs.readFileSync(path.join(outputDir,'interaction.jsonl'),'utf8').includes('dom.click'),
       'DOM click observation expected');
@@ -87,13 +95,15 @@ function _cdp(url) {
       .trim().split('\n').map(JSON.parse);
     const byPath = pathname => resourceIndex.find(item => item.status === 'saved' &&
       new URL(item.url).pathname === pathname);
-    for (const pathname of ['/','/probe.js','/probe.css','/data.json']) {
+    for (const pathname of ['/','/probe.js','/probe.css','/data.json','/slow.json']) {
       const item = byPath(pathname);
       assert(item, 'missing CDP body for ' + pathname);
       assert(fs.existsSync(path.join(outputDir, item.file)), 'missing archived body ' + pathname);
     }
     assert.equal(fs.readFileSync(path.join(outputDir, byPath('/probe.js').file), 'utf8'),
       "window.__resourceArchiveProbe = 'script-saved';");
+    assert.equal(fs.readFileSync(path.join(outputDir, byPath('/slow.json').file), 'utf8'),
+      '{"late":"captured-before-shutdown"}');
     assert.equal(fs.readFileSync(path.join(outputDir, byPath('/data.json').file), 'utf8'),
       '{"fixture":"network-body-captured"}');
     assert(scriptIndex.some(item => item.status === 'saved' &&
