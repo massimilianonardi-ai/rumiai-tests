@@ -141,7 +141,7 @@ server.on('upgrade', (request, socket) =>
         result = {result: {value: message.params.expression.startsWith('JSON.stringify') ?
           raw : 'contract-123'}};
       frame({id: message.id, result});
-      if (message.method === 'Page.navigate')
+      if (message.method === 'Page.navigate' || message.method === 'Page.reload')
         setImmediate(() => frame({method: 'Debugger.paused',
           params: {callFrames: [{callFrameId: 'frame1'}]}}));
     }
@@ -179,6 +179,10 @@ server.on('upgrade', (request, socket) =>
     assert.ok(methods.includes(method), 'missing method: ' + method);
   assert.match(observed.find(item => item.method === 'Page.navigate').params.url,
     /initialRoute=%2Fwork%2Fconversation%2Fcontract-123/);
+  const withoutId = await chatgptExport('127.0.0.1', server.address().port,
+    {outputDir: tmp, timeoutMs: 5000, onEvent: () => {}});
+  assert.equal(withoutId.visible_messages, 3);
+  assert.ok(observed.some(item => item.method === 'Page.reload'));
   console.log('chatgpt-export unit and CDP WebSocket integration PASS');
 })().then(() => server.close(), error =>
 {
