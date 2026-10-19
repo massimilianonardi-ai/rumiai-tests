@@ -319,8 +319,8 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   assert.equal(source.toString(),'Xalpha!\r\nYbeta\na,bgcamma');
   view.insertMode='tsv';
   view.setSelections([range(0,0,0,0),range(1,0,1,0)]);
-  view.insert('first\\tsecond');
-  assert.equal(source.toString(),'firstXalpha!\\r\\nsecondYbeta\\na,bgcamma');
+  view.insert('first\tsecond');
+  assert.equal(source.toString(),'firstXalpha!\r\nsecondYbeta\na,bgcamma');
   assert.throws(()=>{view.insertMode='unknown';},RangeError);
 
   // Source edits through another consumer still publish and rebase.
