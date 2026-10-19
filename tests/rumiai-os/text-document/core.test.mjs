@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['Document','FlatDocument','PieceDocument']);
+  assert.deepEqual(Object.keys(extracted).sort(),['Document','Document2D','FlatDocument','PieceDocument']);
 }
 finally
 {
@@ -42,6 +42,70 @@ assert.equal(typeof extracted.FlatDocument,'function');
 assert.equal(typeof extracted.PieceDocument,'function');
 
 assert.equal(typeof extracted.Document,'function');
+
+// Document2D is a distinct nominal contract for a GUI-facing 2D text space.
+// It does not reveal whether its backing source is physical or transformed.
+const Document2D=extracted.Document2D;
+assert.equal(typeof Document2D,'function');
+assert.equal(Document2D.prototype instanceof extracted.Document,false);
+assert.throws
+(
+  () => new Document2D(),
+  {name:'TypeError',message:'Document2D is abstract'}
+);
+class IncompleteDocument2D extends Document2D
+{
+}
+const view=new IncompleteDocument2D();
+assert.equal(view instanceof Document2D,true);
+assert.equal(view instanceof extracted.Document,false);
+
+for(const name of ['rowCount','colCount','selectionMode','insertMode'])
+{
+  const descriptor=Object.getOwnPropertyDescriptor(Document2D.prototype,name);
+  assert.equal(typeof descriptor.get,'function',name+' getter');
+  assert.throws
+  (
+    () => view[name],
+    {name:'Error',message:'Document2D.'+name+' must be implemented'}
+  );
+
+  if(name==='selectionMode' || name==='insertMode')
+  {
+    assert.equal(typeof descriptor.set,'function',name+' setter');
+    assert.throws
+    (
+      () => {view[name]='any';},
+      {name:'Error',message:'Document2D.'+name+' must be implemented'}
+    );
+  }
+  else
+  {
+    assert.equal(descriptor.set,undefined,name+' read-only');
+  }
+}
+
+for
+(
+  const name of
+  [
+    'getRect','read','getSelections','setSelections','addSelection',
+    'remSelection','insert','subscribe','destroy'
+  ]
+)
+{
+  assert.equal(typeof Document2D.prototype[name],'function',name+' abstract slot');
+  assert.throws
+  (
+    () => view[name](),
+    {name:'Error',message:'Document2D.'+name+' must be implemented'}
+  );
+}
+
+for(const name of ['FlatDocument','PieceDocument'])
+{
+  assert.equal(new extracted[name]('sample') instanceof Document2D,false);
+}
 
 // Document defines a nominal, abstract runtime identity in the NEW core.
 // The unchanged standalone 0.8.2 constructors deliberately do not inherit it.
