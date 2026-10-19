@@ -312,9 +312,15 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 
   view.setSelections([range(2,0,2,0),range(2,1,2,1)]);
   view.insertMode='csv';
+  const beforeCSV=source.toString();
+  assert.throws(()=>view.insert('"missing end,c'),SyntaxError);
+  assert.equal(source.toString(),beforeCSV,'failed CSV parsing cannot commit');
   view.insert('"a,b",c');
   assert.equal(source.toString(),'Xalpha!\r\nYbeta\na,bgcamma');
   view.insertMode='tsv';
+  view.setSelections([range(0,0,0,0),range(1,0,1,0)]);
+  view.insert('first\\tsecond');
+  assert.equal(source.toString(),'firstXalpha!\\r\\nsecondYbeta\\na,bgcamma');
   assert.throws(()=>{view.insertMode='unknown';},RangeError);
 
   // Source edits through another consumer still publish and rebase.
@@ -322,7 +328,7 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   const rev=source.revision;
   source.replace(0,0,'Z');
   assert.equal(source.revision,rev+1);
-  assert.ok(events.filter(x=>x==='content').length>=4);
+  assert.ok(events.filter(x=>x==='content').length>=5);
   assert.deepEqual(view.getSelections(),[range(1,1,1,1)]);
 
   unsubscribe();
