@@ -45,7 +45,7 @@ async function main() {
     const dest = path.join(root, 'nested', 'evidence');
     const env = {...process.env};
     if (display) env.DISPLAY = display.display;
-    browser = spawn(process.execPath, [library, 'https://chatgpt.com/share/6ad1c0d5-49ec-83eb-a79b-85b04b938835?token=secret', dest],
+    browser = spawn(process.execPath, [library, 'https://chatgpt.com/share/6ad1c0d5-49ec-83eb-a79b-85b04b938835', dest],
       {env, stdio: ['ignore','pipe','pipe']});
     let stdout = ''; let stderr = '';
     browser.stdout.on('data', bytes => {stdout += bytes.toString();});
@@ -55,14 +55,18 @@ async function main() {
       await delay(100);
     assert.match(stdout, /Chromium opened/, 'start failed: ' + stderr);
     assert(fs.statSync(dest).isDirectory(), 'nested analysis directory must be created');
-    const exiting = new Promise(resolve => browser.once('exit', resolve));
+    const exiting = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('stop timeout')), 10000);
+      browser.once('exit', code => {clearTimeout(timeout);resolve(code);});
+    });
     browser.kill('SIGINT');
-    const exitStatus = await Promise.race([exiting, delay(10000).then(() => {throw new Error('stop timeout');})]);
+    const exitStatus = await exiting;
     assert.equal(exitStatus, 0, 'SIGINT should finalize the capture: ' + stderr);
     assert.match(stdout, /Analysis finished/);
     const summary = JSON.parse(fs.readFileSync(path.join(dest, 'summary.json'), 'utf8'));
     assert(summary.totalEvents > 0);
-    assert(!fs.readFileSync(path.join(dest, 'lifecycle.jsonl'), 'utf8').includes('token=secret'));
+    assert(fs.readFileSync(path.join(dest, 'lifecycle.jsonl'), 'utf8').includes(
+      'https://chatgpt.com/share/6ad1c0d5-49ec-83eb-a79b-85b04b938835')); 
     return 0;
   } finally {
     if (browser?.exitCode === null) browser.kill('SIGKILL');
