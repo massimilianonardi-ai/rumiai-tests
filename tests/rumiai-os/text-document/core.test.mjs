@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['Document','Document2D','FlatDocument','PieceDocument']);
+  assert.deepEqual(Object.keys(extracted).sort(),['Document','Document2D','FlatDocument','PieceDocument','RawDocument2D']);
 }
 finally
 {
@@ -242,4 +242,118 @@ for(const name of ['FlatDocument','PieceDocument'])
     }
   }
 }
+
+// A caller knows only the 2D API and supplies a real physical Document.
+// The adapter must keep one effective selection collection and preserve
+// the original source's atomic-edit and external-rebase machinery.
+const RawDocument2D=extracted.RawDocument2D;
+assert.equal(typeof RawDocument2D,'function');
+assert.throws(()=>new RawDocument2D({}),TypeError);
+assert.throws(()=>new RawDocument2D('not a Document'),TypeError);
+
+const point=(row,col)=>({row,col});
+const range=(ar,ac,br,bc,forward=true)=>(
+  {start:point(ar,ac),end:point(br,bc),forward}
+);
+
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('alpha\r\nbeta\ngamma');
+  const view=new RawDocument2D(source);
+  assert.equal(view instanceof Document2D,true);
+  assert.equal(view instanceof extracted.Document,false);
+  assert.equal(view.rowCount,3);
+  assert.equal(view.colCount,5);
+  assert.deepEqual(view.getRect(0,1,3,4),['lph','eta','amm']);
+  assert.deepEqual(view.getRect(1,2,3,99),['ta','mma']);
+  assert.deepEqual(view.getRect(3,0,100,100),[]);
+  assert.deepEqual(view.getRect(0,8,2,12),['','']);
+  assert.throws(()=>view.getRect(-1,0,2,3),RangeError);
+  assert.throws(()=>view.getRect(1,4,0,5),RangeError);
+  assert.deepEqual(view.read(),[]);
+
+  const events=[];
+  const unsubscribe=view.subscribe(event=>events.push(event.type));
+  assert.equal(view.selectionMode,'line');
+  assert.equal(view.insertMode,'raw');
+  view.selectionMode='rectangle';
+  view.addSelection(point(0,1));
+  view.addSelection(point(1,2));
+  assert.deepEqual(view.getSelections(),[range(0,1,0,3),range(1,1,1,3)]);
+  assert.deepEqual(view.read(),['lp','et']);
+
+  // Switch without clearing the rectangle and draw two free-form carets.
+  view.selectionMode='free-form';
+  view.addSelection(point(2,1));
+  view.addSelection(point(2,3));
+  assert.deepEqual
+  (
+    view.getSelections(),
+    [range(0,1,0,3),range(1,1,1,3),range(2,1,2,1),range(2,3,2,3)]
+  );
+  assert.deepEqual(view.read(),['lp','et','','']);
+  view.remSelection(point(2,3));
+  assert.equal(view.getSelections().length,3);
+
+  view.setSelections([range(0,5,0,5)]);
+  view.insert('!');
+  assert.equal(source.toString(),'alpha!\r\nbeta\ngamma');
+  assert.equal(view.colCount,6);
+  assert.equal(view.getSelections()[0].start.col,6);
+  assert.equal(view.getSelections()[0].end.col,6);
+  assert.equal(events.filter(x=>x==='content').length,1);
+
+  view.setSelections([range(0,0,0,0),range(1,0,1,0)]);
+  view.insertMode='lines';
+  view.insert('X\nY');
+  assert.equal(source.toString(),'Xalpha!\r\nYbeta\ngamma');
+  assert.equal(view.getSelections().length,2);
+  assert.deepEqual(view.getRect(0,0,2,2),['Xa','Yb']);
+
+  view.setSelections([range(2,0,2,0),range(2,1,2,1)]);
+  view.insertMode='csv';
+  view.insert('"a,b",c');
+  assert.equal(source.toString().endsWith('a,bgcamma'),false);
+  assert.ok(source.toString().includes('a,b'));
+  view.insertMode='tsv';
+  assert.throws(()=>{view.insertMode='unknown';},RangeError);
+
+  // Source edits through another consumer still publish and rebase.
+  view.setSelections([range(1,1,1,1)]);
+  const rev=source.revision;
+  source.replace(0,0,'Z');
+  assert.equal(source.revision,rev+1);
+  assert.ok(events.filter(x=>x==='content').length>=4);
+  assert.deepEqual(view.getSelections(),[range(1,1,1,1)]);
+
+  unsubscribe();
+  const count=events.length;
+  view.setSelections([]);
+  assert.equal(events.length,count);
+  view.destroy();
+  assert.doesNotThrow(()=>view.destroy());
+  assert.throws(()=>view.getSelections(),Error);
+  assert.doesNotThrow(()=>source.replace(0,0,'T'));
+  assert.ok(source.toString().startsWith('TZ'));
+}
+
+// Virtual columns and rows are not materialized merely by selecting them.
+{
+  const source=new extracted.PieceDocument('ab');
+  const view=new RawDocument2D(source);
+  view.setSelections([range(0,5,0,5)]);
+  const rev=source.revision;
+  assert.deepEqual(view.read(),['']);
+  assert.equal(source.revision,rev);
+  view.insert('Q');
+  assert.equal(source.toString(),'ab   Q');
+  assert.equal(source.revision,rev+1);
+  view.setSelections([range(2,2,2,2)]);
+  view.insert('Z');
+  assert.equal(source.toString(),'ab   Q\n\n  Z');
+  assert.equal(view.rowCount,3);
+  view.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
