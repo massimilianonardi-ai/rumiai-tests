@@ -1,0 +1,189 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/chatgpt-export/contract.test
+
+fail()
+{
+  printf '%s\n' "$TEST_ID: $*" >&2
+  exit 1
+}
+skip()
+{
+  printf '%s\n' "$TEST_ID: $*" >&2
+  exit 2
+}
+error()
+{
+  printf '%s\n' "$TEST_ID: $*" >&2
+  exit 3
+}
+
+self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+case "$self" in
+  */*) : ;;
+  *) self=$(command -v "$self") || error 'cannot resolve test source' ;;
+esac
+test_dir=$(CDPATH= cd -P "${self%/*}" && pwd) || error 'cannot resolve test dir'
+suite_root=$(CDPATH= cd -P "$test_dir/../../.." && pwd) || error 'cannot resolve suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'rumiai-os target unavailable' ;;
+  2) fail 'invalid explicit target' ;;
+  *) error 'target resolution failed' ;;
+esac
+
+lib="$root/lib/sys/js/chatgpt-export.lib.js"
+manual="$root/res/sys/manual/chatgpt-export.lib.js"
+[ -f "$lib" ] && [ ! -x "$lib" ] && [ ! -L "$lib" ] ||
+  fail 'missing or executable JS library'
+[ -f "$manual" ] && [ ! -L "$manual" ] ||
+  fail 'missing operational manual'
+[ ! -e "$root/bin/sys/chatgpt-export" ] ||
+  fail 'unrequested command exists'
+command -v node >/dev/null 2>&1 || skip 'Node.js unavailable'
+node --check "$lib" || fail 'library syntax invalid'
+
+node - "$lib" <<'NODE' || fail 'Node/CDP snapshot export contract failed'
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const zlib = require('node:zlib');
+const {chatgptExport, exportChatgptSnapshot} = require(process.argv[2]);
+
+assert.equal(typeof chatgptExport, 'function');
+assert.equal(typeof exportChatgptSnapshot, 'function');
+const snapshot =
+{
+  conversation_id: 'contract-123',
+  title: 'Contract conversation',
+  create_time: 1700000000,
+  current_node: 'n4',
+  mapping:
+  {
+    root: {parent: null, message: null},
+    n1: {parent: 'root', message: {id: 'm1', author: {role: 'user'},
+      content: {parts: ['hello']}}},
+    n2: {parent: 'n1', message: {id: 'm2', author: {role: 'assistant'},
+      channel: 'analysis', content: {parts: ['private']}}},
+    n3: {parent: 'n2', message: {id: 'm3', author: {role: 'assistant'},
+      channel: 'final', content: {parts: ['answer']}}},
+    n4: {parent: 'n3', message: {id: 'm4', author: {role: 'user'},
+      content: {parts: [{asset_pointer: 'file-ref'}, 'text']}}},
+    alternate: {parent: 'root', message: {id: 'other', author: {role: 'user'},
+      content: {parts: ['not active']}}}
+  }
+};
+const raw = JSON.stringify(snapshot);
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'm-chatgpt-export-'));
+const observed = [];
+let ws;
+const server = http.createServer((request, response) =>
+{
+  response.setHeader('content-type', 'application/json');
+  response.end(JSON.stringify([
+    {type: 'page', url: 'app://-/index.html',
+      webSocketDebuggerUrl: 'ws://127.0.0.1:' + server.address().port + '/devtools/page/1'}
+  ]));
+});
+function frame(message)
+{
+  const bytes = Buffer.from(JSON.stringify(message));
+  if (bytes.length > 65535) throw new Error('unexpected oversized test frame');
+  const header = bytes.length < 126 ? Buffer.from([129, bytes.length]) :
+    Buffer.from([129, 126, bytes.length >> 8, bytes.length & 255]);
+  ws.write(Buffer.concat([header, bytes]));
+}
+server.on('upgrade', (request, socket) =>
+{
+  const digest = crypto.createHash('sha1').update(request.headers['sec-websocket-key'] +
+    '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+  socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n' +
+    'Connection: Upgrade\r\nSec-WebSocket-Accept: ' + digest + '\r\n\r\n');
+  ws = socket;
+  let buffered = Buffer.alloc(0);
+  socket.on('data', chunk =>
+  {
+    buffered = Buffer.concat([buffered, chunk]);
+    while (buffered.length >= 6)
+    {
+      const len = buffered[1] & 127;
+      const ext = len === 126 ? 2 : 0;
+      if (len === 127) throw new Error('unexpected large client frame');
+      if (buffered.length < 2 + ext + 4) return;
+      const bytes = len === 126 ? buffered.readUInt16BE(2) : len;
+      const start = 2 + ext;
+      if (buffered.length < start + 4 + bytes) return;
+      const mask = buffered.subarray(start, start + 4);
+      const payload = Buffer.from(buffered.subarray(start + 4, start + 4 + bytes));
+      const opcode = buffered[0] & 15;
+      buffered = buffered.subarray(start + 4 + bytes);
+      if (opcode === 8) { socket.end(); return; }
+      if (opcode !== 1) continue;
+      for (let i = 0; i < bytes; i++) payload[i] ^= mask[i % 4];
+      const message = JSON.parse(payload.toString());
+      observed.push(message);
+      let result = {};
+      if (message.method === 'Runtime.evaluate')
+        frame({method: 'Debugger.scriptParsed',
+          params: {scriptId: '1', url: 'app://-/app-initial.js'}});
+      if (message.method === 'Debugger.getScriptSource')
+        result = {scriptSource: 'function f({mergeActiveBranch:a},snapshot){return 1;}'};
+      if (message.method === 'Debugger.setBreakpointByUrl')
+        result = {breakpointId: 'one'};
+      if (message.method === 'Debugger.evaluateOnCallFrame')
+        result = {result: {value: message.params.expression.startsWith('JSON.stringify') ?
+          raw : 'contract-123'}};
+      frame({id: message.id, result});
+      if (message.method === 'Page.navigate')
+        setImmediate(() => frame({method: 'Debugger.paused',
+          params: {callFrames: [{callFrameId: 'frame1'}]}}));
+    }
+  });
+});
+
+(async () =>
+{
+  const local = exportChatgptSnapshot(raw, {}, tmp);
+  assert.equal(local.mapping_nodes, 6);
+  assert.equal(local.active_nodes, 5);
+  assert.equal(local.visible_messages, 3);
+  const audit = JSON.parse(fs.readFileSync(path.join(local.outdir, 'AUDIT.json')));
+  assert.equal(audit.transcript.classification_counts.assistant_analysis, 1);
+  assert.equal(audit.conversation.nodes_outside_active_branch, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(local.outdir, 'NON_TEXT_PARTS.json'))[0]?.part?.asset_pointer, 'file-ref');
+  assert.equal(zlib.gunzipSync(fs.readFileSync(path.join(local.outdir,
+    'conversation.raw.json.gz'))).toString(), raw);
+  assert.ok(fs.readFileSync(local.zip).subarray(0, 4).equals(Buffer.from([80, 75, 3, 4])));
+  await assert.rejects(() => chatgptExport('', 9222), error => error.code === 'chatgpt-export.host-invalid');
+  await assert.rejects(() => chatgptExport('127.0.0.1', 70000),
+    error => error.code === 'chatgpt-export.port-invalid');
+
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const captured = await chatgptExport('127.0.0.1', server.address().port,
+    {conversationId: 'contract-123', outputDir: tmp, timeoutMs: 5000,
+      onEvent: () => {}});
+  assert.equal(captured.visible_messages, 3);
+  const methods = observed.map(item => item.method);
+  for (const method of ['Runtime.enable', 'Debugger.enable',
+    'Debugger.getScriptSource', 'Debugger.setBreakpointByUrl',
+    'Page.navigate', 'Debugger.evaluateOnCallFrame', 'Debugger.resume',
+    'Debugger.removeBreakpoint'])
+    assert.ok(methods.includes(method), 'missing method: ' + method);
+  assert.match(observed.find(item => item.method === 'Page.navigate').params.url,
+    /initialRoute=%2Fwork%2Fconversation%2Fcontract-123/);
+  console.log('chatgpt-export unit and CDP WebSocket integration PASS');
+})().then(() => server.close(), error =>
+{
+  console.error(error);
+  server.close();
+  process.exitCode = 1;
+}).finally(() => fs.rmSync(tmp, {recursive: true, force: true}));
+NODE
+exit 0
