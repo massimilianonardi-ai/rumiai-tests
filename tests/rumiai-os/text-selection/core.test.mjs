@@ -40,7 +40,7 @@ finally
 
 assert.equal(typeof m.text.selection.TextEditSelections,'function');
 assert.equal(typeof m.text.selection.Selections,'function');
-assert.deepEqual(Object.keys(m.text.selection),['Selections','TextEditSelections','LineSelections','RectangleSelections','FreeFormSelections']);
+assert.deepEqual(Object.keys(m.text.selection),['Selections','LineSelections','RectangleSelections','FreeFormSelections','TextEditSelections']);
 
 // Selections is the independent, nominal contract for future selectable
 // strategies. The extracted physical editor is not silently adapted to it.
