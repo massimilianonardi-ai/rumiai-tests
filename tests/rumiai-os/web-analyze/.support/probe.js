@@ -37,8 +37,17 @@ function _cdp(url) {
   const probe = spawnSync('chromium', ['--version'], {encoding: 'utf8'});
   if (probe.error?.code === 'ENOENT') {console.log('SKIP: chromium not installed');process.exit(2);}
   assert.equal(probe.status, 0, 'chromium must be runnable');
+  let slowPageDone;
+  const slowPageCompleted = new Promise(resolve => {slowPageDone = resolve;});
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname === '/slow-document') {
+      res.setHeader('Content-Type', 'text/html');
+      return setTimeout(() => {
+        res.end('<html><body>delayed navigation completed</body></html>');
+        slowPageDone();
+      }, 13500);
+    }
     if (pathname === '/probe.js') {
       res.setHeader('Content-Type', 'application/javascript');
       return res.end("window.__resourceArchiveProbe = 'script-saved';");
@@ -116,6 +125,36 @@ function _cdp(url) {
     assert(!all.includes('password=secret'), 'sensitive URL query leaked');
     assert(!all.includes("console.log('secret')"), 'raw script contents leaked');
     assert(fs.existsSync(path.join(outputDir,'summary.json')));
+
+    // A real Chromium navigation that delays response headers beyond the
+    // old 12-second command timeout must not delay start or close the browser.
+    const slowDir = path.join(directory, 'slow-navigation');
+    let slowSession;
+    try {
+      const started = Date.now();
+      slowSession = await startWebAnalyze({
+        url: `http://127.0.0.1:${server.address().port}/slow-document`,
+        outputDir: slowDir, headless: true, timeoutMs: 20000
+      });
+      assert(Date.now() - started < 7000,
+        'slow navigation blocked capture start instead of remaining observable');
+      const early = fs.readFileSync(path.join(slowDir, 'lifecycle.jsonl'), 'utf8')
+        .split('\n').filter(Boolean).map(JSON.parse);
+      assert(early.some(event => event.type === 'capture.ready'),
+        'capture.ready must not wait for the page response');
+      await Promise.race([slowPageCompleted,
+        pause(20000).then(() => {throw new Error('delayed page was never served');})]);
+      await pause(700);
+      const slowSummary = await slowSession.stop();
+      assert(slowSummary.counts.network > 0, 'slow response network evidence missing');
+      const slowIndex = fs.readFileSync(path.join(slowDir, 'resources.jsonl'), 'utf8')
+        .split('\n').filter(Boolean).map(JSON.parse);
+      assert(slowIndex.some(item => item.status === 'saved' &&
+        item.url?.endsWith('/slow-document')),
+        'slow navigation response was not archived');
+    } finally {
+      if (slowSession) await slowSession.stop();
+    }
   } finally {
     external?.close();
     if(session) await session.stop();
