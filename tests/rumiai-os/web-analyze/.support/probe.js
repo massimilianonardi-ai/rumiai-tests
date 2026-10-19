@@ -37,7 +37,24 @@ function _cdp(url) {
   const probe = spawnSync('chromium', ['--version'], {encoding: 'utf8'});
   if (probe.error?.code === 'ENOENT') {console.log('SKIP: chromium not installed');process.exit(2);}
   assert.equal(probe.status, 0, 'chromium must be runnable');
-  const server = http.createServer((req, res) => {res.setHeader('Content-Type', 'text/html');res.end('<html><body>probe</body></html>');});
+  const server = http.createServer((req, res) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    if (pathname === '/probe.js') {
+      res.setHeader('Content-Type', 'application/javascript');
+      return res.end("window.__resourceArchiveProbe = 'script-saved';");
+    }
+    if (pathname === '/probe.css') {
+      res.setHeader('Content-Type', 'text/css');
+      return res.end('body { padding: 4px; }');
+    }
+    if (pathname === '/data.json') {
+      res.setHeader('Content-Type', 'application/json');
+      return res.end('{"fixture":"network-body-captured"}');
+    }
+    res.setHeader('Content-Type', 'text/html');
+    res.end('<html><head><link rel="stylesheet" href="/probe.css"></head><body>probe' +
+      '<script src="/probe.js"></script><script>fetch("/data.json");</script></body></html>');
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'web-analyze-test-'));
   const outputDir = path.join(directory, 'evidence');
@@ -64,6 +81,26 @@ function _cdp(url) {
     assert(summary.counts.dom > 0, 'DOM mutation events expected');
     assert(summary.counts.console > 0, 'console events expected');
     assert.equal(summary.dropped.interaction, 0);
+    const resourceIndex = fs.readFileSync(path.join(outputDir, 'resources.jsonl'), 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    const scriptIndex = fs.readFileSync(path.join(outputDir, 'scripts.jsonl'), 'utf8')
+      .trim().split('\n').map(JSON.parse);
+    const byPath = pathname => resourceIndex.find(item => item.status === 'saved' &&
+      new URL(item.url).pathname === pathname);
+    for (const pathname of ['/','/probe.js','/probe.css','/data.json']) {
+      const item = byPath(pathname);
+      assert(item, 'missing CDP body for ' + pathname);
+      assert(fs.existsSync(path.join(outputDir, item.file)), 'missing archived body ' + pathname);
+    }
+    assert.equal(fs.readFileSync(path.join(outputDir, byPath('/probe.js').file), 'utf8'),
+      "window.__resourceArchiveProbe = 'script-saved';");
+    assert.equal(fs.readFileSync(path.join(outputDir, byPath('/data.json').file), 'utf8'),
+      '{"fixture":"network-body-captured"}');
+    assert(scriptIndex.some(item => item.status === 'saved' &&
+      fs.readFileSync(path.join(outputDir, item.file), 'utf8')
+        .includes('__resourceArchiveProbe')), 'compiled JS source should be preserved');
+    assert(summary.resourceCapture.saved >= 4, 'response bodies were not archived');
+    assert(summary.resourceCapture.scriptsSaved >= 1, 'no script sources were archived');
     const all = ['lifecycle','interaction','dom','network','console','performance','error'].map(topic =>
       fs.readFileSync(path.join(outputDir,`${topic}.jsonl`),'utf8')).join('');
     assert(!all.includes('password=secret'), 'sensitive URL query leaked');
