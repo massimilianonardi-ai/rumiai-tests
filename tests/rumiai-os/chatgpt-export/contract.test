@@ -55,10 +55,11 @@ const os = require('node:os');
 const http = require('node:http');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
-const {chatgptExport, exportChatgptSnapshot} = require(process.argv[2]);
+const {chatgptExport, exportChatgptSnapshot, exportChatgptUrl} = require(process.argv[2]);
 
 assert.equal(typeof chatgptExport, 'function');
 assert.equal(typeof exportChatgptSnapshot, 'function');
+assert.equal(typeof exportChatgptUrl, 'function');
 const snapshot =
 {
   conversation_id: 'contract-123',
@@ -165,6 +166,24 @@ server.on('upgrade', (request, socket) =>
   await assert.rejects(() => chatgptExport('', 9222), error => error.code === 'chatgpt-export.host-invalid');
   await assert.rejects(() => chatgptExport('127.0.0.1', 70000),
     error => error.code === 'chatgpt-export.port-invalid');
+
+  await assert.rejects(() => exportChatgptUrl('invalid-url', tmp),
+    error => error.code === 'chatgpt-export.url-invalid');
+  await assert.rejects(() => exportChatgptUrl('ftp://example.com/', tmp),
+    error => error.code === 'chatgpt-export.url-scheme-unsupported');
+  await assert.rejects(() => exportChatgptUrl('https://example.com/', ''),
+    error => error.code === 'chatgpt-export.analysis-dir-invalid');
+  // Deliberate nonexistent executable: verify launch failure and temporary
+  // browser-profile cleanup without claiming that it validates Chromium.
+  const profilesBefore = fs.readdirSync(tmp).filter(name =>
+    name.startsWith('.chatgpt-export-chromium-'));
+  await assert.rejects(() => exportChatgptUrl('https://example.com/', tmp,
+    {chromium: '__chatgpt_export_missing_chromium__', startupTimeoutMs: 1500,
+      onEvent: () => {}}),
+    error => error.code === 'chatgpt-export.chromium-launch-failed');
+  const profilesAfter = fs.readdirSync(tmp).filter(name =>
+    name.startsWith('.chatgpt-export-chromium-'));
+  assert.deepEqual(profilesAfter, profilesBefore);
 
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const captured = await chatgptExport('127.0.0.1', server.address().port,
