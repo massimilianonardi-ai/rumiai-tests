@@ -66,7 +66,7 @@ async function main() {
     const summary = JSON.parse(fs.readFileSync(path.join(dest, 'summary.json'), 'utf8'));
     assert(summary.totalEvents > 0);
     assert(fs.readFileSync(path.join(dest, 'lifecycle.jsonl'), 'utf8').includes(
-      'https://chatgpt.com/share/6ad1c0d5-49ec-83eb-a79b-85b04b938835')); 
+      'https://chatgpt.com/share/6ad1c0d5-49ec-83eb-a79b-85b04b938835'));
     return 0;
   } finally {
     if (browser?.exitCode === null) browser.kill('SIGKILL');
