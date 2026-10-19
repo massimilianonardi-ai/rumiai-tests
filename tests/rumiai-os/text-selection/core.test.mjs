@@ -40,7 +40,7 @@ finally
 
 assert.equal(typeof m.text.selection.TextEditSelections,'function');
 assert.equal(typeof m.text.selection.Selections,'function');
-assert.deepEqual(Object.keys(m.text.selection),['Selections','TextEditSelections']);
+assert.deepEqual(Object.keys(m.text.selection),['Selections','TextEditSelections','LineSelections','RectangleSelections','FreeFormSelections']);
 
 // Selections is the independent, nominal contract for future selectable
 // strategies. The extracted physical editor is not silently adapted to it.
@@ -347,6 +347,80 @@ for(const backend of ['FlatDocument','PieceDocument'])
   assert.doesNotThrow(() => selector.destroy());
 }
 
+// The same real physical selector owns effective selections for ALL modes.
+// Each strategy interprets the GUI's coordinate stream in its own 2D space.
+for(const backend of ['FlatDocument','PieceDocument'])
+{
+  const document=new m.text.document[backend]('abc\\ndef\\nghi');
+  const owner=new CoreSelections(document);
+  const line=new m.text.selection.LineSelections(owner);
+  const rectangle=new m.text.selection.RectangleSelections(owner);
+  const free=new m.text.selection.FreeFormSelections(owner);
+  const S=(ar,ac,br,bc,forward=true)=>select([ar,ac],[br,bc],forward);
+
+  for(const strategy of [line,rectangle,free])
+  {
+    assert.equal(strategy instanceof Selections,true);
+  }
+
+  rectangle.setSelections([]);
+  rectangle.addSelection(point(0,1));
+  rectangle.addSelection(point(2,2));
+  const rect=[S(0,1,0,3),S(1,1,1,3),S(2,1,2,3)];
+  assert.deepEqual(rectangle.getSelections(),rect);
+
+  // Change mode mid-gesture: preserve the rectangle and append freehand carets.
+  free.addSelection(point(2,3));
+  free.addSelection(point(1,4));
+  const mixed=[...rect,S(2,3,2,3),S(1,4,1,4)];
+  assert.deepEqual(free.getSelections(),mixed);
+  assert.deepEqual(rectangle.getSelections(),mixed);
+  free.remSelection(point(2,3));
+  assert.deepEqual(owner.getSelections(),[...rect,S(1,4,1,4)]);
+  free.remSelection(point(1,4));
+  assert.deepEqual(owner.getSelections(),rect);
+
+  // The stale rectangle gesture cannot overwrite changes by another mode.
+  line.addSelection(point(2,0));
+  line.addSelection(point(0,1));
+  assert.deepEqual(owner.getSelections(),[...rect,S(0,1,2,1,false)]);
+  line.remSelection(point(0,1));
+  assert.deepEqual(owner.getSelections(),[...rect,S(2,0,2,1)]);
+  line.remSelection(point(2,0));
+  assert.deepEqual(owner.getSelections(),rect);
+
+  // Re-entering rectangle mode starts a new gesture on the shared snapshot.
+  rectangle.addSelection(point(0,0));
+  assert.deepEqual(owner.getSelections(),[...rect,S(0,0,0,1)]);
+  rectangle.remSelection(point(0,0));
+  assert.deepEqual(owner.getSelections(),rect);
+
+  const snapshot=rectangle.getSelections();
+  snapshot[0].start.col=9;
+  assert.deepEqual(owner.getSelections(),rect,'selection snapshots are isolated');
+  free.setSelections(mixed);
+  assert.deepEqual(line.getSelections(),mixed);
+  assert.deepEqual(free.setSelections(free.getSelections()).getSelections(),mixed);
+
+  free.setSelections([]);
+  free.addSelection(point(0,0));
+  free.addSelection(point(0,0));
+  assert.deepEqual(free.getSelections(),[S(0,0,0,0)],'revisiting a point is one caret');
+  free.remSelection(point(0,0));
+  assert.deepEqual(free.getSelections(),[S(0,0,0,0)]);
+  free.remSelection(point(0,0));
+  assert.deepEqual(free.getSelections(),[]);
+
+  for(const strategy of [line,rectangle,free])
+  {
+    assert.throws(()=>strategy.addSelection({row:-1,col:0}),RangeError);
+    assert.throws(()=>strategy.remSelection({row:0,col:1.5}),RangeError);
+    assert.throws(()=>strategy.setSelections([{start:point(0,0),end:point(0,0)}]),TypeError);
+    assert.deepEqual(strategy.getSelections(),[]);
+  }
+  owner.destroy();
+}
+
 console.log(JSON.stringify({
   pass:true,
   reference:original.VERSION,
@@ -357,6 +431,7 @@ console.log(JSON.stringify({
     'array-distribution','duplicate-conflict','virtual-eol',
     'future-rows','mixed-line-endings','external-rebase',
     'type-normalization','failure-preserves-source','destroy',
-    'abstract-selections-interface'
+    'abstract-selections-interface',
+    'line-rectangle-freeform-modes','shared-mode-owner','mid-gesture-mode-switch'
   ]
 }));
