@@ -157,7 +157,8 @@ server.on('upgrade', (request, socket) =>
   const audit = JSON.parse(fs.readFileSync(path.join(local.outdir, 'AUDIT.json')));
   assert.equal(audit.transcript.classification_counts.assistant_analysis, 1);
   assert.equal(audit.conversation.nodes_outside_active_branch, 1);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(local.outdir, 'NON_TEXT_PARTS.json'))[0]?.part?.asset_pointer, 'file-ref');
+  const nonText = JSON.parse(fs.readFileSync(path.join(local.outdir, 'NON_TEXT_PARTS.json'), 'utf8'));
+  assert.equal(nonText[0].part.asset_pointer, 'file-ref');
   assert.equal(zlib.gunzipSync(fs.readFileSync(path.join(local.outdir,
     'conversation.raw.json.gz'))).toString(), raw);
   assert.ok(fs.readFileSync(local.zip).subarray(0, 4).equals(Buffer.from([80, 75, 3, 4])));
