@@ -51,13 +51,16 @@ function _cdp(url) {
     const targetId = lifecycle.find(e => e.type === 'capture.ready').targetId;
     const {sessionId} = await external.send('Target.attachToTarget', {targetId, flatten:true});
     await external.send('Runtime.enable', {}, sessionId);
+    // Let the initial navigation settle before testing this document's observer.
+    await pause(600);
     const result = await external.send('Runtime.evaluate', {expression:
       "document.body.innerHTML='<button>click</button>'; document.querySelector('button').click(); console.log('secret'); document.body.setAttribute('data-probe','x'); ({ok:true})",
       returnByValue:true}, sessionId);
     assert.equal(result.result?.value?.ok, true);
-    await pause(300);
+    await pause(600);
     const summary = await session.stop();
-    assert(summary.counts.interaction > 0, 'DOM interaction events expected');
+    assert(fs.readFileSync(path.join(outputDir,'interaction.jsonl'),'utf8').includes('dom.click'),
+      'DOM click observation expected');
     assert(summary.counts.dom > 0, 'DOM mutation events expected');
     assert(summary.counts.console > 0, 'console events expected');
     assert.equal(summary.dropped.interaction, 0);
