@@ -84,12 +84,50 @@ const snapshot =
 const raw = JSON.stringify(snapshot);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'm-chatgpt-export-'));
 const observed = [];
+const linearSource =
+{
+  title: 'Shared contract',
+  conversation_id: 'share-contract',
+  create_time: 1700000000,
+  linear_conversation:
+  [
+    {message: {id: 'sm1', author: {role: 'user'}, content: {parts: ['hello share']}}},
+    {message: {id: 'sm2', author: {role: 'assistant'}, content: {parts: ['shared reply']}}},
+    {message: {id: 'sm3', author: {role: 'assistant'}, channel: 'analysis',
+      content: {parts: ['not in transcript']}}}
+  ]
+};
+let shareMode = 'loader';
+function flatten(value)
+{
+  const nodes = [];
+  function index(node)
+  {
+    const position = nodes.length;
+    nodes.push(null);
+    if (Array.isArray(node)) nodes[position] = node.map(index);
+    else if (node !== null && typeof node === 'object')
+    {
+      const encoded = {};
+      for (const [key, child] of Object.entries(node))
+        encoded['_' + index(key)] = index(child);
+      nodes[position] = encoded;
+    }
+    else nodes[position] = node;
+    return position;
+  }
+  index(value);
+  return nodes;
+}
+const sharedStream = JSON.stringify(flatten({route: {data: linearSource}}));
 let ws;
 const server = http.createServer((request, response) =>
 {
   response.setHeader('content-type', 'application/json');
   response.end(JSON.stringify([
     {type: 'page', url: 'app://-/index.html',
+      webSocketDebuggerUrl: 'ws://127.0.0.1:' + server.address().port + '/devtools/page/1'},
+    {type: 'page', url: 'about:blank',
       webSocketDebuggerUrl: 'ws://127.0.0.1:' + server.address().port + '/devtools/page/1'}
   ]));
 });
@@ -134,6 +172,19 @@ server.on('upgrade', (request, socket) =>
       if (message.method === 'Runtime.evaluate')
         frame({method: 'Debugger.scriptParsed',
           params: {scriptId: '1', url: 'app://-/app-initial.js'}});
+      if (message.method === 'Runtime.evaluate' &&
+          message.params.expression.includes('({href: location.href'))
+        result = {result: {value: {href: 'https://chatgpt.com/share/contract',
+          state: 'complete'}}};
+      if (message.method === 'Runtime.evaluate' &&
+          message.params.expression.includes('const sources ='))
+      {
+        const evidence = shareMode === 'loader' ?
+          {roots: [['remix-loader', linearSource]], availableSources: ['remix-loader'],
+            chunks: [], title: 'Shared contract'} :
+          {roots: [], availableSources: [], chunks: [sharedStream], title: 'Shared contract'};
+        result = {result: {value: JSON.stringify(evidence)}};
+      }
       if (message.method === 'Debugger.getScriptSource')
         result = {scriptSource: 'function f({mergeActiveBranch:a},snapshot){return 1;}'};
       if (message.method === 'Debugger.setBreakpointByUrl')
@@ -202,6 +253,21 @@ server.on('upgrade', (request, socket) =>
     {outputDir: tmp, timeoutMs: 5000, onEvent: () => {}});
   assert.equal(withoutId.visible_messages, 3);
   assert.ok(observed.some(item => item.method === 'Page.reload'));
+  for (const mode of ['loader', 'stream'])
+  {
+    shareMode = mode;
+    const shared = await chatgptExport('127.0.0.1', server.address().port,
+      {url: 'https://chatgpt.com/share/contract', outputDir: tmp, onEvent: () => {}});
+    assert.equal(shared.visible_messages, 2);
+    assert.equal(shared.active_nodes, 4);
+    const audit = JSON.parse(fs.readFileSync(path.join(shared.outdir, 'AUDIT.json')));
+    assert.equal(audit.source.projection, 'derived active-branch mapping; source RAW remains linear');
+    assert.equal(zlib.gunzipSync(fs.readFileSync(path.join(shared.outdir,
+      'conversation.raw.json.gz'))).toString(), JSON.stringify(linearSource));
+    const transcript = fs.readFileSync(path.join(shared.outdir, 'TRANSCRIPT.md'), 'utf8');
+    assert.match(transcript, /hello share/);
+    assert.doesNotMatch(transcript, /not in transcript/);
+  }
   console.log('chatgpt-export unit and CDP WebSocket integration PASS');
 })().then(() => server.close(), error =>
 {
