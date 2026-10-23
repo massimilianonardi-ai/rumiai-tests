@@ -47,6 +47,7 @@ jobs:
           echo "revision=${{ matrix.revision }}"
           echo "suite=$(git -C rumiai-tests rev-parse HEAD)"
           echo "runtime=$(git -C rumiai-os rev-parse HEAD)"
+          grep -E '^(all_consumer|corrupt_provider)=' rumiai-tests/tests/rumiai-os/pkg/dependency.test
 
       - name: Run exact public dependency resolver test
         shell: bash
