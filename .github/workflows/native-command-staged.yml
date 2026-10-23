@@ -19,7 +19,13 @@ permissions:
 
 jobs:
   native-contract:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-26.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - name: Checkout exact triggering test revision
@@ -81,6 +87,20 @@ jobs:
           ./rumiai-test rumiai-os/pkg-launch/contract.test
           ./rumiai-test rumiai-os/pkg-integration/contract.test
 
+      - name: Exercise further migrated public commands
+        if: success() || failure()
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          set -euo pipefail
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/log
+          ./rumiai-test rumiai-os/lang
+          ./rumiai-test rumiai-os/jsc/compiler-loader.test
+          ./rumiai-test rumiai-os/mk/lifecycle.test
+          ./rumiai-test rumiai-os/srv/lifecycle.test
+
       - name: Print failure diagnostics from test sessions
         if: failure()
         shell: bash
@@ -100,7 +120,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-command-staged-${{ github.run_id }}-${{ github.run_attempt }}
+          name: native-command-staged-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: rumiai-tests/.runs
           include-hidden-files: true
           if-no-files-found: ignore
