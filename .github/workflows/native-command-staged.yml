@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: 59d5ec2d78494c126d5c2869b5b01076e735a6ab
+          ref: 673df1a2d5476ad57d54c7bc7e1fc2deeaf16195
           path: rumiai-os
           persist-credentials: false
 
@@ -65,7 +65,7 @@ jobs:
           echo "runtime=$(git -C rumiai-os rev-parse HEAD)"
           echo "catalog=$(git -C pkg-catalog rev-parse HEAD)"
           test "$(git -C rumiai-tests rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "59d5ec2d78494c126d5c2869b5b01076e735a6ab"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "673df1a2d5476ad57d54c7bc7e1fc2deeaf16195"
           test "$(git -C pkg-catalog rev-parse HEAD)" = "893120694670ac91e67353797ca3602d8f2b330b"
 
       - name: Check staged catalog shell syntax
@@ -99,6 +99,7 @@ jobs:
           ./rumiai-test rumiai-os/pkg/uninstall.test
           ./rumiai-test rumiai-os/pkg/state.test
           ./rumiai-test rumiai-os/pkg/default.test
+          ./rumiai-test rumiai-os/pkg/dependency.test
 
       - name: Exercise further migrated public commands
         if: success() || failure()
