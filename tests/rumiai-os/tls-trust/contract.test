@@ -14,6 +14,11 @@ else
   exit 2
 fi
 
+if [ "$(uname -s)" != Linux ]; then
+  printf '%s\\n' 'SKIP: NSS projection contract currently applies to Linux' >&2
+  exit 2
+fi
+
 for tool in openssl certutil flock
 do
   command -v "$tool" >/dev/null 2>&1 || {
