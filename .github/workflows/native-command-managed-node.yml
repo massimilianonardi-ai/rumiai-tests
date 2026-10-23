@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: 3b5d6019db0cf1b4c419792aef36b4bee12037cb
+          ref: 59d5ec2d78494c126d5c2869b5b01076e735a6ab
           path: rumiai-os
           persist-credentials: false
       - name: Checkout staged catalog
@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C rumiai-tests rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C rumiai-os rev-parse HEAD)" = 3b5d6019db0cf1b4c419792aef36b4bee12037cb
+          test "$(git -C rumiai-os rev-parse HEAD)" = 59d5ec2d78494c126d5c2869b5b01076e735a6ab
           test "$(git -C pkg-catalog rev-parse HEAD)" = 893120694670ac91e67353797ca3602d8f2b330b
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
           # Give local Git transport a branch HEAD that points at the exact staged snapshot.
@@ -77,6 +77,37 @@ jobs:
           ./rumiai-test rumiai-os/pkg-launch/managed-node.test
           ./rumiai-test rumiai-os/mk/lifecycle.test
           ./rumiai-test rumiai-os/jsc/compiler-loader.test
+      - name: Reinstall exact managed Node concrete while preserving state
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/rumiai-os"
+          user_conf="$("$root/m" state-path user pkg nodejs conf)"
+          user_home="$("$root/m" state-path user pkg nodejs home)"
+          system_conf="$("$root/m" state-path system pkg nodejs conf)"
+          mkdir -p "$user_conf/.m" "$user_home" "$system_conf"
+          printf 'MIGRATION_USER_SENTINEL=preserved\\nexport MIGRATION_USER_SENTINEL\\n' > "$user_conf/.m/env"
+          printf 'persistent-home\\n' > "$user_home/native-migration-sentinel"
+          printf 'persistent-system\\n' > "$system_conf/native-migration-sentinel"
+          recorded="$("$root/m" pkg default nodejs)"
+          test "$recorded" = "nodejs@v26.8.2!$(./rumiai-os/m osarch)"
+          "$root/m" pkg uninstall "$recorded"
+          if "$root/m" pkg default nodejs >/dev/null 2>&1; then
+            echo "Default survived explicit uninstall" >&2
+            exit 1
+          fi
+          test "$(cat "$user_home/native-migration-sentinel")" = persistent-home
+          test "$(cat "$system_conf/native-migration-sentinel")" = persistent-system
+          "$root/m" pkg install "$recorded"
+          "$root/m" pkg default "$recorded"
+          test "$("$root/m" pkg default nodejs)" = "$recorded"
+          "$root/m" node -e '
+            if (process.env.MIGRATION_USER_SENTINEL !== "preserved") process.exit(51);
+            console.log("reinstalled-managed-node="+process.execPath);
+          '
+          test "$(cat "$user_home/native-migration-sentinel")" = persistent-home
+          test "$(cat "$system_conf/native-migration-sentinel")" = persistent-system
+
       - name: Show logs on failure
         if: failure()
         shell: bash
