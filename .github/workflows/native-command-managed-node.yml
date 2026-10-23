@@ -31,14 +31,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: f8f8acea460aa9bc024e5fed0ab04a350431b3e7
+          ref: 3b5d6019db0cf1b4c419792aef36b4bee12037cb
           path: rumiai-os
           persist-credentials: false
       - name: Checkout staged catalog
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/pkg-catalog
-          ref: 304ab8e4fedbef543f68f9d63e60854f80c9cb7c
+          ref: 893120694670ac91e67353797ca3602d8f2b330b
           path: pkg-catalog
           persist-credentials: false
       - name: Prepare exact staged catalog and native environment
@@ -46,8 +46,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C rumiai-tests rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C rumiai-os rev-parse HEAD)" = f8f8acea460aa9bc024e5fed0ab04a350431b3e7
-          test "$(git -C pkg-catalog rev-parse HEAD)" = 304ab8e4fedbef543f68f9d63e60854f80c9cb7c
+          test "$(git -C rumiai-os rev-parse HEAD)" = 3b5d6019db0cf1b4c419792aef36b4bee12037cb
+          test "$(git -C pkg-catalog rev-parse HEAD)" = 893120694670ac91e67353797ca3602d8f2b330b
           git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
           # Give local Git transport a branch HEAD that points at the exact staged snapshot.
           git -C pkg-catalog switch -c native-command-validated
@@ -86,7 +86,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          find rumiai-tests/.runs -type f -name '*.log' -print | while IFS= read -r f; do
+          find rumiai-tests/.runs -type f -name '*.log' -print 2>/dev/null | while IFS= read -r f; do
             case "$f" in *mk*|*jsc*) echo "---- $f"; tail -n 100 "$f";; esac
           done
           true
