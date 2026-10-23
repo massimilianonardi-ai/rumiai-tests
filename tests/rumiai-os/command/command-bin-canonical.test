@@ -52,7 +52,8 @@ cat > "$real" <<'EOF_COMMAND'
 [ -n "${m_ROOT:-}" ] || exit 1
 . "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 readpathce resolved_command "$0" || exit 3
-printf '%s\n' "$resolved_command" "${m_COMMAND_BIN+x}" > "$OBSERVED_COMMAND_BIN" || exit 41
+[ "${m_COMMAND_BIN+x}" != x ] || exit 4
+printf '%s\n' "$resolved_command" > "$OBSERVED_COMMAND_BIN" || exit 41
 exit 0
 EOF_COMMAND
 chmod 700 "$real" || error 'cannot prepare command body'
