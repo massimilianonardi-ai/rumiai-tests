@@ -1,5 +1,5 @@
 #!/bin/sh
-# Protects: BOOT-18, ENTRY-10, ROOT-06.
+# Protects: BOOT-18, ENTRY-10, ROOT-06 (external execution for every operand).
 
 TEST_ID=rumiai-os/command/external-fallback.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -52,6 +52,7 @@ cat > "$external" <<'EOF_EXTERNAL'
     printf 'arg1=%s\n' "$1"
     printf 'arg2=%s\n' "$2"
     printf 'command-bin-set=%s\n' "${m_COMMAND_BIN+x}"
+    printf 'm-root=%s\n' "$m_ROOT"
 } > "$OBSERVED_EXTERNAL" || exit 41
 exit 29
 EOF_EXTERNAL
@@ -67,11 +68,12 @@ status=$?
     fail "external fallback returned $status instead of 29"
 }
 
-cat > "$tmp/expected" <<'EOF_EXPECTED'
+cat > "$tmp/expected" <<EOF_EXPECTED
 argc=2
 arg1=alpha beta
 arg2=
 command-bin-set=
+m-root=$root
 EOF_EXPECTED
 
 cmp -s "$tmp/expected" "$observed" || {
@@ -79,7 +81,7 @@ cmp -s "$tmp/expected" "$observed" || {
     cat "$tmp/expected" >&2
     printf '%s\n' 'observed external observations:' >&2
     cat "$observed" >&2
-    fail 'non-integrated command was not executed through the external fallback path'
+    fail 'native external command was not executed with the initialized environment'
 }
 
 exit 0

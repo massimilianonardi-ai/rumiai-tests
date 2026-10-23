@@ -99,8 +99,10 @@ consumer=launchconsumer$$
 
 integration_driver=$tmp/integration-driver
 cat > "$integration_driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
@@ -152,8 +154,10 @@ payload=$tmp/payload-$consumer
 mkdir -p "$range/cmd" "$range/link" "$payload/bin" || error 'cannot create consumer fixture'
 
 cat > "$range/cmd/$consumer" <<EOF_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$consumer" "\$@"
 EOF_COMMAND
 chmod 600 "$range/cmd/$consumer" || error 'cannot prepare consumer command'
@@ -214,7 +218,7 @@ run_consumer()
   output=$tmp/$label.out
   err=$tmp/$label.err
 
-  "$consumer" "arg-$label" > "$output" 2> "$err"
+  "$root/m" "$consumer" "arg-$label" > "$output" 2> "$err"
   status=$?
   [ "$status" -eq 37 ] || {
     cat "$err" >&2
@@ -252,7 +256,7 @@ make_provider "$provider_b" b > "$tmp/provb.out" 2> "$tmp/provb.err" || {
   cat "$tmp/provb.err" >&2
   fail 'cannot integrate provider B'
 }
-"$consumer" arg-ambiguous > "$tmp/ambiguous.out" 2> "$tmp/ambiguous.err"
+"$root/m" "$consumer" arg-ambiguous > "$tmp/ambiguous.out" 2> "$tmp/ambiguous.err"
 ambiguous_status=$?
 [ "$ambiguous_status" -eq 1 ] || {
   cat "$tmp/ambiguous.err" >&2

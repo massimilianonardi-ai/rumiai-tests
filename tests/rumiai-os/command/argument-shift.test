@@ -46,9 +46,10 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe
 observed=$tmp/observed
 cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
-printf '%s\n' "$#" "$1" "$2" > "$OBSERVED_ARGS" || return 41
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+printf '%s\n' "$#" "$1" "$2" > "$OBSERVED_ARGS" || exit 41
+exit 0
 EOF_PROBE
 chmod 700 "$probe" || error 'cannot prepare command body'
 
