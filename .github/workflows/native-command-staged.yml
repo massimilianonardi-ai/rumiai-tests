@@ -71,6 +71,7 @@ jobs:
           ./rumiai-test rumiai-os/bootstrap
 
       - name: Execute real package-launch and integration tests
+        if: success() || failure()
         shell: bash
         env:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
@@ -84,7 +85,16 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          find rumiai-tests/sessions -type f -name '*.log' -print -exec tail -n 45 {} \\; 2>/dev/null || true
+          find rumiai-tests/sessions -type f -name '*.log' -print |
+            while IFS= read -r log_file; do
+              case "$log_file" in
+                *library-loading*|*pkg-launch*|*pkg-integration*)
+                  printf '\n---- %s ----\n' "$log_file"
+                  tail -n 80 "$log_file"
+                  ;;
+              esac
+            done
+          true
 
       - name: Upload runner session evidence
         if: always()
