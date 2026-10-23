@@ -81,7 +81,7 @@ jobs:
         shell: bash
         run: |
           find rumiai-tests/.runs -type f -name '*.log' -print 2>/dev/null | while IFS= read -r f; do
-            case "$f" in *mk*|*jsc*) echo "---- $f"; tail -n 100 "$f";; esac
+            case "$f" in *managed-node*|*mk*|*jsc*) echo "---- $f"; tail -n 100 "$f";; esac
           done
           true
       - name: Upload revision-specific runner logs
