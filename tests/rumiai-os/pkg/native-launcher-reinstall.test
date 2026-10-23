@@ -30,18 +30,18 @@ tmp=${TMPDIR:-/tmp}/rumiai-native-reinstall-$$
 user_root=
 system_root=
 pkg_store_created=0
+cleanup_owned=0
 cleanup()
 {
   trap - 0 HUP INT TERM
-  if [ -n "$root" ]
+  if [ "$cleanup_owned" -eq 1 ]
   then
     "$root/m" pkg default -u -- "$package" >/dev/null 2>&1 || :
     "$root/m" pkg uninstall "$package@1" >/dev/null 2>&1 || :
     [ ! -e "$concrete" ] || command -p -- rm -rf -- "$concrete"
     command -p -- rm -f -- "$root/pkg/$package" "$root/bin/ext/$package" 2>/dev/null || :
+    command -p -- rm -rf -- "$system_root" "$user_root" 2>/dev/null || :
   fi
-  [ -z "$system_root" ] || command -p -- rm -rf -- "$system_root" 2>/dev/null || :
-  [ -z "$user_root" ] || command -p -- rm -rf -- "$user_root" 2>/dev/null || :
   [ "$pkg_store_created" -eq 0 ] || command -p -- rmdir -- "$root/pkg" 2>/dev/null || :
   [ -z "$tmp" ] || command -p -- rm -rf -- "$tmp"
 }
@@ -72,6 +72,7 @@ user_root=${usr_conf%/conf}
 [ ! -e "$system_root" ] && [ ! -L "$system_root" ] &&
 [ ! -e "$user_root" ] && [ ! -L "$user_root" ] ||
   skip 'test package state already exists'
+cleanup_owned=1
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER' || error 'cannot create integration driver'
