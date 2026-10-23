@@ -85,7 +85,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          find rumiai-tests/sessions -type f -name '*.log' -print |
+          find rumiai-tests/.runs -type f -name '*.log' -print |
             while IFS= read -r log_file; do
               case "$log_file" in
                 *library-loading*|*pkg-launch*|*pkg-integration*)
@@ -101,5 +101,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-command-staged-${{ github.run_id }}-${{ github.run_attempt }}
-          path: rumiai-tests/sessions
+          path: rumiai-tests/.runs
+          include-hidden-files: true
           if-no-files-found: ignore
