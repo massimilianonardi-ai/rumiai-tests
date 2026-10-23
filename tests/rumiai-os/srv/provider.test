@@ -158,8 +158,10 @@ mkdir -p "$range/cmd" "$range/link" "$range/facility-service/$facility" "$payloa
 printf '%s 1\n' "$facility" > "$range/facility" ||
   error 'cannot write facility declaration'
 cat > "$range/cmd/$service_command" <<EOF_SERVICE_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$package" "\$@"
 EOF_SERVICE_COMMAND
 printf '%s\n' bin/service-target > "$range/link/$service_command" ||
@@ -184,7 +186,8 @@ on_term()
 trap on_term TERM
 trap 'exit 0' HUP INT
 printf '%s\n' "$$" >> "$TEST_SERVICE_STARTS"
-printf '%s\n' "${m_COMMAND_BIN-}" > "$TEST_SERVICE_COMMAND"
+[ "${m_COMMAND_BIN+x}" != x ] || exit 55
+command -p -- realpath -- "$0" > "$TEST_SERVICE_COMMAND" || exit 56
 while :
 do
   sleep 1
@@ -194,8 +197,10 @@ chmod 700 "$payload/bin/service-target" || error 'cannot prepare service target'
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case "$action" in
@@ -245,11 +250,11 @@ case "$service_pid" in
 esac
 pid_exists "$service_pid" || fail 'provider-backed service is not alive'
 
-expected_command=$root/pkg/$package@1/cmd/$service_command
+expected_command=$root/pkg/$package@1/root/bin/service-target
 observed_command=$(command -p -- cat "$TEST_SERVICE_COMMAND" 2>/dev/null) ||
   fail 'cannot read package command identity'
 [ "$observed_command" = "$expected_command" ] ||
-  fail "srv did not launch exact provider concrete command: expected=$expected_command observed=$observed_command"
+  fail "srv did not run the selected provider concrete target: expected=$expected_command observed=$observed_command"
 
 run_pkg provider default "$facility" "$missing_provider" > "$tmp/default-switch.out" 2> "$tmp/default-switch.err" || {
   cat "$tmp/default-switch.err" >&2
