@@ -34,7 +34,8 @@ probe=$tmp/probe
 transcript=$tmp/transcript
 
 cat > "$probe" <<'EOT'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
 command -p sh -c '
 [ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || exit 41
 [ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BOOTSTRAP_BIN" ] || exit 42
@@ -52,8 +53,8 @@ do
     eval "present=\${$legacy+x}"
     [ "$present" != x ] || exit 52
 done
-' || return $?
-return 0
+' || exit $?
+exit 0
 EOT
 chmod 700 "$probe" || error 'cannot make probe executable'
 EXPECTED_ROOT=$root
