@@ -166,7 +166,10 @@ printf '%s\n' "$facility =1" > "$range/dependency" || error 'cannot prepare cons
 cat > "$range/env" <<'EOF_PACKAGE_ENV'
 ORDER=package
 PACKAGE_ENV=package
-export ORDER PACKAGE_ENV
+[ -n "${pkg_launch_root:-}" ] || return 1
+[ -z "${m_COMMAND_BIN+x}" ] || return 1
+PACKAGE_ROOT=$pkg_launch_root
+export ORDER PACKAGE_ENV PACKAGE_ROOT
 EOF_PACKAGE_ENV
 chmod 600 "$range/env" || error 'cannot prepare consumer package environment'
 
@@ -178,6 +181,7 @@ printf 'provider-marker=%s\n' "$PROVIDER_MARKER"
 printf 'provider-home=%s\n' "$PROVIDER_HOME"
 printf 'order=%s\n' "$ORDER"
 printf 'package=%s\n' "$PACKAGE_ENV"
+printf 'package-root=%s\n' "$PACKAGE_ROOT"
 printf 'user=%s\n' "$USER_ENV"
 printf 'arg1=%s\n' "$1"
 exit 37
@@ -233,6 +237,8 @@ run_consumer()
     fail "$label runtime precedence is not package -> provider -> user"
   grep -Fx 'package=package' "$output" >/dev/null 2>&1 ||
     fail "$label package environment was not applied"
+  grep -Fx "package-root=$root/pkg/$consumer@1/root" "$output" >/dev/null 2>&1 ||
+    fail "$label package env did not receive the validated concrete root"
   grep -Fx "user=provider-$expected-user" "$output" >/dev/null 2>&1 ||
     fail "$label user environment was not applied last"
   grep -Fx "arg1=arg-$label" "$output" >/dev/null 2>&1 ||
