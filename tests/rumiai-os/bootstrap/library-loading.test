@@ -108,7 +108,9 @@ grep -F 'pkg_provider_global_environment_apply' "$base_library" >/dev/null 2>&1 
 probe_name=rumiai-loadlib-probe-$$
 probe=$tmp/$probe_name
 cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 
 loadsyslib >/dev/null 2>&1
 printf 'loadsyslib-zero=%s\n' "$?"
@@ -215,7 +217,9 @@ EOF_ISOLATED_COMMAND
 generator_name=rumiai-loadlib-inject-stream-probe
 generator=$tmp/$generator_name
 cat > "$generator" <<'EOF_GENERATOR'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 
 loadsyslib "loadlib-inject-stream" || exit "$?"
 

@@ -16,13 +16,15 @@ entry=$root/m
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-cwd-$$; umask 077; mkdir -p "$tmp/work/deep" || error 'cannot create temporary working directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 cwd=$(CDPATH= cd -- "$tmp/work/deep" && pwd -P) || error 'cannot resolve temporary working directory'; probe=$tmp/probe; result=$tmp/result; transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
-#!/usr/bin/env m
-[ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || return 41
-[ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || return 42
-actual_cwd=$(pwd -P) || return 43
-[ "$actual_cwd" = "$EXPECTED_CWD" ] || return 44
-printf '%s\n' "$actual_cwd" > "$PROBE_RESULT" || return 45
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+[ "${m_ROOT-}" = "$EXPECTED_ROOT" ] || exit 41
+[ "${m_BOOTSTRAP_BIN-}" = "$EXPECTED_BIN" ] || exit 42
+actual_cwd=$(pwd -P) || exit 43
+[ "$actual_cwd" = "$EXPECTED_CWD" ] || exit 44
+printf '%s\n' "$actual_cwd" > "$PROBE_RESULT" || exit 45
+exit 0
 EOT
 chmod 700 "$probe" || error 'cannot make probe executable'
 EXPECTED_ROOT=$root EXPECTED_BIN=$entry EXPECTED_CWD=$cwd PROBE_RESULT=$result; export EXPECTED_ROOT EXPECTED_BIN EXPECTED_CWD PROBE_RESULT

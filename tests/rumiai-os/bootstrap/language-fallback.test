@@ -16,10 +16,12 @@ entry=$root/m
 tmp=${TMPDIR:-/tmp}/rumiai-bootstrap-language-fallback-$$; umask 077; mkdir "$tmp" || error 'cannot create temporary directory'; trap 'rm -rf "$tmp"' 0 HUP INT TERM
 probe=$tmp/probe; transcript=$tmp/transcript
 cat > "$probe" <<'EOT'
-#!/usr/bin/env m
-[ "${m_LANGUAGE_FALLBACK-}" = "en_US" ] || return 41
-[ "${m_LANG_FALLBACK_DIR-}" = "$m_ROOT/res/sys/lang/en_US" ] || return 42
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+[ "${m_LANGUAGE_FALLBACK-}" = "en_US" ] || exit 41
+[ "${m_LANG_FALLBACK_DIR-}" = "$m_ROOT/res/sys/lang/en_US" ] || exit 42
+exit 0
 EOT
 chmod 700 "$probe" || error 'cannot make probe executable'
 (LC_ALL=C; LANG=C; export LC_ALL LANG; "$entry" "$probe") >"$transcript" 2>&1 || { status=$?; cat "$transcript" >&2; fail "language fallback probe returned $status"; }
