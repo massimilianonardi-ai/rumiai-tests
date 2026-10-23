@@ -10,6 +10,7 @@ on:
       - tests/rumiai-os/bootstrap/**
       - tests/rumiai-os/pkg-launch/**
       - tests/rumiai-os/pkg-integration/**
+      - tests/rumiai-os/pkg/native-launcher-reinstall.test
       - tests/rumiai-os/srv/**
       - lib/rumiai-os-target.lib
   workflow_dispatch:
@@ -93,6 +94,7 @@ jobs:
           cd rumiai-tests
           ./rumiai-test rumiai-os/pkg-launch/contract.test
           ./rumiai-test rumiai-os/pkg-integration/contract.test
+          ./rumiai-test rumiai-os/pkg/native-launcher-reinstall.test
 
       - name: Exercise further migrated public commands
         if: success() || failure()
@@ -116,7 +118,7 @@ jobs:
           find rumiai-tests/.runs -type f -name '*.log' -print |
             while IFS= read -r log_file; do
               case "$log_file" in
-                *library-loading*|*pkg-launch*|*pkg-integration*|*srv*)
+                *library-loading*|*pkg-launch*|*pkg-integration*|*native-launcher-reinstall*|*srv*)
                   printf '\n---- %s ----\n' "$log_file"
                   tail -n 80 "$log_file"
                   ;;
