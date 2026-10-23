@@ -118,7 +118,7 @@ osarch_probe=$tmp/osarch
 cat > "$osarch_probe" <<'EOF_OSARCH'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "osarch"
 printf '%s\n' "$m_OSARCH"
 EOF_OSARCH
@@ -139,7 +139,7 @@ driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
@@ -158,7 +158,7 @@ resolver=$tmp/dependency-resolver
 cat > "$resolver" <<'EOF_RESOLVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/facility/pkg-facility" || exit 3
 loadsyslib "pkg/facility/pkg-dependency" || exit 3
 pkg_dependency_resolve "$@"

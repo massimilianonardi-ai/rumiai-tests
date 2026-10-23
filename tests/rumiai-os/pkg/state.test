@@ -83,7 +83,7 @@ make_stateful_definition()
   cat > "$range/cmd/$package" <<EOF_COMMAND
 #!/bin/sh
 [ -n "\${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-launch"
 launcher "$package" "\$@"
 EOF_COMMAND
@@ -187,7 +187,7 @@ driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
@@ -336,7 +336,7 @@ printf '%s\n' data > "$empty_dir_range/var/data" ||
 cat > "$empty_dir_range/cmd/$empty_dir" <<EOF_COMMAND
 #!/bin/sh
 [ -n "\${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-launch"
 launcher "$empty_dir" "\$@"
 EOF_COMMAND
