@@ -108,7 +108,9 @@ grep -F 'pkg_provider_global_environment_apply' "$base_library" >/dev/null 2>&1 
 probe_name=rumiai-loadlib-probe-$$
 probe=$tmp/$probe_name
 cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 
 loadsyslib >/dev/null 2>&1
 printf 'loadsyslib-zero=%s\n' "$?"
@@ -215,7 +217,9 @@ EOF_ISOLATED_COMMAND
 generator_name=rumiai-loadlib-inject-stream-probe
 generator=$tmp/$generator_name
 cat > "$generator" <<'EOF_GENERATOR'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 
 loadsyslib "loadlib-inject-stream" || exit "$?"
 
@@ -539,8 +543,11 @@ scan_file()
 
   awk -v allow_bootstrap_core="$scan_allow_bootstrap_core" '
     /^[[:space:]]*\.[[:space:]]+/ && /\$m_LIB_DIR\/sys\/sh\// {
+      core_line=$0
+      sub(/^[[:space:]]*/, "", core_line)
       if (allow_bootstrap_core == "yes" &&
-          $0 == ". \"$m_LIB_DIR/sys/sh/core.lib.sh\"")
+          (core_line == ". \"$m_LIB_DIR/sys/sh/core.lib.sh\"" ||
+           index(core_line, ". \"$m_LIB_DIR/sys/sh/core.lib.sh\" ||") == 1))
         next
 
       print FNR ":" $0
@@ -560,9 +567,13 @@ scan_file()
 for dir in "$root/bin/sys" "$root/bin/ai" "$root/lib/sys/sh" "$root/lib/ai/sh"
 do
   [ -d "$dir" ] || continue
+  case "$dir" in
+    "$root/bin/"*) allow_core=yes ;;
+    *) allow_core=no ;;
+  esac
   find "$dir" -type f -print | while IFS= read -r file
   do
-    scan_file "$file"
+    scan_file "$file" "$allow_core"
   done
 done
 

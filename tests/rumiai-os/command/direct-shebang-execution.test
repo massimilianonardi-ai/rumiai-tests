@@ -46,19 +46,23 @@ trap 'rm -rf "$tmp"' 0 HUP INT TERM
 command_file=$tmp/direct-command
 observed=$tmp/observed
 cat > "$command_file" <<'EOF_COMMAND'
-#!/usr/bin/env m
-printf '%s\n' "$m_ROOT" "$m_BOOTSTRAP_BIN" "$#" "$1" "$2" > "$OBSERVED_DIRECT" || return 41
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || { printf '%s\n' 'm environment not initialized' >&2; exit 1; }
+printf '%s\n' "$m_ROOT" "$m_BOOTSTRAP_BIN" "$#" "$1" "$2" > "$OBSERVED_DIRECT" || exit 41
+exit 0
 EOF_COMMAND
 chmod 700 "$command_file" || error 'cannot make direct command executable'
 
 OBSERVED_DIRECT=$observed
-PATH=$root/bin/sys:$PATH
-export OBSERVED_DIRECT PATH
-"$command_file" alpha beta > "$tmp/stdout" 2> "$tmp/stderr" || {
+export OBSERVED_DIRECT
+(
+    unset m_ROOT
+    "$command_file" alpha beta > "$tmp/no-env.out" 2> "$tmp/no-env.err"
+) && fail 'native command accepted an uninitialized environment'
+"$root/m" sh -c '"$@"' sh "$command_file" alpha beta > "$tmp/stdout" 2> "$tmp/stderr" || {
     status=$?
     cat "$tmp/stderr" >&2
-    fail "direct integrated command returned $status"
+    fail "native command in an initialized environment returned $status"
 }
 
 actual=$(cat "$observed") || error 'cannot read direct-command observations'
@@ -67,5 +71,5 @@ $root/m
 2
 alpha
 beta"
-[ "$actual" = "$expected" ] || fail "direct #!/usr/bin/env m execution used unexpected runtime state: $actual"
+[ "$actual" = "$expected" ] || fail "native direct execution after bootstrap used unexpected runtime state: $actual"
 exit 0

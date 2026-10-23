@@ -74,8 +74,10 @@ mkdir "$tmp" || error 'cannot create temporary directory'
 
 driver=$tmp/facility-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/facility/pkg-facility.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
+loadsyslib "pkg/facility/pkg-facility" || exit 3
 action=$1
 shift
 case "$action" in
@@ -129,7 +131,8 @@ make_valid()
 
   printf '%s\n' service-start > "$provider/facility-service/$facility/start" || return 1
   cat > "$provider/cmd/service-start" <<'EOF_SERVICE_COMMAND'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
 exit 0
 EOF_SERVICE_COMMAND
   printf '%s\n' bin/service-target > "$provider/link/service-start" || return 1

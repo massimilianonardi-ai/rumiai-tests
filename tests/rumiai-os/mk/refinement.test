@@ -47,6 +47,12 @@ case "$status" in
   *) error "target discovery failed" ;;
 esac
 
+# Native mk/pkg commands inherit environment from this real bootstrap.
+if [ "${m_ROOT-}" != "$root" ]
+then
+  exec "$root/m" sh "$0" "$@"
+fi
+
 command_path="$root/bin/sys/mk"
 [ -x "$command_path" ] || fail "bin/sys/mk is missing or not executable"
 

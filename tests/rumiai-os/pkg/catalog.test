@@ -94,7 +94,9 @@ chmod 700 "$tmp/bin/http-fetch" || error 'cannot prepare external boundary fixtu
 
 driver=$tmp/driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 loadsyslib "pkg/pkg-catalog" || exit 3
 PATH="$PKG_CATALOG_TEST_BIN:$PATH"
 export PATH

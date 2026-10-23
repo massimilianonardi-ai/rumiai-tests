@@ -48,9 +48,13 @@ alias=$tmp/command-alias
 observed=$tmp/observed
 
 cat > "$real" <<'EOF_COMMAND'
-#!/usr/bin/env m
-printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_COMMAND_BIN" || return 41
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+readpathce resolved_command "$0" || exit 3
+[ "${m_COMMAND_BIN+x}" != x ] || exit 4
+printf '%s\n' "$resolved_command" > "$OBSERVED_COMMAND_BIN" || exit 41
+exit 0
 EOF_COMMAND
 chmod 700 "$real" || error 'cannot prepare command body'
 ln -s "$real" "$alias" || error 'cannot create command symlink'
@@ -63,8 +67,8 @@ export OBSERVED_COMMAND_BIN
     cat "$tmp/stderr" >&2
     fail "symlink command dispatch returned $status"
 }
-actual=$(cat "$observed") || error 'cannot read m_COMMAND_BIN observation'
-[ "$actual" = "$expected" ] || fail "m_COMMAND_BIN is not the canonical command pathname: expected=$expected observed=$actual"
+actual=$(cat "$observed") || error 'cannot read native command identity observation'
+[ "$actual" = "$expected" ] || fail "native command did not canonicalize its own symlink invocation: expected=$expected observed=$actual"
 
 path_dir=$tmp/path
 cwd=$tmp/cwd
@@ -72,9 +76,12 @@ shadowed=$path_dir/shadowed
 shadow_observed=$tmp/shadow-observed
 mkdir "$path_dir" "$cwd" "$cwd/shadowed" || error 'cannot prepare slashless command shadow fixture'
 cat > "$shadowed" <<'EOF_SHADOW'
-#!/usr/bin/env m
-printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_COMMAND_BIN" || return 42
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+readpathce resolved_command "$0" || exit 3
+printf '%s\n' "$resolved_command" > "$OBSERVED_COMMAND_BIN" || exit 42
+exit 0
 EOF_SHADOW
 chmod 700 "$shadowed" || error 'cannot prepare PATH command'
 shadow_expected=$(command -p realpath -- "$shadowed" 2>/dev/null) || error 'cannot canonicalize PATH command'

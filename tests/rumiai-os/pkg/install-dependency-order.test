@@ -35,7 +35,9 @@ depend_marker=$driver.depend
 trap 'rm -rf "$driver" "$marker" "$depend_marker" "$driver.err" "$driver.invalid.err" "$driver.installed" "$driver.installed.err" "$driver.dependency.err" "${installed_concrete-}"; [ "${installed_pkg_store_created-0}" -eq 0 ] || rmdir "$root/pkg" 2>/dev/null || :' 0 HUP INT TERM
 
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 loadsyslib "pkg/pkg-install" || exit 3
 
 pkg()
@@ -138,7 +140,9 @@ installed_concrete="$root/pkg/testinstalled@21!linux-x86_64"
 mkdir "$installed_concrete" || error 'cannot prepare installed concrete fixture'
 installed_driver=$driver.installed
 cat > "$installed_driver" <<'EOF_INSTALLED_DRIVER'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 loadsyslib "pkg/pkg-install" || exit 3
 
 pkg_catalog_request_resolve()

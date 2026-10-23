@@ -99,8 +99,10 @@ consumer=launchconsumer$$
 
 integration_driver=$tmp/integration-driver
 cat > "$integration_driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
@@ -152,8 +154,10 @@ payload=$tmp/payload-$consumer
 mkdir -p "$range/cmd" "$range/link" "$payload/bin" || error 'cannot create consumer fixture'
 
 cat > "$range/cmd/$consumer" <<EOF_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$consumer" "\$@"
 EOF_COMMAND
 chmod 600 "$range/cmd/$consumer" || error 'cannot prepare consumer command'
@@ -162,7 +166,10 @@ printf '%s\n' "$facility =1" > "$range/dependency" || error 'cannot prepare cons
 cat > "$range/env" <<'EOF_PACKAGE_ENV'
 ORDER=package
 PACKAGE_ENV=package
-export ORDER PACKAGE_ENV
+[ -n "${pkg_launch_root:-}" ] || return 1
+[ -z "${m_COMMAND_BIN+x}" ] || return 1
+PACKAGE_ROOT=$pkg_launch_root
+export ORDER PACKAGE_ENV PACKAGE_ROOT
 EOF_PACKAGE_ENV
 chmod 600 "$range/env" || error 'cannot prepare consumer package environment'
 
@@ -174,6 +181,7 @@ printf 'provider-marker=%s\n' "$PROVIDER_MARKER"
 printf 'provider-home=%s\n' "$PROVIDER_HOME"
 printf 'order=%s\n' "$ORDER"
 printf 'package=%s\n' "$PACKAGE_ENV"
+printf 'package-root=%s\n' "$PACKAGE_ROOT"
 printf 'user=%s\n' "$USER_ENV"
 printf 'arg1=%s\n' "$1"
 exit 37
@@ -214,7 +222,7 @@ run_consumer()
   output=$tmp/$label.out
   err=$tmp/$label.err
 
-  "$consumer" "arg-$label" > "$output" 2> "$err"
+  "$root/m" "$consumer" "arg-$label" > "$output" 2> "$err"
   status=$?
   [ "$status" -eq 37 ] || {
     cat "$err" >&2
@@ -229,6 +237,8 @@ run_consumer()
     fail "$label runtime precedence is not package -> provider -> user"
   grep -Fx 'package=package' "$output" >/dev/null 2>&1 ||
     fail "$label package environment was not applied"
+  grep -Fx "package-root=$root/pkg/$consumer@1/root" "$output" >/dev/null 2>&1 ||
+    fail "$label package env did not receive the validated concrete root"
   grep -Fx "user=provider-$expected-user" "$output" >/dev/null 2>&1 ||
     fail "$label user environment was not applied last"
   grep -Fx "arg1=arg-$label" "$output" >/dev/null 2>&1 ||
@@ -252,7 +262,7 @@ make_provider "$provider_b" b > "$tmp/provb.out" 2> "$tmp/provb.err" || {
   cat "$tmp/provb.err" >&2
   fail 'cannot integrate provider B'
 }
-"$consumer" arg-ambiguous > "$tmp/ambiguous.out" 2> "$tmp/ambiguous.err"
+"$root/m" "$consumer" arg-ambiguous > "$tmp/ambiguous.out" 2> "$tmp/ambiguous.err"
 ambiguous_status=$?
 [ "$ambiguous_status" -eq 1 ] || {
   cat "$tmp/ambiguous.err" >&2

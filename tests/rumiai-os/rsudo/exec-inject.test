@@ -74,7 +74,9 @@ EOF_COMMAND
 probe_name=rumiai-rsudo-exec-inject-probe
 probe=$tmp/$probe_name
 cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 
 loadsyslib "rsudo/rsudo-mod-exec" || exit "$?"
 

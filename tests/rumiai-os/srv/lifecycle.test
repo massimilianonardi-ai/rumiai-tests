@@ -197,13 +197,17 @@ command -p -- mkdir -p   "$range/cmd"   "$range/link"   "$range/facility-service
 } > "$range/facility" || error 'cannot write facility declarations'
 
 cat > "$range/cmd/$service_command" <<EOF_SERVICE_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$package" "\$@"
 EOF_SERVICE_COMMAND
 cat > "$range/cmd/$fail_command" <<EOF_FAIL_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$package" "\$@"
 EOF_FAIL_COMMAND
 printf '%s\n' bin/service-target > "$range/link/$service_command" || error 'cannot write service command link'
@@ -247,8 +251,10 @@ chmod 700 "$payload/bin/service-target" "$payload/bin/fail-target" ||
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case "$action" in

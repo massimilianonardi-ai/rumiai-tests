@@ -84,8 +84,10 @@ cache=$root/state/system/current/sys/environment/cache
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
@@ -105,7 +107,8 @@ chmod 700 "$driver" || error 'cannot prepare integration driver'
 
 probe=$tmp/probe
 cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
 marker=$1
 runtime_name=$2
 eval "marker_value=\${$marker-<unset>}"

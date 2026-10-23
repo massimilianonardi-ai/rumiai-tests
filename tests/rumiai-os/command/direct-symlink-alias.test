@@ -48,22 +48,24 @@ alias=$tmp/renamed-alias
 observed=$tmp/observed
 
 cat > "$real" <<'EOF_COMMAND'
-#!/usr/bin/env m
-printf '%s\n' "$m_COMMAND_BIN" > "$OBSERVED_ALIAS" || return 41
-return 0
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+readpathce resolved_command "$0" || exit 3
+printf '%s\n' "$resolved_command" > "$OBSERVED_ALIAS" || exit 41
+exit 0
 EOF_COMMAND
 chmod 700 "$real" || error 'cannot make canonical command executable'
 ln -s "$real" "$alias" || error 'cannot create renamed command alias'
 expected=$(command -p realpath -- "$real" 2>/dev/null) || error 'cannot canonicalize canonical command'
 
 OBSERVED_ALIAS=$observed
-PATH=$root/bin/sys:$PATH
-export OBSERVED_ALIAS PATH
-"$alias" > "$tmp/stdout" 2> "$tmp/stderr" || {
+export OBSERVED_ALIAS
+"$root/m" sh -c '"$1"' sh "$alias" > "$tmp/stdout" 2> "$tmp/stderr" || {
     status=$?
     cat "$tmp/stderr" >&2
     fail "renamed direct alias returned $status"
 }
 actual=$(cat "$observed") || error 'cannot read alias observation'
-[ "$actual" = "$expected" ] || fail "direct symlink alias did not canonicalize m_COMMAND_BIN: expected=$expected observed=$actual"
+[ "$actual" = "$expected" ] || fail "native symlink alias did not canonicalize its own invocation: expected=$expected observed=$actual"
 exit 0

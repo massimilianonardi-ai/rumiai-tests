@@ -47,7 +47,7 @@ legacy_template=$root/lib/sys/sh/rsudo/rsudo-jobs-template
 [ -f "$command_path" ] && [ -x "$command_path" ] ||
     fail 'bin/sys/rsudo-admin is missing or not executable'
 
-[ "$(sed -n '1p' "$command_path")" = '#!/usr/bin/env m' ] ||
+[ "$(sed -n '1p' "$command_path")" = '#!/bin/sh' ] ||
     fail 'rsudo-admin has the wrong interpreter header'
 
 command -p sh -n "$command_path" ||

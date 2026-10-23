@@ -128,8 +128,10 @@ fi
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
@@ -138,7 +140,7 @@ case $action in
     pkg_integrate "$@"
     ;;
   deintegrate) pkg_deintegrate "$@";;
-  *) return 2;;
+  *) exit 2;;
 esac
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare integration driver'

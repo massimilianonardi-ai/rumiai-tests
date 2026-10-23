@@ -234,7 +234,9 @@ status=$?
 # normal ssh_auth-backed operation instead of another auth check.
 state_script=$tmp/state-reset
 cat > "$state_script" <<'EOF_STATE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 
 loadsyslib "rsudo/rsudo"
 

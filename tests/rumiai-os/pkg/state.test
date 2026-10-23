@@ -81,8 +81,10 @@ make_stateful_definition()
     return 1
 
   cat > "$range/cmd/$package" <<EOF_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch"
 launcher "$package" "\$@"
 EOF_COMMAND
   chmod 600 "$range/cmd/$package" || return 1
@@ -183,8 +185,10 @@ fi
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
@@ -193,7 +197,7 @@ case $action in
     pkg_integrate "$@"
     ;;
   deintegrate) pkg_deintegrate "$@";;
-  *) return 2;;
+  *) exit 2;;
 esac
 EOF_DRIVER
 chmod 700 "$driver" || error 'cannot prepare integration driver'
@@ -241,7 +245,7 @@ run_pkg default "$package@1" > "$tmp/default-1.out" 2> "$tmp/default-1.err" || {
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$package" read
+  "$root/m" "$package" read
 ) > "$tmp/read-1.out" 2> "$tmp/read-1.err" || {
   cat "$tmp/read-1.err" >&2
   fail 'stateful version 1 command failed'
@@ -256,7 +260,7 @@ grep -Fx 'runtime=absent' "$tmp/read-1.out" >/dev/null 2>&1 ||
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$package" write
+  "$root/m" "$package" write
 ) > "$tmp/write.out" 2> "$tmp/write.err" || {
   cat "$tmp/write.err" >&2
   fail 'stateful package could not write through var routing'
@@ -288,7 +292,7 @@ run_pkg default "$package@2" > "$tmp/default-2.out" 2> "$tmp/default-2.err" || {
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$package" read
+  "$root/m" "$package" read
 ) > "$tmp/read-2.out" 2> "$tmp/read-2.err" || {
   cat "$tmp/read-2.err" >&2
   fail 'stateful version 2 command failed'
@@ -330,8 +334,10 @@ printf '%s\n' data > "$empty_dir_range/var/data" ||
   error 'cannot define empty-directory state mapping'
 
 cat > "$empty_dir_range/cmd/$empty_dir" <<EOF_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch"
 launcher "$empty_dir" "\$@"
 EOF_COMMAND
 chmod 600 "$empty_dir_range/cmd/$empty_dir" ||
@@ -392,7 +398,7 @@ run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-d
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$empty_dir" read
+  "$root/m" "$empty_dir" read
 ) > "$tmp/empty-dir-read-before.out" 2> "$tmp/empty-dir-read-before.err" || {
   cat "$tmp/empty-dir-read-before.err" >&2
   fail 'cannot read synthesized empty package state'
@@ -403,7 +409,7 @@ run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-d
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$empty_dir" write
+  "$root/m" "$empty_dir" write
 ) > "$tmp/empty-dir-write.out" 2> "$tmp/empty-dir-write.err" || {
   cat "$tmp/empty-dir-write.err" >&2
   fail 'cannot write through synthesized package state route'
@@ -415,7 +421,7 @@ run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-d
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$empty_dir" read
+  "$root/m" "$empty_dir" read
 ) > "$tmp/empty-dir-read-after.out" 2> "$tmp/empty-dir-read-after.err" || {
   cat "$tmp/empty-dir-read-after.err" >&2
   fail 'cannot read synthesized package state after write'

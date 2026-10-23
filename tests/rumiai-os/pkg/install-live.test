@@ -76,8 +76,10 @@ export PATH
 
 runtime_probe=$tmp/runtime-probe
 cat > "$runtime_probe" <<'EOF_PROBE'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/osarch.lib.sh"
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
+loadsyslib "osarch"
 printf '%s\n' "$m_OSARCH"
 EOF_PROBE
 chmod 700 "$runtime_probe" || error 'cannot prepare runtime probe'

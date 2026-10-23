@@ -95,7 +95,7 @@ command_path="$root/bin/sys/mk"
 PATH="$root/bin/sys:$PATH"
 export PATH
 
-if ! "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
+if ! "$root/m" "$root/bin/sys/pkg" default nodejs >/dev/null 2>&1
 then
   skip "managed nodejs runtime is not installed/default in the supplied target"
 fi
@@ -118,8 +118,10 @@ provider=mkreqprovider$$
 
 driver="$tmp/integration-driver"
 cat > "$driver" <<'EOF_DRIVER' || error "cannot write integration driver"
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 pkg_integrate "$@"
 EOF_DRIVER
 chmod 700 "$driver" || error "cannot make integration driver executable"
@@ -248,7 +250,7 @@ cache_project="$cache_root/projects/$project_key"
 expect_status 1 run_pkg provider default "$facility"
 
 docs_plan="$tmp/docs.plan.json"
-"$command_path" --project "$project" --plan docs > "$docs_plan" || fail "MK-38 unreachable-requirement plan failed"
+"$root/m" "$command_path" --project "$project" --plan docs > "$docs_plan" || fail "MK-38 unreachable-requirement plan failed"
 "$root/m" node - "$docs_plan" <<'EOF_NODE' || fail "MK-38 unreachable requirement appeared in plan"
 const fs = require('fs');
 const plan = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -260,7 +262,7 @@ expect_status 1 run_pkg provider default "$facility"
 [ ! -e "$project/docs.marker" ] || fail "plan inspection executed docs action"
 
 build_plan="$tmp/build-unsatisfied.plan.json"
-"$command_path" --project "$project" --plan build > "$build_plan" ||
+"$root/m" "$command_path" --project "$project" --plan build > "$build_plan" ||
   fail "MK-42 unsatisfied requirement plan failed"
 "$root/m" node - "$build_plan" "$facility" <<'EOF_NODE' || fail "MK-42 unsatisfied requirement was not preserved in plan"
 const fs = require('fs');
@@ -274,7 +276,7 @@ if (!enable || enable.state !== 'ready') process.exit(3);
 EOF_NODE
 expect_status 1 run_pkg provider default "$facility"
 
-"$command_path" --project "$project" build ||
+"$root/m" "$command_path" --project "$project" build ||
   fail "MK-42 runtime requirement refinement failed"
 [ -f "$project/compile.marker" ] || fail "consumer action did not run after requirement became satisfied"
 selected="$(run_pkg provider default "$facility" 2> "$tmp/default-after-build.err")" ||
@@ -282,7 +284,7 @@ selected="$(run_pkg provider default "$facility" 2> "$tmp/default-after-build.er
 [ "$selected" = "$provider" ] || fail "enable-build configured unexpected facility selector"
 
 satisfied_plan="$tmp/build-satisfied.plan.json"
-"$command_path" --project "$project" --plan build > "$satisfied_plan" ||
+"$root/m" "$command_path" --project "$project" --plan build > "$satisfied_plan" ||
   fail "MK-43 satisfied requirement plan failed"
 "$root/m" node - "$satisfied_plan" "$provider@1" <<'EOF_NODE' || fail "MK-43 selected provider was not exposed by the plan"
 const fs = require('fs');
@@ -293,11 +295,11 @@ EOF_NODE
 
 # MK-47: the concrete provider selected for a facility requirement is part of
 # incremental identity even when project inputs/action are otherwise unchanged.
-"$command_path" --project "$project" incremental ||
+"$root/m" "$command_path" --project "$project" incremental ||
   fail "initial requirement-backed incremental execution failed"
 [ "$(command -p -- awk 'END { print NR }' "$project/incremental.trace")" -eq 1 ] ||
   fail "initial requirement-backed incremental action did not run"
-"$command_path" --project "$project" incremental ||
+"$root/m" "$command_path" --project "$project" incremental ||
   fail "unchanged requirement-backed incremental execution failed"
 [ "$(command -p -- awk 'END { print NR }' "$project/incremental.trace")" -eq 1 ] ||
   fail "unchanged requirement provider did not produce up-to-date operation"
@@ -318,7 +320,7 @@ run_pkg default "$provider@2" >/dev/null 2> "$tmp/provider-v2-default.err" ||
   error "cannot move synthetic provider package default to v2"
 
 provider_changed_plan="$tmp/provider-changed.plan.json"
-"$command_path" --project "$project" --plan incremental > "$provider_changed_plan" ||
+"$root/m" "$command_path" --project "$project" --plan incremental > "$provider_changed_plan" ||
   fail "provider-changed incremental plan failed"
 "$root/m" node - "$provider_changed_plan" "$provider@2" <<'EOF_NODE' || fail "MK-47 provider identity change did not invalidate incremental freshness"
 const fs = require('fs');
@@ -328,13 +330,13 @@ const op = plan.operations.find(value => value.name === 'incremental');
 if (!req || req.provider !== process.argv[3]) process.exit(1);
 if (!op || op.state !== 'ready') process.exit(2);
 EOF_NODE
-"$command_path" --project "$project" incremental ||
+"$root/m" "$command_path" --project "$project" incremental ||
   fail "provider-changed incremental execution failed"
 [ "$(command -p -- awk 'END { print NR }' "$project/incremental.trace")" -eq 2 ] ||
   fail "MK-47 provider concrete change did not rerun incremental operation"
 
 strict_plan="$tmp/strict.plan.json"
-"$command_path" --project "$project" --profile strict --plan build > "$strict_plan" ||
+"$root/m" "$command_path" --project "$project" --profile strict --plan build > "$strict_plan" ||
   fail "profile requirement plan failed"
 "$root/m" node - "$strict_plan" <<'EOF_NODE' || fail "profile did not replace the named requirement"
 const fs = require('fs');
@@ -346,12 +348,12 @@ EOF_NODE
 run_pkg provider default -u -- "$facility" >/dev/null 2> "$tmp/default-before-mapped.err" ||
   error "cannot reset facility default before provider requirement scenario"
 command -p -- rm -f "$project/mapped.marker" || error "cannot reset mapped marker"
-"$command_path" --project "$project" mapped ||
+"$root/m" "$command_path" --project "$project" mapped ||
   fail "MK-38 provider requirement refinement failed"
 [ -f "$project/mapped.marker" ] || fail "provider-derived action did not run after requirement became satisfied"
 
 command -p -- rm -f "$project/impossible.marker" || error "cannot reset impossible marker"
-expect_status 1 "$command_path" --project "$project" impossible
+expect_status 1 "$root/m" "$command_path" --project "$project" impossible
 [ ! -e "$project/impossible.marker" ] ||
   fail "MK-41 unsatisfied requirement allowed its consumer action to execute"
 

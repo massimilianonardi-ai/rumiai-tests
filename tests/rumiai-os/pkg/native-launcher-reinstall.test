@@ -1,0 +1,216 @@
+#!/bin/sh
+# Exercise the documented uninstall/reintegrate/default sequence on a legacy
+# concrete. This test uses the real pkg integration/uninstall/default machinery
+# and preserves package state; it never touches a pre-existing package.
+
+TEST_ID=rumiai-os/pkg/native-launcher-reinstall.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P) ||
+  error 'cannot locate test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." 2>/dev/null && pwd -P) ||
+  error 'cannot locate suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target helper unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case $? in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+[ -x "$root/m" ] && [ -x "$root/bin/sys/pkg" ] ||
+  fail 'native pkg runtime is unavailable'
+
+package=nativereinstall$$
+concrete=$root/pkg/$package@1
+tmp=${TMPDIR:-/tmp}/rumiai-native-reinstall-$$
+user_root=
+system_root=
+pkg_store_created=0
+cleanup_owned=0
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "$cleanup_owned" -eq 1 ]
+  then
+    "$root/m" pkg default -u -- "$package" >/dev/null 2>&1 || :
+    "$root/m" pkg uninstall "$package@1" >/dev/null 2>&1 || :
+    [ ! -e "$concrete" ] || command -p -- rm -rf -- "$concrete"
+    command -p -- rm -f -- "$root/pkg/$package" "$root/bin/ext/$package" 2>/dev/null || :
+    command -p -- rm -rf -- "$system_root" "$user_root" 2>/dev/null || :
+  fi
+  [ "$pkg_store_created" -eq 0 ] || command -p -- rmdir -- "$root/pkg" 2>/dev/null || :
+  [ -z "$tmp" ] || command -p -- rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+umask 077
+command -p -- mkdir "$tmp" || error 'cannot create test scratch'
+
+if [ ! -e "$root/pkg" ] && [ ! -L "$root/pkg" ]
+then
+  command -p -- mkdir "$root/pkg" || error 'cannot create package store'
+  pkg_store_created=1
+fi
+[ -d "$root/pkg" ] && [ ! -L "$root/pkg" ] ||
+  fail 'package store is not a real directory'
+[ ! -e "$concrete" ] && [ ! -L "$concrete" ] ||
+  skip 'test concrete already exists'
+
+sys_conf=$("$root/m" state-path system pkg "$package" conf) ||
+  error 'cannot locate system configuration'
+sys_data=$("$root/m" state-path system pkg "$package" data) ||
+  error 'cannot locate system data'
+usr_conf=$("$root/m" state-path user pkg "$package" conf) ||
+  error 'cannot locate user configuration'
+usr_home=$("$root/m" state-path user pkg "$package" home) ||
+  error 'cannot locate user home'
+system_root=${sys_conf%/conf}
+user_root=${usr_conf%/conf}
+[ ! -e "$system_root" ] && [ ! -L "$system_root" ] &&
+[ ! -e "$user_root" ] && [ ! -L "$user_root" ] ||
+  skip 'test package state already exists'
+cleanup_owned=1
+
+driver=$tmp/integration-driver
+cat > "$driver" <<'EOF_DRIVER' || error 'cannot create integration driver'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
+[ "$#" -eq 4 ] || exit 2
+pkg_integrate "$@"
+EOF_DRIVER
+command -p -- chmod 700 "$driver" || error 'cannot make integration driver executable'
+
+make_definition()
+{
+  version=$1
+  range=$tmp/range-$version
+  payload=$tmp/payload-$version
+  command -p -- mkdir -p "$range/cmd" "$range/link" "$range/var" \
+    "$payload/bin" "$payload/etc/tool" "$payload/workspace" || return 1
+  printf '%s\n' tar.gz > "$range/format" || return 1
+  printf '%s\n' bin/upstream > "$range/link/$package" || return 1
+  printf '%s\n' etc/tool/config > "$range/var/conf" || return 1
+  printf '%s\n' workspace > "$range/var/data" || return 1
+  printf '%s\n' "factory-$version" > "$payload/etc/tool/config" || return 1
+  printf '%s\n' "payload-$version" > "$payload/workspace/item" || return 1
+
+  cat > "$payload/bin/upstream" <<'EOF_UPSTREAM' || return 1
+#!/bin/sh
+[ -n "$MIGRATION_PACKAGE_ROOT" ] || exit 21
+printf 'config=%s\n' "$(cat "$MIGRATION_PACKAGE_ROOT/etc/tool/config")"
+printf 'item=%s\n' "$(cat "$MIGRATION_PACKAGE_ROOT/workspace/item")"
+printf 'root=%s\n' "$MIGRATION_PACKAGE_ROOT"
+printf 'user=%s\n' "$MIGRATION_USER_VALUE"
+EOF_UPSTREAM
+  command -p -- chmod 700 "$payload/bin/upstream" || return 1
+
+  if [ "$version" = old ]
+  then
+    # Intentional obsolete package metadata: a copied legacy launcher and env.
+    printf '%s\n' '#!/usr/bin/env m' \
+      'loadsyslib "pkg/pkg-launch"' \
+      "launcher \"$package\" \"\$@\"" > "$range/cmd/$package" || return 1
+    printf '%s\n' 'legacy_dir="${m_COMMAND_BIN%/*}"' \
+      '[ "$legacy_dir" != "$m_COMMAND_BIN" ] || return 1' \
+      'MIGRATION_PACKAGE_ROOT="${legacy_dir%/*}/root"' \
+      'export MIGRATION_PACKAGE_ROOT' > "$range/env" || return 1
+  else
+    printf '%s\n' '#!/bin/sh' \
+      '[ -n "${m_ROOT:-}" ] || exit 1' \
+      '. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2' \
+      'loadsyslib "pkg/pkg-launch" || exit 3' \
+      "launcher \"$package\" \"\$@\"" > "$range/cmd/$package" || return 1
+    printf '%s\n' 'MIGRATION_PACKAGE_ROOT="$pkg_launch_root"' \
+      'export MIGRATION_PACKAGE_ROOT' > "$range/env" || return 1
+  fi
+  command -p -- chmod 600 "$range/cmd/$package" "$range/env" || return 1
+}
+
+make_definition old || error 'cannot make legacy concrete fixture'
+"$root/m" "$driver" "$package" 1 "$tmp/range-old" "$tmp/payload-old" ||
+  fail 'legacy concrete could not be integrated'
+"$root/m" pkg default "$package@1" || fail 'cannot select old concrete'
+[ "$(command -p -- sed -n '1p' "$concrete/cmd/$package")" = '#!/usr/bin/env m' ] ||
+  fail 'old command was not materialized'
+command -p -- grep -F 'm_COMMAND_BIN' "$concrete/env" >/dev/null ||
+  fail 'old package environment was not materialized'
+
+command -p -- mkdir -p "$usr_conf/.m" "$usr_home" ||
+  error 'cannot create user state fixture'
+printf '%s\n' migration-sentinel > "$sys_conf/etc/tool/config" ||
+  error 'cannot update system config'
+printf '%s\n' migration-data > "$sys_data/workspace/runtime" ||
+  error 'cannot update system data'
+printf '%s\n' migration-home > "$usr_home/sentinel" ||
+  error 'cannot update user home'
+printf '%s\n' 'MIGRATION_USER_VALUE=user-preserved' \
+  'export MIGRATION_USER_VALUE' > "$usr_conf/.m/env" ||
+  error 'cannot update user configuration'
+default=$("$root/m" pkg default "$package") ||
+  fail 'old concrete default disappeared'
+[ "$default" = "$package@1" ] || fail 'unexpected old concrete default'
+
+# The normal manager forbids overwriting a concrete, even for the same version.
+make_definition new || error 'cannot make native concrete fixture'
+if "$root/m" "$driver" "$package" 1 "$tmp/range-new" "$tmp/payload-new" \
+  > "$tmp/duplicate.out" 2> "$tmp/duplicate.err"
+then
+  fail 'integration unexpectedly overwrote installed old concrete'
+fi
+[ -f "$concrete/env" ] &&
+command -p -- grep -F 'm_COMMAND_BIN' "$concrete/env" >/dev/null ||
+  fail 'failed duplicate integration modified the old concrete'
+
+# Maintenance window: consumers/services have to be stopped by the operator.
+"$root/m" pkg uninstall "$package@1" ||
+  fail 'public uninstall refused concrete replacement'
+[ ! -e "$concrete" ] && [ ! -L "$concrete" ] ||
+  fail 'public uninstall did not remove the old concrete'
+if "$root/m" pkg default "$package" >/dev/null 2>&1
+then
+  fail 'uninstall left a dangling package default'
+fi
+[ "$(cat "$sys_conf/etc/tool/config")" = migration-sentinel ] &&
+[ "$(cat "$sys_data/workspace/runtime")" = migration-data ] &&
+[ "$(cat "$usr_home/sentinel")" = migration-home ] &&
+command -p -- grep -Fx 'MIGRATION_USER_VALUE=user-preserved' "$usr_conf/.m/env" >/dev/null ||
+  fail 'uninstall changed mutable configuration or data'
+
+# A failed attempt to replace the old concrete must not consume the staging
+# payload. Its subsequent integration is the equivalent of a same-spec install.
+[ -d "$tmp/payload-new" ] || fail 'duplicate integration consumed new payload'
+"$root/m" "$driver" "$package" 1 "$tmp/range-new" "$tmp/payload-new" ||
+  fail 'native same-identity concrete reintegration failed'
+"$root/m" pkg default "$package@1" ||
+  fail 'cannot restore recorded default'
+[ "$("$root/m" pkg default "$package")" = "$default" ] ||
+  fail 'restored default changed concrete identity'
+[ "$(command -p -- sed -n '1p' "$concrete/cmd/$package")" = '#!/bin/sh' ] ||
+  fail 'reinstallation did not materialize the native command'
+if command -p -- grep -F 'm_COMMAND_BIN' "$concrete/env" >/dev/null
+then
+  fail 'reinstallation retained the legacy package env'
+fi
+
+"$root/m" "$package" > "$tmp/observed" 2> "$tmp/launch.err" || {
+  cat "$tmp/launch.err" >&2
+  fail 'reinstalled native launcher did not execute'
+}
+command -p -- grep -Fx 'config=migration-sentinel' "$tmp/observed" >/dev/null ||
+  fail 'reinstalled package did not see preserved system config'
+command -p -- grep -Fx 'item=payload-old' "$tmp/observed" >/dev/null ||
+  fail 'reinstalled package did not see preserved stateful data'
+command -p -- grep -Fx "root=$concrete/root" "$tmp/observed" >/dev/null ||
+  fail 'reinstalled package did not use canonical concrete root'
+command -p -- grep -Fx 'user=user-preserved' "$tmp/observed" >/dev/null ||
+  fail 'reinstalled package did not see preserved user env'
+[ "$(cat "$sys_data/workspace/runtime")" = migration-data ] &&
+[ "$(cat "$usr_home/sentinel")" = migration-home ] ||
+  fail 'reinstallation changed authoritative mutable state'
+
+exit 0

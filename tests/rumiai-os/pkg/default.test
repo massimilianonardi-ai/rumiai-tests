@@ -24,7 +24,7 @@ run_selected()
   (
     PATH="$root/bin/ext:$root/bin/sys:$PATH"
     export PATH
-    "$package"
+    "$root/m" "$package"
   )
 }
 
@@ -33,7 +33,7 @@ run_selected_macos_arm64()
   (
     PATH="$root/bin/ext-macos-arm64:$root/bin/sys:$PATH"
     export PATH
-    "$package"
+    "$root/m" "$package"
   )
 }
 
@@ -96,7 +96,8 @@ make_definition()
   mkdir -p "$range/cmd" "$range/link" "$payload/bin" || return 1
 
   cat > "$range/cmd/$package" <<EOF_COMMAND
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
 printf '%s\\n' '$version'
 EOF_COMMAND
   chmod 600 "$range/cmd/$package" || return 1
@@ -161,9 +162,11 @@ done
 
 driver=$tmp/pkg-integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/osarch.lib.sh" || exit 3
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "osarch" || exit 3
+loadsyslib "pkg/pkg-integration" || exit 3
 
 action=$1
 shift
