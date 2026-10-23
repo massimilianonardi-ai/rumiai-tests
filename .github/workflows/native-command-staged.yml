@@ -44,6 +44,11 @@ jobs:
           path: pkg-catalog
           persist-credentials: false
 
+      - name: Normalize product origin for canonical test discovery
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
       - name: Confirm revision-pinned targets
         shell: bash
         run: |
@@ -74,6 +79,12 @@ jobs:
           cd rumiai-tests
           ./rumiai-test rumiai-os/pkg-launch/contract.test
           ./rumiai-test rumiai-os/pkg-integration/contract.test
+
+      - name: Print failure diagnostics from test sessions
+        if: failure()
+        shell: bash
+        run: |
+          find rumiai-tests/sessions -type f -name '*.log' -print -exec tail -n 45 {} \\; 2>/dev/null || true
 
       - name: Upload runner session evidence
         if: always()
