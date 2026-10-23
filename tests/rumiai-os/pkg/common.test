@@ -58,7 +58,9 @@ mkdir "$tmp" || error 'cannot create temporary directory'
 
 driver=$tmp/driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 loadsyslib "pkg/pkg-common" || exit 3
 
 case "$1" in
