@@ -1,0 +1,112 @@
+#!/bin/sh
+# TLS-TRUST.md: explicit CA authorization, NSS projection, idempotency,
+# revocation and preservation of unrelated browser trust through real m commands.
+set -u
+
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 3
+tests_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd) || exit 3
+if [ -n "${m_ROOT-}" ] && [ -x "$m_ROOT/m" ]; then
+  root=$m_ROOT
+elif [ -x "$tests_root/../rumiai-os/m" ]; then
+  root=$tests_root/../rumiai-os
+else
+  printf '%s\n' 'SKIP: rumiai-os target not discoverable' >&2
+  exit 2
+fi
+
+for tool in openssl certutil flock
+do
+  command -v "$tool" >/dev/null 2>&1 || {
+    printf 'SKIP: required external tool unavailable: %s\n' "$tool" >&2
+    exit 2
+  }
+done
+
+m_cmd="$root/m"
+ca_cmd="$root/bin/sys/tls-ca"
+nss_cmd="$root/bin/sys/tls-nss-sync"
+state_cmd="$root/bin/sys/state-path"
+[ -x "$ca_cmd" ] && [ -x "$nss_cmd" ] && [ -x "$state_cmd" ] ||
+  { printf '%s\n' 'FAIL: TLS commands not executable' >&2; exit 1; }
+
+fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/m-tls-trust.XXXXXXXX") ||
+  { printf '%s\n' 'ERROR: cannot allocate certificate fixture' >&2; exit 3; }
+sha=
+browser_home=
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ -n "$sha" ]
+  then
+    "$m_cmd" "$ca_cmd" remove "$sha" >/dev/null 2>&1 || :
+  fi
+  if [ -n "$browser_home" ] && [ -d "$browser_home" ] && [ ! -L "$browser_home" ]
+  then
+    # Only remove our unique state identity, not a pre-existing user/browser HOME.
+    rm -rf -- "$browser_home" 2>/dev/null || :
+    rmdir -- "${browser_home%/*}" 2>/dev/null || :
+  fi
+  rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+umask 077
+
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "$tmp/approved.key" -out "$tmp/approved.pem" \
+  -subj '/CN=m TLS temporary approved CA' \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1 ||
+  { printf '%s\n' 'ERROR: cannot generate trusted root' >&2; exit 3; }
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "$tmp/local.key" -out "$tmp/local.pem" \
+  -subj '/CN=m TLS unrelated local CA' \
+  -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1 ||
+  { printf '%s\n' 'ERROR: cannot generate local root' >&2; exit 3; }
+
+# Key material and malformed input are not authorizable.
+"$m_cmd" "$ca_cmd" add "$tmp/approved.key" >/dev/null 2>&1 &&
+  fail 'private key was incorrectly accepted as a CA'
+sha=$("$m_cmd" "$ca_cmd" add "$tmp/approved.pem") ||
+  fail 'cannot approve a valid public CA'
+[ "${#sha}" -eq 64 ] || fail 'add did not report SHA-256 fingerprint'
+listed=$("$m_cmd" "$ca_cmd" list) || fail 'cannot list approved certificates'
+printf '%s\n' "$listed" | grep -Fx "$sha" >/dev/null ||
+  fail 'approved CA missing from the authoritative list'
+
+browser_home=$("$m_cmd" "$state_cmd" user sys "tls-trust-test-$$" cache) ||
+  fail 'cannot resolve disposable browser fixture state'
+[ ! -e "$browser_home" ] && [ ! -L "$browser_home" ] ||
+  fail 'test fixture state identity already exists'
+mkdir -p "$browser_home/.local/share/pki/nssdb" ||
+  fail 'cannot prepare browser NSS fixture'
+db="$browser_home/.local/share/pki/nssdb"
+certutil -N --empty-password -d "sql:$db" >/dev/null 2>&1 ||
+  fail 'cannot initialize real NSS database'
+certutil -A -d "sql:$db" -n unrelated-local-ca -t 'C,,' -i "$tmp/local.pem" >/dev/null 2>&1 ||
+  fail 'cannot install unrelated local CA'
+
+"$m_cmd" "$nss_cmd" "$browser_home" ||
+  fail 'first NSS trust projection failed'
+certutil -L -d "sql:$db" -n "m-tls-$sha" >/dev/null 2>&1 ||
+  fail 'approved CA missing from NSS'
+certutil -L -d "sql:$db" -n unrelated-local-ca >/dev/null 2>&1 ||
+  fail 'projection removed existing local CA'
+
+"$m_cmd" "$nss_cmd" "$browser_home" ||
+  fail 'repeated NSS trust projection failed'
+"$m_cmd" "$ca_cmd" remove "$sha" ||
+  fail 'cannot remove centrally approved CA'
+sha=
+"$m_cmd" "$nss_cmd" "$browser_home" ||
+  fail 'NSS revocation projection failed'
+if certutil -L -d "sql:$db" -n "m-tls-$listed" >/dev/null 2>&1
+then
+  fail 'managed CA survived central removal'
+fi
+certutil -L -d "sql:$db" -n unrelated-local-ca >/dev/null 2>&1 ||
+  fail 'revocation removed unrelated local CA'
+
+printf '%s\n' 'PASS: real m CA authorization, NSS synchronization and revocation preserve unrelated trust'
+exit 0
