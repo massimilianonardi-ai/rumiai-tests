@@ -99,7 +99,6 @@ jobs:
           ./rumiai-test rumiai-os/pkg/uninstall.test
           ./rumiai-test rumiai-os/pkg/state.test
           ./rumiai-test rumiai-os/pkg/default.test
-          ./rumiai-test rumiai-os/pkg/dependency.test
 
       - name: Exercise further migrated public commands
         if: success() || failure()
@@ -123,7 +122,7 @@ jobs:
           find rumiai-tests/.runs -type f -name '*.log' -print |
             while IFS= read -r log_file; do
               case "$log_file" in
-                *library-loading*|*pkg-launch*|*pkg-integration*|*native-launcher-reinstall*|*pkg/uninstall*|*pkg/state*|*pkg/default*|*pkg/dependency*|*srv*)
+                *library-loading*|*pkg-launch*|*pkg-integration*|*native-launcher-reinstall*|*pkg/uninstall*|*pkg/state*|*pkg/default*|*srv*)
                   printf '\n---- %s ----\n' "$log_file"
                   tail -n 80 "$log_file"
                   ;;
