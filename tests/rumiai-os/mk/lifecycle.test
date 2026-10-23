@@ -189,7 +189,7 @@ command -p -- grep -F '"operations": [' "$show_output" >/dev/null || fail "--sho
 
 (
   CDPATH= cd -- "$project/nested/dir" &&
-  "$command_path" build check
+  "$root/m" "$command_path" build check
 ) || fail "goal execution failed through project discovery"
 
 cat > "$tmp/order.expected" <<'EOF_ORDER'
