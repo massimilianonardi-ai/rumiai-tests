@@ -1,0 +1,84 @@
+name: native-command-staged
+
+on:
+  push:
+    branches:
+      - m-native-command-tests
+    paths:
+      - .github/workflows/native-command-staged.yml
+      - tests/rumiai-os/command/**
+      - tests/rumiai-os/bootstrap/**
+      - tests/rumiai-os/pkg-launch/**
+      - tests/rumiai-os/pkg-integration/**
+      - tests/rumiai-os/srv/**
+      - lib/rumiai-os-target.lib
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact triggering test revision
+        uses: actions/checkout@v4
+        with:
+          path: rumiai-tests
+          persist-credentials: false
+
+      - name: Checkout staged runtime
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: f8f8acea460aa9bc024e5fed0ab04a350431b3e7
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Checkout staged catalog
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/pkg-catalog
+          ref: 304ab8e4fedbef543f68f9d63e60854f80c9cb7c
+          path: pkg-catalog
+          persist-credentials: false
+
+      - name: Confirm revision-pinned targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "suite=$(git -C rumiai-tests rev-parse HEAD)"
+          echo "runtime=$(git -C rumiai-os rev-parse HEAD)"
+          echo "catalog=$(git -C pkg-catalog rev-parse HEAD)"
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "f8f8acea460aa9bc024e5fed0ab04a350431b3e7"
+          test "$(git -C pkg-catalog rev-parse HEAD)" = "304ab8e4fedbef543f68f9d63e60854f80c9cb7c"
+
+      - name: Execute real command and bootstrap tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          set -euo pipefail
+          cd rumiai-tests
+          ./rumiai-test tests/rumiai-os/command
+          ./rumiai-test tests/rumiai-os/bootstrap
+
+      - name: Execute real package-launch and integration tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          set -euo pipefail
+          cd rumiai-tests
+          ./rumiai-test tests/rumiai-os/pkg-launch/contract.test
+          ./rumiai-test tests/rumiai-os/pkg-integration/contract.test
+
+      - name: Upload runner session evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-command-staged-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rumiai-tests/sessions
+          if-no-files-found: ignore
