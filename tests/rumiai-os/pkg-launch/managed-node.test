@@ -1,0 +1,57 @@
+#!/bin/sh
+# Verify that the real native package command executes the managed Node binary.
+# This test needs an installed/current nodejs package; otherwise it is SKIP.
+
+TEST_ID=rumiai-os/pkg-launch/managed-node.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  case "$0" in */*) self=$0;; *) self=$(command -v "$0") || return 1;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot locate test source'
+suite_root=${test_dir%/tests/rumiai-os/pkg-launch}
+[ "$suite_root" != "$test_dir" ] || error 'unexpected test layout'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target discovery helper unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'rumiai-os target checkout not found' ;;
+  2) fail 'invalid explicit rumiai-os target' ;;
+  *) error 'target discovery failed' ;;
+esac
+
+concrete=$("$root/m" pkg default nodejs 2>/dev/null) ||
+  skip 'managed nodejs default is unavailable on supplied target'
+case "$concrete" in
+  nodejs@*) : ;;
+  *) fail "unexpected managed nodejs concrete identity: $concrete" ;;
+esac
+
+expected_root="$root/pkg/$concrete/root"
+[ -d "$expected_root" ] || fail "selected managed nodejs useful root is absent: $expected_root"
+
+"$root/m" node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const expected = fs.realpathSync(process.argv[1]);
+const actual = fs.realpathSync(process.execPath);
+if (process.env.m_ROOT !== process.argv[2] ||
+    Object.prototype.hasOwnProperty.call(process.env, "m_COMMAND_BIN") ||
+    !actual.startsWith(expected + path.sep)) {
+  console.error("managed-node-identity: expected-root=" + expected +
+    " binary=" + actual + " m_ROOT=" + process.env.m_ROOT);
+  process.exit(1);
+}
+console.log("managed-node-binary=" + actual);
+console.log("managed-node-version=" + process.version);
+' "$expected_root" "$root" || fail 'native launcher did not execute the selected managed Node binary'
+
+exit 0
