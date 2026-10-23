@@ -29,7 +29,7 @@ loader="$root/lib/sys/js/dynamic-loader.lib.js"
 [ -f "$command_file" ] && [ ! -L "$command_file" ] || fail 'jsc command is not a regular file'
 [ -f "$engine" ] && [ ! -L "$engine" ] && [ ! -x "$engine" ] || fail 'compiler engine file type/mode invalid'
 [ -f "$loader" ] && [ ! -L "$loader" ] && [ ! -x "$loader" ] || fail 'loader library file type/mode invalid'
-[ "$(command -p sed -n '1p' "$command_file")" = '#!/usr/bin/env m' ] || fail 'incorrect public command shebang'
+[ "$(command -p sed -n '1p' "$command_file")" = '#!/bin/sh' ] || fail 'incorrect public command shebang'
 command -p sh -n "$command_file" || fail 'public command is not POSIX shell syntax'
 
 for topic in jsc jsc.lib.js dynamic-loader.lib.js

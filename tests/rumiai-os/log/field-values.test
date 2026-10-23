@@ -44,7 +44,9 @@ stdout=$tmp/stdout
 stderr=$tmp/stderr
 
 cat > "$probe" <<'EOT'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 field_value='a b\c"d'
 log warn test message value "$field_value"
 EOT

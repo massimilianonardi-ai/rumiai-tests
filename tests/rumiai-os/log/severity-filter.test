@@ -44,7 +44,9 @@ stdout=$tmp/stdout
 stderr=$tmp/stderr
 
 cat > "$probe" <<'EOT'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 log info test message marker info-filtered
 log error test message marker error-visible
 EOT
