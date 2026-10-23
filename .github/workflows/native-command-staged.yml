@@ -6,8 +6,8 @@ on:
       - m-native-command-tests
     paths:
       - .github/workflows/native-command-staged.yml
-      - rumiai-os/command/**
-      - rumiai-os/bootstrap/**
+      - tests/rumiai-os/command/**
+      - tests/rumiai-os/bootstrap/**
       - tests/rumiai-os/pkg-launch/**
       - tests/rumiai-os/pkg-integration/**
       - tests/rumiai-os/srv/**
@@ -62,8 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           cd rumiai-tests
-          ./rumiai-test tests/rumiai-os/command
-          ./rumiai-test tests/rumiai-os/bootstrap
+          ./rumiai-test rumiai-os/command
+          ./rumiai-test rumiai-os/bootstrap
 
       - name: Execute real package-launch and integration tests
         shell: bash
