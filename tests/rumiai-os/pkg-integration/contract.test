@@ -116,8 +116,10 @@ fi
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
@@ -238,8 +240,10 @@ mkdir -p "$range_shared/cmd" "$range_shared/link" \
 printf '%s 1\n' "$shared_facility" > "$range_shared/facility" ||
   error 'cannot write shared facility declaration'
 cat > "$range_shared/cmd/$shared_command" <<EOF_SHARED_COMMAND
-#!/usr/bin/env m
-loadsyslib "pkg/pkg-launch"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$package" "\$@"
 EOF_SHARED_COMMAND
 printf '%s\n' bin/tool > "$range_shared/link/$shared_command" ||
@@ -344,8 +348,10 @@ mkdir -p "$range_service/cmd" "$range_service/link" \
 printf '%s 1\n' "$service_facility" > "$range_service/facility" ||
   error 'cannot write service facility declaration'
 cat > "$range_service/cmd/$service_command" <<EOF_SERVICE_COMMAND
-#!/usr/bin/env m
-. "\$m_LIB_DIR/sys/sh/pkg/pkg-launch.lib.sh"
+#!/bin/sh
+[ -n "\${m_ROOT:-}" ] || exit 1
+. "\$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
 launcher "$package" "\$@"
 EOF_SERVICE_COMMAND
 printf '%s\n' bin/service-target > "$range_service/link/$service_command" ||
