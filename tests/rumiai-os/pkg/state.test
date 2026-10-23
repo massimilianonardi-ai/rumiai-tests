@@ -245,7 +245,7 @@ run_pkg default "$package@1" > "$tmp/default-1.out" 2> "$tmp/default-1.err" || {
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$package" read
+  "$root/m" "$package" read
 ) > "$tmp/read-1.out" 2> "$tmp/read-1.err" || {
   cat "$tmp/read-1.err" >&2
   fail 'stateful version 1 command failed'
@@ -260,7 +260,7 @@ grep -Fx 'runtime=absent' "$tmp/read-1.out" >/dev/null 2>&1 ||
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$package" write
+  "$root/m" "$package" write
 ) > "$tmp/write.out" 2> "$tmp/write.err" || {
   cat "$tmp/write.err" >&2
   fail 'stateful package could not write through var routing'
@@ -292,7 +292,7 @@ run_pkg default "$package@2" > "$tmp/default-2.out" 2> "$tmp/default-2.err" || {
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$package" read
+  "$root/m" "$package" read
 ) > "$tmp/read-2.out" 2> "$tmp/read-2.err" || {
   cat "$tmp/read-2.err" >&2
   fail 'stateful version 2 command failed'
@@ -398,7 +398,7 @@ run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-d
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$empty_dir" read
+  "$root/m" "$empty_dir" read
 ) > "$tmp/empty-dir-read-before.out" 2> "$tmp/empty-dir-read-before.err" || {
   cat "$tmp/empty-dir-read-before.err" >&2
   fail 'cannot read synthesized empty package state'
@@ -409,7 +409,7 @@ run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-d
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$empty_dir" write
+  "$root/m" "$empty_dir" write
 ) > "$tmp/empty-dir-write.out" 2> "$tmp/empty-dir-write.err" || {
   cat "$tmp/empty-dir-write.err" >&2
   fail 'cannot write through synthesized package state route'
@@ -421,7 +421,7 @@ run_pkg default "$empty_dir@1"   > "$tmp/empty-dir-default.out" 2> "$tmp/empty-d
 (
   PATH="$root/bin/ext:$root/bin/sys:$PATH"
   export PATH
-  "$empty_dir" read
+  "$root/m" "$empty_dir" read
 ) > "$tmp/empty-dir-read-after.out" 2> "$tmp/empty-dir-read-after.err" || {
   cat "$tmp/empty-dir-read-after.err" >&2
   fail 'cannot read synthesized package state after write'
