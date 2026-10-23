@@ -71,6 +71,7 @@ jobs:
         run: |
           set -euo pipefail
           find pkg-catalog/pkg -type f -path '*/cmd/*' -exec sh -n {} +
+          find pkg-catalog/pkg -type f -name env -exec sh -n {} +
 
       - name: Execute real command and bootstrap tests
         shell: bash
