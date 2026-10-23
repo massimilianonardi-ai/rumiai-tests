@@ -6,8 +6,8 @@ on:
       - m-native-command-tests
     paths:
       - .github/workflows/native-command-staged.yml
-      - tests/rumiai-os/command/**
-      - tests/rumiai-os/bootstrap/**
+      - rumiai-os/command/**
+      - rumiai-os/bootstrap/**
       - tests/rumiai-os/pkg-launch/**
       - tests/rumiai-os/pkg-integration/**
       - tests/rumiai-os/srv/**
@@ -72,8 +72,8 @@ jobs:
         run: |
           set -euo pipefail
           cd rumiai-tests
-          ./rumiai-test tests/rumiai-os/pkg-launch/contract.test
-          ./rumiai-test tests/rumiai-os/pkg-integration/contract.test
+          ./rumiai-test rumiai-os/pkg-launch/contract.test
+          ./rumiai-test rumiai-os/pkg-integration/contract.test
 
       - name: Upload runner session evidence
         if: always()
