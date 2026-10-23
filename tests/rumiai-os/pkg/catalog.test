@@ -96,7 +96,7 @@ driver=$tmp/driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-catalog" || exit 3
 PATH="$PKG_CATALOG_TEST_BIN:$PATH"
 export PATH

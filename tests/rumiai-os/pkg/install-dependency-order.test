@@ -37,7 +37,7 @@ trap 'rm -rf "$driver" "$marker" "$depend_marker" "$driver.err" "$driver.invalid
 cat > "$driver" <<'EOF_DRIVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-install" || exit 3
 
 pkg()
@@ -142,7 +142,7 @@ installed_driver=$driver.installed
 cat > "$installed_driver" <<'EOF_INSTALLED_DRIVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/pkg-install" || exit 3
 
 pkg_catalog_request_resolve()

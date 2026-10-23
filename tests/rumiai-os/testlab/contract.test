@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Protected current properties:
-#   TESTLAB-01  testlab belongs to m and is a bootstrap-integrated command.
+#   TESTLAB-01  testlab belongs to m and runs under the native shell in initialized m environment.
 #   TESTLAB-02  project scenarios are executable child programs, never sourced.
 #   TESTLAB-17  scenario resources use res/sys/testlab; no project-root testlab namespace exists.
 # Plus mandatory operational-manual and interpreter coverage for the command.
@@ -46,8 +46,8 @@ manual_command=$root/bin/sys/manual
 [ ! -L "$testlab" ] || fail 'TESTLAB-01: testlab must not be a symlink'
 
 first_line=$(command -p sed -n '1p' "$testlab") || error 'cannot read testlab interpreter header'
-[ "$first_line" = '#!/usr/bin/env m' ] ||
-  fail "TESTLAB-01: expected '#!/usr/bin/env m', observed '$first_line'"
+[ "$first_line" = '#!/bin/sh' ] ||
+  fail "TESTLAB-01: expected '#!/bin/sh', observed '$first_line'"
 
 command -p sh -n "$testlab" || fail 'TESTLAB-01: testlab is not valid POSIX sh syntax'
 

@@ -65,8 +65,8 @@ case "$status" in
 esac
 
 command_path="$root/bin/sys/http-fetch"
-[ -f "$command_path" ] || fail "bin/sys/http-fetch is missing"
-[ -x "$command_path" ] || fail "bin/sys/http-fetch is not executable"
+[ -f "$root/m" "$command_path" ] || fail "bin/sys/http-fetch is missing"
+[ -x "$root/m" "$command_path" ] || fail "bin/sys/http-fetch is not executable"
 
 tmp="${TMPDIR:-/tmp}/rumiai-http-fetch-backends-$$"
 umask "077"
@@ -99,7 +99,7 @@ exit 0
 EOF_WGET_MARK
 chmod "700" "$fakebin/wget" || error "cannot make fake wget executable"
 
-PATH="$runtime_path" "$command_path" -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
+PATH="$runtime_path" "$root/m" "$command_path" -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
 status="$?"
 [ "$status" -eq "1" ] || fail "curl transfer failure returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl transfer with wget"
@@ -108,7 +108,7 @@ grep -F 'reason="transfer-failed"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl f
 grep -F 'backend="curl"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl failure diagnostic does not identify curl"
 grep -F 'status="23"' "$tmp/stderr" >/dev/null 2>&1 || fail "curl failure diagnostic does not preserve backend status 23"
 
-PATH="$runtime_path" "$command_path" -l -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
+PATH="$runtime_path" "$root/m" "$command_path" -l -- "https://example.test/fail" >"$tmp/stdout" 2>"$tmp/stderr"
 status="$?"
 [ "$status" -eq "1" ] || fail "curl Content-Length probe failure returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "http-fetch retried a failed curl Content-Length probe with wget"
@@ -154,7 +154,7 @@ EOF_WGET_GNU
 chmod "700" "$fakebin/wget" || error "cannot replace fake wget"
 rm -f "$wget_marker"
 
-PATH="$runtime_path" "$command_path" \
+PATH="$runtime_path" "$root/m" "$command_path" \
   -H "X-Test: value" \
   -t "7" \
   -- "https://example.test/wget" >"$tmp/stdout" 2>"$tmp/stderr" || {
@@ -184,7 +184,7 @@ cmp "$expected_args" "$wget_args" >/dev/null 2>&1 || {
   fail "GNU Wget backend arguments do not match the http-fetch contract"
 }
 
-length="$(PATH="$runtime_path" "$command_path" -l -- "https://example.test/wget" 2>"$tmp/stderr")" || {
+length="$(PATH="$runtime_path" "$root/m" "$command_path" -l -- "https://example.test/wget" 2>"$tmp/stderr")" || {
   status="$?"
   cat "$tmp/stderr" >&2
   fail "GNU Wget Content-Length probe returned $status"
@@ -205,7 +205,7 @@ exit 47
 EOF_WGET_FAIL
 chmod "700" "$fakebin/wget" || error "cannot replace fake wget with failing GNU Wget"
 
-PATH="$runtime_path" "$command_path" -- "https://example.test/wget-fail" >"$tmp/stdout" 2>"$tmp/stderr"
+PATH="$runtime_path" "$root/m" "$command_path" -- "https://example.test/wget-fail" >"$tmp/stdout" 2>"$tmp/stderr"
 status="$?"
 [ "$status" -eq "1" ] || fail "GNU Wget transfer failure returned status $status instead of 1"
 grep -F 'backend="wget"' "$tmp/stderr" >/dev/null 2>&1 || fail "wget failure diagnostic does not identify wget"
@@ -224,7 +224,7 @@ EOF_WGET_BUSYBOX
 chmod "700" "$fakebin/wget" || error "cannot replace fake wget with BusyBox probe"
 rm -f "$wget_marker"
 
-PATH="$runtime_path" "$command_path" -- "https://example.test/busybox" >"$tmp/stdout" 2>"$tmp/stderr"
+PATH="$runtime_path" "$root/m" "$command_path" -- "https://example.test/busybox" >"$tmp/stdout" 2>"$tmp/stderr"
 status="$?"
 [ "$status" -eq "1" ] || fail "unsupported BusyBox Wget case returned status $status instead of 1"
 [ ! -e "$wget_marker" ] || fail "BusyBox Wget was used as a transfer backend"
