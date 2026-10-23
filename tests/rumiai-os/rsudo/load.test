@@ -253,7 +253,9 @@ RSUDO_CREDENTIALS_GROUP_FILE_PASS=file-pass
 EOF_GROUPS
 
 cat > "$tmp/encode-helper" <<'EOF_ENCODE_HELPER'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
 
 loadsyslib "enc" || exit 1
 encode
