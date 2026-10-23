@@ -86,11 +86,13 @@ jobs:
           user_home="$("$root/m" state-path user pkg nodejs home)"
           system_conf="$("$root/m" state-path system pkg nodejs conf)"
           mkdir -p "$user_conf/.m" "$user_home" "$system_conf"
-          printf 'MIGRATION_USER_SENTINEL=preserved\\nexport MIGRATION_USER_SENTINEL\\n' > "$user_conf/.m/env"
-          printf 'persistent-home\\n' > "$user_home/native-migration-sentinel"
-          printf 'persistent-system\\n' > "$system_conf/native-migration-sentinel"
+          printf 'MIGRATION_USER_SENTINEL=preserved\nexport MIGRATION_USER_SENTINEL\n' > "$user_conf/.m/env"
+          printf 'persistent-home\n' > "$user_home/native-migration-sentinel"
+          printf 'persistent-system\n' > "$system_conf/native-migration-sentinel"
           recorded="$("$root/m" pkg default nodejs)"
-          test "$recorded" = "nodejs@v26.8.2!$(./rumiai-os/m osarch)"
+          expected="nodejs@v26.8.2!$("$root/m" osarch)"
+          printf 'migration-recorded=%s expected=%s\n' "$recorded" "$expected"
+          test "$recorded" = "$expected"
           "$root/m" pkg uninstall "$recorded"
           if "$root/m" pkg default nodejs >/dev/null 2>&1; then
             echo "Default survived explicit uninstall" >&2
