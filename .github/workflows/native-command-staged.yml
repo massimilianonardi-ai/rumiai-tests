@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/rumiai-os
-          ref: f8f8acea460aa9bc024e5fed0ab04a350431b3e7
+          ref: 3b5d6019db0cf1b4c419792aef36b4bee12037cb
           path: rumiai-os
           persist-credentials: false
 
@@ -46,7 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: massimilianonardi-ai/pkg-catalog
-          ref: 304ab8e4fedbef543f68f9d63e60854f80c9cb7c
+          ref: 893120694670ac91e67353797ca3602d8f2b330b
           path: pkg-catalog
           persist-credentials: false
 
@@ -63,8 +63,8 @@ jobs:
           echo "runtime=$(git -C rumiai-os rev-parse HEAD)"
           echo "catalog=$(git -C pkg-catalog rev-parse HEAD)"
           test "$(git -C rumiai-tests rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C rumiai-os rev-parse HEAD)" = "f8f8acea460aa9bc024e5fed0ab04a350431b3e7"
-          test "$(git -C pkg-catalog rev-parse HEAD)" = "304ab8e4fedbef543f68f9d63e60854f80c9cb7c"
+          test "$(git -C rumiai-os rev-parse HEAD)" = "3b5d6019db0cf1b4c419792aef36b4bee12037cb"
+          test "$(git -C pkg-catalog rev-parse HEAD)" = "893120694670ac91e67353797ca3602d8f2b330b"
 
       - name: Check staged catalog shell syntax
         shell: bash
