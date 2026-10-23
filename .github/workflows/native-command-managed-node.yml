@@ -72,14 +72,8 @@ jobs:
           RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
         run: |
           set -euo pipefail
-          ./rumiai-os/m node -e '
-            const path=require("node:path");
-            if (!process.env.m_ROOT || !process.execPath.startsWith(path.join(process.env.m_ROOT,"pkg")+path.sep))
-              process.exit(41);
-            console.log("managed-node-binary="+process.execPath);
-            console.log("managed-node-version="+process.version);
-          '
           cd rumiai-tests
+          ./rumiai-test rumiai-os/pkg-launch/managed-node.test
           ./rumiai-test rumiai-os/mk/lifecycle.test
           ./rumiai-test rumiai-os/jsc/compiler-loader.test
       - name: Show logs on failure
