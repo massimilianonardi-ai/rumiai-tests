@@ -66,6 +66,12 @@ jobs:
           test "$(git -C rumiai-os rev-parse HEAD)" = "f8f8acea460aa9bc024e5fed0ab04a350431b3e7"
           test "$(git -C pkg-catalog rev-parse HEAD)" = "304ab8e4fedbef543f68f9d63e60854f80c9cb7c"
 
+      - name: Check staged catalog shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find pkg-catalog/pkg -type f -path '*/cmd/*' -exec sh -n {} +
+
       - name: Execute real command and bootstrap tests
         shell: bash
         env:
@@ -100,6 +106,7 @@ jobs:
           ./rumiai-test rumiai-os/jsc/compiler-loader.test
           ./rumiai-test rumiai-os/mk/lifecycle.test
           ./rumiai-test rumiai-os/srv/lifecycle.test
+          ./rumiai-test rumiai-os/srv/provider.test
 
       - name: Print failure diagnostics from test sessions
         if: failure()
@@ -108,7 +115,7 @@ jobs:
           find rumiai-tests/.runs -type f -name '*.log' -print |
             while IFS= read -r log_file; do
               case "$log_file" in
-                *library-loading*|*pkg-launch*|*pkg-integration*)
+                *library-loading*|*pkg-launch*|*pkg-integration*|*srv*)
                   printf '\n---- %s ----\n' "$log_file"
                   tail -n 80 "$log_file"
                   ;;
