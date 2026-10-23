@@ -98,10 +98,11 @@ certutil -L -d "sql:$db" -n unrelated-local-ca >/dev/null 2>&1 ||
   fail 'repeated NSS trust projection failed'
 "$m_cmd" "$ca_cmd" remove "$sha" ||
   fail 'cannot remove centrally approved CA'
+removed_sha=$sha
 sha=
 "$m_cmd" "$nss_cmd" "$browser_home" ||
   fail 'NSS revocation projection failed'
-if certutil -L -d "sql:$db" -n "m-tls-$listed" >/dev/null 2>&1
+if certutil -L -d "sql:$db" -n "m-tls-$removed_sha" >/dev/null 2>&1
 then
   fail 'managed CA survived central removal'
 fi
