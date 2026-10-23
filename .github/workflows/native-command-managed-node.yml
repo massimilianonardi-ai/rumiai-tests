@@ -1,0 +1,100 @@
+name: native-command-managed-node
+
+on:
+  push:
+    branches:
+      - m-native-command-tests
+    paths:
+      - .github/workflows/native-command-managed-node.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  managed-node:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-26.04-arm
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - name: Checkout staged tests
+        uses: actions/checkout@v4
+        with:
+          path: rumiai-tests
+          persist-credentials: false
+      - name: Checkout staged runtime
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: f8f8acea460aa9bc024e5fed0ab04a350431b3e7
+          path: rumiai-os
+          persist-credentials: false
+      - name: Checkout staged catalog
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/pkg-catalog
+          ref: 304ab8e4fedbef543f68f9d63e60854f80c9cb7c
+          path: pkg-catalog
+          persist-credentials: false
+      - name: Prepare exact staged catalog and native environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C rumiai-tests rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C rumiai-os rev-parse HEAD)" = f8f8acea460aa9bc024e5fed0ab04a350431b3e7
+          test "$(git -C pkg-catalog rev-parse HEAD)" = 304ab8e4fedbef543f68f9d63e60854f80c9cb7c
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+          # Give local Git transport a branch HEAD that points at the exact staged snapshot.
+          git -C pkg-catalog switch -c native-command-validated
+          ./rumiai-os/m osarch update
+          catalog_conf="$(./rumiai-os/m state-path system sys pkg conf)"
+          mkdir -p "$catalog_conf"
+          printf 'file://%s/pkg-catalog\n' "$GITHUB_WORKSPACE" > "$catalog_conf/catalog"
+          echo "expected-catalog=$(git -C pkg-catalog rev-parse HEAD)"
+          echo "catalog-source=$(cat "$catalog_conf/catalog")"
+          ./rumiai-os/m osarch
+      - name: Install Node.js through the real staged pkg catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./rumiai-os/m pkg install 'nodejs@v26.8.2'
+          ./rumiai-os/m pkg default 'nodejs@v26.8.2'
+          ./rumiai-os/m pkg default nodejs
+          ./rumiai-os/m node --version
+      - name: Prove managed Node execution and run mk and jsc tests
+        shell: bash
+        env:
+          RUMIAI_TEST_RUMIAI_OS_ROOT: ${{ github.workspace }}/rumiai-os
+        run: |
+          set -euo pipefail
+          ./rumiai-os/m node -e '
+            const path=require("node:path");
+            if (!process.env.m_ROOT || !process.execPath.startsWith(path.join(process.env.m_ROOT,"pkg")+path.sep))
+              process.exit(41);
+            console.log("managed-node-binary="+process.execPath);
+            console.log("managed-node-version="+process.version);
+          '
+          cd rumiai-tests
+          ./rumiai-test rumiai-os/mk/lifecycle.test
+          ./rumiai-test rumiai-os/jsc/compiler-loader.test
+      - name: Show logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          find rumiai-tests/.runs -type f -name '*.log' -print | while IFS= read -r f; do
+            case "$f" in *mk*|*jsc*) echo "---- $f"; tail -n 100 "$f";; esac
+          done
+          true
+      - name: Upload revision-specific runner logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-managed-node-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rumiai-tests/.runs
+          include-hidden-files: true
+          if-no-files-found: ignore
