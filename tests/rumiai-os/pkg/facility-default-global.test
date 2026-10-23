@@ -151,7 +151,8 @@ mkdir "$tmp" || error 'cannot create temporary directory'
 unset RUMIAI_TEST_FACILITY_GLOBAL_MARKER
 env_probe=$tmp/env-probe
 cat > "$env_probe" <<'EOF_ENV_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
 if [ "${RUMIAI_TEST_FACILITY_GLOBAL_MARKER+x}" = x ]
 then
   printf '%s\n' "$RUMIAI_TEST_FACILITY_GLOBAL_MARKER"
@@ -164,7 +165,8 @@ chmod 700 "$env_probe" || error 'cannot prepare ambient environment probe'
 
 path_probe=$tmp/path-probe
 cat > "$path_probe" <<'EOF_PATH_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
 runtime_name=$1
 runtime_path=$(command -v -- "$runtime_name" 2>/dev/null) || exit 1
 printf '%s\n' "$runtime_path"
@@ -212,8 +214,10 @@ done
 
 driver=$tmp/integration-driver
 cat > "$driver" <<'EOF_DRIVER'
-#!/usr/bin/env m
-. "$m_LIB_DIR/sys/sh/pkg/pkg-integration.lib.sh" || exit 3
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+loadsyslib "core" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
 action=$1
 shift
 case $action in
