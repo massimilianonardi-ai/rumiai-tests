@@ -55,7 +55,9 @@ PATH="$root/bin/sys:$PATH"
 export PATH
 probe=$tmp/osarch
 cat > "$probe" <<'EOF_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 . "$m_LIB_DIR/sys/sh/osarch.lib.sh"
 printf '%s\n' "$m_OSARCH"
 EOF_PROBE
