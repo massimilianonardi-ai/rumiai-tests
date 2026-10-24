@@ -76,7 +76,7 @@ driver=$tmp/facility-driver
 cat > "$driver" <<'EOF_DRIVER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "pkg/facility/pkg-facility" || exit 3
 action=$1
 shift

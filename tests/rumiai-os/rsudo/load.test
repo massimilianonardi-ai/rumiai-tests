@@ -255,7 +255,7 @@ EOF_GROUPS
 cat > "$tmp/encode-helper" <<'EOF_ENCODE_HELPER'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 
 loadsyslib "enc" || exit 1
 encode

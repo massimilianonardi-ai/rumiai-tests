@@ -76,7 +76,7 @@ probe=$tmp/$probe_name
 cat > "$probe" <<'EOF_PROBE'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 
 loadsyslib "rsudo/rsudo-mod-exec" || exit "$?"
 

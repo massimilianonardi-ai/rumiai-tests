@@ -78,7 +78,7 @@ runtime_probe=$tmp/runtime-probe
 cat > "$runtime_probe" <<'EOF_PROBE'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 1
-loadsyslib "core" || exit 2
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 loadsyslib "osarch"
 printf '%s\n' "$m_OSARCH"
 EOF_PROBE
