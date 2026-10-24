@@ -66,6 +66,8 @@ esac
 test_script="$test_dir/${TEST_ID##*/}"
 rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
 
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || error "cannot initialize test shell runtime"
+
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-github.lib.sh"
 [ -f "$library" ] || fail "lib/sys/sh/pkg/repository/pkg-repository-github.lib.sh is missing"

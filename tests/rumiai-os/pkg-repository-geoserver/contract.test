@@ -22,6 +22,8 @@ case $status in 0) :;; 1) skip 'rumiai-os target checkout not found';; 2) fail '
 test_script="$test_dir/${TEST_ID##*/}"
 rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter test through target m bootstrap"
 
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || error "cannot initialize test shell runtime"
+
 library=$root/lib/sys/sh/pkg/repository/pkg-repository-geoserver.lib.sh
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail 'GeoServer repository adapter missing'
 command -p -- sh -n "$library" >/dev/null 2>&1 || fail 'GeoServer repository adapter syntax invalid'
