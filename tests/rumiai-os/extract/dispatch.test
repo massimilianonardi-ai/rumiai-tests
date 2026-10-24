@@ -195,7 +195,7 @@ check_dispatch()
   : > "$marker"
   rm -rf "$destination"
   mkdir "$destination"
-  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
+  PATH="$runtime_path" "$root/m" "$command_path" "$format" "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
     cat "$tmp/err" >&2
     fail "extract failed for $format"
   }
@@ -229,7 +229,7 @@ mv "$fakebin/ditto" "$tmp/ditto"
 : > "$marker"
 rm -rf "$destination"
 mkdir "$destination"
-PATH="$runtime_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
+PATH="$runtime_path" "$root/m" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err" || {
   cat "$tmp/err" >&2
   fail "dmg fallback failed when native backend was incomplete"
 }
@@ -240,7 +240,7 @@ mv "$tmp/ditto" "$fakebin/ditto"
 : > "$marker"
 rm -rf "$destination"
 mkdir "$destination"
-EXTRACT_HDIUTIL_FAIL=attach PATH="$runtime_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
+EXTRACT_HDIUTIL_FAIL=attach PATH="$runtime_path" "$root/m" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
 status="$?"
 [ "$status" -eq 1 ] || fail "dmg attach failure returned status $status instead of 1"
 actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
@@ -249,7 +249,7 @@ actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
 : > "$marker"
 rm -rf "$destination"
 mkdir "$destination"
-EXTRACT_DITTO_FAIL=1 PATH="$runtime_path" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
+EXTRACT_DITTO_FAIL=1 PATH="$runtime_path" "$root/m" "$command_path" dmg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
 status="$?"
 [ "$status" -eq 1 ] || fail "dmg copy failure returned status $status instead of 1"
 actual="$(tr '\n' ' ' < "$marker" | sed 's/ $//')"
@@ -262,11 +262,11 @@ do
   printf -- '%s' 'stream' > "$tmp/$name"
   rm -rf "$destination"
   mkdir "$destination"
-  PATH="$runtime_path" "$command_path" "$format" "$tmp/$name" "$destination" >/dev/null 2>"$tmp/err" || fail "single-stream $format failed"
+  PATH="$runtime_path" "$root/m" "$command_path" "$format" "$tmp/$name" "$destination" >/dev/null 2>"$tmp/err" || fail "single-stream $format failed"
   [ -f "$destination/payload" ] || fail "single-stream $format did not derive output filename"
 done
 
-m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" flat-pkg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
+m_LOG_LEVEL=trace PATH="$runtime_path" "$root/m" "$command_path" flat-pkg "$artifact" "$destination" >/dev/null 2>"$tmp/err"
 status="$?"
 [ "$status" -eq 2 ] || fail "extract accepted package-semantic flat-pkg mode"
 [ -s "$tmp/err" ] || fail "invalid extract invocation produced no diagnostic"

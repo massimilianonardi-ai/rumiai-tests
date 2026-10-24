@@ -51,7 +51,7 @@ EOF_BACKEND
 run_digest()
 {
   : > "$marker"
-  PATH="$root/bin/sys:$fakebin" "$command_path" -a md5 </dev/null > "$tmp/out" 2> "$tmp/err"
+  PATH="$root/bin/sys:$fakebin" "$root/m" "$command_path" -a md5 </dev/null > "$tmp/out" 2> "$tmp/err"
 }
 
 make_backend cksum 'MD5 (-) = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -75,7 +75,7 @@ run_digest || fail "MD5 digest failed with openssl fallback"
 [ "$(cat "$marker")" = openssl ] || fail "MD5 digest did not fall back to openssl"
 
 rm "$fakebin/openssl"
-PATH="$root/bin/sys:$fakebin" "$command_path" -a md5 </dev/null > "$tmp/out" 2> "$tmp/err"
+PATH="$root/bin/sys:$fakebin" "$root/m" "$command_path" -a md5 </dev/null > "$tmp/out" 2> "$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "missing MD5 capability returned $status instead of 1"
 

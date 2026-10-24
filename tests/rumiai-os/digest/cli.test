@@ -77,28 +77,28 @@ chmod "700" "$fakebin/cksum" || error "cannot make fake cksum executable"
 runtime_path="$root/bin/sys:$fakebin:/usr/bin:/bin"
 stdout="$tmp/stdout"
 stderr="$tmp/stderr"
-printf -- '%s' 'stdin-data' | PATH="$runtime_path" "$command_path" -a sha256 >"$stdout" 2>"$stderr" || {
+printf -- '%s' 'stdin-data' | PATH="$runtime_path" "$root/m" "$command_path" -a sha256 >"$stdout" 2>"$stderr" || {
   cat "$stderr" >&2
   fail "digest stdin invocation failed"
 }
 [ "$(cat "$stdout")" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "digest did not normalize SHA-256 output"
 
 printf -- '%s' 'file-data' > "$tmp/input"
-PATH="$runtime_path" "$command_path" -a sha256 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest SHA-256 file invocation failed"
+PATH="$runtime_path" "$root/m" "$command_path" -a sha256 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest SHA-256 file invocation failed"
 [ "$(cat "$stdout")" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ] || fail "digest SHA-256 file output is incorrect"
 
-printf -- '%s' 'stdin-data' | PATH="$runtime_path" "$command_path" -a md5 >"$stdout" 2>"$stderr" || {
+printf -- '%s' 'stdin-data' | PATH="$runtime_path" "$root/m" "$command_path" -a md5 >"$stdout" 2>"$stderr" || {
   cat "$stderr" >&2
   fail "digest MD5 stdin invocation failed"
 }
 [ "$(cat "$stdout")" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ] || fail "digest did not normalize MD5 output"
 
-PATH="$runtime_path" "$command_path" -a md5 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest MD5 file invocation failed"
+PATH="$runtime_path" "$root/m" "$command_path" -a md5 -- "$tmp/input" >"$stdout" 2>"$stderr" || fail "digest MD5 file invocation failed"
 [ "$(cat "$stdout")" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ] || fail "digest MD5 file output is incorrect"
 
 expect_invalid()
 {
-  m_LOG_LEVEL=trace PATH="$runtime_path" "$command_path" "$@" >"$stdout" 2>"$stderr"
+  m_LOG_LEVEL=trace PATH="$runtime_path" "$root/m" "$command_path" "$@" >"$stdout" 2>"$stderr"
   status="$?"
   [ "$status" -eq 2 ] || fail "invalid digest invocation returned $status instead of 2"
   [ -s "$stderr" ] || fail "invalid digest invocation produced no diagnostic"

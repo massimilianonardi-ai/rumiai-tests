@@ -62,28 +62,28 @@ command -p cat >/dev/null || exit 91
 printf -- '%s\\n' 'SHA2-512(stdin)= $hex_d'"
 
 runtime_path="$root/bin/sys:$fakebin"
-printf -- '%s' payload | PATH="$runtime_path" "$command_path" -a sha512 > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 stdin invocation failed"
+printf -- '%s' payload | PATH="$runtime_path" "$root/m" "$command_path" -a sha512 > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 stdin invocation failed"
 [ "$(cat "$tmp/out")" = "$(printf '%s' "$hex_a" | tr 'A-F' 'a-f')" ] || fail "SHA-512 output was not normalized"
 [ "$(sort -u "$marker")" = cksum ] || fail "SHA-512 did not prefer cksum"
 
 printf -- '%s' file-payload > "$tmp/input"
-PATH="$runtime_path" "$command_path" -a sha512 -- "$tmp/input" > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 file invocation failed"
+PATH="$runtime_path" "$root/m" "$command_path" -a sha512 -- "$tmp/input" > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 file invocation failed"
 [ "$(cat "$tmp/out")" = "$(printf '%s' "$hex_a" | tr 'A-F' 'a-f')" ] || fail "SHA-512 file output is incorrect"
 
 rm "$fakebin/cksum"; : > "$marker"
-PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 sha512sum fallback failed"
+PATH="$runtime_path" "$root/m" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 sha512sum fallback failed"
 [ "$(cat "$marker")" = sha512sum ] || fail "SHA-512 did not fall back to sha512sum"
 
 rm "$fakebin/sha512sum"; : > "$marker"
-PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 shasum fallback failed"
+PATH="$runtime_path" "$root/m" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 shasum fallback failed"
 [ "$(cat "$marker")" = shasum ] || fail "SHA-512 did not fall back to shasum"
 
 rm "$fakebin/shasum"; : > "$marker"
-PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 openssl fallback failed"
+PATH="$runtime_path" "$root/m" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err" || fail "SHA-512 openssl fallback failed"
 [ "$(cat "$marker")" = openssl ] || fail "SHA-512 did not fall back to openssl"
 
 rm "$fakebin/openssl"
-PATH="$runtime_path" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err"
+PATH="$runtime_path" "$root/m" "$command_path" -a sha512 </dev/null > "$tmp/out" 2> "$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "missing SHA-512 capability returned $status instead of 1"
 

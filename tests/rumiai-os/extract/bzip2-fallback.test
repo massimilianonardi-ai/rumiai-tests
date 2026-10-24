@@ -176,7 +176,7 @@ assert_single_stream_output()
 }
 
 reset_case || error "cannot reset preferred-path fixture"
-PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+PATH="$runtime_path" "$root/m" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
   command -p -- cat "$tmp/err" >&2
   fail "tar.bz2 failed with bzip2 available"
 }
@@ -187,7 +187,7 @@ assert_tar_stream_args
 [ ! -s "$python_count" ] || fail "preferred bzip2 path unexpectedly invoked python3"
 
 reset_case || error "cannot reset bzip2-failure fixture"
-EXTRACT_BZIP2_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+EXTRACT_BZIP2_FAIL=1 PATH="$runtime_path" "$root/m" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "bzip2 operational failure returned status $status instead of 1"
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read bzip2-failure marker"
@@ -199,7 +199,7 @@ command -p -- mv -- "$fakebin/bzip2" "$tmp/bzip2" || error "cannot remove bzip2 
 for format in tar.bz2 tar.bzip2 tbz tbz2
 do
   reset_case || error "cannot reset $format 7-Zip fallback fixture"
-  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+  PATH="$runtime_path" "$root/m" "$command_path" "$format" "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
     command -p -- cat "$tmp/err" >&2
     fail "$format did not fall back to 7-Zip when bzip2 was unavailable"
   }
@@ -210,7 +210,7 @@ do
 done
 
 reset_case || error "cannot reset single-stream 7-Zip fixture"
-PATH="$runtime_path" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+PATH="$runtime_path" "$root/m" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err" || {
   command -p -- cat "$tmp/err" >&2
   fail "single-stream bzip2 did not fall back to 7-Zip"
 }
@@ -220,7 +220,7 @@ assert_7z_stream_args "$single_stream"
 assert_single_stream_output
 
 reset_case || error "cannot reset 7-Zip-failure fixture"
-EXTRACT_7Z_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+EXTRACT_7Z_FAIL=1 PATH="$runtime_path" "$root/m" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "7-Zip operational failure returned status $status instead of 1"
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read 7-Zip-failure marker"
@@ -232,7 +232,7 @@ command -p -- mv -- "$fakebin/7zz" "$tmp/7zz" || error "cannot remove 7-Zip capa
 for format in tar.bz2 tar.bzip2 tbz tbz2
 do
   reset_case || error "cannot reset $format python3 fallback fixture"
-  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+  PATH="$runtime_path" "$root/m" "$command_path" "$format" "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err" || {
     command -p -- cat "$tmp/err" >&2
     fail "$format did not fall back to python3 when bzip2 and 7-Zip were unavailable"
   }
@@ -243,7 +243,7 @@ do
 done
 
 reset_case || error "cannot reset single-stream python3 fixture"
-PATH="$runtime_path" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err" || {
+PATH="$runtime_path" "$root/m" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err" || {
   command -p -- cat "$tmp/err" >&2
   fail "single-stream bzip2 did not fall back to python3"
 }
@@ -253,7 +253,7 @@ assert_python_stream_args "$single_stream"
 assert_single_stream_output
 
 reset_case || error "cannot reset python3-failure fixture"
-EXTRACT_PYTHON_FAIL=1 PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+EXTRACT_PYTHON_FAIL=1 PATH="$runtime_path" "$root/m" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "python3 operational failure returned status $status instead of 1"
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//') || error "cannot read python3-failure marker"
@@ -263,7 +263,7 @@ grep -F -- 'decompression-failed' "$tmp/err" >/dev/null 2>&1 || fail "python3 op
 command -p -- mv -- "$fakebin/python3" "$tmp/python3" || error "cannot remove python3 capability"
 
 reset_case || error "cannot reset missing-backend tar fixture"
-PATH="$runtime_path" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
+PATH="$runtime_path" "$root/m" "$command_path" tar.bz2 "$artifact" "$destination" >"$tmp/out" 2>"$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "tar.bz2 without bzip2, 7-Zip or python3 returned status $status instead of 1"
 [ ! -s "$marker" ] || fail "missing-backend tar case unexpectedly invoked a backend"
@@ -271,7 +271,7 @@ grep -F -- 'command-not-found' "$tmp/err" >/dev/null 2>&1 || fail "missing pytho
 grep -F -- '[command="python3"]' "$tmp/err" >/dev/null 2>&1 || fail "missing fallback diagnostics did not identify python3"
 
 reset_case || error "cannot reset missing-backend single-stream fixture"
-PATH="$runtime_path" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err"
+PATH="$runtime_path" "$root/m" "$command_path" bzip2 "$single_stream" "$destination" >"$tmp/out" 2>"$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "single-stream bzip2 without bzip2, 7-Zip or python3 returned status $status instead of 1"
 [ ! -s "$marker" ] || fail "missing-backend single-stream case unexpectedly invoked a backend"

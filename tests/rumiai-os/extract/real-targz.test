@@ -68,7 +68,7 @@ printf -- '%s\n' 'real tar gzip payload' > "$tmp/source/file.txt"
   tar -cf - file.txt
 ) | gzip -c > "$tmp/archive.tar.gz" || error "cannot create tar.gz fixture"
 
-PATH="$root/bin/sys:/usr/bin:/bin" "$command_path" tar.gz "$tmp/archive.tar.gz" "$tmp/destination" >/dev/null 2>"$tmp/stderr" || {
+PATH="$root/bin/sys:/usr/bin:/bin" "$root/m" "$command_path" tar.gz "$tmp/archive.tar.gz" "$tmp/destination" >/dev/null 2>"$tmp/stderr" || {
   cat "$tmp/stderr" >&2
   fail "real tar.gz extraction failed"
 }

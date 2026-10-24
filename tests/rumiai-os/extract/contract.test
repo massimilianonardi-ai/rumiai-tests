@@ -95,14 +95,14 @@ runtime_path="$fakebin:$root/bin/sys:/usr/bin:/bin"
 
 mkdir "$tmp/pkg-out" || error 'cannot create pkg destination'
 : > "$marker"
-PATH="$runtime_path" "$command_path" pkg "$artifact" "$tmp/pkg-out" >/dev/null 2>"$tmp/pkg.err" || { cat "$tmp/pkg.err" >&2; fail 'raw pkg extraction failed'; }
+PATH="$runtime_path" "$root/m" "$command_path" pkg "$artifact" "$tmp/pkg-out" >/dev/null 2>"$tmp/pkg.err" || { cat "$tmp/pkg.err" >&2; fail 'raw pkg extraction failed'; }
 [ -f "$tmp/pkg-out/Example.pkg/Payload/bin/tool" ] || fail 'pkg raw component structure was not preserved'
 [ -f "$tmp/pkg-out/Distribution" ] || fail 'pkg raw metadata was not preserved'
 [ "$(cat "$marker")" = pkg ] || fail 'pkg did not dispatch to pkgutil'
 
 mkdir "$tmp/dmg-out" || error 'cannot create dmg destination'
 : > "$marker"
-PATH="$runtime_path" "$command_path" dmg "$artifact" "$tmp/dmg-out" >/dev/null 2>"$tmp/dmg.err" || { cat "$tmp/dmg.err" >&2; fail 'raw dmg extraction failed'; }
+PATH="$runtime_path" "$root/m" "$command_path" dmg "$artifact" "$tmp/dmg-out" >/dev/null 2>"$tmp/dmg.err" || { cat "$tmp/dmg.err" >&2; fail 'raw dmg extraction failed'; }
 [ -f "$tmp/dmg-out/Installer.pkg" ] || fail 'dmg did not preserve contained pkg'
 [ -f "$tmp/dmg-out/README" ] || fail 'dmg did not preserve unrelated image content'
 actual=$(tr '\n' ' ' < "$marker" | sed 's/ $//')
@@ -112,27 +112,27 @@ appimage=$tmp/tool.AppImage
 printf '%s\n' appimage > "$appimage"
 chmod 755 "$appimage" || error 'cannot prepare appimage'
 mkdir "$tmp/appimage-out" || error 'cannot create appimage destination'
-PATH="$runtime_path" "$command_path" appimage "$appimage" "$tmp/appimage-out" >/dev/null 2>"$tmp/appimage.err" || fail 'appimage materialization failed'
+PATH="$runtime_path" "$root/m" "$command_path" appimage "$appimage" "$tmp/appimage-out" >/dev/null 2>"$tmp/appimage.err" || fail 'appimage materialization failed'
 [ -x "$tmp/appimage-out/tool.AppImage" ] || fail 'appimage was not copied opaquely'
 
 executable=$tmp/tool
 printf '%s\n' executable > "$executable"
 chmod 600 "$executable" || error 'cannot prepare executable'
 mkdir "$tmp/executable-out" || error 'cannot create executable destination'
-PATH="$runtime_path" "$command_path" executable "$executable" "$tmp/executable-out" >/dev/null 2>"$tmp/executable.err" || fail 'executable materialization failed'
+PATH="$runtime_path" "$root/m" "$command_path" executable "$executable" "$tmp/executable-out" >/dev/null 2>"$tmp/executable.err" || fail 'executable materialization failed'
 [ -x "$tmp/executable-out/tool" ] || fail 'executable output was not made executable'
 [ ! -x "$executable" ] || fail 'executable input mode was modified'
 
 mkdir "$tmp/source" "$tmp/tar-out" || error 'cannot create tar fixture'
 printf '%s\n' payload > "$tmp/source/file"
 ( CDPATH= cd -- "$tmp/source" && tar -cf - file ) | gzip -c > "$tmp/archive.tar.gz" || error 'cannot build tar.gz fixture'
-PATH="$runtime_path" "$command_path" tar.gz "$tmp/archive.tar.gz" "$tmp/tar-out" >/dev/null 2>"$tmp/tar.err" || fail 'tar.gz extraction failed'
+PATH="$runtime_path" "$root/m" "$command_path" tar.gz "$tmp/archive.tar.gz" "$tmp/tar-out" >/dev/null 2>"$tmp/tar.err" || fail 'tar.gz extraction failed'
 [ "$(cat "$tmp/tar-out/file")" = payload ] || fail 'tar.gz payload is incorrect'
 
 for format in flat-pkg dmg-pkg
 do
   mkdir "$tmp/reject-$format" || error 'cannot create rejection destination'
-  PATH="$runtime_path" "$command_path" "$format" "$artifact" "$tmp/reject-$format" >/dev/null 2>"$tmp/reject-$format.err"
+  PATH="$runtime_path" "$root/m" "$command_path" "$format" "$artifact" "$tmp/reject-$format" >/dev/null 2>"$tmp/reject-$format.err"
   [ "$?" -eq 2 ] || fail "extract accepted package-semantic format $format"
 done
 

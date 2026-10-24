@@ -80,7 +80,7 @@ EOF_BACKEND
 run_digest()
 {
   : > "$marker"
-  PATH="$root/bin/sys:$fakebin" "$command_path" -a sha256 </dev/null > "$tmp/out" 2> "$tmp/err"
+  PATH="$root/bin/sys:$fakebin" "$root/m" "$command_path" -a sha256 </dev/null > "$tmp/out" 2> "$tmp/err"
 }
 
 make_backend cksum 'SHA256 (-) = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -103,7 +103,7 @@ run_digest || fail "digest failed with openssl fallback"
 [ "$(cat "$marker")" = "openssl" ] || fail "digest did not fall back to openssl"
 
 rm "$fakebin/openssl"
-PATH="$root/bin/sys:$fakebin" "$command_path" -a sha256 </dev/null > "$tmp/out" 2> "$tmp/err"
+PATH="$root/bin/sys:$fakebin" "$root/m" "$command_path" -a sha256 </dev/null > "$tmp/out" 2> "$tmp/err"
 status="$?"
 [ "$status" -eq 1 ] || fail "missing digest capability returned $status instead of 1"
 
