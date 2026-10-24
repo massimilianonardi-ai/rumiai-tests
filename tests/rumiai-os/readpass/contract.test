@@ -64,7 +64,7 @@ IFS= read -r first_line < "$readpass" || fail "cannot read readpass shebang"
 [ "$first_line" = '#!/bin/sh' ] || fail "readpass shebang is not #!/bin/sh"
 
 IFS= read -r first_line < "$readpassv" || fail "cannot read readpassv shebang"
-[ "$first_line" = '#!/usr/bin/env m' ] || fail "readpassv shebang is not #!/usr/bin/env m"
+[ "$first_line" = '#!/bin/sh' ] || fail "readpassv shebang is not #!/bin/sh"
 
 if grep -E '(^|[^[:alnum:]_])m_[[:alnum:]_]+|(^|[^[:alnum:]_])log([[:space:](]|$)|(^|[^[:alnum:]_])lang([[:space:](]|$)|m_COMMAND_BIN' "$readpass" >/dev/null 2>&1
 then

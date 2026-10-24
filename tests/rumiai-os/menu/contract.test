@@ -58,7 +58,7 @@ menu_manual=$root/res/sys/manual/menu
 menu_lib_manual=$root/res/sys/manual/menu.lib.sh
 
 [ -f "$menu" ] && [ -x "$menu" ] || fail 'bin/sys/menu is missing or not executable'
-[ "$(sed -n '1p' "$menu")" = '#!/usr/bin/env m' ] || fail 'menu has the wrong interpreter header'
+[ "$(sed -n '1p' "$menu")" = '#!/bin/sh' ] || fail 'menu has the wrong interpreter header'
 [ -f "$menu_lib" ] && [ ! -x "$menu_lib" ] || fail 'menu.lib.sh is missing or executable'
 case $(sed -n '1p' "$menu_lib") in '#!'*) fail 'menu.lib.sh must not have a shebang' ;; esac
 [ -f "$menu_manual" ] && [ ! -L "$menu_manual" ] || fail 'menu operational manual is missing'
@@ -82,7 +82,9 @@ umask 077
 mkdir "$tmp" || error 'cannot create temporary directory'
 api_probe=$tmp/api-probe
 cat > "$api_probe" <<'EOF_PROBE'
-#!/usr/bin/env m
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
 . "$m_LIB_DIR/sys/sh/menu.lib.sh" || exit 10
 for function_name in \
     menu_reset \

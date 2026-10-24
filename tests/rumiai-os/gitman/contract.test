@@ -45,8 +45,8 @@ manual_command=$root/bin/sys/manual
     fail 'GITMAN-01: expected executable bin/sys/gitman'
 
 first_line=$(sed -n '1p' "$gitman") || error 'cannot read gitman interpreter header'
-[ "$first_line" = '#!/usr/bin/env m' ] ||
-    fail "GITMAN-01/interpreter contract: expected '#!/usr/bin/env m', observed '$first_line'"
+[ "$first_line" = '#!/bin/sh' ] ||
+    fail "GITMAN-01/interpreter contract: expected '#!/bin/sh', observed '$first_line'"
 
 command -p sh -n "$gitman" ||
     fail 'interpreter contract: gitman is not valid POSIX sh syntax'

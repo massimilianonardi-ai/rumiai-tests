@@ -37,7 +37,7 @@ manual_path=$root/res/sys/manual/vsed
 manual_command=$root/bin/sys/manual
 
 [ -f "$command_path" ] && [ -x "$command_path" ] || fail 'vsed is missing or not executable'
-[ "$(sed -n '1p' "$command_path")" = '#!/usr/bin/env m' ] || fail 'vsed does not use the integrated m shebang'
+[ "$(sed -n '1p' "$command_path")" = '#!/bin/sh' ] || fail 'vsed does not use its native POSIX sh shebang'
 command -p sh -n "$command_path" || fail 'vsed is not valid POSIX-shell syntax'
 [ -f "$manual_path" ] && [ ! -L "$manual_path" ] || fail 'vsed operational manual is missing'
 [ -x "$manual_command" ] || fail 'manual command is unavailable'

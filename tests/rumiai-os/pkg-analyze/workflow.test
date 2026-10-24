@@ -72,7 +72,7 @@ command_file="$root/bin/sys/pkg-analyze"
 [ -x "$command_file" ] || fail "bin/sys/pkg-analyze is not executable"
 
 case "$(command -p -- sed -n '1p' "$command_file")" in
-  '#!/usr/bin/env m') :;;
+  '#!/bin/sh') :;;
   *) fail "pkg-analyze has the wrong command entrypoint";;
 esac
 
