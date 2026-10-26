@@ -83,9 +83,17 @@ jobs:
           hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$artifact"
           trap 'hdiutil detach "$mount" || true' EXIT
           echo '===== UTM.app layout ====='
-          find "$mount" -maxdepth 7 -print | head -160
-          echo '===== executable binary names ====='
-          find "$mount" -path '*/Contents/MacOS/*' -maxdepth 8 -type f -print | head -100
+          find "$mount" -maxdepth 2 -type d -print
+          echo '===== UTM executable files ====='
+          ls -la "$mount/UTM.app/Contents/MacOS"
+          echo '===== UTM CLI candidate locations ====='
+          find "$mount/UTM.app/Contents" -maxdepth 5 -iname '*utmctl*' -print
+
+      - name: Print exact test diagnostics
+        if: ${{ failure() && !cancelled() }}
+        shell: bash
+        run: |
+          find rumiai-tests/.runs -name '*.log' -type f -print -exec cat {} \;
 
       - name: Upload test sessions
         if: always()
