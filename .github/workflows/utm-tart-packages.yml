@@ -61,14 +61,31 @@ jobs:
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-test --validation external/utm/install-live.test
+          ./rumiai-test external/utm/install-live.test
 
       - name: Install and validate Tart through real m pkg
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-test --validation external/tart/install-live.test
+          ./rumiai-test external/tart/install-live.test
+
+      - name: Diagnose UTM upstream DMG bundle layout
+        if: ${{ failure() && !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/utm-source-mount"
+          mkdir -p "$mount"
+          artifact="$RUNNER_TEMP/utm-v5.0.8.dmg"
+          curl -fL --retry 2 --output "$artifact" \
+            https://github.com/utmapp/UTM/releases/download/v5.0.8/UTM.dmg
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$artifact"
+          trap 'hdiutil detach "$mount" || true' EXIT
+          echo '===== UTM.app layout ====='
+          find "$mount" -maxdepth 7 -print | head -160
+          echo '===== executable binary names ====='
+          find "$mount" -path '*/Contents/MacOS/*' -maxdepth 8 -type f -print | head -100
 
       - name: Upload test sessions
         if: always()
