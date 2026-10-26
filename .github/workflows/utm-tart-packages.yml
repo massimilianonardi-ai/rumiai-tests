@@ -1,0 +1,75 @@
+name: UTM and Tart Apple Silicon packages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/utm-tart-packages.yml
+      - tests/external/utm/**
+      - tests/external/tart/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-macos-package-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-15
+          - macos-26
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout test suite at triggering revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          path: rumiai-tests
+          persist-credentials: false
+
+      - name: Checkout exact m runtime revision
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 673df1a2d5476ad57d54c7bc7e1fc2deeaf16195
+          fetch-depth: 1
+          path: rumiai-os
+          persist-credentials: false
+
+      - name: Identify host and actual catalog revision
+        shell: bash
+        run: |
+          set -eu
+          test "$(uname -m)" = arm64
+          sw_vers
+          uname -a
+          echo "suite=$(git -C rumiai-tests rev-parse HEAD)"
+          echo "m=$(git -C rumiai-os rev-parse HEAD)"
+          git ls-remote https://github.com/massimilianonardi-ai/pkg-catalog.git refs/heads/main
+
+      - name: Install and validate UTM through real m pkg
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-test external/utm/install-live.test
+
+      - name: Install and validate Tart through real m pkg
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          cd rumiai-tests
+          ./rumiai-test external/tart/install-live.test
+
+      - name: Upload test sessions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: utm-tart-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: rumiai-tests/sessions
+          if-no-files-found: warn
+          include-hidden-files: true

@@ -1,0 +1,123 @@
+#!/bin/sh
+
+TEST_ID=external/utm/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) : ;; *) self=$(command -v "$self") || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall "$identity" >/dev/null 2>&1 || :
+  fi
+  [ -z "${tmp-}" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot locate test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target helper'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root") || error 'cannot find rumiai-os target'
+[ -x "$root/m" ] && [ -x "$root/bin/sys/pkg" ] || fail 'm/pkg entrypoints missing'
+[ "$(uname -s)" = Darwin ] || skip 'requires macOS'
+[ "$(uname -m)" = arm64 ] || skip 'requires Apple Silicon'
+for tool in codesign plutil file
+do
+  command -v "$tool" >/dev/null 2>&1 || error "missing macOS tool $tool"
+done
+PATH="$root/bin/ext-macos-arm64:$root/bin/sys:$PATH"
+export PATH
+
+bounded()
+{
+  bounded_output=$1
+  shift
+  "$@" > "$bounded_output" 2>&1 &
+  bounded_pid=$!
+  (
+    sleep 25
+    kill "$bounded_pid" 2>/dev/null || :
+  ) &
+  bounded_watchdog=$!
+  wait "$bounded_pid"
+  bounded_status=$?
+  kill "$bounded_watchdog" 2>/dev/null || :
+  wait "$bounded_watchdog" 2>/dev/null || :
+  return "$bounded_status"
+}
+
+run_pkg versions 'utm!macos-arm64' >/dev/null 2>&1 &&
+  skip 'package already installed in supplied target'
+
+tmp=${TMPDIR:-/tmp}/rumiai-utm-install-$$
+umask 077
+mkdir -- "$tmp" || error 'cannot create temporary directory'
+identity='utm@v5.0.8!macos-arm64'
+installed=0
+
+# Exercise the real package API against upstream bytes, checksum, and extraction.
+run_pkg install "$identity" > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.out" "$tmp/install.err" >&2
+  fail 'real pkg install failed'
+}
+installed=1
+installed_versions=$(run_pkg versions 'utm!macos-arm64') ||
+  fail 'pkg versions failed after install'
+[ "$installed_versions" = "$identity" ] ||
+  fail "unexpected installed concrete: $installed_versions"
+run_pkg default "$identity" || fail 'cannot select package default'
+selected=$(run_pkg default 'utm') || fail 'cannot query package default'
+[ "$selected" = "$identity" ] || fail "wrong package default: $selected"
+
+app="$root/pkg/$identity/root/UTM.app"
+[ -d "$app/Contents/MacOS" ] || fail 'UTM.app bundle missing from installed useful root'
+plutil -lint "$app/Contents/Info.plist" || fail 'UTM Info.plist invalid'
+for executable in UTM utmctl
+do
+  binary="$app/Contents/MacOS/$executable"
+  [ -x "$binary" ] || fail "missing or non-executable $executable in bundle"
+  file "$binary" > "$tmp/file-$executable.out" || fail 'Mach-O file inspection failed'
+  cat "$tmp/file-$executable.out"
+  grep -i arm64 "$tmp/file-$executable.out" >/dev/null ||
+    fail "no ARM64 slice: $executable"
+done
+for public in utm utmctl
+do
+  [ -x "$root/bin/ext-macos-arm64/$public" ] ||
+    fail "public command missing: $public"
+done
+codesign --verify --deep --strict --verbose=2 "$app" ||
+  fail 'UTM signature invalid after materialization'
+codesign -dv --verbose=2 "$app" 2>&1 | head -40 || :
+
+# A GitHub runner may lack an interactive UTM/XPC session. Record the real result.
+if ! bounded "$tmp/utmctl-version.out" "$root/m" utmctl version
+then
+  cat "$tmp/utmctl-version.out" >&2
+  fail 'managed utmctl version failed in GitHub macOS runner'
+fi
+cat "$tmp/utmctl-version.out"
+
+run_pkg uninstall "$identity" || fail 'pkg uninstall failed'
+installed=0
+[ ! -e "$root/pkg/$identity" ] && [ ! -L "$root/pkg/$identity" ] ||
+  fail 'package concrete remains after uninstall'
+printf '%s\n' 'utm-install=PASS' 'utm-cli=PASS' 'utm-codesign=PASS' 'utm-uninstall=PASS'

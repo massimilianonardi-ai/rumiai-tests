@@ -1,0 +1,102 @@
+#!/bin/sh
+
+TEST_ID=external/tart/install-live.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) : ;; *) self=$(command -v "$self") || return 1 ;; esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+run_pkg()
+{
+  "$root/m" "$root/bin/sys/pkg" "$@"
+}
+
+cleanup()
+{
+  trap - 0 HUP INT TERM
+  if [ "${installed-0}" -eq 1 ] && [ -n "${root-}" ]
+  then
+    run_pkg uninstall "$identity" >/dev/null 2>&1 || :
+  fi
+  [ -z "${tmp-}" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot locate test directory'
+package_group=${test_dir%/*}
+external_group=${package_group%/*}
+suite_root=${external_group%/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target helper'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root") || error 'cannot find rumiai-os target'
+[ -x "$root/m" ] && [ -x "$root/bin/sys/pkg" ] || fail 'm/pkg entrypoints missing'
+[ "$(uname -s)" = Darwin ] || skip 'requires macOS'
+[ "$(uname -m)" = arm64 ] || skip 'requires Apple Silicon'
+for tool in codesign plutil file
+do
+  command -v "$tool" >/dev/null 2>&1 || error "missing macOS tool $tool"
+done
+PATH="$root/bin/ext-macos-arm64:$root/bin/sys:$PATH"
+export PATH
+
+run_pkg versions 'tart!macos-arm64' >/dev/null 2>&1 &&
+  skip 'package already installed in supplied target'
+
+tmp=${TMPDIR:-/tmp}/rumiai-tart-install-$$
+umask 077
+mkdir -- "$tmp" || error 'cannot create temporary directory'
+identity='tart@2.41.1!macos-arm64'
+installed=0
+
+# Exercise the real package API against upstream bytes, checksum, and extraction.
+run_pkg install "$identity" > "$tmp/install.out" 2> "$tmp/install.err" || {
+  cat "$tmp/install.out" "$tmp/install.err" >&2
+  fail 'real pkg install failed'
+}
+installed=1
+installed_versions=$(run_pkg versions 'tart!macos-arm64') ||
+  fail 'pkg versions failed after install'
+[ "$installed_versions" = "$identity" ] ||
+  fail "unexpected installed concrete: $installed_versions"
+run_pkg default "$identity" || fail 'cannot select package default'
+selected=$(run_pkg default 'tart') || fail 'cannot query package default'
+[ "$selected" = "$identity" ] || fail "wrong package default: $selected"
+
+app="$root/pkg/$identity/root/tart.app"
+[ -d "$app/Contents/MacOS" ] || fail 'tart.app bundle missing from installed useful root'
+plutil -lint "$app/Contents/Info.plist" || fail 'Tart Info.plist invalid'
+binary="$app/Contents/MacOS/tart"
+[ -x "$binary" ] || fail 'tart executable missing from bundle'
+file "$binary" > "$tmp/file-tart.out" || fail 'Tart Mach-O inspection failed'
+cat "$tmp/file-tart.out"
+grep -i arm64 "$tmp/file-tart.out" >/dev/null || fail 'Tart has no ARM64 slice'
+[ -x "$root/bin/ext-macos-arm64/tart" ] || fail 'Tart public command missing'
+codesign --verify --deep --strict --verbose=2 "$app" ||
+  fail 'Tart app signature invalid after materialization'
+codesign -dv --verbose=2 "$app" 2>&1 | head -40 || :
+codesign -d --entitlements :- "$app" > "$tmp/entitlements.out" 2> "$tmp/entitlements.err" || {
+  cat "$tmp/entitlements.err" >&2
+  fail 'Tart code signing entitlements cannot be read'
+}
+[ -s "$tmp/entitlements.out" ] || fail 'Tart signing entitlements missing'
+
+"$root/m" tart --version > "$tmp/tart-version.out" 2>&1 || {
+  cat "$tmp/tart-version.out" >&2
+  fail 'managed tart --version failed'
+}
+cat "$tmp/tart-version.out"
+grep -F '2.41.1' "$tmp/tart-version.out" >/dev/null ||
+  fail 'Tart version output differs from installed version'
+
+run_pkg uninstall "$identity" || fail 'pkg uninstall failed'
+installed=0
+[ ! -e "$root/pkg/$identity" ] && [ ! -L "$root/pkg/$identity" ] ||
+  fail 'package concrete remains after uninstall'
+printf '%s\n' 'tart-install=PASS' 'tart-cli=PASS' 'tart-codesign=PASS' 'tart-uninstall=PASS'
