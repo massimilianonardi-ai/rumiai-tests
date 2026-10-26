@@ -41,6 +41,11 @@ jobs:
           path: rumiai-os
           persist-credentials: false
 
+      - name: Normalize target repository origin for suite discovery
+        shell: bash
+        run: |
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+
       - name: Identify host and actual catalog revision
         shell: bash
         run: |
@@ -56,20 +61,22 @@ jobs:
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-test external/utm/install-live.test
+          ./rumiai-test --validation external/utm/install-live.test
 
       - name: Install and validate Tart through real m pkg
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           cd rumiai-tests
-          ./rumiai-test external/tart/install-live.test
+          ./rumiai-test --validation external/tart/install-live.test
 
       - name: Upload test sessions
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: utm-tart-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: rumiai-tests/sessions
+          path: |
+            rumiai-tests/sessions
+            rumiai-tests/.runs
           if-no-files-found: warn
           include-hidden-files: true
