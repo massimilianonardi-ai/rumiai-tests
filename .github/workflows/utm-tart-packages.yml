@@ -70,24 +70,24 @@ jobs:
           cd rumiai-tests
           ./rumiai-test external/tart/install-live.test
 
-      - name: Diagnose UTM upstream DMG bundle layout
+      - name: Inspect GitHub API rejection and rate-limit metadata
         if: ${{ failure() && !cancelled() }}
         shell: bash
         run: |
-          set -euo pipefail
-          mount="$RUNNER_TEMP/utm-source-mount"
-          mkdir -p "$mount"
-          artifact="$RUNNER_TEMP/utm-v5.0.8.dmg"
-          curl -fL --retry 2 --output "$artifact" \
-            https://github.com/utmapp/UTM/releases/download/v5.0.8/UTM.dmg
-          hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$artifact"
-          trap 'hdiutil detach "$mount" || true' EXIT
-          echo '===== UTM.app layout ====='
-          find "$mount" -maxdepth 2 -type d -print
-          echo '===== UTM executable files ====='
-          ls -la "$mount/UTM.app/Contents/MacOS"
-          echo '===== UTM CLI candidate locations ====='
-          find "$mount/UTM.app/Contents" -maxdepth 5 -iname '*utmctl*' -print
+          set -eu
+          for endpoint in utmapp/UTM/releases/tags/v5.0.8 openai/tart/releases/tags/2.41.1
+          do
+            headers="$RUNNER_TEMP/api-headers"
+            body="$RUNNER_TEMP/api-body"
+            curl -sS --max-time 20 -D "$headers" -o "$body" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "https://api.github.com/repos/$endpoint" || :
+            echo "===== $endpoint ====="
+            grep -iE '^(HTTP/|x-ratelimit-|retry-after:)' "$headers" || :
+            head -c 600 "$body" || :
+            printf '\n'
+          done
 
       - name: Print exact test diagnostics
         if: ${{ failure() && !cancelled() }}
