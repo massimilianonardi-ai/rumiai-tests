@@ -1,4 +1,4 @@
-#usr/bin/env node
+#!/usr/bin/env node
 /* SuperEnalotto v25. Run: node compute_v25.js estrazioni_con_ritardi.csv [metrics.json] */
 
 function analyze(csv) {
@@ -118,7 +118,7 @@ function analyze(csv) {
  }
  const absOut=summarizeThreshold('abs',ABS,sumsAbs,lostAbsHits),dynOut=summarizeThreshold('dyn',DYN,sumsDyn,lostDynHits);
  const histogram=(m)=>Object.fromEntries([...m.entries()].sort((a,b)=>a[0]-b[0]));
- const result={meta:{repoHead:"d4e17362d8a5a43e07bd1b2fe805c4cc6ec77222",N,T,R,seedMC,SN,SH,seedSim,seedShuffle,
+ const result={per_date:perDate.map(rr=>({date:rr.date,concorso:rr.concorso,index:rr.index,max_prior_pair:rr.max_prior_pair,v24_hit:rr.v24_hit,mc_base:rr.mc_base,mc_abs:rr.mc_abs,mc_dyn:rr.mc_dyn})),meta:{repoHead:"d4e17362d8a5a43e07bd1b2fe805c4cc6ec77222",N,T,R,seedMC,SN,SH,seedSim,seedShuffle,
   baselineOldMean:oldMean,baseMC:baseMCsum/(T*R),baseMC_estimate:TOTAL*baseMCsum/(T*R),baseHits,dates:[rows[START].date,rows.at(-1).date]},
   observed:{all:ob,base:obBase,hist_all:histogram(allH),hist_base:histogram(baseH)},
   nulls:{uniform:simCompare(ob,sim),shuffle:simCompare(ob,shuf)},
@@ -131,6 +131,12 @@ const fs=require('node:fs');
 const path=require('node:path');
 const data=fs.readFileSync(process.argv[2]||path.join(__dirname,'estrazioni_con_ritardi.csv'),'utf8');
 const metrics=analyze(data);
+const detail=metrics.per_date;
+delete metrics.per_date;
+const perDateOut=process.argv[4]||path.join(__dirname,'superenalotto_coppie_max_precedente_v25.csv');
+const dh=['data;concorso;indice_cronologico;massima_frequenza_precedente_coppia;vincente_supera_F01_F17;mc_campioni_passano_F01_F17;'+[12,14,16,18,20,22,24,26,28,30,32].map(t=>'mc_esclusi_F18_max_'+t).join(';')+';'+[1.5,2,2.5,3,3.5].map(t=>'mc_esclusi_F18_z_'+t).join(';')];
+for(const d of detail)dh.push([d.date,d.concorso,d.index,d.max_prior_pair,d.v24_hit,d.mc_base,...d.mc_abs,...d.mc_dyn].join(';'));
+fs.writeFileSync(perDateOut,dh.join('\n')+'\n','utf8');
 const out=process.argv[3]||path.join(__dirname,'superenalotto_metriche_v25.json');
 fs.writeFileSync(out,JSON.stringify(metrics,null,2)+'\n','utf8');
 console.log(JSON.stringify({meta:metrics.meta,observed:metrics.observed.all,metrics_file:out},null,2));
