@@ -177,3 +177,19 @@ Mantiene gli importi monetari come **TEXT decimale esatto**, non
 floating point, e converte i campi vuoti in \`NULL\`. Non inventa
 alcun valore mancante, non calcola ritardi/frequenze e non modifica
 i CSV. La procedura non sovrascrive un database esistente.
+
+
+## Verifiche storiche aggiuntive e manifesto
+
+Il file \`SOURCE_MANIFEST.json\` fissa revisioni, riferimenti, copertura e
+limiti di ogni sorgente. Il file \`verifiche_jackpot_pre2009.csv\` contiene
+tre confronti puntuali con l'archivio vincite del sito ufficiale Sisal:
+i jackpot del 2005-05-04 e del 2007-05-19 differiscono di **1 EUR**
+dall'importo della fonte secondaria; quello del 2008-10-23 coincide.
+Per questo gli importi in \`jackpot_6_pre2009_da_confermare.csv\` non
+sono promossi a valori ufficiali, nemmeno quando la sestina coincide.
+
+Le **52 verifiche** ADM/Sisal elencate nel registro riguardano soltanto
+due concorsi del 2026. La fonte dei 75 jackpot storici è indipendente
+ma non certificata; per un dato utilizzato in decisioni economiche
+effettive occorre riscontro del bollettino ufficiale del concorso.
