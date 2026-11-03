@@ -1422,7 +1422,15 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
     'AaXX\nH1\nzzbb\nM\nccYY\nH2\nwwDd\nlast');
   assert.equal(first.inlineFold,null);
   assert.equal(second.inlineFold,null);
-  assert.deepEqual(notes.annotations,[]);
+  // Local fold configurations are invalidated, while these independent
+  // underlying source annotations still have exact unchanged row anchors.
+  assert.deepEqual(notes.annotations,
+    [
+      {id:'hidden1',text:'H1',at:point(1,0)},
+      {id:'suffix1',text:'S1',at:point(2,3)},
+      {id:'prefix2',text:'P2',at:point(4,1)},
+      {id:'hidden2',text:'H2',at:point(5,0)}
+    ]);
   assert.equal(cells.rowCount,8);
   assert.equal(events.filter(event => event.type === 'content').length,1);
   assert.deepEqual(events.find(event => event.type === 'content')
