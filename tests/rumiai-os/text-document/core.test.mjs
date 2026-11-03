@@ -1808,4 +1808,235 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 }
 
 
+
+// Derived occupied regions form a protected many-to-many read-only
+// relation: one display region joins disjoint input spans; one input span
+// can also appear in several distinct display regions. No such copy
+// becomes an additional source selection owner.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('abcdef\nUVWXYZ\nTAIL');
+  const raw=new RawDocument2D(source);
+  const view=new SubstitutionDocument2D(raw);
+  const events=[];
+  view.subscribe(event=>events.push(event));
+
+  const configuration=
+  [
+    {
+      id:'first',
+      start:point(0,1),end:point(0,3),
+      sources:
+      [
+        {start:point(1,0),end:point(1,2)},
+        {start:point(0,4),end:point(0,6)}
+      ]
+    },
+    {
+      id:'second',
+      start:point(0,3),end:point(0,4),
+      sources:[{start:point(1,0),end:point(1,2)}]
+    }
+  ];
+
+  assert.strictEqual(view.setSubstitutions(configuration),view);
+  assert.equal(view.rowCount,3);
+  assert.equal(view.getRowWidth(0),9);
+  assert.equal(view.colCount,9);
+  assert.deepEqual(view.getRect(0,0,3,20),
+    ['aUVefUVef','UVWXYZ','TAIL']);
+  assert.deepEqual(view.getRect(0,2,1,8),['VefUVe']);
+  assert.deepEqual(view.getRegions(0,3,1,4),
+    [[{kind:'substitution',id:'first',text:'UVef',
+      start:point(0,1),end:point(0,5)}]]);
+  assert.deepEqual(view.getRegions(0,6,1,7),
+    [[{kind:'substitution',id:'second',text:'UV',
+      start:point(0,5),end:point(0,7)}]]);
+  assert.deepEqual(view.substitutions,configuration);
+  assert.equal(source.revision,0);
+  assert.deepEqual(events[0].invalidation,{all:true});
+
+  // Public configuration is detached; a user can neither overwrite
+  // private source relations nor inject source provenance into getRegions.
+  const readback=view.substitutions;
+  readback[0].sources[0].start.col=5;
+  configuration[1].sources[0].end.col=5;
+  assert.equal(view.substitutions[0].sources[0].start.col,0);
+  assert.equal(view.substitutions[1].sources[0].end.col,2);
+  const a=view.getRegions(0,3,1,4)[0][0];
+  assert.equal(Object.hasOwn(a,'sources'),false);
+  a.start.col=99;
+  assert.equal(view.getRegions(0,3,1,4)[0][0].start.col,1);
+  const revision=view.revision;
+  view.setSubstitutions(view.substitutions);
+  assert.equal(view.revision,revision);
+
+  const physicalBefore=source.toString();
+  for(const edit of
+  [
+    {start:point(0,1),end:point(0,5),text:'Q'},
+    {start:point(0,2),end:point(0,3),text:'Q'},
+    {start:point(0,0),end:point(0,8),text:'Q'}
+  ])
+  {
+    assert.throws(()=>view.replace([edit],view.revision),
+      /substitut/);
+    assert.throws(()=>view.setSelections([
+      range(edit.start.row,edit.start.col,edit.end.row,edit.end.col)
+    ]),/substitut/);
+  }
+  assert.throws(()=>view.replace([
+    {start:point(2,0),end:point(2,1),text:'Z'},
+    {start:point(0,1),end:point(0,5),text:'Q'}
+  ],view.revision),/substitut/);
+  assert.equal(source.toString(),physicalBefore);
+  assert.equal(source.revision,0);
+
+  // The referenced source text can still be selected at its original
+  // position. The copies do not create new editable source positions.
+  view.setSelections([range(1,0,1,2)]);
+  assert.deepEqual(view.read(),['UV']);
+  assert.deepEqual(raw.getSelections(),[range(1,0,1,2)]);
+  raw.setSelections([range(0,1,0,2)]);
+  assert.throws(()=>view.read(),/substitut/);
+  assert.throws(()=>view.insert('x'),/substitut/);
+  assert.equal(source.revision,0);
+
+  view.setSelections([range(2,0,2,1)]);
+  const prior=view.revision;
+  view.replace([
+    {start:point(0,0),end:point(0,1),text:'A'},
+    {start:point(2,0),end:point(2,1),text:'Z'}
+  ],prior);
+  assert.equal(source.toString(),'Abcdef\nUVWXYZ\nZAIL');
+  assert.equal(source.revision,1);
+  assert.deepEqual(view.substitutions,[]);
+  assert.equal(view.rowCount,3);
+  assert.equal(view.revision,prior+1);
+  assert.throws(()=>view.replace([
+    {start:point(0,0),end:point(0,1),text:'Q'}
+  ],prior),/stale/);
+
+  view.destroy();
+  raw.destroy();
+}
+
+// The derived-label input contract is strict. Reject source intervals
+// that are empty, cross rows, cut through tabs, or refer to protected
+// virtual content. Invalid configurations must preserve view revision.
+{
+  const source=new extracted.PieceDocument('A\tBC\nother\nend');
+  const raw=new RawDocument2D(source);
+  const cell=new CellDocument2D(raw);
+  const view=new SubstitutionDocument2D(cell);
+  const base={id:'derived',start:point(1,0),end:point(1,1)};
+  const bad=
+  [
+    {...base,sources:[]},
+    {...base,sources:[{start:point(0,2),end:point(0,4)}]},
+    {...base,sources:[{start:point(0,1),end:point(0,4)}]},
+    {...base,sources:[{start:point(0,4),end:point(1,1)}]},
+    {...base,sources:[{start:point(2,0),end:point(2,0)}]},
+    {...base,sources:[{start:point(99,0),end:point(99,1)}]},
+    {...base,text:'literal',sources:[{start:point(1,1),end:point(1,2)}]},
+    {...base},
+    {...base,sources:'invalid'}
+  ];
+
+  for(const item of bad)
+  {
+    const revision=view.revision;
+    assert.throws(()=>view.setSubstitutions([item]));
+    assert.equal(view.revision,revision);
+    assert.deepEqual(view.substitutions,[]);
+    assert.equal(source.revision,0);
+  }
+
+  const inner=new SubstitutionDocument2D(cell);
+  inner.setSubstitutions([
+    {id:'protected',text:'!',start:point(1,1),end:point(1,3)}
+  ]);
+  const outer=new SubstitutionDocument2D(inner);
+  assert.throws(()=>outer.setSubstitutions([
+    {id:'mirror',start:point(2,0),end:point(2,1),
+      sources:[{start:point(1,1),end:point(1,2)}]}
+  ]),/indivisible/);
+  assert.equal(source.revision,0);
+
+  outer.destroy();
+  inner.destroy();
+  view.destroy();
+  cell.destroy();
+  raw.destroy();
+}
+
+// A cell layer above a derived substitution retains synthetic identity,
+// width and protection. Annotations and folding remain separately
+// composable, and copied Unicode fragments are measured in grapheme cells.
+{
+  const source=new extracted.PieceDocument('xabc\n😀e\u0301Q\ntail');
+  const raw=new RawDocument2D(source);
+  const notes=new AnnotationDocument2D(raw);
+  notes.setAnnotations([{id:'n',text:'tip',at:point(0,0)}]);
+  const sub=new SubstitutionDocument2D(notes);
+  sub.setSubstitutions([
+    {id:'copied',start:point(0,1),end:point(0,3),
+      sources:[
+        {start:point(1,0),end:point(1,2)},
+        {start:point(1,2),end:point(1,4)}
+      ]}
+  ]);
+  const cell=new CellDocument2D(sub);
+  assert.deepEqual(sub.getRect(0,0,1,20),['x😀e\u0301c']);
+  assert.deepEqual(cell.getRect(0,0,1,20),['x😀e\u0301c']);
+  assert.deepEqual(cell.getRegions(0,1,1,2),
+    [[{kind:'substitution',id:'copied',text:'😀e\u0301',
+      start:point(0,1),end:point(0,3)}]]);
+  assert.deepEqual(cell.getRegions(0,0,1,1)[0]
+    .filter(r=>r.kind==='annotation').map(r=>r.id),['n']);
+  assert.throws(()=>cell.replace([
+    {start:point(0,1),end:point(0,3),text:'!'}
+  ],cell.revision),/substitut/);
+
+  const fold=new FoldDocument2D(cell);
+  fold.setFolds([{startRow:2,endRow:3}]);
+  assert.deepEqual(fold.getRect(0,0,3,20),['x😀e\u0301c','😀e\u0301Q','…']);
+  fold.destroy();
+  cell.destroy();
+  sub.destroy();
+  notes.destroy();
+  raw.destroy();
+}
+
+// A huge copied region is resolved during configuration, not on each
+// viewport read. Viewport calls never re-read distant source fragments.
+{
+  class ObservedRaw extends RawDocument2D
+  {
+    calls=[];
+    getRect(...args)
+    {
+      this.calls.push([args[0],args[1],args[3]]);
+      return super.getRect(...args);
+    }
+  }
+
+  const source=new extracted.PieceDocument(
+    'one\n'+'z'.repeat(100000)+'\nlast');
+  const raw=new ObservedRaw(source);
+  const view=new SubstitutionDocument2D(raw);
+  view.setSubstitutions([
+    {id:'big',start:point(0,0),end:point(0,3),
+      sources:[{start:point(1,0),end:point(1,100000)}]}
+  ]);
+  const readsAtSetup=raw.calls.length;
+  assert.ok(readsAtSetup>0);
+  assert.deepEqual(view.getRect(0,0,1,5),['zzzzz']);
+  assert.equal(raw.calls.length,readsAtSetup);
+  assert.equal(source.revision,0);
+  view.destroy();
+  raw.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
