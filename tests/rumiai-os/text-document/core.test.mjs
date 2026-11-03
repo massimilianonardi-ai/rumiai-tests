@@ -544,7 +544,7 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   cells.selectionMode='rectangle';
   cells.addSelection(point(0,4));
   cells.addSelection(point(1,1));
-  assert.deepEqual(cells.getSelections(),[range(0,1,0,5),range(1,1,1,5)]);
+  assert.deepEqual(cells.getSelections(),[range(0,1,0,5,false),range(1,1,1,5,false)]);
   cells.setSelections([range(1,0,1,1)]);
   assert.deepEqual(cells.read(),['😀']);
   assert.deepEqual(raw.getSelections(),[range(1,0,1,2)]);
