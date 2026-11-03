@@ -34,6 +34,13 @@ jobs:
           ref: 1ef36fa01286573e846ac449e8683f8833c5b26a
           path: JSONTestSuite
           persist-credentials: false
+      - name: Exercise permanent query command test against the real checkout
+        shell: sh
+        run: |
+          set -eu
+          git -C rumiai-os remote set-url origin https://github.com/massimilianonardi-ai/rumiai-os.git
+          RUMIAI_TEST_RUMIAI_OS_ROOT="$GITHUB_WORKSPACE/rumiai-os" \
+            sh rumiai-tests/tests/rumiai-os/json/command-conformance.test
       - name: Report exact revisions and run raw conformance fixtures
         shell: sh
         run: |
