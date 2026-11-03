@@ -549,6 +549,16 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   assert.deepEqual(cells.read(),['😀']);
   assert.deepEqual(raw.getSelections(),[range(1,0,1,2)]);
 
+  // A physical writer can place a caret inside a surrogate pair. Copying
+  // or editing through this logical view must refuse that invalid anchor.
+  raw.setSelections([range(1,1,1,1)]);
+  const invalidAnchorRevision=source.revision;
+  assert.throws(()=>cells.getSelections(),/indivisible/);
+  assert.throws(()=>cells.read(),/indivisible/);
+  assert.throws(()=>cells.insert('!'),/indivisible/);
+  assert.equal(source.revision,invalidAnchorRevision);
+  cells.setSelections([range(1,0,1,1)]);
+
   // A second layer routes versioned edits through the first layer into one
   // physical transaction, including a zero-width insertion at a cell edge.
   const beforeNested=source.revision;
