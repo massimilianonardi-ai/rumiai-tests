@@ -164,9 +164,14 @@ async function main()
     assert.equal(storage.sessionStorage.values.fixtureView, 'test-123');
     const dbIndex = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/indexeddb/index.json'), 'utf8'));
-    assert(dbIndex.databases.some(db => db.name === 'rest-database' &&
-      db.stores.some(store => store.name === 'records' && store.entries >= 1)),
-      'IndexedDB data was not enumerated');
+    const indexedStore = dbIndex.databases.find(db =>
+      db.name === 'rest-database')?.stores.find(store => store.name === 'records');
+    assert(indexedStore?.entries >= 1, 'IndexedDB data was not enumerated');
+    assert.equal(indexedStore.status, 'saved', 'IndexedDB value serialization incomplete');
+    const indexedPage = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/indexeddb', indexedStore.pages[0].file), 'utf8'));
+    assert(JSON.stringify(indexedPage.entries).includes('idb-payload'),
+      'IndexedDB value bytes were not preserved in the deep serialized page');
     const cacheIndex = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/cache-storage/index.json'), 'utf8'));
     const cached = cacheIndex.caches.flatMap(cache => cache.entries)
