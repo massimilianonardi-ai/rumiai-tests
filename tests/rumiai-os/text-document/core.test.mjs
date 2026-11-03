@@ -1472,4 +1472,77 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
 }
 
 
+
+// All composed views share the same revision-checked one-commit mapping
+// boundary. A user-provided edit getter can mutate the source while the
+// batch is being constructed: that must invalidate the whole batch.
+for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
+{
+  const source=new Backend('abc\nxyz');
+  const raw=new RawDocument2D(source);
+  const cell=new CellDocument2D(raw);
+  const fold=new FoldDocument2D(cell);
+  const notes=new AnnotationDocument2D(fold);
+
+  for(const view of [cell,fold,notes])
+  {
+    const priorRevision=view.revision;
+    const physicalRevision=source.revision;
+    const edit=
+    {
+      start:point(0,0),
+      end:point(0,1),
+      get text()
+      {
+        source.replace(0,0,'Z');
+        return 'Q';
+      }
+    };
+
+    assert.throws(()=>view.replace([edit],priorRevision),/stale/);
+    assert.equal(source.revision,physicalRevision+1);
+    assert.equal(source.toString().includes('Q'),false);
+    assert.notEqual(view.revision,priorRevision);
+  }
+
+  const unchanged=source.toString();
+  const stableRevision=source.revision;
+
+  for(const view of [cell,fold,notes])
+  {
+    assert.throws
+    (
+      () => view.replace
+      (
+        [
+          {start:point(0,0),end:point(0,1),text:'X'},
+          {start:point(0,1),end:point(0,2),text:3}
+        ],
+        view.revision
+      ),
+      TypeError
+    );
+    assert.equal(source.toString(),unchanged);
+    assert.equal(source.revision,stableRevision);
+  }
+
+  const beforeCommit=source.revision;
+  notes.replace
+  (
+    [
+      {start:point(0,0),end:point(0,1),text:'A'},
+      {start:point(1,0),end:point(1,1),text:'Y'}
+    ],
+    notes.revision
+  );
+  assert.equal(source.revision,beforeCommit+1);
+  assert.ok(source.toString().endsWith('Yyz'));
+
+  notes.destroy();
+  fold.destroy();
+  cell.destroy();
+  raw.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
