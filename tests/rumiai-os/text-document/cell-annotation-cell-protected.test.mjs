@@ -270,7 +270,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     (
       ()=>view.replace
       (
-        [{start:p(0,5),end:p(0,5),text:'Q'}],revision
+        [{start:p(0,8),end:p(0,8),text:'Q'}],revision
       ),
       /substitut/
     );
