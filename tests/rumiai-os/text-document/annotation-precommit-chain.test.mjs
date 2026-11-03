@@ -395,7 +395,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
       }
     }
 
-    const source=new MismatchedRaw('abcd\\nHIDDEN\\nuvwxyz');
+    const source=new MismatchedRaw('abcd\nHIDDEN\nuvwxyz');
     const raw=new classes.RawDocument2D(source);
     const notes=new classes.AnnotationDocument2D(raw);
     const fold=new classes.FoldDocument2D(notes);
@@ -405,7 +405,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     notes.subscribe(event=>noteEvents.push(event));
     fold.subscribe(event=>foldEvents.push(event));
     source.replace(1,2,'Q');
-    assert.equal(source.toString(),'aQcd\\nHIDDEN\\nuvwxyz');
+    assert.equal(source.toString(),'aQcd\nHIDDEN\nuvwxyz');
     assert.equal('geometry' in noteEvents.at(-1),false);
     assert.equal('geometry' in foldEvents.at(-1),false);
     assert.deepEqual(foldEvents.at(-1).invalidation,{all:true});
@@ -417,7 +417,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
   // A broken observer cannot cancel a valid physical source commit
   // or stop the remaining observers of the private notification.
   {
-    const t=open('abc\\nTAIL');
+    const t=open('abc\nTAIL');
     const errors=[];
     const seen=[];
     const originalConsoleError=console.error;
@@ -440,7 +440,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     }
 
     assert.equal(committed,true);
-    assert.equal(t.source.toString(),'aQc\\nTAIL');
+    assert.equal(t.source.toString(),'aQc\nTAIL');
     assert.equal(seen.length,1);
     assert.equal(errors.length,1);
     assert.match(errors[0][0],/annotation pre-commit geometry observer/);
