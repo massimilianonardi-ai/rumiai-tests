@@ -122,6 +122,29 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
+  // Edits before a fold have no endpoint shift even when unrelated
+  // visible rows jump after the fold is removed. That is NOT an identity
+  // mapping for annotations on later rows.
+  {
+    const t=make('top\nhidden-A\nhidden-B\nvisible\nlast');
+    t.fold.setFolds([{startRow:1,endRow:3}]);
+    const inner=new classes.AnnotationDocument2D(t.fold);
+    const outer=new classes.AnnotationDocument2D(inner);
+    inner.setAnnotations([{id:'visible',text:'old',at:p(2,1)}]);
+    outer.setAnnotations([{id:'last',text:'old',at:p(3,2)}]);
+    const events=[];
+    outer.subscribe(e=>events.push(e));
+    t.source.replace(0,0,'Z');
+    assert.deepEqual(t.fold.folds,[]);
+    assert.ok(t.events.at(-1).geometry);
+    assert.ok(events.at(-1).geometry);
+    assert.deepEqual(inner.annotations,[]);
+    assert.deepEqual(outer.annotations,[]);
+    outer.destroy();
+    inner.destroy();
+    t.close();
+  }
+
   // Tab stops and Unicode graphemes below a folded interval do not
   // change the fact that a row-start cut has an exact old/new mapping.
   {
