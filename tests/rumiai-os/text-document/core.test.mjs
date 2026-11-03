@@ -465,7 +465,12 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 const CellDocument2D=extracted.CellDocument2D;
 assert.equal(typeof CellDocument2D,'function');
 assert.throws(()=>new CellDocument2D({}),TypeError);
-assert.throws(()=>new CellDocument2D(new RawDocument2D(new extracted.FlatDocument('x')),0),RangeError);
+{
+  const source=new extracted.FlatDocument('x');
+  const raw=new RawDocument2D(source);
+  assert.throws(()=>new CellDocument2D(raw,0),RangeError);
+  raw.destroy();
+}
 
 for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 {
@@ -539,7 +544,7 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   cells.selectionMode='rectangle';
   cells.addSelection(point(0,4));
   cells.addSelection(point(1,1));
-  assert.equal(cells.getSelections().length,2);
+  assert.deepEqual(cells.getSelections(),[range(0,1,0,5),range(1,1,1,5)]);
   cells.setSelections([range(1,0,1,1)]);
   assert.deepEqual(cells.read(),['😀']);
   assert.deepEqual(raw.getSelections(),[range(1,0,1,2)]);
