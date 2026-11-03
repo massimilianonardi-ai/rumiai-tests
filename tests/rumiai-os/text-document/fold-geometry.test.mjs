@@ -254,14 +254,15 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // A nonzero old endpoint cannot be certified from post-commit raw
-  // geometry. Even a valid ASCII edit falls back rather than guessing.
+  // With a real raw precommit snapshot, an old nonzero caret is now
+  // certified before the fold clears; post-only guessing is not used.
   {
     const t=make('top\nh1\nh2\nend');
     t.fold.setFolds([{startRow:1,endRow:3}]);
     const start=t.source.lineStart(3)+1;
     t.source.replace(start,start+1,'X');
-    assert.equal('geometry' in t.events.at(-1),false);
+    assert.deepEqual(t.events.at(-1).geometry.edits,
+      [edited(p(2,1),p(2,2),p(3,1),p(3,2))]);
     t.close();
   }
 
@@ -276,13 +277,14 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // Inline folding joins two source rows and has different boundary
-  // semantics. It is outside the proven whole-row projection subset.
+  // Inline folds now use real raw precommit positions, including
+  // rows after the folded splice. Their marker remains read-only.
   {
     const t=make('abcdef\nHI\nxyz\ntail');
     t.fold.setInlineFold({start:p(0,2),end:p(2,1)});
     t.source.replace(t.source.lineStart(3),t.source.lineStart(3),'X');
-    assert.equal('geometry' in t.events.at(-1),false);
+    assert.deepEqual(t.events.at(-1).geometry.edits,
+      [edited(p(1,0),p(1,0),p(3,0),p(3,1))]);
     assert.equal(t.fold.inlineFold,null);
     t.close();
   }
