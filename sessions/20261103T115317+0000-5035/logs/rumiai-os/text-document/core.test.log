@@ -1,0 +1,74 @@
+m.text.document extraction parity PASS 40 committed edit comparisons
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
++ actual - expected
+... Skipped lines
+
+  {
+    edits: [
+      {
+        new: {
+          end: {
++           col: 3,
++           row: 0
+-           col: 1,
+-           row: 1
+          },
+          start: {
++           col: 2,
++           row: 0
+-           col: 0,
+-           row: 1
+          }
+        },
+        old: {
+          end: {
+            col: 2,
+...
+    ],
++   newRowCount: 2,
+-   newRowCount: 3,
+    oldRowCount: 2,
+    previousRevision: 0,
+    revision: 1
+  }
+
+    at file:///Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/text-document/geometry.test.mjs:240:10
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: {
+    previousRevision: 0,
+    revision: 1,
+    oldRowCount: 2,
+    newRowCount: 2,
+    edits: [
+      {
+        old: { start: { row: 0, col: 2 }, end: { row: 0, col: 2 } },
+        new: { start: { row: 0, col: 2 }, end: { row: 0, col: 3 } }
+      }
+    ]
+  },
+  expected: {
+    previousRevision: 0,
+    revision: 1,
+    oldRowCount: 2,
+    newRowCount: 3,
+    edits: [
+      {
+        old: { start: { row: 0, col: 2 }, end: { row: 0, col: 2 } },
+        new: { start: { row: 1, col: 0 }, end: { row: 1, col: 1 } }
+      }
+    ]
+  },
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.22.1
+rumiai-os/text-document/core.test: cell pre/post geometry checks failed
