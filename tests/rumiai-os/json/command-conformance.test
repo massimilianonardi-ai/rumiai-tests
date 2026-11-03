@@ -37,6 +37,8 @@ command_file=$root/bin/sys/json
 [ -f "$command_file" ] && [ -x "$command_file" ] || fail 'json command is missing or not executable'
 IFS= read -r first_line < "$command_file" || first_line=
 [ "$first_line" = '#!/bin/sh' ] || fail 'json requires an exact POSIX shebang'
+manual_file=$root/res/sys/manual/json
+[ -f "$manual_file" ] && [ ! -L "$manual_file" ] || fail 'json operational manual topic is missing'
 
 # This is a standalone command; it must run without the m bootstrap.
 unset m_ROOT
@@ -79,6 +81,7 @@ valid '"str"' '"str"'
 valid '"\u0000\n\t\uD800"' '"\u0000\n\t\uD800"'
 valid '{ "z": [ true, false, null, -1.25E+20 ], "z": { "x": "\\\\" } }' '{"z":[true,false,null,-1.25E+20],"z":{"x":"\\\\"}}'
 valid '[{},[],[0],{"a":{}},1e-200]' '[{},[],[0],{"a":{}},1e-200]'
+valid '{"escape":"\\/","tab":"\\t"}' '{"escape":"\\/","tab":"\\t"}'
 
 invalid '' 6
 invalid ' ' 6
@@ -91,6 +94,8 @@ invalid '+1' 4
 invalid '.1' 4
 invalid 'true false' 6
 invalid '[1,]' 6
+invalid '[1, 2,]' 6
+invalid '{"a":[}]' 6
 invalid '[,]' 6
 invalid '[1 2]' 6
 invalid '{"a":1,}' 6
@@ -100,11 +105,15 @@ invalid '{"a":1 "b":2}' 6
 invalid '{"a":}' 6
 invalid '"bad\q"' 4
 invalid '"bad\u12xz"' 4
+invalid '"bad\u012"' 4
 invalid '"unfinished' 4
 invalid '[1' 6
 invalid '{"a":1' 6
 invalid 'False' 4
 invalid 'NaN' 4
+
+printf ' \t\r\n{}\r\n' | "$command_file" > "$temp_dir/out" || fail 'CRLF JSON rejected'
+[ "$(cat "$temp_dir/out")" = '{}' ] || fail 'CRLF compaction mismatch'
 
 # RFC 3629 byte-level UTF-8 regression cases (including overlong forms).
 for bad in 192 193 128 255
@@ -122,6 +131,11 @@ LC_ALL=C command -p awk 'BEGIN { printf "%c%c%c{}",239,187,191 }' |
   "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'BOM accepted'
 LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c\"",226,130,172 }' |
   "$command_file" -c || fail 'valid multibyte UTF-8 rejected'
+
+LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c%c\"",240,159,152,128 }' |
+  "$command_file" -c || fail 'valid four-byte UTF-8 rejected'
+LC_ALL=C command -p awk 'BEGIN { printf "\"a%cb\"",0 }' |
+  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'raw NUL in string accepted'
 
 # Preserve streaming linearity for large strings and avoid recursive sh stacks.
 LC_ALL=C command -p awk 'BEGIN { printf "[\""; for (i=0;i<100000;i++) printf "x"; printf "\"]" }' > "$temp_dir/large" || error 'cannot generate large fixture'
