@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "snapshot_date": "2026-11-03",
+  "data_until": "2026-10-31",
+  "provenance_policy": "Original observed facts only; hypothetical pre-1997 Lotto-based draws in separate explicitly labeled simulation tables.",
+  "sources": [
+    {
+      "id": "rumiai_original",
+      "repository": "massimilianonardi-ai/rumiai-tests",
+      "path": "research/superenalotto/estrazioni_con_ritardi.csv",
+      "rows": 4294,
+      "note": "Canonical chronological dates, historical contest numbers and combinations, discarding precomputed delays."
+    },
+    {
+      "id": "la_scimmia_vince",
+      "repository": "federicodiluca/la-scimmia-vince",
+      "commit": "e7130aa6e787fc80b9eb8c75c6fe333870283f3c",
+      "files": [
+        {
+          "path": "data/superenalotto/draws.csv",
+          "rows": 4294
+        },
+        {
+          "path": "data/superenalotto/pools.csv",
+          "rows": 2947
+        },
+        {
+          "path": "data/superenalotto/prizes.csv",
+          "rows": 38029
+        }
+      ],
+      "license_notice": "source/la-scimmia-vince/LICENSE",
+      "note": "Rows from 2009 onward based on official operator archive; earlier draws from TuttoSuperenalotto."
+    },
+    {
+      "id": "lotto_mirror",
+      "repository": "pandvan/lotto-archive",
+      "commit": "828bb7b3b7631b8944858bb27a2b4a51bc47e2b1",
+      "upstream_official": "https://www.brightstarlottery.it/STORICO_ESTRAZIONI_LOTTO/storico.zip",
+      "years": [
+        1939,
+        1997
+      ],
+      "archived_observations": 30931,
+      "lotto_dates_before_superenalotto": 3116,
+      "valid_counterfactual_draws": 3068,
+      "invalid_missing_wheels": 48,
+      "note": "Pre-1997 direct wheel results retained, hypothetical combinations isolated, no economic data invented."
+    },
+    {
+      "id": "luigimassa_jackpot",
+      "repository": "luigimassa/superenalotto-archivio",
+      "commit": "94160928109065af88332b3dd80da125f49445f3",
+      "file": "sestine_vincenti_6.csv",
+      "source_rows": 118,
+      "pre2009_rows": 75,
+      "trust": "secondary; financial amount sometimes differs by 1 EUR from Sisal"
+    },
+    {
+      "id": "superenalottooggi_1997",
+      "url": "https://superenalottooggi.com/archivio/1997",
+      "license": "CC BY 4.0; attribution SuperEnalottoOggi.com",
+      "observed_rows": 45,
+      "trust": "secondary; euro amounts already converted from historical lire by publisher"
+    },
+    {
+      "id": "Sisal",
+      "url": "https://www.sisal.it/superenalotto/ultima-estrazione",
+      "verified_contest": "2026-175",
+      "fields_compared": "pool, carryover, total, prizes; official additional pool"
+    },
+    {
+      "id": "ADM",
+      "url": "https://www.adm.gov.it/portale/monopoli/giochi/giochi_num_total/superenalotto",
+      "verified_contest": "2026-145",
+      "fields_compared": "pool, carryover, categories, official additional pool"
+    }
+  ],
+  "output": {
+    "factual_draws": 4294,
+    "real_pool_contests": 2947,
+    "real_prize_rows": 38029,
+    "secondary_prizes_1997_rows": 45,
+    "secondary_pre2009_6_jackpot_rows": 75,
+    "lotto_wheel_rows": 30931,
+    "hypothetical_pre1997_rows": 3068,
+    "official_verification_field_checks": 52,
+    "coverage_gaps": [
+      "full economic categories 1998-2008",
+      "independent official confirmation for 75 pre-2009 jackpot prizes",
+      "sales/ticket revenue and geography beyond published data",
+      "regulatory additional pool per contest except two checked"
+    ]
+  },
+  "integrity": {
+    "financial_rows_rebuild_byte_identical": true,
+    "hypothetical_rows_rebuild_byte_identical": true,
+    "canonical_id_disagreements_1997": 9,
+    "draw_number_discrepancies": 1,
+    "old_2004_12_27_resolution": "Lotto wheels and independent sources confirm 41 (not 4)",
+    "official_sample_count": 2,
+    "official_sample_check_passes": 52,
+    "historical_6_jackpot_official_comparison": "2 source amounts differ by 1 EUR; see verifiche_jackpot_pre2009.csv"
+  }
+}
