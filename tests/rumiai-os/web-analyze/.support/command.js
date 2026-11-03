@@ -23,7 +23,9 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   dynamicStyle.textContent = '.dynamic-probe { color: blue; }';
   document.head.append(dynamicStyle);
   document.addEventListener('rest-probe', () => {});
-  fetch('/data.json');
+  localStorage.setItem('fixtureSession', 'fixture-only-access');
+  sessionStorage.setItem('fixtureView', 'test-123');
+  fetch('/data.json', {headers:{'X-Fixture-Request':'captured'}});
   setTimeout(() => {
     const hydrated = document.createElement('section');
     hydrated.id = 'hydrated'; hydrated.textContent = 'Delayed hydrated content';
@@ -90,6 +92,8 @@ async function main()
     }[location];
     if (!data) {res.statusCode=404;res.end('not found');return;}
     res.setHeader('Content-Type', data[1]);
+    if (location === '/')
+      res.setHeader('Set-Cookie', 'fixture_cookie=fixture-only-secret; HttpOnly; SameSite=Lax; Path=/');
     if (location === '/hydrated.json')
       setTimeout(() => res.end(data[0]), 600);
     else
@@ -116,7 +120,9 @@ async function main()
       'rest/manifest.json', 'rest/page.mhtml',
       'rest/targets/target-000/dom-tree.json',
       'rest/targets/target-000/dom-snapshot.json',
-      'rest/resources-at-rest.jsonl', 'rest/scripts-at-rest.jsonl'])
+      'rest/resources-at-rest.jsonl', 'rest/scripts-at-rest.jsonl',
+      'rest/cookies.json', 'rest/targets/target-000/storage.json',
+      'network-details.jsonl', 'rest/network-details-at-rest.jsonl'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
@@ -131,6 +137,28 @@ async function main()
     assert(rest.artifacts.some(item => item.name === 'dom-tree' && item.status === 'saved'));
     assert(rest.artifacts.some(item => item.name === 'dom-snapshot' && item.status === 'saved'));
     assert(rest.artifacts.some(item => item.name === 'page' && item.status === 'saved'));
+    const cookies = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/cookies.json'), 'utf8'));
+    assert(cookies.some(item => item.name === 'fixture_cookie' &&
+      item.value === 'fixture-only-secret' && item.httpOnly === true),
+      'HTTP-only cookie unavailable from the private rest dump');
+    const storage = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/storage.json'), 'utf8'));
+    assert.equal(storage.localStorage.values.fixtureSession, 'fixture-only-access');
+    assert.equal(storage.sessionStorage.values.fixtureView, 'test-123');
+    const details = fs.readFileSync(path.join(capture, 'network-details.jsonl'), 'utf8');
+    assert(details.includes('X-Fixture-Request'),
+      'full HTTP request metadata was not preserved');
+    assert(details.includes('fixture_cookie=fixture-only-secret'),
+      'response cookie provenance was not preserved');
+    const atRest = fs.readFileSync(path.join(capture,
+      'rest/network-details-at-rest.jsonl'), 'utf8');
+    assert(atRest.includes('fixture_cookie=fixture-only-secret'),
+      'phase-zero network boundary did not preserve cookie evidence');
+    for (const file of ['rest/cookies.json', 'rest/targets/target-000/storage.json',
+      'network-details.jsonl'])
+      assert.equal(fs.statSync(path.join(capture, file)).mode & 0o777, 0o600,
+        'private browser state file permissions must be restrictive: ' + file);
     const environment = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/environment.json'), 'utf8'));
     assert(environment.shadowRoots.some(item => item.html.includes('Shadow content')),
