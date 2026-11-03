@@ -236,7 +236,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
   const notes=new classes.AnnotationDocument2D(raw);
   const events=[];
   notes.subscribe(event=>events.push(event));
-  source.replace(2,2,'Z');
+  source.replace(3,3,'Z');
   assert.deepEqual(events[0].geometry,
   {
     previousRevision:0,revision:1,
@@ -244,7 +244,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     edits:
     [
       {
-        old:{start:p(0,2),end:p(0,2)},
+        old:{start:p(0,3),end:p(0,3)},
         new:{start:p(1,0),end:p(1,1)}
       }
     ]
