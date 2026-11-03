@@ -160,6 +160,27 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
+  // A whole-row deletion is still one source edit even though
+  // an unrelated row contains occupied substitutions.
+  {
+    const t=make('abcdef\nremove\nlast');
+    t.view.setSubstitutions
+    (
+      [{id:'label',text:'LONG',start:p(0,1),end:p(0,4)}]
+    );
+    const from=t.source.lineStart(1);
+    const to=t.source.lineStart(2);
+    const before=t.source.revision;
+    t.source.replace(from,to,'');
+    assert.equal(t.source.revision,before+1);
+    assert.equal(t.source.toString(),'abcdef\nlast');
+    assert.deepEqual(t.events.at(-1).geometry.edits,
+      [edit(p(1,0),p(2,0),p(1,0),p(1,0))]);
+    assert.equal(t.events.at(-1).geometry.oldRowCount,3);
+    assert.equal(t.events.at(-1).geometry.newRowCount,2);
+    t.close();
+  }
+
   // Label-copy dependencies are display-only: a source edit at a
   // copied location does not turn a label into an edit destination.
   {
