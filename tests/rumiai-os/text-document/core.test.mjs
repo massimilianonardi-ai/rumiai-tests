@@ -790,7 +790,11 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   assert.equal(fold.rowCount,5);
   assert.equal(fold.colCount,5);
   assert.deepEqual(fold.getRegions(4,0,5,3),
-    [[{kind:'text',text:'three',start:point(4,0),end:point(4,5)}]]);
+    [[
+      {kind:'text',text:'t',start:point(4,0),end:point(4,1)},
+      {kind:'text',text:'h',start:point(4,1),end:point(4,2)},
+      {kind:'text',text:'r',start:point(4,2),end:point(4,3)}
+    ]]);
   assert.deepEqual(fold.getRegions(5,0,7,4),[]);
   assert.throws(()=>fold.setSelections([range(0,0,4,1)]),/crosses folded/);
 
