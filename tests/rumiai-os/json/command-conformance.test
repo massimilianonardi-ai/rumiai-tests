@@ -1,4 +1,5 @@
 #!/bin/sh
+# Contract of the standalone POSIX JSON query command.
 
 TEST_ID=rumiai-os/json/command-conformance.test
 fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
@@ -39,29 +40,7 @@ IFS= read -r first_line < "$command_file" || first_line=
 [ "$first_line" = '#!/bin/sh' ] || fail 'json requires an exact POSIX shebang'
 manual_file=$root/res/sys/manual/json
 [ -f "$manual_file" ] && [ ! -L "$manual_file" ] || fail 'json operational manual topic is missing'
-
-# This is a standalone command; it must run without the m bootstrap.
 unset m_ROOT
-
-valid()
-{
-  input=$1
-  expected=$2
-  actual=$(printf '%s' "$input" | "$command_file") || fail "valid JSON rejected: $input"
-  [ "$actual" = "$expected" ] || fail "compaction mismatch for $input: $actual"
-  printf '%s' "$input" | "$command_file" -c > "$temp_dir/check-out" 2> "$temp_dir/check-err" || fail "check mode rejected $input"
-  [ ! -s "$temp_dir/check-out" ] || fail 'check mode wrote output'
-}
-invalid()
-{
-  input=$1
-  expected_status=$2
-  printf '%s' "$input" | "$command_file" > "$temp_dir/out" 2> "$temp_dir/err"
-  actual_status=$?
-  [ "$actual_status" -eq "$expected_status" ] || fail "invalid JSON returned $actual_status, expected $expected_status: $input"
-  [ ! -s "$temp_dir/out" ] || fail "invalid JSON leaked output: $input"
-  [ -s "$temp_dir/err" ] || fail 'invalid JSON did not explain the failure'
-}
 
 temp_dir=${TMPDIR:-/tmp}/rumiai-json-test-$$
 umask 077
@@ -69,84 +48,177 @@ mkdir -m 700 -- "$temp_dir" || error 'cannot create temporary directory'
 trap 'rm -f -- "$temp_dir"/*; rmdir -- "$temp_dir"' 0
 trap 'exit 3' 1 2 3 15
 
-valid '{}' '{}'
-valid '[]' '[]'
-valid '0' '0'
-valid '-0' '-0'
-valid '2e999999999999999999999999999' '2e999999999999999999999999999'
-valid 'true' 'true'
-valid 'false' 'false'
-valid 'null' 'null'
-valid '"str"' '"str"'
-valid '"\u0000\n\t\uD800"' '"\u0000\n\t\uD800"'
-valid '{ "z": [ true, false, null, -1.25E+20 ], "z": { "x": "\\\\" } }' '{"z":[true,false,null,-1.25E+20],"z":{"x":"\\\\"}}'
-valid '[{},[],[0],{"a":{}},1e-200]' '[{},[],[0],{"a":{}},1e-200]'
-valid '{"escape":"\\/","tab":"\\t"}' '{"escape":"\\/","tab":"\\t"}'
+query()
+{
+  input=$1
+  filter=$2
+  expected=$3
+  printf '%s' "$input" | "$command_file" -c "$filter" > "$temp_dir/out" 2> "$temp_dir/err" || fail "query rejected $filter: $(cat "$temp_dir/err")"
+  printf '%s\n' "$expected" > "$temp_dir/expected"
+  cmp -s -- "$temp_dir/expected" "$temp_dir/out" || fail "query output mismatch: $filter"
+}
 
-invalid '' 6
-invalid ' ' 6
-invalid '01' 6
-invalid '-01' 6
-invalid '1e+' 4
-invalid '1.' 4
-invalid '-' 4
-invalid '+1' 4
-invalid '.1' 4
-invalid 'true false' 6
-invalid '[1,]' 6
-invalid '[1, 2,]' 6
-invalid '{"a":[}]' 6
-invalid '[,]' 6
-invalid '[1 2]' 6
-invalid '{"a":1,}' 6
-invalid '[{"a":1,}]' 6
-invalid '{"a" 1}' 6
-invalid '{"a":1 "b":2}' 6
-invalid '{"a":}' 6
-invalid '"bad\q"' 4
-invalid '"bad\u12xz"' 4
-invalid '"bad\u012"' 4
-invalid '"unfinished' 4
-invalid '[1' 6
-invalid '{"a":1' 6
-invalid 'False' 4
-invalid 'NaN' 4
+query_failure()
+{
+  input=$1
+  filter=$2
+  expected_status=$3
+  printf '%s' "$input" | "$command_file" -c "$filter" > "$temp_dir/out" 2> "$temp_dir/err"
+  actual=$?
+  [ "$actual" -eq "$expected_status" ] || fail "filter $filter status $actual, expected $expected_status"
+  [ ! -s "$temp_dir/out" ] || fail "query failure leaked partial output: $filter"
+  [ -s "$temp_dir/err" ] || fail "query failure lacks diagnostic: $filter"
+}
 
-printf ' \t\r\n{}\r\n' | "$command_file" > "$temp_dir/out" || fail 'CRLF JSON rejected'
-[ "$(cat "$temp_dir/out")" = '{}' ] || fail 'CRLF compaction mismatch'
+check_json()
+{
+  printf '%s' "$1" | "$command_file" --check > "$temp_dir/out" 2> "$temp_dir/err"
+  actual=$?
+  [ "$actual" -eq "$2" ] || fail "check status $actual, expected $2: $1"
+  [ ! -s "$temp_dir/out" ] || fail 'check mode produced output'
+  if [ "$2" -ne 0 ]
+  then
+    [ -s "$temp_dir/err" ] || fail 'validation failure lacks diagnostic'
+  fi
+}
 
-# RFC 3629 byte-level UTF-8 regression cases (including overlong forms).
+# Querying is the public goal, not an optional mode of the validator.
+query '{"user":{"name":"Ada"}}' '.user.name' '"Ada"'
+query '{"users":[{"name":"Ada"},{"name":"Lin"}]}' '.users[].name' '"Ada"
+"Lin"'
+query '[10,20,30]' '.[-1]' '30'
+query '[10,20,30]' '.[8]' 'null'
+query '{"a":true,"b":false}' '.a, .b' 'true
+false'
+query '{"a":{"x":1},"b":{"x":2}}' '.a,.b|.x' '1
+2'
+query '{"a":{"x":1},"b":{"x":2}}' '.a,.b | .x' '1
+2'
+query '{"nested":[[1,2],[3,4]]}' '.nested[]|.[]' '1
+2
+3
+4'
+query '{"x":1,"y":2}' '.[]' '1
+2'
+query '{"key with space":25}' '.["key with space"]' '25'
+query '{"\u0061":7}' '.a' '7'
+query '{"a":7}' '.["\u0061"]' '7'
+query '{"\uD83D\uDE00":8}' '.["😀"]' '8'
+query '{"a":1,"b":2,"a":3}' '.a' '3'
+query '{"a":1,"b":2,"a":3}' '.' '{"a":3,"b":2}'
+query '{"a":1,"b":2,"a":3}' '.[]' '3
+2'
+query 'null' '.missing' 'null'
+query '{}' '.missing' 'null'
+query '{}' '.' '{}'
+query '[]' '.' '[]'
+query 'true' '.' 'true'
+query 'false' '.' 'false'
+query 'null' '.' 'null'
+query '-0' '.' '-0'
+query '2e999999999999999999999999999' '.' '2e999999999999999999999999999'
+query '{"z": [ true, false, null, -1.25E+20 ]}' '.' '{"z":[true,false,null,-1.25E+20]}'
+query '1 2' '.' '1
+2'
+query '{"a":1}{"b":2}' '.' '{"a":1}
+{"b":2}'
+
+query_failure '1' '.x' 13
+query_failure '1' '.[]' 13
+query_failure '{}' '.foo + 1' 3
+query_failure '{}' 'bad' 3
+query_failure '{}' '.[-]' 3
+query_failure '{}' '.["unterminated]' 3
+query_failure '{}' '.a |' 3
+query_failure '1true' '.' 12
+query_failure 'truefalse' '.' 12
+query_failure '{"a":1,}' '.' 12
+query_failure '{"a":"bad\q"}' '.' 10
+query_failure '"unterminated' '.' 10
+query_failure '1e+' '.' 10
+
+check_json '{}' 0
+check_json '[]' 0
+check_json '0' 0
+check_json '"\u0000\uD800"' 0
+check_json '' 12
+check_json '  ' 12
+check_json '1 2' 12
+check_json '01' 12
+check_json '[1,]' 12
+check_json '{"a":1,}' 12
+check_json '"bad\q"' 10
+check_json '"bad\u12xz"' 10
+check_json 'NaN' 10
+check_json 'True' 10
+
+# Pretty printing, raw Unicode decoding, optional lookup and -e semantics.
+printf '{"a":[1,true]}' | "$command_file" . > "$temp_dir/out" || fail 'pretty query failed'
+printf '{\n  "a": [\n    1,\n    true\n  ]\n}\n' > "$temp_dir/expected"
+cmp -s -- "$temp_dir/expected" "$temp_dir/out" || fail 'default pretty output mismatch'
+printf '%s' '{"a":"a\n\u20ac\uD83D\uDE00"}' | "$command_file" -r .a > "$temp_dir/out" || fail 'raw query failed'
+printf 'a\n\342\202\254\360\237\230\200\n' > "$temp_dir/expected"
+cmp -s -- "$temp_dir/expected" "$temp_dir/out" || fail 'Unicode raw-output mismatch'
+printf '%s' '"\uD800"' | "$command_file" -r . > "$temp_dir/out" || fail 'unpaired-surrogate raw query failed'
+printf '\357\277\275\n' > "$temp_dir/expected"
+cmp -s -- "$temp_dir/expected" "$temp_dir/out" || fail 'unpaired-surrogate raw-output mismatch'
+printf '%s' '1' | "$command_file" -e '.foo?' > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 4 ] && [ ! -s "$temp_dir/out" ] || fail 'optional query produced a value'
+printf '%s' 'null' | "$command_file" -e . > "$temp_dir/out"
+[ "$?" -eq 1 ] || fail '-e null status wrong'
+printf '%s' 'false' | "$command_file" -e . > "$temp_dir/out"
+[ "$?" -eq 1 ] || fail '-e false status wrong'
+printf '%s' 'true' | "$command_file" -e . > "$temp_dir/out"
+[ "$?" -eq 0 ] || fail '-e true status wrong'
+printf '%s' '[]' | "$command_file" -e '.[]' > "$temp_dir/out"
+[ "$?" -eq 4 ] || fail '-e no-output status wrong'
+
+# A file-mode query and each independent input file must work normally.
+printf '%s' '{"a":[1,2]}' > "$temp_dir/one"
+printf '%s' '{"a":[3,4]}' > "$temp_dir/two"
+printf '%s' '.a[]' > "$temp_dir/filter"
+"$command_file" -c -f "$temp_dir/filter" "$temp_dir/one" "$temp_dir/two" > "$temp_dir/out" || fail 'file/-f query failed'
+printf '1\n2\n3\n4\n' > "$temp_dir/expected"
+cmp -s -- "$temp_dir/expected" "$temp_dir/out" || fail 'multi-file query mismatch'
+"$command_file" -c '.a[]' -- "$temp_dir/one" > "$temp_dir/out" || fail 'post-filter option terminator failed'
+"$command_file" --check "$temp_dir/one" > "$temp_dir/out" || fail 'file check failed'
+"$command_file" -c . "$temp_dir/missing" > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 8 ] || fail 'missing input file status wrong'
+"$command_file" -c -f "$temp_dir/missing" > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 18 ] || fail 'missing filter file status wrong'
+"$command_file" --check -c > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 2 ] || fail 'incompatible check/compact flags accepted'
+
+# Reject malformed later input atomically: no partial successful output.
+printf '%s' '1 {"x":}' | "$command_file" -c . > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 12 ] && [ ! -s "$temp_dir/out" ] || fail 'late syntax error leaked output'
+printf '%s' '{"a":' > "$temp_dir/bad"
+"$command_file" -c . "$temp_dir/one" "$temp_dir/bad" > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 12 ] && [ ! -s "$temp_dir/out" ] || fail 'late file failure leaked output'
+
+# Invalid byte sequences, NUL, BOM, and valid multi-byte UTF-8.
 for bad in 192 193 128 255
 do
   LC_ALL=C command -p awk -v b="$bad" 'BEGIN { printf "\"%c\"", b }' |
-    "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err"
-  [ "$?" -eq 5 ] || fail "invalid UTF-8 byte $bad was not rejected as UTF-8"
-  [ ! -s "$temp_dir/out" ] || fail 'malformed UTF-8 leaked output'
+    "$command_file" --check > "$temp_dir/out" 2> "$temp_dir/err"
+  [ "$?" -eq 11 ] || fail "invalid UTF-8 byte $bad not rejected"
 done
 LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c\"",237,160,128 }' |
-  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'UTF-8 surrogate encoding accepted'
-LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c%c\"",244,144,128,128 }' |
-  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'out-of-range UTF-8 accepted'
+  "$command_file" --check > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 11 ] || fail 'UTF-8 surrogate encoding accepted'
 LC_ALL=C command -p awk 'BEGIN { printf "%c%c%c{}",239,187,191 }' |
-  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'BOM accepted'
-LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c\"",226,130,172 }' |
-  "$command_file" -c || fail 'valid multibyte UTF-8 rejected'
-
+  "$command_file" --check > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 10 ] || fail 'BOM accepted'
 LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c%c\"",240,159,152,128 }' |
-  "$command_file" -c || fail 'valid four-byte UTF-8 rejected'
+  "$command_file" --check || fail 'valid 4-byte UTF-8 rejected'
 LC_ALL=C command -p awk 'BEGIN { printf "\"a%cb\"",0 }' |
-  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'raw NUL in string accepted'
+  "$command_file" --check > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 10 ] || fail 'raw NUL accepted'
 
-# Preserve streaming linearity for large strings and avoid recursive sh stacks.
-LC_ALL=C command -p awk 'BEGIN { printf "[\""; for (i=0;i<100000;i++) printf "x"; printf "\"]" }' > "$temp_dir/large" || error 'cannot generate large fixture'
-"$command_file" -c -- "$temp_dir/large" || fail 'large JSON document rejected'
-LC_ALL=C command -p awk 'BEGIN { for (i=0;i<1000;i++) printf "["; printf "0"; for (i=0;i<1000;i++) printf "]" }' | "$command_file" -c || fail '1000-level nesting rejected'
-
-"$command_file" -- "$temp_dir/large" > "$temp_dir/out" || fail 'file operand failed'
-[ -s "$temp_dir/out" ] || fail 'file operand produced no result'
-"$command_file" -- "$temp_dir/missing" > "$temp_dir/out" 2> "$temp_dir/err"
-[ "$?" -eq 3 ] || fail 'missing file did not return status 3'
-"$command_file" -unknown > "$temp_dir/out" 2> "$temp_dir/err"
-[ "$?" -eq 2 ] || fail 'unknown option did not return status 2'
+# Nonrecursive depth and large exact strings are regression properties.
+LC_ALL=C command -p awk 'BEGIN { for (i=0;i<1000;i++) printf "["; printf "0"; for (i=0;i<1000;i++) printf "]" }' |
+  "$command_file" --check || fail '1000-level JSON rejected'
+LC_ALL=C command -p awk 'BEGIN { printf "[\""; for (i=0;i<100000;i++) printf "x"; printf "\"]" }' > "$temp_dir/large" || error 'large test fixture failed'
+"$command_file" --check "$temp_dir/large" || fail 'large valid JSON rejected'
 
 exit 0

@@ -27,7 +27,7 @@ do
     *) printf '%s\n' "unexpected fixture identity: $json_case" >&2; exit 3;;
   esac
 
-  "$json_command" -c -- "$json_fixture" >/dev/null 2>&1
+  "$json_command" --check "$json_fixture" >/dev/null 2>&1
   json_status=$?
 
   if [ "$json_status" -ge 128 ]
