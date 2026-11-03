@@ -247,8 +247,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // A plausible old suffix column without a saved precommit boundary
-  // cannot be verified from the new row's EOL after a source mutation.
+  // The existing raw precommit hook now proves a non-boundary old
+  // suffix point: its old column is shifted by the occupied region.
   {
     const t=make('abcdef');
     t.view.setSubstitutions
@@ -256,7 +256,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
       [{id:'hidden',text:'X',start:p(0,1),end:p(0,3)}]
     );
     t.source.replace(5,5,'Z');
-    assert.equal('geometry' in t.events.at(-1),false);
+    assert.deepEqual(t.events.at(-1).geometry.edits,
+      [edit(p(0,4),p(0,4),p(0,5),p(0,6))]);
     t.close();
   }
 
