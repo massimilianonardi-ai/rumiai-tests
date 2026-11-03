@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['Document','Document2D','FlatDocument','PieceDocument','RawDocument2D']);
+  assert.deepEqual(Object.keys(extracted).sort(),['CellDocument2D','Document','Document2D','FlatDocument','PieceDocument','RawDocument2D']);
 }
 finally
 {
@@ -89,7 +89,7 @@ for
 (
   const name of
   [
-    'getRect','read','getSelections','setSelections','addSelection',
+    'getRect','getRowWidth','getRegions','read','getSelections','setSelections','addSelection',
     'remSelection','insert','replace','subscribe','destroy'
   ]
 )
@@ -433,6 +433,182 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   assert.throws(() => view.replace(edits, revision), /stale/);
 
   view.destroy();
+}
+
+
+// A raw region window exposes the true source-coordinate geometry and clips
+// bounded UTF-16 reads without widening to whole Unicode graphemes.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('ab\r\n😀\tQ\n');
+  const raw=new RawDocument2D(source);
+  assert.equal(raw.getRowWidth(0),2);
+  assert.equal(raw.getRowWidth(1),4);
+  assert.equal(raw.getRowWidth(99),0);
+  assert.deepEqual
+  (
+    raw.getRegions(0,1,3,3),
+    [
+      [{kind:'text',start:point(0,1),end:point(0,2),text:'b'}],
+      [{kind:'text',start:point(1,1),end:point(1,3),text:'\uDE00\t'}],
+      []
+    ]
+  );
+  assert.throws(()=>raw.getRegions(0,-1,2,3),RangeError);
+  assert.throws(()=>raw.getRowWidth(-1),RangeError);
+  raw.destroy();
+}
+
+// Cell geometry is a composable Document2D, never an alternate selection owner.
+// Ordinary text, a grapheme spanning multiple UTF-16 units, and a multi-cell
+// TAB preserve their individual view/parent correspondences.
+const CellDocument2D=extracted.CellDocument2D;
+assert.equal(typeof CellDocument2D,'function');
+assert.throws(()=>new CellDocument2D({}),TypeError);
+assert.throws(()=>new CellDocument2D(new RawDocument2D(new extracted.FlatDocument('x')),0),RangeError);
+
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('A\tB\r\n😀e\u0301Q\nZ');
+  const raw=new RawDocument2D(source);
+  const cells=new CellDocument2D(raw);
+  const nested=new CellDocument2D(cells);
+  const events=[];
+
+  cells.subscribe(event=>events.push(event));
+  assert.equal(cells instanceof Document2D,true);
+  assert.equal(cells.rowCount,3);
+  assert.equal(cells.getRowWidth(0),5);
+  assert.equal(cells.getRowWidth(1),3);
+  assert.equal(cells.getRowWidth(2),1);
+  assert.equal(cells.colCount,5);
+  assert.equal(nested.getRowWidth(0),5);
+  assert.deepEqual(cells.getRect(0,0,3,20),['A   B','😀e\u0301Q','Z']);
+  assert.deepEqual(cells.getRect(0,2,1,3),[' ']);
+  assert.deepEqual
+  (
+    cells.getRegions(0,2,1,3),
+    [[{kind:'tab',text:'\t',start:point(0,1),end:point(0,4)}]]
+  );
+  assert.deepEqual
+  (
+    cells.getRegions(1,0,2,1),
+    [[{kind:'text',text:'😀',start:point(1,0),end:point(1,1)}]]
+  );
+
+  // The returned regions are independent snapshots; mutating one must not
+  // retarget a subsequent edit (the vulnerability observed in PoC 074).
+  const published=cells.getRegions(0,4,1,5)[0][0];
+  published.start.col=0;
+  published.end.col=1;
+
+  const initial=source.revision;
+  assert.throws
+  (
+    ()=>cells.replace
+    (
+      [{start:point(0,2),end:point(0,3),text:'?'}],
+      cells.revision
+    ),
+    /indivisible/
+  );
+  assert.equal(source.revision,initial);
+  assert.equal(source.toString(),'A\tB\r\n😀e\u0301Q\nZ');
+
+  cells.replace
+  (
+    [
+      {start:point(0,4),end:point(0,5),text:'X'},
+      {start:point(1,1),end:point(1,2),text:'é'}
+    ],
+    cells.revision
+  );
+  assert.equal(source.toString(),'A\tX\r\n😀éQ\nZ');
+  assert.equal(source.revision,initial+1);
+  assert.equal(cells.revision,1);
+  assert.equal(nested.revision,1);
+  assert.equal(events.filter(e=>e.type==='content').length,1);
+  assert.deepEqual(events.find(e=>e.type==='content').invalidation,{all:true});
+  assert.throws(()=>cells.replace
+  (
+    [{start:point(0,4),end:point(0,5),text:'Y'}],0
+  ),/stale/);
+
+  // Selection strategies operate in view cells, while Raw owns the single
+  // effective physical collection and selected text transfers unchanged.
+  cells.selectionMode='rectangle';
+  cells.addSelection(point(0,4));
+  cells.addSelection(point(1,1));
+  assert.equal(cells.getSelections().length,2);
+  cells.setSelections([range(1,0,1,1)]);
+  assert.deepEqual(cells.read(),['😀']);
+  assert.deepEqual(raw.getSelections(),[range(1,0,1,2)]);
+
+  // A second layer routes versioned edits through the first layer into one
+  // physical transaction, including a zero-width insertion at a cell edge.
+  const beforeNested=source.revision;
+  nested.replace
+  (
+    [{start:point(0,4),end:point(0,4),text:'!'}],
+    nested.revision
+  );
+  assert.equal(source.revision,beforeNested+1);
+  assert.equal(source.toString(),'A\t!X\r\n😀éQ\nZ');
+
+  // A direct physical edit also invalidates this view's old coordinates.
+  const stale=cells.revision;
+  source.replace(0,0,'z');
+  assert.throws(()=>cells.replace
+  (
+    [{start:point(0,4),end:point(0,5),text:'Q'}],stale
+  ),/stale/);
+
+  nested.destroy();
+  cells.destroy();
+  raw.destroy();
+  assert.doesNotThrow(()=>source.replace(0,0,'!'));
+}
+
+// A bounded viewport near the beginning of a very long row must not read
+// or materialize the entire input row merely to form grapheme cells.
+{
+  class ObservedRaw extends RawDocument2D
+  {
+    largestWindow=0;
+    getRegions(...args)
+    {
+      this.largestWindow=Math.max(this.largestWindow,args[3]-args[1]);
+      return super.getRegions(...args);
+    }
+  }
+
+  const source=new extracted.PieceDocument('a'.repeat(100000)+'X');
+  const raw=new ObservedRaw(source);
+  const cells=new CellDocument2D(raw);
+  assert.deepEqual(cells.getRect(0,0,1,5),['aaaaa']);
+  assert.ok(raw.largestWindow<=2048);
+  cells.destroy();
+  raw.destroy();
+}
+
+// The scanner must preserve a combining cluster spanning a 2048-unit
+// boundary, not cut or invent an editable grapheme boundary.
+{
+  const source=new extracted.PieceDocument('a'.repeat(2047)+'e\u0301B');
+  const raw=new RawDocument2D(source);
+  const cells=new CellDocument2D(raw);
+  assert.deepEqual
+  (
+    cells.getRegions(0,2047,1,2048),
+    [[{kind:'text',text:'e\u0301',start:point(0,2047),end:point(0,2048)}]]
+  );
+  assert.throws(()=>cells.replace
+  (
+    [{start:point(0,2047),end:point(0,2048),text:'E'}],
+    cells.revision+1
+  ),/stale/);
+  cells.destroy();
+  raw.destroy();
 }
 
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
