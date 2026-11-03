@@ -325,6 +325,71 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
+  // A new physical row changes the new substitution space after the
+  // occupied configuration is cleared; old endpoints stay in its old view.
+  {
+    const t=open('abcdef\nsecond\nTAIL');
+    const view=new classes.SubstitutionDocument2D(t.upper);
+    view.setSubstitutions
+    (
+      [{id:'label',text:'X',start:p(0,1),end:p(0,3)}]
+    );
+    const events=[];
+    view.subscribe(e=>events.push(e));
+    const revision=view.revision;
+    const physical=t.source.revision;
+    const at=t.source.lineStart(1)+3;
+    t.source.replace(at,at,'\n');
+    assert.equal(t.source.revision,physical+1);
+    assert.equal(t.source.toString(),'abcdef\nsec\nond\nTAIL');
+    assert.deepEqual(events.at(-1).geometry,
+    {
+      previousRevision:revision,revision:view.revision,
+      oldRowCount:3,newRowCount:4,
+      edits:[edit(p(1,3),p(1,3),p(1,3),p(2,0))]
+    });
+    assert.deepEqual(view.substitutions,[]);
+    view.destroy();
+    t.close();
+  }
+
+  // Source cuts strictly inside a grapheme or CRLF terminator cannot be
+  // promoted to old folded/substituted cells by the intermediate chain.
+  for(const [text,at] of [['A😀B\nHIDDEN\nxyz',2],['A\r\nHIDDEN\nxyz',2]])
+  {
+    for(const Kind of [classes.FoldDocument2D,classes.SubstitutionDocument2D])
+    {
+      const t=open(text);
+      const view=new Kind(t.upper);
+      if(Kind===classes.FoldDocument2D)
+      {
+        view.setFolds([{startRow:1,endRow:2}]);
+      }
+      else
+      {
+        view.setSubstitutions
+        (
+          [{id:'letter',text:'LONG',start:p(0,0),end:p(0,1)}]
+        );
+      }
+      const events=[];
+      view.subscribe(e=>events.push(e));
+      t.source.replace(at,at,'Q');
+      assert.equal('geometry' in events.at(-1),false);
+      assert.deepEqual(events.at(-1).invalidation,{all:true});
+      if(Kind===classes.FoldDocument2D)
+      {
+        assert.deepEqual(view.folds,[]);
+      }
+      else
+      {
+        assert.deepEqual(view.substitutions,[]);
+      }
+      view.destroy();
+      t.close();
+    }
+  }
+
   // Derived labels are display dependencies, never edit destinations.
   {
     const t=open('A\tBC😀DE\nTAIL');
