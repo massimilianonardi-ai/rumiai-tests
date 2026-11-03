@@ -39,6 +39,8 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
     .then(cache => cache.put('/cached-fixture', new Response('cached-payload')))
     .then(() => {document.body.dataset.cacheReady = 'yes';});
   fetch('/data.json', {headers:{'X-Fixture-Request':'captured'}});
+  fetch('/submit-data', {method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({marker:'request-body-marker'})});
   setTimeout(() => {
     const hydrated = document.createElement('section');
     hydrated.id = 'hydrated'; hydrated.textContent = 'Delayed hydrated content';
@@ -101,7 +103,8 @@ async function main()
       '/app.js': [app, 'text/javascript'],
       '/data.json': ['{"initial":true}', 'application/json'],
       '/lazy.json': ['{"lazy":true}', 'application/json'],
-      '/hydrated.json': ['{"hydrated":true}', 'application/json']
+      '/hydrated.json': ['{"hydrated":true}', 'application/json'],
+      '/submit-data': ['{"accepted":true}', 'application/json']
     }[location];
     if (!data) {res.statusCode=404;res.end('not found');return;}
     res.setHeader('Content-Type', data[1]);
@@ -181,6 +184,10 @@ async function main()
       'rest/targets/target-000/cache-storage', cached.body.file), 'utf8');
     assert.equal(cachedBody, 'cached-payload');
     const details = fs.readFileSync(path.join(capture, 'network-details.jsonl'), 'utf8');
+    assert(details.includes('request-body-marker'),
+      'initial POST request contents were not preserved');
+    assert(details.includes('Network.getRequestPostData'),
+      'per-request body retrieval evidence was not recorded');
     assert(details.includes('X-Fixture-Request'),
       'full HTTP request metadata was not preserved');
     assert(details.includes('fixture_cookie=fixture-only-secret'),
