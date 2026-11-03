@@ -2153,6 +2153,54 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   raw.destroy();
 }
 
+// Two edits can share the same source start only when a zero-width
+// insertion and a replacement meet. The inserted span must precede the
+// replacement in the new geometry, regardless of caller argument order.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('abcd');
+  const raw=new RawDocument2D(source);
+  const seen=[];
+  raw.subscribe(e=>seen.push(e));
+  source.replace
+  (
+    [
+      {start:1,end:3,text:'XY'},
+      {start:1,end:1,text:'!'}
+    ]
+  );
+  assert.equal(source.toString(),'a!XYd');
+  assert.equal(source.revision,1);
+  assert.deepEqual(seen[0].geometry.edits,
+  [
+    {
+      old:
+      {
+        start:{row:0,col:1,offset:1},
+        end:{row:0,col:3,offset:3}
+      },
+      new:
+      {
+        start:{row:0,col:2,offset:2},
+        end:{row:0,col:4,offset:4}
+      }
+    },
+    {
+      old:
+      {
+        start:{row:0,col:1,offset:1},
+        end:{row:0,col:1,offset:1}
+      },
+      new:
+      {
+        start:{row:0,col:1,offset:1},
+        end:{row:0,col:2,offset:2}
+      }
+    }
+  ]);
+  raw.destroy();
+}
+
 // Source locations inside a CRLF terminator carry the exact UTF-16
 // boundary, even though that column is beyond the editable row width.
 for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
