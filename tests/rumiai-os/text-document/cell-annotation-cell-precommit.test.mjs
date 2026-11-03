@@ -362,6 +362,59 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     raw.destroy();
   }
 
+  // A committed event with a discontinuous immediate annotation
+  // revision cannot justify old points captured at another revision.
+  {
+    class BrokenRevisionAnnotation extends classes.AnnotationDocument2D
+    {
+      subscribe(listener)
+      {
+        return super.subscribe
+        (
+          event =>
+          {
+            if(event.geometry)
+            {
+              listener
+              (
+                {
+                  ...event,
+                  geometry:
+                  {
+                    ...event.geometry,
+                    previousRevision:event.geometry.previousRevision+1
+                  }
+                }
+              );
+            }
+            else
+            {
+              listener(event);
+            }
+          }
+        );
+      }
+    }
+
+    const source=new Backend('abc');
+    const raw=new classes.RawDocument2D(source);
+    const lower=new classes.CellDocument2D(raw);
+    const notes=new BrokenRevisionAnnotation(lower);
+    const upper=new classes.CellDocument2D(notes);
+    const observed=[],events=[];
+    upper._subscribeBeforeGeometry(g=>observed.push(g));
+    upper.subscribe(e=>events.push(e));
+    source.replace(1,2,'Z');
+    assert.equal(source.toString(),'aZc');
+    assert.equal(observed.length,1);
+    assert.equal('geometry' in events.at(-1),false);
+    assert.deepEqual(events.at(-1).invalidation,{all:true});
+    upper.destroy();
+    notes.destroy();
+    lower.destroy();
+    raw.destroy();
+  }
+
   // An annotation atop a folded nonidentity view is NOT Cell identity,
   // even if a later layer exposes an old/new event: no invented cut.
   {
