@@ -44,7 +44,7 @@ function open(Backend,text,cell=true)
   const notes=new classes.AnnotationDocument2D(view);
   const events=[];
   notes.subscribe(event=>events.push(event));
-  return
+  const result =
   {
     source,raw,view,notes,events,
     close()
@@ -57,6 +57,7 @@ function open(Backend,text,cell=true)
       raw.destroy();
     }
   };
+  return result;
 }
 
 for(const Backend of [classes.FlatDocument,classes.PieceDocument])
