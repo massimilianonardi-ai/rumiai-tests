@@ -104,12 +104,20 @@ async function main()
       'LIMITATIONS.md', 'summary.json', 'resources.jsonl', 'scripts.jsonl',
       'states/state-000.json', 'states/screen-000.png',
       'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
-      'states/dom-rest-final.html', 'states/dom-rest-final.json'])
+      'states/dom-rest-final.html', 'states/dom-rest-final.json',
+      'rest/manifest.json', 'rest/page.mhtml',
+      'rest/targets/target-000/dom-tree.json',
+      'rest/targets/target-000/dom-snapshot.json'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
     assert(states.length >= 2, 'nested scroll was not explored');
+    const rest = JSON.parse(fs.readFileSync(path.join(capture, 'rest/manifest.json'), 'utf8'));
+    assert.equal(rest.phase, 'rest-before-automated-input');
+    assert(rest.artifacts.some(item => item.name === 'dom-tree' && item.status === 'saved'));
+    assert(rest.artifacts.some(item => item.name === 'dom-snapshot' && item.status === 'saved'));
+    assert(rest.artifacts.some(item => item.name === 'page' && item.status === 'saved'));
     assert(['settled', 'dom-quiet-network-pending'].includes(states[0].settlement.status),
       'initial DOM must be saved after bounded network and mutation quiet');
     if (states[0].settlement.status === 'settled')
