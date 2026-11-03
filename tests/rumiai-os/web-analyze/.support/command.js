@@ -15,6 +15,14 @@ const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
 const app = `document.addEventListener('DOMContentLoaded', () => {
+  const host = document.createElement('section');
+  host.id = 'shadow-probe';
+  host.attachShadow({mode:'open'}).innerHTML = '<b id="shadow-inner">Shadow content</b>';
+  document.body.append(host);
+  const dynamicStyle = document.createElement('style');
+  dynamicStyle.textContent = '.dynamic-probe { color: blue; }';
+  document.head.append(dynamicStyle);
+  document.addEventListener('rest-probe', () => {});
   fetch('/data.json');
   setTimeout(() => {
     const hydrated = document.createElement('section');
@@ -118,6 +126,22 @@ async function main()
     assert(rest.artifacts.some(item => item.name === 'dom-tree' && item.status === 'saved'));
     assert(rest.artifacts.some(item => item.name === 'dom-snapshot' && item.status === 'saved'));
     assert(rest.artifacts.some(item => item.name === 'page' && item.status === 'saved'));
+    const environment = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/environment.json'), 'utf8'));
+    assert(environment.shadowRoots.some(item => item.html.includes('Shadow content')),
+      'open shadow subtree not captured');
+    const domTree = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/dom-tree.json'), 'utf8'));
+    assert(JSON.stringify(domTree).includes('shadow-inner'),
+      'pierced CDP DOM tree omitted shadow node');
+    const styles = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/stylesheets/index.json'), 'utf8'));
+    assert(styles.some(item => item.status === 'saved'),
+      'CSS source was not preserved');
+    const listeners = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/event-listeners.json'), 'utf8'));
+    assert(listeners.some(group => group.listeners?.some(item => item.type === 'rest-probe')),
+      'event listener metadata not captured');
     assert(['settled', 'dom-quiet-network-pending'].includes(states[0].settlement.status),
       'initial DOM must be saved after bounded network and mutation quiet');
     if (states[0].settlement.status === 'settled')
