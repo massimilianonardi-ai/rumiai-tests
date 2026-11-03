@@ -29,3 +29,14 @@ Il sorgente originale `compute_v13.py` non era recuperabile; l'archivio include 
 - `superenalotto_metriche_v26.json`: 23 confronti di statistiche con pseudo-serie casuali, seed e limiti.
 
 **Stato scientifico v26:** copertura retrospettiva esatta 3.801/4.226, media stimata delle combinazioni residue circa 559,2 milioni; nessun vantaggio predittivo dimostrato. Il periodo 2021–2026 è già stato riutilizzato durante lo sviluppo e non è un test indipendente.
+
+
+## Base storica economica e controfattuale (3 novembre 2026)
+
+L'archivio canonico **dati sorgente** è in **[archive/](archive/README.md)**.
+Contiene 4.294 estrazioni reali, 2.947 concorsi con montepremi,
+38.029 righe di premi e vincite, integrazioni storiche con provenienza,
+e 3.068 sestine **ipotetiche** pre-1997 ricostruite dalle ruote del Lotto.
+Le verifiche ufficiali e le lacune economiche 1998–2008 sono documentate
+nel file \`archive/README.md\` e nel manifesto \`archive/SOURCE_MANIFEST.json\`.
+L'archivio non cambia e non sostituisce le analisi v01–v26.
