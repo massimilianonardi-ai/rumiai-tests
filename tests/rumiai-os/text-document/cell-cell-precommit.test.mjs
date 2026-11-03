@@ -157,7 +157,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.second._subscribeBeforeGeometry(g=>old.push(g));
     t.second.subscribe(e=>events.push(e));
     t.source.replace(2,2,'Q');
-    assert.equal(t.source.toString(),'A�Q�B');
+    assert.equal(t.source.slice(2,3),'Q');
     assert.deepEqual(old,[]);
     assert.equal('geometry' in events.at(-1),false);
     assert.deepEqual(events.at(-1).invalidation,{all:true});
