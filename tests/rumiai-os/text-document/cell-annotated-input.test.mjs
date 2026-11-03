@@ -272,8 +272,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // An intermediate nonidentity Cell cannot be treated as Raw, even
-  // when another zero-width annotation offers an old-point hook.
+  // Annotated Cell coordinates are NOT Raw coordinates. The new
+  // restricted Cell-space identity admits a separately proven batch.
   {
     const t=open('A\tBC😀DE');
     const notes=new classes.AnnotationDocument2D(t.cell);
@@ -282,10 +282,18 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     const events=[];
     outer._subscribeBeforeGeometry(v=>prepared.push(v));
     outer.subscribe(e=>events.push(e));
+    const revision=outer.revision;
     t.source.replace(7,8,'Z');
-    assert.deepEqual(prepared,[]);
-    assert.equal('geometry' in events.at(-1),false);
+    assert.deepEqual(prepared,
+      [{previousRevision:revision,oldRowCount:1,
+        edits:[{old:{start:p(0,8),end:p(0,9)}}]}]);
+    assert.deepEqual(events.at(-1).geometry,
+      {previousRevision:revision,revision:outer.revision,
+        oldRowCount:1,newRowCount:1,
+        edits:[edit(p(0,8),p(0,9),p(0,8),p(0,9))]});
     assert.equal(notes._hasRawCoordinateIdentity(),false);
+    assert.equal(notes._hasCellCoordinateIdentity(),true);
+    assert.equal('offset' in prepared[0].edits[0].old.start,false);
     outer.destroy();
     notes.destroy();
     t.close();
