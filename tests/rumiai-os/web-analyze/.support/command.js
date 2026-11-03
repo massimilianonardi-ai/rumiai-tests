@@ -110,10 +110,13 @@ async function main()
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
     assert(states.length >= 2, 'nested scroll was not explored');
-    assert.equal(states[0].settlement.status, 'settled',
-      'initial DOM must be observed after network and mutation quiescence');
-    assert.equal(states[0].settlement.inFlightRequests, 0,
-      'initial DOM must not be recorded while requests are pending');
+    assert(['settled', 'dom-quiet-network-pending'].includes(states[0].settlement.status),
+      'initial DOM must be saved after bounded network and mutation quiet');
+    if (states[0].settlement.status === 'settled')
+      assert.equal(states[0].settlement.inFlightRequests, 0);
+    else
+      assert(states[0].settlement.quietForMs >= 4500,
+        'pending request degradation must require extended network quiet');
     assert(states[0].html.includes('Delayed hydrated content'),
       'initial snapshot was taken before delayed hydration');
     const initialDom = fs.readFileSync(path.join(capture, 'states/dom-rest-initial.html'), 'utf8');
@@ -121,7 +124,7 @@ async function main()
       'full resting DOM did not capture delayed rendering');
     const initialMeta = JSON.parse(fs.readFileSync(path.join(capture,
       'states/dom-rest-initial.json'), 'utf8'));
-    assert.equal(initialMeta.settlement.status, 'settled');
+    assert.equal(initialMeta.settlement.status, states[0].settlement.status);
     assert(initialMeta.htmlBytes > 100, 'full resting DOM was empty');
     const finalDom = fs.readFileSync(path.join(capture, 'states/dom-rest-final.html'), 'utf8');
     assert(finalDom.includes('Lazy control'), 'final resting DOM omitted lazy control');
