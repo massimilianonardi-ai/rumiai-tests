@@ -109,4 +109,170 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     [{old:{start:p(0,4),end:p(1,1)},new:{start:p(0,4),end:p(1,1)}}]);
   sc.destroy();sr.destroy();
 }
+
+// Zero-width annotations preserve the input coordinate system even when
+// their local overlay configuration is cleared by a source revision.
+for(const Backend of [classes.FlatDocument,classes.PieceDocument])
+{
+  const source=new Backend('A\tB\n😀e\u0301X');
+  const raw=new classes.RawDocument2D(source);
+  const cells=new classes.CellDocument2D(raw);
+  const notes=new classes.AnnotationDocument2D(cells);
+  const outer=new classes.AnnotationDocument2D(notes);
+
+  const noteEvents=[];
+  const outerEvents=[];
+  notes.subscribe(event=>noteEvents.push(event));
+  outer.subscribe(event=>outerEvents.push(event));
+
+  notes.setAnnotations
+  (
+    [{id:'tab-edge',text:'note',at:p(0,4)}]
+  );
+  outer.setAnnotations
+  (
+    [{id:'emoji-edge',text:'outer',at:p(1,1)}]
+  );
+  assert.deepEqual(notes.getRect(0,0,2,20),cells.getRect(0,0,2,20));
+  const previousNotesRevision=notes.revision;
+  const previousOuterRevision=outer.revision;
+  const priorSourceRevision=source.revision;
+  const priorEvents=noteEvents.length;
+  const priorOuter=outerEvents.length;
+
+  // The physically unsorted batch passes through both view layers.
+  source.replace
+  (
+    [{start:6,end:8,text:'Q'},{start:2,end:3,text:'ZZ'}]
+  );
+  assert.equal(source.revision,priorSourceRevision+1);
+  assert.deepEqual(notes.annotations,[]);
+  assert.deepEqual(outer.annotations,[]);
+  assert.equal(noteEvents.length,priorEvents+1);
+  assert.equal(outerEvents.length,priorOuter+1);
+  const noteEvent=noteEvents.at(-1);
+  const outerEvent=outerEvents.at(-1);
+  assert.deepEqual(noteEvent.invalidation,{all:true});
+  assert.deepEqual(outerEvent.invalidation,{all:true});
+
+  const expectedEdits=
+  [
+    {old:{start:p(1,1),end:p(1,2)},new:{start:p(1,1),end:p(1,2)}},
+    {old:{start:p(0,4),end:p(0,5)},new:{start:p(0,4),end:p(0,6)}}
+  ];
+  assert.deepEqual(noteEvent.geometry,
+  {
+    previousRevision:previousNotesRevision,
+    revision:notes.revision,
+    oldRowCount:2,newRowCount:2,edits:expectedEdits
+  });
+  assert.deepEqual(outerEvent.geometry,
+  {
+    previousRevision:previousOuterRevision,
+    revision:outer.revision,
+    oldRowCount:2,newRowCount:2,edits:expectedEdits
+  });
+  assert.ok(Object.isFrozen(noteEvent.geometry));
+  assert.ok(Object.isFrozen(noteEvent.geometry.edits));
+  assert.ok(Object.isFrozen(noteEvent.geometry.edits[0].old.start));
+  assert.throws
+  (
+    ()=>{noteEvent.geometry.edits[0].old.start.col=99;},
+    TypeError
+  );
+
+  // Changing local overlays is not a source edit and has no geometry.
+  notes.setAnnotations
+  (
+    [{id:'after',text:'unchanged space',at:p(0,4)}]
+  );
+  assert.equal('geometry' in noteEvents.at(-1),false);
+  assert.equal('geometry' in outerEvents.at(-1),false);
+
+  // A real edit through this annotation view remains one physical commit
+  // and projects through the actual input chain, not through its labels.
+  const before=source.revision;
+  const viewRevision=notes.revision;
+  notes.replace
+  (
+    [{start:p(0,4),end:p(0,6),text:'Y'}],
+    viewRevision
+  );
+  assert.equal(source.revision,before+1);
+  assert.equal(source.toString(),'A\tY\n😀QX');
+  assert.deepEqual(notes.annotations,[]);
+  assert.deepEqual(noteEvents.at(-1).geometry.edits,
+  [
+    {old:{start:p(0,4),end:p(0,6)},new:{start:p(0,4),end:p(0,5)}}
+  ]);
+  assert.throws
+  (
+    ()=>notes.replace
+    (
+      [{start:p(0,4),end:p(0,5),text:'!'}],
+      viewRevision
+    ),
+    /stale/
+  );
+
+  // A nonrepresentable new grapheme must not be relayed as a fake point.
+  source.replace(5,5,'\u0301');
+  assert.deepEqual(noteEvents.at(-1).invalidation,{all:true});
+  assert.equal('geometry' in noteEvents.at(-1),false);
+  assert.equal('geometry' in outerEvents.at(-1),false);
+
+  outer.destroy();
+  notes.destroy();
+  cells.destroy();
+  raw.destroy();
+}
+
+// Identity annotation projection must not reveal raw UTF-16 offsets.
+// Raw mutations inside CRLF remain mutation coordinates, not GUI carets.
+for(const Backend of [classes.FlatDocument,classes.PieceDocument])
+{
+  const source=new Backend('ab\r\ncd');
+  const raw=new classes.RawDocument2D(source);
+  const notes=new classes.AnnotationDocument2D(raw);
+  const events=[];
+  notes.subscribe(event=>events.push(event));
+  source.replace(2,2,'Z');
+  assert.deepEqual(events[0].geometry,
+  {
+    previousRevision:0,revision:1,
+    oldRowCount:2,newRowCount:3,
+    edits:
+    [
+      {
+        old:{start:p(0,2),end:p(0,2)},
+        new:{start:p(1,0),end:p(1,1)}
+      }
+    ]
+  });
+  assert.equal('offset' in events[0].geometry.edits[0].old.start,false);
+
+  // No corresponding geometry from the immediate input -> no exact
+  // downstream geometry, but still a complete content invalidation.
+  notes.destroy();
+  raw.destroy();
+
+  class NoGeometry extends Backend
+  {
+    _getLastGeometry()
+    {
+      return null;
+    }
+  }
+  const missing=new NoGeometry('A\tB');
+  const missingRaw=new classes.RawDocument2D(missing);
+  const missingAnnotations=new classes.AnnotationDocument2D(missingRaw);
+  const absent=[];
+  missingAnnotations.subscribe(event=>absent.push(event));
+  missing.replace(2,3,'C');
+  assert.equal('geometry' in absent[0],false);
+  assert.deepEqual(absent[0].invalidation,{all:true});
+  missingAnnotations.destroy();
+  missingRaw.destroy();
+}
+
 console.log('cell old/new geometry PASS');
