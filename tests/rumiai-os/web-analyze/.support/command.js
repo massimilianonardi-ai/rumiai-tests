@@ -27,6 +27,18 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   worker.addEventListener('message', event => {
     document.body.dataset.workerReply = String(event.data);
   });
+  if ('SharedWorker' in window) {
+    const shared = new SharedWorker('/shared-worker.js');
+    shared.port.onmessage = event => {
+      document.body.dataset.sharedWorkerReply = String(event.data);
+    };
+    shared.port.start();
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/service-worker.js')
+      .then(() => {document.body.dataset.serviceWorkerRegistered = 'yes';})
+      .catch(() => {document.body.dataset.serviceWorkerRegistered = 'no';});
+  }
   const sameFrame = document.createElement('iframe');
   sameFrame.id = 'same-origin-frame';
   sameFrame.src = '/frame.html';
@@ -122,6 +134,12 @@ async function main()
       '/app.js': [app, 'text/javascript'],
       '/background-worker.js': [
         'postMessage("worker-ready");setInterval(()=>{},5000);',
+        'text/javascript'],
+      '/shared-worker.js': [
+        'onconnect=e=>{e.ports[0].postMessage("shared-ready");e.ports[0].start()};',
+        'text/javascript'],
+      '/service-worker.js': [
+        'self.addEventListener("install",()=>{});self.addEventListener("activate",()=>{});',
         'text/javascript'],
       '/frame.html': [
         '<!doctype html><title>Frame child</title><body><p>Same-origin iframe</p></body>',
@@ -228,6 +246,10 @@ async function main()
     const workerTarget = targetGraph.targets.find(target =>
       target.type === 'worker' && target.attached);
     assert(workerTarget, 'dedicated worker missing from attached-target graph');
+    assert(targetGraph.targets.some(target => target.type === 'shared_worker'),
+      'shared worker target missing from Chromium discovery');
+    assert(targetGraph.targets.some(target => target.type === 'service_worker'),
+      'service worker target missing from Chromium discovery');
     assert(targetGraph.contexts.some(context => context.targetId === workerTarget.targetId),
       'worker execution context missing from lifecycle graph');
     assert(targetGraph.targets.some(target => target.type === 'page' &&
