@@ -125,6 +125,35 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
+  // Tab stops and Unicode graphemes below a folded interval do not
+  // change the fact that a row-start cut has an exact old/new mapping.
+  {
+    const t=make('top\nh1\nh2\n\t😀Z\nend',true);
+    t.fold.setFolds([{startRow:1,endRow:3}]);
+    assert.deepEqual(t.fold.getRect(0,0,4,20),['top','…','    😀Z','end']);
+    const old=t.fold.revision;
+    const at=t.source.lineStart(3);
+    t.source.replace(at,at,'Q');
+    assert.deepEqual(t.fold.folds,[]);
+    assert.equal(t.source.toString(),'top\nh1\nh2\nQ\t😀Z\nend');
+    assert.deepEqual(t.fold.getRect(3,0,4,20),['Q   😀Z']);
+    assert.deepEqual(t.events.at(-1).geometry,
+    {
+      previousRevision:old,revision:t.fold.revision,
+      oldRowCount:4,newRowCount:5,
+      edits:[edited(p(2,0),p(2,0),p(3,0),p(3,1))]
+    });
+    assert.throws
+    (
+      ()=>t.fold.replace
+      (
+        [{start:p(2,0),end:p(2,0),text:'Z'}],old
+      ),
+      /stale/
+    );
+    t.close();
+  }
+
   // A newline at a visible row start expands the physical row count.
   {
     const t=make('top\nh1\nh2\nbody\nend');
