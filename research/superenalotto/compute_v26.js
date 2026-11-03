@@ -7,7 +7,6 @@ No third-party dependencies. Reproduce:
 Data frozen at 2026-10-31. Historical thresholds F03-F14 were fitted retrospectively.
 */
 function analyze(csv, config={}) {
- 'use strict';
  const START=68, TOTAL=622614630, MC_R=config.samples||750, NULL_B=config.nullReplicas||320;
  const MC_SEED=2026112601, NULL_SEED=2026112602;
  const names=['somma','mediana','deviazione_standard','intervallo_interquartile','minimo','massimo','n_coppie_sopra_2sigma','gini',
