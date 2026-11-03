@@ -314,8 +314,9 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     raw.destroy();
   }
 
-  // A local overlay reconfiguration is not a physical mutation record.
-  // A view above another cell view has no precommit physical geometry.
+  // Local overlay reconfiguration has no physical mutation record.
+  // An annotation atop certified nested Cells forwards verified endpoints
+  // but still conservatively clears its annotations on source changes.
   {
     const source=new Backend('one\ntwo');
     const raw=new classes.RawDocument2D(source);
@@ -327,7 +328,10 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     notes.setAnnotations([note('two',1,1)]);
     assert.equal('geometry' in events.at(-1),false);
     source.replace(0,1,'O');
-    assert.equal('geometry' in events.at(-1),false);
+    assert.deepEqual(events.at(-1).geometry.edits,
+      [{old:{start:p(0,0),end:p(0,1)},
+        new:{start:p(0,0),end:p(0,1)}}]);
+    assert.deepEqual(events.at(-1).invalidation,{all:true});
     assert.deepEqual(notes.annotations,[]);
     notes.destroy();
     outer.destroy();
