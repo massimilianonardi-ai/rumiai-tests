@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['CellDocument2D','Document','Document2D','FlatDocument','PieceDocument','RawDocument2D']);
+  assert.deepEqual(Object.keys(extracted).sort(),['CellDocument2D','Document','Document2D','FlatDocument','FoldDocument2D','PieceDocument','RawDocument2D']);
 }
 finally
 {
@@ -625,5 +625,184 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   cells.destroy();
   raw.destroy();
 }
+
+
+// Folded whole rows remain visible as protected synthetic regions. All
+// selected text and commits stay in the underlying raw document.
+const FoldDocument2D=extracted.FoldDocument2D;
+assert.equal(typeof FoldDocument2D,'function');
+assert.throws(()=>new FoldDocument2D({}),TypeError);
+
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('head\r\nsecret1\nsecret2\n\tB\ntail');
+  const raw=new RawDocument2D(source);
+  const fold=new FoldDocument2D(raw);
+  const cells=new CellDocument2D(fold);
+  const events=[];
+  fold.subscribe(event=>events.push(event));
+
+  assert.equal(fold instanceof Document2D,true);
+  assert.equal(fold.rowCount,5);
+  assert.deepEqual(fold.getRect(0,0,6,20),
+    ['head','secret1','secret2','\tB','tail']);
+  assert.strictEqual(fold.setFolds([{startRow:1,endRow:3}]),fold);
+  assert.deepEqual(fold.folds,[{startRow:1,endRow:3}]);
+  assert.equal(fold.revision,1);
+  assert.equal(fold.rowCount,4);
+  assert.equal(fold.colCount,4);
+  assert.equal(fold.getRowWidth(1),1);
+  assert.equal(fold.getRowWidth(3),4);
+  assert.equal(fold.getRowWidth(20),0);
+  assert.deepEqual(fold.getRect(0,0,4,10),['head','…','\tB','tail']);
+  assert.deepEqual(fold.getRect(1,1,2,2),['']);
+  assert.deepEqual(fold.getRect(1,0,2,1),['…']);
+  assert.deepEqual(fold.getRegions(1,0,2,1),
+    [[{kind:'fold',text:'…',start:point(1,0),end:point(1,1)}]]);
+  assert.deepEqual(fold.getRegions(1,1,2,2),[[]]);
+  assert.deepEqual(cells.getRect(0,0,4,10),['head','…','    B','tail']);
+  assert.equal(cells.getRegions(1,0,2,1)[0][0].kind,'fold');
+  assert.throws(()=>fold.getRect(-1,0,1,2),RangeError);
+  assert.throws(()=>fold.getRegions(1,2,0,3),RangeError);
+  assert.throws(()=>fold.getRowWidth(-1),RangeError);
+  assert.equal(events.filter(x=>x.type==='content').length,1);
+  assert.deepEqual(events[0].invalidation,{all:true});
+
+  const foldRecord=fold.folds[0];
+  foldRecord.startRow=0;
+  const region=fold.getRegions(1,0,2,1)[0][0];
+  region.start.row=99;
+  assert.deepEqual(fold.folds,[{startRow:1,endRow:3}]);
+  assert.deepEqual(fold.getRegions(1,0,2,1),
+    [[{kind:'fold',text:'…',start:point(1,0),end:point(1,1)}]]);
+
+  const before=source.toString(), beforeRevision=source.revision;
+  assert.throws(()=>fold.replace
+  (
+    [{start:point(1,0),end:point(1,1),text:'X'}],
+    fold.revision
+  ),/fold marker/);
+  assert.throws(()=>fold.replace
+  (
+    [{start:point(0,4),end:point(2,0),text:'X'}],
+    fold.revision
+  ),/crosses folded/);
+  assert.throws(()=>fold.replace
+  (
+    [
+      {start:point(2,1),end:point(2,2),text:'C'},
+      {start:point(1,0),end:point(1,1),text:'X'}
+    ],
+    fold.revision
+  ),/fold marker/);
+  assert.throws(()=>cells.replace
+  (
+    [{start:point(1,0),end:point(1,1),text:'X'}],
+    cells.revision
+  ),/fold marker/);
+  assert.throws(()=>fold.setSelections([range(1,0,1,1)]),/fold marker/);
+  assert.throws(()=>fold.setSelections([range(0,0,2,1)]),/crosses folded/);
+  assert.equal(source.toString(),before);
+  assert.equal(source.revision,beforeRevision);
+
+  fold.setSelections([range(2,1,2,2)]);
+  assert.deepEqual(fold.getSelections(),[range(2,1,2,2)]);
+  assert.deepEqual(raw.getSelections(),[range(3,1,3,2)]);
+  assert.deepEqual(fold.read(),['B']);
+  assert.deepEqual(cells.read(),['B']);
+
+  // Selecting hidden content from another view must not let read/insert
+  // silently copy or mutate it through this folded view.
+  raw.setSelections([range(1,0,1,2)]);
+  assert.throws(()=>fold.getSelections(),/folded source/);
+  assert.throws(()=>fold.read(),/folded source/);
+  assert.throws(()=>fold.insert('!'),/folded source/);
+  assert.equal(source.toString(),before);
+  raw.setSelections([range(0,1,4,1)]);
+  assert.throws(()=>fold.read(),/crosses folded/);
+  assert.throws(()=>fold.insert('!'),/crosses folded/);
+  assert.equal(source.toString(),before);
+
+  // The whole batch is projected first, then committed exactly once.
+  fold.setSelections([range(2,1,2,2)]);
+  const oldViewRevision=fold.revision;
+  fold.replace
+  (
+    [
+      {start:point(0,0),end:point(0,1),text:'H'},
+      {start:point(2,1),end:point(2,2),text:'X'}
+    ],
+    oldViewRevision
+  );
+  assert.equal(source.toString(),'Head\r\nsecret1\nsecret2\n\tX\ntail');
+  assert.equal(source.revision,beforeRevision+1);
+  assert.equal(fold.revision,oldViewRevision+1);
+  assert.deepEqual(fold.folds,[],'source commit invalidates row-indexed folds');
+  assert.equal(fold.rowCount,5);
+  assert.equal(cells.rowCount,5);
+  assert.equal(events.filter(x=>x.type==='content').length,2);
+  assert.throws(()=>fold.replace
+  (
+    [{start:point(2,1),end:point(2,2),text:'!'}],oldViewRevision
+  ),/stale/);
+
+  fold.setFolds([{startRow:1,endRow:4}]);
+  assert.equal(fold.rowCount,3);
+  const revisionBeforeExternal=fold.revision;
+  source.replace(0,0,'!');
+  assert.equal(fold.revision,revisionBeforeExternal+1);
+  assert.deepEqual(fold.folds,[]);
+  assert.equal(fold.rowCount,5);
+
+  assert.strictEqual(fold.setFolds([]),fold);
+  assert.throws(()=>fold.setFolds([{startRow:2,endRow:2}]),RangeError);
+  assert.throws(()=>fold.setFolds([{startRow:0,endRow:99}]),RangeError);
+  assert.throws
+  (
+    ()=>fold.setFolds([{startRow:1,endRow:3},{startRow:2,endRow:4}]),
+    /overlapping/
+  );
+
+  cells.destroy();
+  fold.destroy();
+  assert.doesNotThrow(()=>fold.destroy());
+  assert.throws(()=>fold.getSelections(),/destroyed/);
+  assert.doesNotThrow(()=>raw.getSelections());
+  raw.destroy();
+}
+
+// Several disjoint folds must map visible rows without materializing hidden
+// source data; a second cell projection can be placed below or above them.
+{
+  const source=new extracted.PieceDocument('one\nA\nB\ntwo\nC\nD\nthree');
+  const raw=new RawDocument2D(source);
+  const cells=new CellDocument2D(raw);
+  const fold=new FoldDocument2D(cells);
+
+  fold.setFolds
+  (
+    [{startRow:4,endRow:6},{startRow:1,endRow:3}]
+  );
+  assert.deepEqual(fold.folds,
+    [{startRow:1,endRow:3},{startRow:4,endRow:6}]);
+  assert.deepEqual(fold.getRect(0,0,5,10),
+    ['one','…','two','…','three']);
+  assert.equal(fold.rowCount,5);
+  assert.equal(fold.colCount,5);
+  assert.deepEqual(fold.getRegions(4,0,5,3),
+    [[{kind:'text',text:'three',start:point(4,0),end:point(4,5)}]]);
+  assert.deepEqual(fold.getRegions(5,0,7,4),[]);
+  assert.throws(()=>fold.setSelections([range(0,0,4,1)]),/crosses folded/);
+
+  // A selection in an unaffected row maps through both view layers.
+  fold.setSelections([range(4,0,4,5)]);
+  assert.deepEqual(raw.getSelections(),[range(6,0,6,5)]);
+  assert.deepEqual(fold.read(),['three']);
+
+  fold.destroy();
+  cells.destroy();
+  raw.destroy();
+}
+
 
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
