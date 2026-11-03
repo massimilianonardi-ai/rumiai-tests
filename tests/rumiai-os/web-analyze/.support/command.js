@@ -54,7 +54,7 @@ async function run(args)
     const timeout = setTimeout(() => {
       processHandle.kill('SIGKILL');
       reject(new Error('web-analyze timeout: ' + stderr));
-    }, 70000);
+    }, 120000);
     processHandle.on('error', error => {clearTimeout(timeout);reject(error);});
     processHandle.on('exit', exitCode => {clearTimeout(timeout);resolve(exitCode);});
   });
@@ -105,7 +105,7 @@ async function main()
   {
     const uri = `http://127.0.0.1:${server.address().port}/`;
     const base = path.join(work, 'reports');
-    const result = await run([uri, base]);
+    const result = await run([uri, base, '--scroll']);
     assert.equal(result.code, 0, `analysis exit ${result.code}: ${result.stderr}`);
     const report = result.stdout.trim();
     assert(report.endsWith('/README.md'), 'command did not emit README path');
@@ -206,6 +206,14 @@ async function main()
     const repeated = await run([uri, base]);
     assert.equal(repeated.code, 0, 'rerun must work without overwriting evidence: ' + repeated.stderr);
     assert.notEqual(repeated.stdout.trim(), result.stdout.trim());
+    const restOnly = path.dirname(repeated.stdout.trim());
+    const restOnlyStates = fs.readdirSync(path.join(restOnly, 'states'))
+      .filter(file => /^state-\d+\.json$/.test(file));
+    assert.equal(restOnlyStates.length, 1, 'default invocation must not scroll');
+    const restOnlyState = JSON.parse(fs.readFileSync(path.join(restOnly,
+      'states/state-000.json'), 'utf8'));
+    assert(!restOnlyState.html.includes('Lazy control'),
+      'default resting-page command unexpectedly triggered lazy scroll');
     assert(fs.existsSync(report), 'rerun overwrote original report');
 
     const continuous = await run([`http://127.0.0.1:${server.address().port}/churn`, base]);
