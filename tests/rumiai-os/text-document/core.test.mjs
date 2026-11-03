@@ -1056,4 +1056,33 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 }
 
 
+
+// Dense overlays may share one zero-width anchor without altering layout.
+// An overlay at the 2048-unit chunk boundary must map to the same cell
+// even when the grapheme scanner carries trailing input across chunks.
+{
+  const source=new extracted.PieceDocument('a'.repeat(2048)+'B');
+  const raw=new RawDocument2D(source);
+  const notes=new AnnotationDocument2D(raw);
+  const cells=new CellDocument2D(notes);
+  const entries=Array.from({length:128},(_,i)=>
+    ({id:'n'+String(i).padStart(3,'0'),text:'tip',at:point(0,0)}));
+  entries.push({id:'boundary',text:'chunk',at:point(0,2048)});
+  notes.setAnnotations(entries);
+  const start=cells.getRegions(0,0,1,1)[0];
+  assert.equal(start.filter(x=>x.kind==='annotation').length,128);
+  assert.equal(start[0].id,'n000');
+  assert.equal(start[127].id,'n127');
+  assert.deepEqual(cells.getRegions(0,2048,1,2049)[0]
+    .filter(x=>x.kind==='annotation').map(x=>[x.id,x.start.col]),
+    [['boundary',2048]]);
+  assert.deepEqual(cells.getRect(0,2047,1,2049),['aB']);
+  assert.equal(cells.getRowWidth(0),2049);
+  assert.equal(source.revision,0);
+  cells.destroy();
+  notes.destroy();
+  raw.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
