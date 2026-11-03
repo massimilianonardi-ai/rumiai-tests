@@ -105,12 +105,13 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     );
     const seen=[];
     notes.subscribe(event=>seen.push(event));
-    const offset=t.source.lineStart(3);
+    const sourceRevision=t.source.revision;
     t.fold.replace
     (
       [{start:p(2,0),end:p(2,0),text:'Q'}],
       t.fold.revision
     );
+    assert.equal(t.source.revision,sourceRevision+1);
     assert.equal(t.source.toString(),'top\nhidden-A\nhidden-B\nQvisible\nlast');
     assert.deepEqual
     (
