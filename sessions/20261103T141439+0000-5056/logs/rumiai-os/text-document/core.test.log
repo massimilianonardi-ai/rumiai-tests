@@ -1,0 +1,68 @@
+m.text.document extraction parity PASS 40 committed edit comparisons
+cell old/new geometry PASS
+annotation retained-anchor geometry PASS
+fold whole-row old/new geometry PASS
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
++ actual - expected
+
++ undefined
+- {
+-   edits: [
+-     {
+-       new: {
+-         end: {
+-           col: 5,
+-           row: 0
+-         },
+-         start: {
+-           col: 4,
+-           row: 0
+-         }
+-       },
+-       old: {
+-         end: {
+-           col: 3,
+-           row: 0
+-         },
+-         start: {
+-           col: 3,
+-           row: 0
+-         }
+-       }
+-     }
+-   ],
+-   newRowCount: 2,
+-   oldRowCount: 2,
+-   previousRevision: 1,
+-   revision: 2
+- }
+
+    at file:///Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/text-document/substitution-geometry.test.mjs:78:12
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: undefined,
+  expected: {
+    previousRevision: 1,
+    revision: 2,
+    oldRowCount: 2,
+    newRowCount: 2,
+    edits: [
+      {
+        old: { start: { row: 0, col: 3 }, end: { row: 0, col: 3 } },
+        new: { start: { row: 0, col: 4 }, end: { row: 0, col: 5 } }
+      }
+    ]
+  },
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.22.1
+rumiai-os/text-document/core.test: substitution old/new geometry checks failed
