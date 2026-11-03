@@ -340,9 +340,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     raw.destroy();
   }
 
-  // No direct observation of an intermediate CellDocument2D is provided.
-  // Its own valid grapheme/TAB geometry does not certify an arbitrary
-  // old substitution suffix point without an old input boundary map.
+  // A direct raw-backed CellDocument2D can now certify old grapheme/TAB
+  // positions to an immediate substitution view using CELL coordinates.
   {
     const t=open('A\tB😀C\nlast',true);
     t.view.setSubstitutions
@@ -351,7 +350,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     );
     t.source.replace(5,6,'D');
     assert.equal(t.source.toString(),'A\tB😀D\nlast');
-    assert.equal('geometry' in t.events.at(-1),false);
+    assert.deepEqual(t.events.at(-1).geometry.edits,
+      [edit(p(0,9),p(0,10),p(0,6),p(0,7))]);
     assert.deepEqual(t.view.substitutions,[]);
     t.close();
   }
