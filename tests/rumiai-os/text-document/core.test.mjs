@@ -2059,4 +2059,186 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 }
 
 
+
+// Source-level replace notifications must retain their exact legacy
+// argument shape, while RawDocument2D receives detached old/new UTF-16
+// geometry captured around the same committed physical transaction.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('ab\r\ncd\nef');
+  const raw=new RawDocument2D(source);
+  const rawEvents=[];
+  const physical=[];
+  raw.subscribe(event=>rawEvents.push(event));
+  source.subscribe((...args)=>physical.push(args));
+
+  const edits=
+  [
+    {start:7,end:9,text:'Z\nQ'},
+    {start:2,end:4,text:'\n'}
+  ];
+  const original=edits.map(e=>({...e}));
+  source.replace(edits);
+
+  assert.equal(source.toString(),'ab\ncd\nZ\nQ');
+  assert.equal(source.revision,1);
+  assert.deepEqual(physical,[[original]]);
+  assert.equal(rawEvents.length,1);
+  assert.equal(rawEvents[0].type,'content');
+  assert.equal(rawEvents[0].revision,1);
+  assert.deepEqual(rawEvents[0].invalidation,{all:true});
+
+  const geometry=rawEvents[0].geometry;
+  assert.ok(geometry);
+  assert.equal(geometry.previousRevision,0);
+  assert.equal(geometry.revision,1);
+  assert.equal(geometry.oldRowCount,3);
+  assert.equal(geometry.newRowCount,4);
+  assert.deepEqual(geometry.edits,
+  [
+    {
+      old:
+      {
+        start:{row:2,col:0,offset:7},
+        end:{row:2,col:2,offset:9}
+      },
+      new:
+      {
+        start:{row:2,col:0,offset:6},
+        end:{row:3,col:1,offset:9}
+      }
+    },
+    {
+      old:
+      {
+        start:{row:0,col:2,offset:2},
+        end:{row:1,col:0,offset:4}
+      },
+      new:
+      {
+        start:{row:0,col:2,offset:2},
+        end:{row:1,col:0,offset:3}
+      }
+    }
+  ]);
+  assert.ok(Object.isFrozen(geometry));
+  assert.ok(Object.isFrozen(geometry.edits));
+  assert.ok(Object.isFrozen(geometry.edits[0].old.start));
+  assert.ok(Object.isFrozen(geometry.edits[0].new.end));
+  assert.throws(()=>{geometry.edits[0].old.start.col=99;},TypeError);
+
+  // A three-argument source edit and a successful no-effect commit both
+  // produce exactly one new geometry event without changing public args.
+  source.replace(0,0,'!');
+  assert.deepEqual(physical[1],[0,0,'!']);
+  assert.equal(rawEvents[1].geometry.previousRevision,1);
+  assert.equal(rawEvents[1].geometry.revision,2);
+  assert.deepEqual(rawEvents[1].geometry.edits[0].new,
+    {start:{row:0,col:0,offset:0},end:{row:0,col:1,offset:1}});
+  source.replace(0,0,'');
+  assert.deepEqual(physical[2],[0,0,'']);
+  assert.equal(source.revision,3);
+  assert.equal(rawEvents[2].geometry.previousRevision,2);
+  assert.equal(rawEvents[2].geometry.revision,3);
+  assert.deepEqual(rawEvents[2].geometry.edits[0].old,
+    rawEvents[2].geometry.edits[0].new);
+
+  // Rejected commands are not commits and publish no geometry.
+  const count=rawEvents.length;
+  assert.throws(()=>source.replace
+    ([{start:0,end:2,text:'a'},{start:1,end:3,text:'b'}]),RangeError);
+  assert.equal(rawEvents.length,count);
+  assert.equal(source.revision,3);
+
+  raw.destroy();
+}
+
+// Source locations inside a CRLF terminator carry the exact UTF-16
+// boundary, even though that column is beyond the editable row width.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('a\r\nb');
+  const raw=new RawDocument2D(source);
+  const events=[];
+  raw.subscribe(event=>events.push(event));
+  source.replace(2,2,'X');
+  assert.equal(source.toString(),'a\rX\nb');
+  assert.equal(source.lineCount,3);
+  assert.deepEqual(events[0].geometry.edits[0],
+  {
+    old:
+    {
+      start:{row:0,col:2,offset:2},
+      end:{row:0,col:2,offset:2}
+    },
+    new:
+    {
+      start:{row:0,col:2,offset:2},
+      end:{row:0,col:3,offset:3}
+    }
+  });
+  assert.equal(events[0].geometry.oldRowCount,2);
+  assert.equal(events[0].geometry.newRowCount,3);
+  assert.deepEqual(events[0].invalidation,{all:true});
+  raw.destroy();
+}
+
+// Explicit raw editing, selected insertion and arbitrary external source
+// changes must all converge on the same atomic physical geometry capture.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('ab\ncd');
+  const raw=new RawDocument2D(source);
+  const events=[];
+  raw.subscribe(e=>events.push(e));
+
+  raw.replace
+  (
+    [{start:point(1,0),end:point(1,1),text:'Z'}],
+    raw.revision
+  );
+  assert.equal(source.toString(),'ab\nZd');
+  assert.deepEqual(events[0].geometry.edits[0].old,
+    {start:{row:1,col:0,offset:3},end:{row:1,col:1,offset:4}});
+  raw.setSelections([range(0,2,0,2)]);
+  const count=events.length;
+  raw.insert('!');
+  assert.equal(source.toString(),'ab!\nZd');
+  assert.equal(source.revision,2);
+  assert.equal(events.length,count+1);
+  assert.equal(events.at(-1).type,'content');
+  assert.deepEqual(events.at(-1).geometry.edits[0].new,
+    {start:{row:0,col:2,offset:2},end:{row:0,col:3,offset:3}});
+  source.replace(0,0,'Q');
+  assert.equal(events.at(-1).geometry.revision,3);
+  assert.equal(events.at(-1).geometry.edits[0].old.start.offset,0);
+  assert.deepEqual(events.at(-1).invalidation,{all:true});
+
+  raw.destroy();
+}
+
+// The internal geometry channel is optional: unsupported Document
+// subclasses continue publishing conservative raw content invalidation.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  class NoGeometry extends Backend
+  {
+    _getLastGeometry()
+    {
+      return null;
+    }
+  }
+
+  const source=new NoGeometry('abc');
+  const raw=new RawDocument2D(source);
+  const events=[];
+  raw.subscribe(e=>events.push(e));
+  source.replace(1,2,'X');
+  assert.equal(source.toString(),'aXc');
+  assert.deepEqual(events[0].invalidation,{all:true});
+  assert.equal(Object.hasOwn(events[0],'geometry'),false);
+  raw.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
