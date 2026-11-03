@@ -182,6 +182,12 @@ async function main()
     assert.equal(wireSummary.status, 'saved');
     assert.equal(wireSummary.packets, wire.length);
     assert.equal(wireSummary.errors.length, 0);
+    assert(wire.some(entry => entry.raw.includes('X-Fixture-Request')),
+      'wire archive omitted an observed HTTP request header');
+    const diagnosticNetwork = fs.readFileSync(path.join(capture,
+      'network.jsonl'), 'utf8');
+    assert(!diagnosticNetwork.includes('X-Fixture-Request'),
+      'privacy-redacted network diagnostics exposed raw request headers');
     for (const file of ['cdp-wire.jsonl','cdp-capabilities.json','cdp-protocol.json'])
       assert.equal(fs.statSync(path.join(capture,file)).mode & 0o777, 0o600,
         'CDP evidence files must be private: ' + file);
