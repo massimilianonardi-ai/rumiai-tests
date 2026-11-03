@@ -360,6 +360,94 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     raw.destroy();
   }
 
+  // The Raw event may have plausible {row,col} but a corrupted
+  // original physical offset. Annotation verifies offsets privately
+  // and neither its own event nor a fold may certify that batch.
+  {
+    class MismatchedRaw extends Backend
+    {
+      _getLastGeometry()
+      {
+        const result=super._getLastGeometry();
+
+        if(!result)
+        {
+          return result;
+        }
+
+        return {
+          ...result,
+          edits:result.edits.map
+          (
+            item =>
+            (
+              {
+                ...item,
+                old:
+                {
+                  ...item.old,
+                  start:{...item.old.start,offset:item.old.start.offset+1}
+                }
+              }
+            )
+          )
+        };
+      }
+    }
+
+    const source=new MismatchedRaw('abcd\\nHIDDEN\\nuvwxyz');
+    const raw=new classes.RawDocument2D(source);
+    const notes=new classes.AnnotationDocument2D(raw);
+    const fold=new classes.FoldDocument2D(notes);
+    fold.setInlineFold({start:p(0,2),end:p(2,1)});
+    const noteEvents=[];
+    const foldEvents=[];
+    notes.subscribe(event=>noteEvents.push(event));
+    fold.subscribe(event=>foldEvents.push(event));
+    source.replace(1,2,'Q');
+    assert.equal(source.toString(),'aQcd\\nHIDDEN\\nuvwxyz');
+    assert.equal('geometry' in noteEvents.at(-1),false);
+    assert.equal('geometry' in foldEvents.at(-1),false);
+    assert.deepEqual(foldEvents.at(-1).invalidation,{all:true});
+    fold.destroy();
+    notes.destroy();
+    raw.destroy();
+  }
+
+  // A broken observer cannot cancel a valid physical source commit
+  // or stop the remaining observers of the private notification.
+  {
+    const t=open('abc\\nTAIL');
+    const errors=[];
+    const seen=[];
+    const originalConsoleError=console.error;
+    const failed=t.notes._subscribeBeforeGeometry
+    (
+      () => {throw new Error('observer regression probe');}
+    );
+    t.notes._subscribeBeforeGeometry(captured=>seen.push(captured));
+    let committed=false;
+
+    try
+    {
+      console.error=(...args)=>errors.push(args);
+      t.source.replace(1,2,'Q');
+      committed=true;
+    }
+    finally
+    {
+      console.error=originalConsoleError;
+    }
+
+    assert.equal(committed,true);
+    assert.equal(t.source.toString(),'aQc\\nTAIL');
+    assert.equal(seen.length,1);
+    assert.equal(errors.length,1);
+    assert.match(errors[0][0],/annotation pre-commit geometry observer/);
+    failed();
+    t.close();
+  }
+
   // A nonidentity Fold is NOT an old-coordinate identity relay. An
   // annotation directly above it has no private fold precommit hook.
   {
