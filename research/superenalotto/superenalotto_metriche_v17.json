@@ -1,0 +1,272 @@
+{
+  "seed": 20261103,
+  "dataset_sha256": "6546a40b1d9fccae106035739d3809b03d928990e50235e6773357df377d99e0",
+  "dataset": {
+    "draws_after_2009": 2869,
+    "context_window": 100,
+    "train_examples": 1400,
+    "val_examples": 320,
+    "test_examples": 1049,
+    "validation_start": "2019-01-31",
+    "test_start": "2021-03-30",
+    "test_end": "2026-10-31"
+  },
+  "architecture": {
+    "generator": "conditional product-of-weights on 6-element subsets, exact e6 partition",
+    "encoder": "causal GRU 90 -> 24 latent -> 90 logits",
+    "nll": "log e6(exp(logits))-sum logits on six winning numbers",
+    "validity": "Six unique numbers by construction; set is unordered"
+  },
+  "reward": {
+    "0": 0.0,
+    "1": 0.001,
+    "2": 0.01,
+    "3": 1.0,
+    "4": 20.0,
+    "5": 400.0,
+    "6": 10000.0
+  },
+  "random_reference": {
+    "combination_count": 622614630,
+    "hit_probabilities": [
+      0.652862178969357,
+      0.2975068157328716,
+      0.04648543995826118,
+      0.0030607697091859214,
+      8.398453470327223e-05,
+      8.094894911158769e-07,
+      1.606129942690232e-09
+    ],
+    "p_ge3": 0.003145565339510252,
+    "expected_rewards_per_draw": 0.005842678714440102,
+    "monte_carlo_3000_test_length_sequences": {
+      "replicates": 3000,
+      "test_size": 1049,
+      "hits_mean_random_distribution_quantiles": [
+        0.36320305052430885,
+        0.3994280266920877,
+        0.43660629170638704
+      ],
+      "count3plus_random_distribution_quantiles": [
+        0.0,
+        3.0,
+        7.0
+      ],
+      "weighted_score_random_distribution_quantiles": [
+        0.0008159437559580554,
+        0.003684938036224975,
+        0.02366174928503337
+      ],
+      "method": "Each draw uses a new independent uniformly random six-of-90 ticket; hypergeometric exact distribution for overlap."
+    }
+  },
+  "valid_selection": {
+    "frequency_scan": [
+      {
+        "strength": 0.0,
+        "validation_nll": 20.24943831392892
+      },
+      {
+        "strength": 0.25,
+        "validation_nll": 20.249928843858026
+      },
+      {
+        "strength": 0.5,
+        "validation_nll": 20.253630406104964
+      },
+      {
+        "strength": 1.0,
+        "validation_nll": 20.270592415941838
+      },
+      {
+        "strength": 2.0,
+        "validation_nll": 20.342151403157434
+      },
+      {
+        "strength": 4.0,
+        "validation_nll": 20.62993888878342
+      }
+    ],
+    "selected_frequency_strength": 0.0,
+    "gru": {
+      "Set-GRU (likelihood)": {
+        "best_epoch": 1,
+        "val_nll": 20.248774605741083,
+        "reward_strength": 0.0
+      },
+      "Set-GRU (reward-aware)": {
+        "best_epoch": 2,
+        "val_nll": 20.250227653647862,
+        "reward_strength": 0.05
+      }
+    }
+  },
+  "train_curves": {
+    "Set-GRU (likelihood)": [
+      {
+        "epoch": 1,
+        "train_total_objective": 20.248517123135652,
+        "validation_nll": 20.248774605741083,
+        "validation_expected_reward_ratio": 1.0008493334222341
+      },
+      {
+        "epoch": 2,
+        "train_total_objective": 20.232984022660688,
+        "validation_nll": 20.249770660141508,
+        "validation_expected_reward_ratio": 1.0007727617243327
+      },
+      {
+        "epoch": 3,
+        "train_total_objective": 20.22016750682484,
+        "validation_nll": 20.25024600367268,
+        "validation_expected_reward_ratio": 1.0013960197864606
+      },
+      {
+        "epoch": 4,
+        "train_total_objective": 20.20778378573331,
+        "validation_nll": 20.252375447755327,
+        "validation_expected_reward_ratio": 1.002025011785784
+      },
+      {
+        "epoch": 5,
+        "train_total_objective": 20.19493120366877,
+        "validation_nll": 20.25760055308205,
+        "validation_expected_reward_ratio": 1.0022358176385837
+      }
+    ],
+    "Set-GRU (reward-aware)": [
+      {
+        "epoch": 1,
+        "train_total_objective": 20.20060781999068,
+        "validation_nll": 20.250795117105632,
+        "validation_expected_reward_ratio": 0.9998084574291626
+      },
+      {
+        "epoch": 2,
+        "train_total_objective": 20.185009696266867,
+        "validation_nll": 20.250227653647862,
+        "validation_expected_reward_ratio": 1.0004785180444757
+      },
+      {
+        "epoch": 3,
+        "train_total_objective": 20.17188835144043,
+        "validation_nll": 20.251109002828407,
+        "validation_expected_reward_ratio": 1.0007921318060322
+      },
+      {
+        "epoch": 4,
+        "train_total_objective": 20.15901669588956,
+        "validation_nll": 20.25253287844952,
+        "validation_expected_reward_ratio": 1.0014524623240895
+      },
+      {
+        "epoch": 5,
+        "train_total_objective": 20.145477641712535,
+        "validation_nll": 20.255686109526803,
+        "validation_expected_reward_ratio": 1.0023243578950427
+      },
+      {
+        "epoch": 6,
+        "train_total_objective": 20.13117824901234,
+        "validation_nll": 20.260020782448414,
+        "validation_expected_reward_ratio": 1.0033986912699395
+      }
+    ]
+  },
+  "test": {
+    "Uniforme": {
+      "hits_mean": 0.4194470924690181,
+      "hits_sum": 440,
+      "counts_by_hits": [
+        668,
+        322,
+        59,
+        0,
+        0,
+        0,
+        0
+      ],
+      "p_at_least_3": 0.0,
+      "utility_mean": 0.0008693994280266921,
+      "utility_over_random_expectation": 0.1488015122032952,
+      "exact_set_nll_mean": 20.249438313928916,
+      "prob_of_true_set_geometric_mean": 1.6061299426902352e-09,
+      "expected_reward_under_model_mean": 0.005842678714440104,
+      "expected_reward_ratio_to_uniform": 1.0000000000000002
+    },
+    "Frequenze storiche": {
+      "hits_mean": 0.4204003813155386,
+      "hits_sum": 441,
+      "counts_by_hits": [
+        669,
+        322,
+        55,
+        3,
+        0,
+        0,
+        0
+      ],
+      "p_at_least_3": 0.002859866539561487,
+      "utility_mean": 0.0036911344137273584,
+      "utility_over_random_expectation": 0.6317537886525866,
+      "exact_set_nll_mean": 20.249438313928916,
+      "prob_of_true_set_geometric_mean": 1.6061299426902352e-09,
+      "expected_reward_under_model_mean": 0.005842678714440104,
+      "expected_reward_ratio_to_uniform": 1.0000000000000002
+    },
+    "Set-GRU (likelihood)": {
+      "hits_mean": 0.39180171591992374,
+      "hits_sum": 411,
+      "counts_by_hits": [
+        697,
+        297,
+        51,
+        4,
+        0,
+        0,
+        0
+      ],
+      "p_at_least_3": 0.0038131553860819827,
+      "utility_mean": 0.004582459485224021,
+      "utility_over_random_expectation": 0.7843079705715349,
+      "exact_set_nll_mean": 20.251564423317777,
+      "prob_of_true_set_geometric_mean": 1.6027187622956573e-09,
+      "expected_reward_under_model_mean": 0.005839542176063033,
+      "expected_reward_ratio_to_uniform": 0.9994631677471298
+    },
+    "Set-GRU (reward-aware)": {
+      "hits_mean": 0.38703527168732127,
+      "hits_sum": 406,
+      "counts_by_hits": [
+        691,
+        311,
+        46,
+        1,
+        0,
+        0,
+        0
+      ],
+      "p_at_least_3": 0.0009532888465204957,
+      "utility_mean": 0.001688274547187798,
+      "utility_over_random_expectation": 0.28895556810530243,
+      "exact_set_nll_mean": 20.25021100079827,
+      "prob_of_true_set_geometric_mean": 1.6048893865154984e-09,
+      "expected_reward_under_model_mean": 0.005845059197720706,
+      "expected_reward_ratio_to_uniform": 1.0004074301184354
+    }
+  },
+  "latent_diagnostics": {
+    "Set-GRU (likelihood)": {
+      "neighbor_cosine": 0.7245905995368958,
+      "random_pair_cosine": 0.46298035979270935,
+      "warning": "Neighbor similarity is inflated by overlapping history windows; it is not evidence of forecast skill."
+    },
+    "Set-GRU (reward-aware)": {
+      "neighbor_cosine": 0.7147706747055054,
+      "random_pair_cosine": 0.4480215311050415,
+      "warning": "Neighbor similarity is inflated by overlapping history windows; it is not evidence of forecast skill."
+    }
+  },
+  "disclaimer": "Test 2021-2026 already reused in previous experiments; results are exploratory, not statistically independent validation.",
+  "ranking_note": "Frequency baseline always ranks on causal historic counts; validation-chosen temperature calibrates joint probabilities separately (may be zero)."
+}

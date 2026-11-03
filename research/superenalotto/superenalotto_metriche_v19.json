@@ -1,0 +1,415 @@
+{
+  "experiment": "v19 — Hybrid v18 AR distribution + exact hard constraints or validation-trained penalties",
+  "created_utc": "2026-11-03T11:59:35.785762+00:00",
+  "code_seed": 20261122,
+  "data_sha256": "b7e3e27741cb62c0896a7ff23734b117d2d1f3e580acdc5322241b8005bbd8b4",
+  "baseline_weights_sha256": "94145da77db3ce0a97b42131b12d6aa65ea79e5a4491e5fbdd7719b122d865e1",
+  "sampled_candidates_validation": 512,
+  "sampled_candidates_test": 512,
+  "dataset": {
+    "total_draws": 4294,
+    "post_2009_draws": 2869,
+    "history_window": 100,
+    "train_examples": 1400,
+    "validation_examples": 320,
+    "test_examples": 1049,
+    "train_last": "2019-01-29",
+    "validation_first": "2019-01-31",
+    "test_first": "2021-03-30",
+    "test_last": "2026-10-31"
+  },
+  "reward": [
+    0.0,
+    0.001,
+    0.01,
+    1.0,
+    20.0,
+    400.0,
+    10000.0
+  ],
+  "theory": {
+    "combinations": 622614630,
+    "random_avg_hits": 0.4,
+    "expected_3plus_per_1049": 3.299698041146254,
+    "uniform_nll": 20.24943831392892,
+    "random_expected_score": 0.005842678714440102
+  },
+  "method": {
+    "M0": "Frozen v18 autoregressive model. Published v18 top-6 marginal decision is the primary M0 reference.",
+    "M1": "Rejection sampling from frozen v18 P; accepted draws are an exact sample from P conditioned on F01–F14. Ticket maximizing estimated sum of constrained inclusion probabilities among feasible sampled candidates.",
+    "M2": "P_lambda(S) ∝ P_v18(S)*exp(-sum_j lambda_j*1[fails_j]); each lambda fitted >=0 on validation set penalized conditional log-likelihood; normalizer estimated via Monte Carlo.",
+    "random_constrained": "Uniform sample of 6 distinct numbers, rejected until all filters pass.",
+    "thresholds_fixed": "Original v03/v05 thresholds, selected retrospectively using ALL 4294 historical draws; contaminated for 2021–2026 evaluation.",
+    "thresholds_prevalidation": "95% shortest integer intervals fitted to first 1,500 post-2009 draws ending 2019-01-29; frozen for validation and test.",
+    "candidate_sampling": "512 Monte Carlo sets each date for validation/test; no gradients or neural retraining. 14 soft coefficients only are trained using validation.",
+    "utility": "Recorded ex post and NOT tuned on test; 3+ are rare so cannot rely on reward alone."
+  },
+  "regimes": {
+    "fissi_v06": {
+      "num_ranges": [
+        [
+          1,
+          36
+        ],
+        [
+          3,
+          54
+        ],
+        [
+          10,
+          68
+        ],
+        [
+          25,
+          81
+        ],
+        [
+          38,
+          87
+        ],
+        [
+          57,
+          90
+        ]
+      ],
+      "delay_ranges": [
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          13
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          4,
+          28
+        ],
+        [
+          5,
+          40
+        ],
+        [
+          7,
+          69
+        ]
+      ],
+      "validation": {
+        "size": 320,
+        "true_eligibility": 0.671875,
+        "model_eligible_proposal_share": 0.66546630859375,
+        "fitted_penalties": {
+          "F01": 0.0,
+          "F02": 0.00030121,
+          "F03": 0.0,
+          "F04": 0.18322069,
+          "F05": 0.13437844,
+          "F06": 0.18657895,
+          "F07": 0.02689578,
+          "F08": 0.07015444,
+          "F09": 0.0,
+          "F10": 0.0,
+          "F11": 0.04327872,
+          "F12": 0.0,
+          "F13": 0.0,
+          "F14": 0.04407653
+        },
+        "success": true,
+        "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+        "validation_objective": -0.004430739331600234,
+        "iterations": 7,
+        "regularization": 0.02,
+        "validation_nll_delta_vs_AR_MC": -0.006348739288738173
+      },
+      "test": {
+        "size": 1049,
+        "true_eligible_count": 666,
+        "true_eligibility": 0.6348903717826502,
+        "neural_proposal_acceptance_mean": 0.6507406607483317,
+        "neural_proposal_acceptance_min": 0.48046875,
+        "soft_nll_mc_mean": 20.257356327574527,
+        "soft_delta_nll_mc_minus_v18": 0.005356142636491693,
+        "m1_hard_mean_nll": null,
+        "m1_hard_mean_nll_explanation": "Infinite due to excluded actual winners; conditional probability zero.",
+        "uniform_eligibility_exact_from_v06_mean": 0.6501628859567514,
+        "models": {
+          "M0_ricalcolato": {
+            "mean_hits": 0.3965681601525262,
+            "total_hits": 416,
+            "hist_hits": [
+              686,
+              313,
+              47,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.0036062917063870346
+          },
+          "M1_rigido": {
+            "mean_hits": 0.3937082936129647,
+            "total_hits": 413,
+            "hist_hits": [
+              697,
+              294,
+              55,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.003664442326024785
+          },
+          "M2_soft": {
+            "mean_hits": 0.38608198284080075,
+            "total_hits": 405,
+            "hist_hits": [
+              698,
+              300,
+              48,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.003603431839847472
+          },
+          "Casuale_vincolato": {
+            "mean_hits": 0.4127740705433746,
+            "total_hits": 433,
+            "hist_hits": [
+              673,
+              323,
+              49,
+              4,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 4,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.004588179218303145
+          }
+        },
+        "m0_reference_v18": {
+          "mean_hits": 0.4213536701620591,
+          "sum_hits": 442
+        },
+        "paired_bootstrap_M1_minus_M0": [
+          -0.08007626310772165,
+          0.023856053384175274
+        ],
+        "paired_bootstrap_M2_minus_M0": [
+          -0.08677311725452812,
+          0.015252621544327931
+        ]
+      }
+    },
+    "prevalidazione": {
+      "num_ranges": [
+        [
+          1,
+          36
+        ],
+        [
+          2,
+          51
+        ],
+        [
+          9,
+          66
+        ],
+        [
+          24,
+          79
+        ],
+        [
+          38,
+          87
+        ],
+        [
+          56,
+          90
+        ]
+      ],
+      "delay_ranges": [
+        [
+          1,
+          7
+        ],
+        [
+          1,
+          13
+        ],
+        [
+          2,
+          19
+        ],
+        [
+          4,
+          28
+        ],
+        [
+          6,
+          41
+        ],
+        [
+          7,
+          68
+        ]
+      ],
+      "validation": {
+        "size": 320,
+        "true_eligibility": 0.68125,
+        "model_eligible_proposal_share": 0.6568603515625,
+        "fitted_penalties": {
+          "F01": 0.0,
+          "F02": 0.00028105,
+          "F03": 0.0,
+          "F04": 0.18302633,
+          "F05": 0.16613609,
+          "F06": 0.22534135,
+          "F07": 0.02977311,
+          "F08": 0.04629436,
+          "F09": 0.0,
+          "F10": 0.0,
+          "F11": 0.04223632,
+          "F12": 0.0,
+          "F13": 0.0,
+          "F14": 0.07399816
+        },
+        "success": true,
+        "message": "CONVERGENCE: RELATIVE REDUCTION OF F <= FACTR*EPSMCH",
+        "validation_objective": -0.006098324932936322,
+        "iterations": 8,
+        "regularization": 0.02,
+        "validation_nll_delta_vs_AR_MC": -0.008541682560478872
+      },
+      "test": {
+        "size": 1049,
+        "true_eligible_count": 658,
+        "true_eligibility": 0.6272640610104862,
+        "neural_proposal_acceptance_mean": 0.6413287952812202,
+        "neural_proposal_acceptance_min": 0.474609375,
+        "soft_nll_mc_mean": 20.260490392974962,
+        "soft_delta_nll_mc_minus_v18": 0.008490208036923077,
+        "m1_hard_mean_nll": null,
+        "m1_hard_mean_nll_explanation": "Infinite due to excluded actual winners; conditional probability zero.",
+        "uniform_eligibility_exact_from_v06_mean": null,
+        "models": {
+          "M0_ricalcolato": {
+            "mean_hits": 0.3965681601525262,
+            "total_hits": 416,
+            "hist_hits": [
+              686,
+              313,
+              47,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.0036062917063870346
+          },
+          "M1_rigido": {
+            "mean_hits": 0.41658722592945663,
+            "total_hits": 437,
+            "hist_hits": [
+              673,
+              318,
+              55,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.0036873212583412767
+          },
+          "M2_soft": {
+            "mean_hits": 0.3822688274547188,
+            "total_hits": 401,
+            "hist_hits": [
+              701,
+              298,
+              47,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.003591992373689227
+          },
+          "Casuale_vincolato": {
+            "mean_hits": 0.41468064823641565,
+            "total_hits": 435,
+            "hist_hits": [
+              670,
+              326,
+              50,
+              3,
+              0,
+              0,
+              0
+            ],
+            "at_least_three": 3,
+            "at_least_four": 0,
+            "at_least_five": 0,
+            "six": 0,
+            "mean_score": 0.0036472831267874155
+          }
+        },
+        "m0_reference_v18": {
+          "mean_hits": 0.4213536701620591,
+          "sum_hits": 442
+        },
+        "paired_bootstrap_M1_minus_M0": [
+          -0.057197330791229746,
+          0.04482840800762618
+        ],
+        "paired_bootstrap_M2_minus_M0": [
+          -0.09151572926596759,
+          0.012392755004766444
+        ]
+      }
+    }
+  },
+  "warnings": [
+    "Historical F03–F14 fixed thresholds contain information from 2021–2026; results with them are descriptive, not leak-free.",
+    "The neural checkpoint v18 and prior model choices were informed by repeated inspection of the 2021–2026 test. This test is not fresh.",
+    "NLL normalization for soft model is a finite-Monte-Carlo estimate, not exact. Averaged differences near MC error should not be interpreted.",
+    "Hard conditioning assigns zero probability to targets failing any filter, making full-sequence proper NLL infinite.",
+    "Model candidate ticket maximizes expected overlap approximately, not the rare-prize reward R(k) exactly.",
+    "Without a precommitted, future test there is no evidence of improvement at lottery prediction."
+  ]
+}

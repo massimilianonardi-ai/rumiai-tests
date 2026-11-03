@@ -1,0 +1,299 @@
+{
+  "experiment": "v18 autoregressive conditional 6-of-90 generation",
+  "utc_created": "2026-11-03T11:44:30.904397+00:00",
+  "seed": 20261121,
+  "dataset_sha256": "6546a40b1d9fccae106035739d3809b03d928990e50235e6773357df377d99e0",
+  "target_space": 622614630,
+  "window": 100,
+  "draws_after_2009": 2869,
+  "split": {
+    "training": 1400,
+    "validation": 320,
+    "test": 1049,
+    "validation_from": "2019-01-31",
+    "test_from": "2021-03-30",
+    "test_until": "2026-10-31"
+  },
+  "architecture": {
+    "encoder_history": "GRU(90,32), last state",
+    "autoregressive_set_order": "strict increasing indices (canonical, not physical draw order)",
+    "prefix": "sum of learned embeddings of numbers already chosen",
+    "head": "MLP(32+16+8 -> 48 -> 90) with tanh, residual to uniform exact combinatorial probability",
+    "base_conditional": "P(next=j | prefix)=C(89-j,5-step)/C(89-prev,6-step) over feasible next j",
+    "validity": "exactly 6 distinct numbers from 1..90 by construction",
+    "model_interactions": "prefix-dependent nonlinear conditional scores; same probability of a set independent of any physical draw order"
+  },
+  "training": {
+    "optimizer": "AdamW",
+    "learning_rate": 0.0006,
+    "weight_decay": 0.025,
+    "batch_size": 128,
+    "max_epochs": 20,
+    "patience": 5,
+    "selection": "minimum chronological validation set NLL only",
+    "train_subject": "negative log likelihood of exact 6-number set"
+  },
+  "ticket_decision": {
+    "method": "sample autoregressive sets and choose six largest marginal inclusion probabilities",
+    "samples_per_test_case": 256,
+    "sampling_seeds": [
+      20261422,
+      20261522
+    ],
+    "note": "Approximates maximizing expected correct matches; does not exactly maximize the high-value utility R(k)."
+  },
+  "reward": {
+    "0": 0.0,
+    "1": 0.001,
+    "2": 0.01,
+    "3": 1.0,
+    "4": 20.0,
+    "5": 400.0,
+    "6": 10000.0
+  },
+  "null_theory": {
+    "expected_hits": 0.4,
+    "mean_nll": 20.24943831392892,
+    "p_at_least_three": 0.003145565339510252,
+    "expected_score": 0.005842678714440102
+  },
+  "selection": {
+    "AR senza storia": {
+      "epoch": 1,
+      "validation_nll": 20.24842071533203,
+      "beats_uniform_validation": true
+    },
+    "AR con storia": {
+      "epoch": 1,
+      "validation_nll": 20.24505043029785,
+      "beats_uniform_validation": true
+    }
+  },
+  "validation_diagnostics": {
+    "history_shuffle": {
+      "original_val_nll": 20.24505043029785,
+      "shuffled_val_nll": 20.245277404785156,
+      "shuffle_minus_original": 0.0002269744873046875
+    },
+    "latent": {
+      "successive_cosine": 0.7375252842903137,
+      "permuted_pair_cosine": 0.47713562846183777,
+      "note": "Overlapping windows share 99 of 100 past draws; smoothness alone is not evidence of predictivity."
+    }
+  },
+  "curves": {
+    "AR senza storia": [
+      {
+        "epoch": 1,
+        "train_nll": 20.250839789254325,
+        "val_nll": 20.24842071533203
+      },
+      {
+        "epoch": 2,
+        "train_nll": 20.22114420209612,
+        "val_nll": 20.25162696838379
+      },
+      {
+        "epoch": 3,
+        "train_nll": 20.19750118800572,
+        "val_nll": 20.25530433654785
+      },
+      {
+        "epoch": 4,
+        "train_nll": 20.174993558611188,
+        "val_nll": 20.25973129272461
+      },
+      {
+        "epoch": 5,
+        "train_nll": 20.15205872671945,
+        "val_nll": 20.265148162841797
+      },
+      {
+        "epoch": 6,
+        "train_nll": 20.13039436340332,
+        "val_nll": 20.272418975830078
+      }
+    ],
+    "AR con storia": [
+      {
+        "epoch": 1,
+        "train_nll": 20.248826555524552,
+        "val_nll": 20.24505043029785
+      },
+      {
+        "epoch": 2,
+        "train_nll": 20.218492050170898,
+        "val_nll": 20.245698928833008
+      },
+      {
+        "epoch": 3,
+        "train_nll": 20.194749254499165,
+        "val_nll": 20.24750328063965
+      },
+      {
+        "epoch": 4,
+        "train_nll": 20.170776879446848,
+        "val_nll": 20.251344680786133
+      },
+      {
+        "epoch": 5,
+        "train_nll": 20.147508305140903,
+        "val_nll": 20.256183624267578
+      },
+      {
+        "epoch": 6,
+        "train_nll": 20.124921798706055,
+        "val_nll": 20.262619018554688
+      }
+    ]
+  },
+  "test_metrics": {
+    "AR senza storia": {
+      "nll_mean": 20.249631881713867,
+      "nll_delta_vs_uniform": 0.0001926422119140625,
+      "hits_mean": 0.3956148713060057,
+      "hits_sum": 415,
+      "hits_by_exact_count": [
+        687,
+        311,
+        49,
+        2,
+        0,
+        0,
+        0
+      ],
+      "three_or_more": 2,
+      "four_or_more": 0,
+      "utility_mean": 0.0026701620591039078,
+      "utility_ratio_vs_null": 0.4570099075454274,
+      "hits_mean_bootstrap_ci95": [
+        0.36129647283126787,
+        0.43088655862726405
+      ]
+    },
+    "AR con storia": {
+      "nll_mean": 20.251998901367188,
+      "nll_delta_vs_uniform": 0.002559661865234375,
+      "hits_mean": 0.4213536701620591,
+      "hits_sum": 442,
+      "hits_by_exact_count": [
+        659,
+        339,
+        50,
+        1,
+        0,
+        0,
+        0
+      ],
+      "three_or_more": 1,
+      "four_or_more": 0,
+      "utility_mean": 0.0017530981887511911,
+      "utility_ratio_vs_null": 0.3000504176994077,
+      "hits_mean_bootstrap_ci95": [
+        0.38608198284080075,
+        0.45853193517635843
+      ]
+    },
+    "Uniforme (campione)": {
+      "nll_mean": 20.249438313928916,
+      "nll_delta_vs_uniform": -3.552713678800501e-15,
+      "hits_mean": 0.4194470924690181,
+      "hits_sum": 440,
+      "hits_by_exact_count": [
+        668,
+        322,
+        59,
+        0,
+        0,
+        0,
+        0
+      ],
+      "three_or_more": 0,
+      "four_or_more": 0,
+      "utility_mean": 0.0008693994280266921,
+      "utility_ratio_vs_null": 0.1488015122032952
+    },
+    "Frequenze storiche": {
+      "nll_mean": 20.249438313928916,
+      "nll_delta_vs_uniform": -3.552713678800501e-15,
+      "hits_mean": 0.4204003813155386,
+      "hits_sum": 441,
+      "hits_by_exact_count": [
+        669,
+        322,
+        55,
+        3,
+        0,
+        0,
+        0
+      ],
+      "three_or_more": 3,
+      "four_or_more": 0,
+      "utility_mean": 0.0036911344137273584,
+      "utility_ratio_vs_null": 0.6317537886525866
+    },
+    "Set-GRU v17 (likelihood)": {
+      "nll_mean": 20.251564423317777,
+      "nll_delta_vs_uniform": 0.0021261093888576,
+      "hits_mean": 0.39180171591992374,
+      "hits_sum": 411,
+      "hits_by_exact_count": [
+        697,
+        297,
+        51,
+        4,
+        0,
+        0,
+        0
+      ],
+      "three_or_more": 4,
+      "four_or_more": 0,
+      "utility_mean": 0.004582459485224021,
+      "utility_ratio_vs_null": 0.7843079705715349
+    },
+    "Set-GRU v17 (reward)": {
+      "nll_mean": 20.25021100079827,
+      "nll_delta_vs_uniform": 0.0007726868693502809,
+      "hits_mean": 0.38703527168732127,
+      "hits_sum": 406,
+      "hits_by_exact_count": [
+        691,
+        311,
+        46,
+        1,
+        0,
+        0,
+        0
+      ],
+      "three_or_more": 1,
+      "four_or_more": 0,
+      "utility_mean": 0.001688274547187798,
+      "utility_ratio_vs_null": 0.28895556810530243
+    }
+  },
+  "paired_vs_v17": {
+    "AR con storia": {
+      "delta_mean_hits_vs_set_gru_v17": 0.029551954242135366,
+      "paired_bootstrap_ci95": [
+        -0.019065776930409915,
+        0.07626310772163966
+      ],
+      "delta_mean_nll_vs_v17": 0.00043447804941010304
+    },
+    "AR senza storia": {
+      "delta_mean_hits_vs_set_gru_v17": 0.0038131553860819827,
+      "paired_bootstrap_ci95": [
+        -0.04861773117254528,
+        0.05338417540514776
+      ],
+      "delta_mean_nll_vs_v17": -0.0019325416039102095
+    }
+  },
+  "limitations": [
+    "2021–2026 period was previously examined in multiple model-selection conversations; this is exploratory rather than a fresh independent test.",
+    "Insufficient data to infer actual physical state of ball extraction machine; correlations alone do not identify a generator.",
+    "Monte Carlo top-six marginal decision has stochastic estimation error.",
+    "Exact predictive likelihood of full set is a more reliable statistical score than rare jackpot utility."
+  ],
+  "data_reproduction": "Run python compute_v18.py in same directory as superenalotto_matrice_binaria_90_v13.csv and superenalotto_previsioni_test_v17.csv"
+}
