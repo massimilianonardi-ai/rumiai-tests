@@ -133,8 +133,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // A nested Cell over Cell is not certified by the direct-raw bridge;
-  // no physical offset can be reinterpreted as a second cell cut.
+  // The upper Cell independently maps the immediate Cell's verified
+  // old/new endpoints. Neither private observer exposes raw offsets.
   {
     const t=open('A\tB😀C');
     const outer=new classes.CellDocument2D(t.cell);
@@ -142,9 +142,24 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     outer._subscribeBeforeGeometry(event=>seen.push(event));
     const events=[];
     outer.subscribe(event=>events.push(event));
+    const revision=outer.revision;
     t.source.replace(5,6,'D');
-    assert.deepEqual(seen,[]);
-    assert.equal('geometry' in events.at(-1),false);
+    assert.deepEqual(seen,
+    [
+      {
+        previousRevision:revision,
+        oldRowCount:1,
+        edits:[{old:{start:p(0,6),end:p(0,7)}}]
+      }
+    ]);
+    assert.deepEqual(events.at(-1).geometry,
+    {
+      previousRevision:revision,revision:outer.revision,
+      oldRowCount:1,newRowCount:1,
+      edits:[edit(p(0,6),p(0,7),p(0,6),p(0,7))]
+    });
+    assert.equal('offset' in seen[0].edits[0].old.start,false);
+    assert.ok(Object.isFrozen(seen[0].edits[0].old.start));
     outer.destroy();
     t.close();
   }
