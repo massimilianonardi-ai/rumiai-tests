@@ -19,3 +19,13 @@ Il pacchetto ZIP originale (11.597.232 byte, SHA-256 `3fb68ee363475762229ed59b78
 I filtri al 99% sono retrospettivi. I numeri di combinazioni residue delle versioni 23–24 sono stime Monte Carlo; le verifiche sulle sestine storiche sono esatte. Il periodo di test 2021–2026 è stato riutilizzato nei modelli neurali e non è un test indipendente per esperimenti successivi.
 
 Il sorgente originale `compute_v13.py` non era recuperabile; l'archivio include `compute_v13_RICOSTRUITO.py`, denominato esplicitamente come ricostruzione.
+
+## Esperimenti successivi all'archivio
+
+- `superenalotto_analisi_filtri_v25.md`: esperimento sulle frequenze massime pregresse delle coppie, con F18 ancora non attivo.
+- **`superenalotto_analisi_filtri_v26.md`**: **registro cumulativo corrente v01–v26**; F01–F18 attivi, F18 impone `massima frequenza pregressa delle 15 coppie ≤ 30`. Questa è la *frequenza*, non il ritardo dall'ultima apparizione di una coppia.
+- `compute_v26.js`: programma riproducibile Node.js per F18, i vettori ordinati delle 15 coppie, simulazioni Monte Carlo e test condizionati.
+- `superenalotto_coppie_vettori_v26.csv`: 4.226 righe con 15 frequenze pregresse per estrazione e risultati dei filtri.
+- `superenalotto_metriche_v26.json`: 23 confronti di statistiche con pseudo-serie casuali, seed e limiti.
+
+**Stato scientifico v26:** copertura retrospettiva esatta 3.801/4.226, media stimata delle combinazioni residue circa 559,2 milioni; nessun vantaggio predittivo dimostrato. Il periodo 2021–2026 è già stato riutilizzato durante lo sviluppo e non è un test indipendente.
