@@ -130,6 +130,7 @@ async function main()
     assert.equal(fs.statSync(capture).mode & 0o777, 0o700, 'recording directory is not private');
     for (const file of ['DOM.md', 'NETWORK.md', 'SCRIPTS.md', 'FLOWS.md',
       'LIMITATIONS.md', 'summary.json', 'resources.jsonl', 'scripts.jsonl',
+      'cdp-wire.jsonl', 'cdp-capabilities.json', 'cdp-protocol.json',
       'states/state-000.json', 'states/screen-000.png',
       'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
       'states/dom-rest-final.html', 'states/dom-rest-final.json',
@@ -147,6 +148,43 @@ async function main()
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
     assert(states.length >= 2, 'nested scroll was not explored');
+    const capabilities = JSON.parse(fs.readFileSync(path.join(capture,
+      'cdp-capabilities.json'), 'utf8'));
+    assert.equal(capabilities.status, 'saved',
+      'local Chromium version/protocol schema not discovered');
+    assert.equal(capabilities.browser.status, 'saved');
+    assert.match(capabilities.browser.product, /Chrome|Chromium/);
+    const protocol = JSON.parse(fs.readFileSync(path.join(capture,
+      'cdp-protocol.json'), 'utf8'));
+    assert(protocol.domains.some(domain => domain.domain === 'Runtime'));
+    assert(capabilities.protocol.domains.some(domain =>
+      domain.name === 'Network' && domain.commands.includes('getResponseBody')));
+    const wire = fs.readFileSync(path.join(capture,'cdp-wire.jsonl'),'utf8')
+      .trim().split('\\n').filter(Boolean).map(JSON.parse);
+    assert(wire.length > 20, 'CDP wire ledger is unexpectedly small');
+    assert(wire.every((entry,i) => entry.sequence === i + 1),
+      'wire ledger ordering or sequence has a gap');
+    const parsedWire = wire.map(entry => ({
+      direction:entry.direction, packet:JSON.parse(entry.raw)
+    }));
+    assert(parsedWire.some(entry => entry.direction === 'inbound' &&
+      entry.packet.method === 'Runtime.executionContextCreated'),
+      'unhandled-by-dispatcher CDP event was silently discarded');
+    assert(parsedWire.some(entry => entry.direction === 'outbound' &&
+      entry.packet.method === 'Browser.getVersion'),
+      'browser-level CDP commands were not archived');
+    const sent = new Set(parsedWire.filter(entry => entry.direction === 'outbound')
+      .map(entry => entry.packet.id));
+    assert(parsedWire.some(entry => entry.direction === 'inbound' &&
+      sent.has(entry.packet.id)), 'no CDP request/response correlation survives');
+    const wireSummary = JSON.parse(fs.readFileSync(path.join(capture,
+      'summary.json'),'utf8')).resourceCapture.wireCapture;
+    assert.equal(wireSummary.status, 'saved');
+    assert.equal(wireSummary.packets, wire.length);
+    assert.equal(wireSummary.errors.length, 0);
+    for (const file of ['cdp-wire.jsonl','cdp-capabilities.json','cdp-protocol.json'])
+      assert.equal(fs.statSync(path.join(capture,file)).mode & 0o777, 0o600,
+        'CDP evidence files must be private: ' + file);
     const rest = JSON.parse(fs.readFileSync(path.join(capture, 'rest/manifest.json'), 'utf8'));
     assert.equal(rest.phase, 'rest-before-automated-input');
     assert(rest.artifacts.some(item => item.name === 'resources-at-rest' &&
