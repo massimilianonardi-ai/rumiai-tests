@@ -1266,7 +1266,9 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
   (
     [
       {id:'prefix',text:'P',at:point(0,1)},
+      {id:'prefixCut',text:'C',at:point(0,2)},
       {id:'hidden',text:'H',at:point(1,1)},
+      {id:'suffixCut',text:'C',at:point(2,2)},
       {id:'suffix',text:'S',at:point(2,3)}
     ]
   );
@@ -1274,7 +1276,7 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
   const visible=view.getRegions(0,0,1,10);
   assert.deepEqual(visible[0].filter(x=>x.kind==='annotation')
     .map(x=>[x.id,x.start.col]),
-    [['prefix',1],['suffix',4]]);
+    [['prefix',1],['prefixCut',2],['suffixCut',3],['suffix',4]]);
   assert.equal(view.getRect(0,0,1,10)[0],'ab…zQ');
   view.destroy();
   notes.destroy();
