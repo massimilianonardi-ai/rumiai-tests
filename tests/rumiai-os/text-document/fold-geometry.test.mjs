@@ -90,8 +90,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // One downstream annotation can retain a row-shifted anchor after the
-  // folded view is invalidated, while an ambiguous earlier anchor drops.
+  // Old/new edit endpoints do not describe unaffected rows when a
+  // folded view expands, so local annotations must clear conservatively.
   {
     const t=make('top\nhidden-A\nhidden-B\nvisible\nlast',true);
     t.fold.setFolds([{startRow:1,endRow:3}]);
@@ -113,11 +113,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     );
     assert.equal(t.source.revision,sourceRevision+1);
     assert.equal(t.source.toString(),'top\nhidden-A\nhidden-B\nQvisible\nlast');
-    assert.deepEqual
-    (
-      notes.annotations,
-      [{id:'last',text:'after',at:p(4,2)}]
-    );
+    assert.deepEqual(notes.annotations,[]);
     assert.deepEqual(seen.at(-1).invalidation,{all:true});
     assert.equal(seen.at(-1).geometry.oldRowCount,4);
     assert.equal(seen.at(-1).geometry.newRowCount,5);
