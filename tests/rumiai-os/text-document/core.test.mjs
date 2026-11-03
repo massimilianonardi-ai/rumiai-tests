@@ -1156,9 +1156,9 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
   assert.throws(()=>view.setSelections([range(0,0,1,1)]),
     /crosses inline folded/);
   raw.setSelections([range(1,0,1,1)]);
-  assert.throws(()=>view.getSelections(),/folded source interval/);
-  assert.throws(()=>view.read(),/folded source interval/);
-  assert.throws(()=>view.insert('X'),/folded source interval/);
+  assert.throws(()=>view.getSelections(),/crosses inline folded source/);
+  assert.throws(()=>view.read(),/crosses inline folded source/);
+  assert.throws(()=>view.insert('X'),/crosses inline folded source/);
   assert.equal(source.toString(),unchanged);
 
   // Both editable segments round-trip through the single physical
