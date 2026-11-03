@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['AnnotationDocument2D','CellDocument2D','Document','Document2D','FlatDocument','FoldDocument2D','PieceDocument','RawDocument2D']);
+  assert.deepEqual(Object.keys(extracted).sort(),['AnnotationDocument2D','CellDocument2D','Document','Document2D','FlatDocument','FoldDocument2D','PieceDocument','RawDocument2D','SubstitutionDocument2D']);
 }
 finally
 {
@@ -1541,6 +1541,269 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
   notes.destroy();
   fold.destroy();
   cell.destroy();
+  raw.destroy();
+}
+
+
+
+// Occupied synthetic substitutions must not accidentally grant access to
+// hidden input intervals. The same row may contain multiple disjoint
+// substitution runs, each with an independently mapped source interval.
+const SubstitutionDocument2D=extracted.SubstitutionDocument2D;
+assert.equal(typeof SubstitutionDocument2D,'function');
+assert.throws(()=>new SubstitutionDocument2D({}),TypeError);
+
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('abcde\nhello');
+  const raw=new RawDocument2D(source);
+  const view=new SubstitutionDocument2D(raw);
+  const events=[];
+  view.subscribe(event=>events.push(event));
+
+  const configuration=
+  [
+    {id:'second',text:'🧩!',start:point(0,4),end:point(0,5)},
+    {id:'first',text:'XYZ',start:point(0,1),end:point(0,3)}
+  ];
+
+  assert.strictEqual(view.setSubstitutions(configuration),view);
+  assert.equal(view.revision,1);
+  assert.equal(view.rowCount,2);
+  assert.equal(view.getRowWidth(0),7);
+  assert.equal(view.colCount,7);
+  assert.deepEqual(view.getRect(0,0,2,20),['aXYZd🧩!','hello']);
+  assert.deepEqual(view.getRect(0,1,1,2),['X']);
+  assert.deepEqual(view.getRect(0,5,1,6),['🧩']);
+  assert.deepEqual(view.getRect(0,6,1,7),['!']);
+  assert.deepEqual(view.getRegions(0,2,1,3),
+    [[{kind:'substitution',id:'first',text:'XYZ',
+      start:point(0,1),end:point(0,4)}]]);
+  assert.deepEqual(view.getRegions(0,5,1,6),
+    [[{kind:'substitution',id:'second',text:'🧩!',
+      start:point(0,5),end:point(0,7)}]]);
+
+  // All published metadata and configuration are detached snapshots.
+  const exposed=view.getRegions(0,5,1,6)[0][0];
+  exposed.start.col=0;
+  exposed.end.col=1;
+  exposed.id='corrupted';
+  configuration[0].start.col=0;
+  const displayed=view.substitutions;
+  displayed[0].start.col=0;
+  assert.deepEqual(view.getRegions(0,5,1,6)[0][0],
+    {kind:'substitution',id:'second',text:'🧩!',
+      start:point(0,5),end:point(0,7)});
+  assert.equal(view.substitutions[0].start.col,1);
+  const revision=view.revision;
+  view.setSubstitutions(view.substitutions);
+  assert.equal(view.revision,revision);
+  assert.equal(source.revision,0);
+
+  // A range covering an occupied virtual region is not editable even
+  // when its two endpoints can each be mapped unambiguously.
+  const oldText=source.toString();
+  for(const edit of
+  [
+    {start:point(0,1),end:point(0,4),text:'Q'},
+    {start:point(0,0),end:point(0,5),text:'Q'},
+    {start:point(0,5),end:point(0,7),text:'Q'},
+    {start:point(0,2),end:point(0,3),text:'Q'}
+  ])
+  {
+    assert.throws(()=>view.replace([edit],view.revision),
+      /substitut/);
+  }
+  assert.throws(()=>view.replace(
+    [
+      {start:point(0,0),end:point(0,1),text:'A'},
+      {start:point(0,1),end:point(0,4),text:'Q'}
+    ],view.revision),/substitut/);
+  assert.throws(()=>view.setSelections([range(0,1,0,4)]),
+    /substitut/);
+  assert.equal(source.toString(),oldText);
+  assert.equal(source.revision,0);
+
+  view.setSelections([range(0,4,0,5)]);
+  assert.deepEqual(raw.getSelections(),[range(0,3,0,4)]);
+  assert.deepEqual(view.getSelections(),[range(0,4,0,5)]);
+  assert.deepEqual(view.read(),['d']);
+  raw.setSelections([range(0,1,0,2)]);
+  assert.throws(()=>view.getSelections(),/substitut/);
+  assert.throws(()=>view.read(),/substitut/);
+  assert.throws(()=>view.insert('!'),/substitut/);
+  assert.equal(source.revision,0);
+
+  view.setSelections([range(0,4,0,5)]);
+  const initial=view.revision;
+  view.replace
+  (
+    [
+      {start:point(0,0),end:point(0,1),text:'A'},
+      {start:point(0,4),end:point(0,5),text:'D'}
+    ],
+    initial
+  );
+  assert.equal(source.toString(),'AbcDe\nhello');
+  assert.equal(source.revision,1);
+  assert.deepEqual(view.substitutions,[]);
+  assert.equal(view.getRowWidth(0),5);
+  assert.equal(view.revision,initial+1);
+  assert.equal(events.filter(e=>e.type==='content').length,2);
+  assert.throws(()=>view.replace(
+    [{start:point(0,0),end:point(0,1),text:'Z'}],initial
+  ),/stale/);
+
+  view.setSubstitutions
+  (
+    [{id:'next',text:'!!',start:point(0,1),end:point(0,2)}]
+  );
+  const previous=view.revision;
+  source.replace(0,0,'z');
+  assert.deepEqual(view.substitutions,[]);
+  assert.equal(view.revision,previous+1);
+
+  for(const invalid of
+  [
+    [{id:'same',text:'X',start:point(0,1),end:point(0,2)},
+     {id:'same',text:'Y',start:point(0,3),end:point(0,4)}],
+    [{id:'one',text:'X',start:point(0,1),end:point(0,4)},
+     {id:'two',text:'Y',start:point(0,3),end:point(0,5)}],
+    [{id:'wrong',text:'X\nY',start:point(0,1),end:point(0,2)}],
+    [{id:'cross-row',text:'X',start:point(0,1),end:point(1,1)}]
+  ])
+  {
+    const beforeConfig=view.revision;
+    assert.throws(()=>view.setSubstitutions(invalid),/substitut/);
+    assert.equal(view.revision,beforeConfig);
+    assert.deepEqual(view.substitutions,[]);
+  }
+
+  view.destroy();
+  assert.doesNotThrow(()=>view.destroy());
+  assert.throws(()=>view.getSelections(),/destroyed/);
+  assert.doesNotThrow(()=>raw.getSelections());
+  raw.destroy();
+}
+
+// Substitution is composable above an annotated cell representation and
+// below a folded view: metadata remains source-less and the source text
+// still has exactly one selection owner and exactly one physical commit.
+{
+  const source=new extracted.PieceDocument('A\tBQQ\nhidden\nZZ');
+  const raw=new RawDocument2D(source);
+  const cells=new CellDocument2D(raw);
+  const notes=new AnnotationDocument2D(cells);
+  notes.setAnnotations([{id:'note',text:'tip',at:point(0,4)}]);
+  const substitute=new SubstitutionDocument2D(notes);
+  substitute.setSubstitutions
+  (
+    [{id:'virtual',text:'🧩OK',start:point(0,5),end:point(0,7)}]
+  );
+
+  const fold=new FoldDocument2D(substitute);
+  fold.setFolds([{startRow:1,endRow:2}]);
+  const top=new CellDocument2D(fold);
+  assert.deepEqual(top.getRect(0,0,3,20),['A   B🧩OK','…','ZZ']);
+  assert.deepEqual(top.getRegions(0,0,1,20)[0]
+    .filter(r=>r.kind==='annotation').map(r=>[r.id,r.start.col]),
+    [['note',4]]);
+  assert.deepEqual(top.getRegions(0,5,1,6),
+    [[{kind:'substitution',id:'virtual',text:'🧩OK',
+      start:point(0,5),end:point(0,8)}]]);
+  assert.throws(()=>top.replace(
+    [{start:point(0,4),end:point(0,8),text:'delete'}],
+    top.revision
+  ),/substitut/);
+  assert.throws(()=>top.replace(
+    [{start:point(1,0),end:point(1,1),text:'delete'}],
+    top.revision
+  ),/fold/);
+  assert.equal(source.revision,0);
+
+  top.setSelections([range(0,4,0,5)]);
+  assert.deepEqual(raw.getSelections(),[range(0,2,0,3)]);
+  assert.deepEqual(top.read(),['B']);
+  const prior=source.revision;
+  top.replace
+  (
+    [
+      {start:point(0,4),end:point(0,5),text:'X'},
+      {start:point(2,0),end:point(2,1),text:'Y'}
+    ],
+    top.revision
+  );
+  assert.equal(source.revision,prior+1);
+  assert.equal(source.toString(),'A\tXQQ\nhidden\nYZ');
+  assert.deepEqual(substitute.substitutions,[]);
+  assert.deepEqual(notes.annotations,[]);
+  assert.deepEqual(fold.folds,[]);
+  assert.deepEqual(top.getRect(0,0,3,20),['A   XQQ','hidden','YZ']);
+
+  top.destroy();
+  fold.destroy();
+  substitute.destroy();
+  notes.destroy();
+  cells.destroy();
+  raw.destroy();
+}
+
+// A substituted input must not hide part of a grapheme/TAB or a protected
+// fold: the source interval is validated in the immediate input space.
+{
+  const source=new extracted.PieceDocument('A\tB\nhidden\nCD');
+  const raw=new RawDocument2D(source);
+  const cells=new CellDocument2D(raw);
+  const substitute=new SubstitutionDocument2D(cells);
+  assert.throws(()=>substitute.setSubstitutions(
+    [{id:'half-tab',text:'X',start:point(0,2),end:point(0,4)}]),
+    /indivisible/);
+  assert.equal(source.revision,0);
+
+  const fold=new FoldDocument2D(cells);
+  fold.setFolds([{startRow:1,endRow:2}]);
+  const aboveFold=new SubstitutionDocument2D(fold);
+  assert.throws(()=>aboveFold.setSubstitutions(
+    [{id:'fold',text:'X',start:point(1,0),end:point(1,1)}]),
+    /indivisible/);
+  assert.equal(source.revision,0);
+
+  aboveFold.destroy();
+  fold.destroy();
+  substitute.destroy();
+  cells.destroy();
+  raw.destroy();
+}
+
+// Bounded reads of a substituted long line retrieve only visible source
+// fragments. A whole hidden interval is not materialized by a viewport.
+{
+  class ObservedRaw extends RawDocument2D
+  {
+    windows=[];
+    getRegions(...args)
+    {
+      this.windows.push([args[0],args[1],args[3]]);
+      return super.getRegions(...args);
+    }
+  }
+
+  const source=new extracted.PieceDocument(
+    'prefix'+'x'.repeat(100000)+'suffix');
+  const raw=new ObservedRaw(source);
+  const view=new SubstitutionDocument2D(raw);
+  view.setSubstitutions
+  (
+    [{id:'hidden',text:'[..]',start:point(0,6),end:point(0,100006)}]
+  );
+  raw.windows=[];
+  assert.deepEqual(view.getRect(0,0,1,30),['prefix[..]suffix']);
+  assert.deepEqual(view.getRegions(0,0,1,30)[0]
+    .filter(r=>r.kind==='substitution').map(r=>r.id),['hidden']);
+  assert.ok(raw.windows.every(([row,left,right])=>
+    row===0 && right-left<=30));
+  assert.equal(source.revision,0);
+  view.destroy();
   raw.destroy();
 }
 
