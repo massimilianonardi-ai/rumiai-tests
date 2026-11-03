@@ -23,6 +23,18 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   dynamicStyle.textContent = '.dynamic-probe { color: blue; }';
   document.head.append(dynamicStyle);
   document.addEventListener('rest-probe', () => {});
+  const worker = new Worker('/background-worker.js');
+  worker.addEventListener('message', event => {
+    document.body.dataset.workerReply = String(event.data);
+  });
+  const sameFrame = document.createElement('iframe');
+  sameFrame.id = 'same-origin-frame';
+  sameFrame.src = '/frame.html';
+  document.body.append(sameFrame);
+  const crossFrame = document.createElement('iframe');
+  crossFrame.id = 'other-origin-frame';
+  crossFrame.src = document.documentElement.dataset.crossOriginFrame;
+  document.body.append(crossFrame);
   localStorage.setItem('fixtureSession', 'fixture-only-access');
   sessionStorage.setItem('fixtureView', 'test-123');
   const database = indexedDB.open('rest-database', 1);
@@ -87,6 +99,13 @@ async function main()
   const wrongScheme = spawnSync(command, ['file:///etc/passwd', '/tmp/unused'], {env, encoding: 'utf8'});
   assert.equal(wrongScheme.status, 4);
 
+  const crossServer = http.createServer((req, res) => {
+    res.setHeader('Content-Type', 'text/html');
+    res.end('<!doctype html><title>Cross-origin frame</title>' +
+      '<body><p id="cross-origin-content">Independent origin</p></body>');
+  });
+  await new Promise(resolve => crossServer.listen(0, '127.0.0.1', resolve));
+  const crossUrl = 'http://127.0.0.1:' + crossServer.address().port + '/child.html';
   const server = http.createServer((req, res) => {
     const location = new URL(req.url, 'http://127.0.0.1').pathname;
     if (location === '/churn')
@@ -101,6 +120,12 @@ async function main()
       '/': [html, 'text/html'],
       '/view.css': ['.scroll {height: 160px; overflow-y: auto} p {height: 35px}', 'text/css'],
       '/app.js': [app, 'text/javascript'],
+      '/background-worker.js': [
+        'postMessage("worker-ready");setInterval(()=>{},5000);',
+        'text/javascript'],
+      '/frame.html': [
+        '<!doctype html><title>Frame child</title><body><p>Same-origin iframe</p></body>',
+        'text/html'],
       '/data.json': ['{"initial":true}', 'application/json'],
       '/lazy.json': ['{"lazy":true}', 'application/json'],
       '/hydrated.json': ['{"hydrated":true}', 'application/json'],
@@ -112,6 +137,9 @@ async function main()
       res.setHeader('Set-Cookie', 'fixture_cookie=fixture-only-secret; HttpOnly; SameSite=Lax; Path=/');
     if (location === '/hydrated.json')
       setTimeout(() => res.end(data[0]), 600);
+    else if (location === '/')
+      res.end(data[0].replace('<html>', '<html data-cross-origin-frame="' +
+        crossUrl + '">'));
     else
       res.end(data[0]);
   });
@@ -142,7 +170,8 @@ async function main()
       'network-details.jsonl', 'rest/network-details-at-rest.jsonl',
       'rest/targets/target-000/indexeddb/index.json',
       'rest/targets/target-000/cache-storage/index.json',
-      'rest/targets/target-000/storage-usage.json'])
+      'rest/targets/target-000/storage-usage.json',
+      'rest/target-graph-initial.json', 'rest/target-graph-final.json'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
@@ -191,7 +220,33 @@ async function main()
     for (const file of ['cdp-wire.jsonl','cdp-capabilities.json','cdp-protocol.json'])
       assert.equal(fs.statSync(path.join(capture,file)).mode & 0o777, 0o600,
         'CDP evidence files must be private: ' + file);
+    const targetGraph = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/target-graph-final.json'), 'utf8'));
+    assert.equal(targetGraph.discovery.status, 'saved');
+    assert(targetGraph.targets.some(target => target.type === 'page' && target.attached),
+      'initial page missing from CDP target inventory');
+    const workerTarget = targetGraph.targets.find(target =>
+      target.type === 'worker' && target.attached);
+    assert(workerTarget, 'dedicated worker missing from attached-target graph');
+    assert(targetGraph.contexts.some(context => context.targetId === workerTarget.targetId),
+      'worker execution context missing from lifecycle graph');
+    assert(targetGraph.targets.some(target => target.type === 'page' &&
+      target.targetId !== workerTarget.targetId),
+      'main page was not preserved in target graph');
     const rest = JSON.parse(fs.readFileSync(path.join(capture, 'rest/manifest.json'), 'utf8'));
+    const workerEntry = rest.targets.find(target =>
+      target.type === 'worker' && target.targetId === workerTarget.targetId);
+    assert(workerEntry, 'worker target was not independently captured at rest');
+    const workerData = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets', workerEntry.name, 'worker-environment.json'), 'utf8'));
+    assert(JSON.stringify(workerData).includes('background-worker.js'),
+      'worker global environment not captured by CDP');
+    const frameTree = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/frame-tree.json'), 'utf8'));
+    assert(JSON.stringify(frameTree).includes('child.html'),
+      'cross-origin iframe missing from CDP frame tree');
+    assert(!targetGraph.targets.some(target => target.type === 'worker' &&
+      target.attached && !target.ready), 'attached worker was not instrumented');
     assert.equal(rest.phase, 'rest-before-automated-input');
     assert(rest.artifacts.some(item => item.name === 'resources-at-rest' &&
       item.status === 'saved'), 'rest resource index missing');
@@ -316,6 +371,7 @@ async function main()
   finally
   {
     server.close();
+    crossServer.close();
     fs.rmSync(work, {recursive: true, force: true});
   }
 }
