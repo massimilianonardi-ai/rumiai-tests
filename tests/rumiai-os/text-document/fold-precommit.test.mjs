@@ -261,13 +261,20 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     raw.destroy();
   }
 
-  // Nested cell input has no direct physical observation through its
-  // public interface. Inline projection stays conservative there.
+  // The direct raw-backed cell view now offers old CELL points to its
+  // immediate fold consumer, not physical offsets.
   {
     const t=open('abcd\nHIDDEN\nuvwxyz\nTAIL',true);
     inline(t);
+    const revision=t.fold.revision;
     t.source.replace(1,2,'Q');
-    assert.equal('geometry' in t.events.at(-1),false);
+    assert.deepEqual(t.events.at(-1).geometry,
+    {
+      previousRevision:revision,revision:t.fold.revision,
+      oldRowCount:2,newRowCount:4,
+      edits:[geometry(p(0,1),p(0,2),p(0,1),p(0,2))]
+    });
+    assert.equal('offset' in t.events.at(-1).geometry.edits[0].old.start,false);
     t.close();
   }
 
