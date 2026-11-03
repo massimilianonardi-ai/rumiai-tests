@@ -115,7 +115,8 @@ async function main()
       'states/dom-rest-final.html', 'states/dom-rest-final.json',
       'rest/manifest.json', 'rest/page.mhtml',
       'rest/targets/target-000/dom-tree.json',
-      'rest/targets/target-000/dom-snapshot.json'])
+      'rest/targets/target-000/dom-snapshot.json',
+      'rest/resources-at-rest.jsonl', 'rest/scripts-at-rest.jsonl'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
@@ -123,6 +124,10 @@ async function main()
     assert(states.length >= 2, 'nested scroll was not explored');
     const rest = JSON.parse(fs.readFileSync(path.join(capture, 'rest/manifest.json'), 'utf8'));
     assert.equal(rest.phase, 'rest-before-automated-input');
+    assert(rest.artifacts.some(item => item.name === 'resources-at-rest' &&
+      item.status === 'saved'), 'rest resource index missing');
+    assert(rest.artifacts.some(item => item.name === 'scripts-at-rest' &&
+      item.status === 'saved'), 'rest compiled-script index missing');
     assert(rest.artifacts.some(item => item.name === 'dom-tree' && item.status === 'saved'));
     assert(rest.artifacts.some(item => item.name === 'dom-snapshot' && item.status === 'saved'));
     assert(rest.artifacts.some(item => item.name === 'page' && item.status === 'saved'));
