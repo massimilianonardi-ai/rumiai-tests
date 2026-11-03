@@ -315,8 +315,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
   }
 
   // Local overlay reconfiguration has no physical mutation record.
-  // An annotation atop certified nested Cells forwards verified endpoints
-  // but still conservatively clears its annotations on source changes.
+  // Once nested Cells certify both endpoint spaces, a note on a separate
+  // unchanged row can survive by the existing restricted anchor rule.
   {
     const source=new Backend('one\ntwo');
     const raw=new classes.RawDocument2D(source);
@@ -332,7 +332,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
       [{old:{start:p(0,0),end:p(0,1)},
         new:{start:p(0,0),end:p(0,1)}}]);
     assert.deepEqual(events.at(-1).invalidation,{all:true});
-    assert.deepEqual(notes.annotations,[]);
+    assert.deepEqual(notes.annotations,[note('two',1,1)]);
     notes.destroy();
     outer.destroy();
     inner.destroy();
