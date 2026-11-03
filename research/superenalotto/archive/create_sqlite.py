@@ -104,7 +104,9 @@ def main() -> int:
             fk = list(con.execute("PRAGMA foreign_key_check"))
             if fk:
                 raise RuntimeError(f"SQLite foreign-key violations: {fk[:4]}")
-        con.execute("PRAGMA integrity_check").fetchone()
+        integrity = con.execute("PRAGMA integrity_check").fetchone()
+        if integrity != ("ok",):
+            raise RuntimeError(f"SQLite integrity check failed: {integrity}")
     except BaseException:
         con.close()
         destination.unlink(missing_ok=True)
