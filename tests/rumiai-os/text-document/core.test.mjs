@@ -2173,8 +2173,8 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
     },
     new:
     {
-      start:{row:0,col:2,offset:2},
-      end:{row:0,col:3,offset:3}
+      start:{row:1,col:0,offset:2},
+      end:{row:1,col:1,offset:3}
     }
   });
   assert.equal(events[0].geometry.oldRowCount,2);
