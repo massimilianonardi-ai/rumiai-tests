@@ -1,0 +1,94 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
++ actual - expected
+
+  [
+    [
+      {
+        end: {
++         col: 1,
+-         col: 5,
+          row: 4
+        },
+        kind: 'text',
+        start: {
+          col: 0,
+          row: 4
+        },
++       text: 't'
+-       text: 'three'
+      },
++     {
++       end: {
++         col: 2,
++         row: 4
++       },
++       kind: 'text',
++       start: {
++         col: 1,
++         row: 4
++       },
++       text: 'h'
++     },
++     {
++       end: {
++         col: 3,
++         row: 4
++       },
++       kind: 'text',
++       start: {
++         col: 2,
++         row: 4
++       },
++       text: 'r'
++     }
+    ]
+  ]
+
+    at file:///Users/runner/work/rumiai-tests/rumiai-tests/rumiai-tests/tests/rumiai-os/text-document/core.test.mjs:792:10
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: [
+    [
+      {
+        kind: 'text',
+        text: 't',
+        start: { row: 4, col: 0 },
+        end: { row: 4, col: 1 }
+      },
+      {
+        kind: 'text',
+        text: 'h',
+        start: { row: 4, col: 1 },
+        end: { row: 4, col: 2 }
+      },
+      {
+        kind: 'text',
+        text: 'r',
+        start: { row: 4, col: 2 },
+        end: { row: 4, col: 3 }
+      }
+    ]
+  ],
+  expected: [
+    [
+      {
+        kind: 'text',
+        text: 'three',
+        start: { row: 4, col: 0 },
+        end: { row: 4, col: 5 }
+      }
+    ]
+  ],
+  operator: 'deepStrictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.22.1
+rumiai-os/text-document/core.test: document extraction/real core compilation checks failed
