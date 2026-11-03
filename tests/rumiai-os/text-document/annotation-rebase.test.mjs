@@ -289,8 +289,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // A protected synthetic fold does not offer pre/post input geometry.
-  // Releasing the fold must never pretend the marker was a source anchor.
+  // An old nonzero-column edit cannot be mapped by the current restricted
+  // whole-row fold geometry projection; the fold still clears on commit.
   {
     const source=new Backend('one\ntwo\nthree');
     const raw=new classes.RawDocument2D(source);
