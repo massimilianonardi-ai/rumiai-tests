@@ -51,7 +51,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
   });
   assert.ok(Object.isFrozen(events[0].geometry.edits[0].old.start));
   assert.equal('offset' in events[0].geometry.edits[0].new.end,false);
-  assert.equal('geometry' in nestedEvents[0],false);
+  assert.deepEqual(nestedEvents[0].geometry,events[0].geometry);
+  assert.deepEqual(nestedEvents[0].invalidation,{all:true});
   source.replace(1,1,'X');
   assert.equal(source.toString(),'AX\tZZ\n😀QX');
   assert.deepEqual(events[1].geometry.edits,
