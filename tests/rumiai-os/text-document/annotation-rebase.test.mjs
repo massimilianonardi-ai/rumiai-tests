@@ -264,6 +264,54 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
+  // Two annotation layers retain independent source anchors through one
+  // physical edit, but changing only the lower overlay configuration is
+  // not itself a text mutation and invalidates the upper view.
+  {
+    const t=open(Backend,'aa\nbb\ncc');
+    const outer=new classes.AnnotationDocument2D(t.notes);
+    const upperEvents=[];
+    outer.subscribe(event=>upperEvents.push(event));
+    t.notes.setAnnotations([note('lower',1,1)]);
+    outer.setAnnotations([note('upper',2,1)]);
+    const previousRevision=outer.revision;
+    t.source.replace(0,0,'Z');
+    assert.deepEqual(positions(t.notes),[['lower',1,1]]);
+    assert.deepEqual(positions(outer),[['upper',2,1]]);
+    assert.equal(outer.revision,previousRevision+1);
+    assert.deepEqual(upperEvents.at(-1).invalidation,{all:true});
+    assert.equal(upperEvents.at(-1).geometry.previousRevision,previousRevision);
+
+    t.notes.setAnnotations([note('new-lower',1,0)]);
+    assert.deepEqual(outer.annotations,[]);
+    assert.equal('geometry' in upperEvents.at(-1),false);
+    outer.destroy();
+    t.close();
+  }
+
+  // A protected synthetic fold does not offer pre/post input geometry.
+  // Releasing the fold must never pretend the marker was a source anchor.
+  {
+    const source=new Backend('one\ntwo\nthree');
+    const raw=new classes.RawDocument2D(source);
+    const cell=new classes.CellDocument2D(raw);
+    const fold=new classes.FoldDocument2D(cell);
+    fold.setFolds([{startRow:1,endRow:2}]);
+    const notes=new classes.AnnotationDocument2D(fold);
+    const events=[];
+    notes.subscribe(event=>events.push(event));
+    notes.setAnnotations([note('top',0,1),note('last',2,2)]);
+    source.replace(source.lineStart(2)+1,source.lineStart(2)+2,'H');
+    assert.deepEqual(fold.folds,[]);
+    assert.deepEqual(notes.annotations,[]);
+    assert.equal('geometry' in events.at(-1),false);
+    assert.deepEqual(events.at(-1).invalidation,{all:true});
+    notes.destroy();
+    fold.destroy();
+    cell.destroy();
+    raw.destroy();
+  }
+
   // A local overlay reconfiguration is not a physical mutation record.
   // A view above another cell view has no precommit physical geometry.
   {
