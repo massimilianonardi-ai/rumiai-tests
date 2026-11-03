@@ -143,7 +143,7 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     assert.equal(t.source.toString(),'abcdEfghiJ\nTAIL');
     assert.deepEqual(t.events.at(-1).geometry.edits,
     [
-      edit(p(0,10),p(0,11),p(0,9),p(0,10)),
+      edit(p(0,11),p(0,12),p(0,9),p(0,10)),
       edit(p(0,7),p(0,8),p(0,4),p(0,5))
     ]);
     t.close();
