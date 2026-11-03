@@ -1,0 +1,74 @@
+#!/bin/sh
+# External conformance runner for nst/JSONTestSuite/test_parsing.
+# Opt-in validation harness, not a default discovered .test.
+set -u
+
+[ "$#" -eq 2 ] || { printf '%s\n' 'usage: json-testsuite.run <json-command> <test_parsing-directory>' >&2; exit 2; }
+json_command=$1
+json_fixtures=$2
+[ -x "$json_command" ] || { printf '%s\n' "missing executable: $json_command" >&2; exit 2; }
+[ -d "$json_fixtures" ] || { printf '%s\n' "missing fixture directory: $json_fixtures" >&2; exit 2; }
+
+json_cases_y=0
+json_cases_n=0
+json_cases_i=0
+json_cases_i_accepted=0
+json_cases_i_rejected=0
+json_failures=0
+
+for json_fixture in "$json_fixtures"/*.json
+do
+  [ -f "$json_fixture" ] || { printf '%s\n' 'no JSONTestSuite fixtures found' >&2; exit 3; }
+  json_case=${json_fixture##*/}
+  case "$json_case" in
+    y_*) json_expect=accept; json_cases_y=$((json_cases_y + 1));;
+    n_*) json_expect=reject; json_cases_n=$((json_cases_n + 1));;
+    i_*) json_expect=either; json_cases_i=$((json_cases_i + 1));;
+    *) printf '%s\n' "unexpected fixture identity: $json_case" >&2; exit 3;;
+  esac
+
+  "$json_command" -c -- "$json_fixture" >/dev/null 2>&1
+  json_status=$?
+
+  if [ "$json_status" -ge 128 ]
+  then
+    printf '%s\n' "CRASH $json_case status=$json_status" >&2
+    json_failures=$((json_failures + 1))
+    continue
+  fi
+
+  if [ "$json_expect" = accept ]
+  then
+    if [ "$json_status" -ne 0 ]
+    then
+      printf '%s\n' "FAIL accept $json_case status=$json_status" >&2
+      json_failures=$((json_failures + 1))
+    fi
+  elif [ "$json_expect" = reject ]
+  then
+    if [ "$json_status" -eq 0 ]
+    then
+      printf '%s\n' "FAIL reject $json_case: was accepted" >&2
+      json_failures=$((json_failures + 1))
+    fi
+  elif [ "$json_status" -eq 0 ]
+  then
+    json_cases_i_accepted=$((json_cases_i_accepted + 1))
+  else
+    json_cases_i_rejected=$((json_cases_i_rejected + 1))
+  fi
+done
+
+json_total=$((json_cases_y + json_cases_n + json_cases_i))
+printf '%s\n' "JSONTestSuite totals: y=$json_cases_y n=$json_cases_n i=$json_cases_i total=$json_total"
+printf '%s\n' "JSONTestSuite optional i_: accepted=$json_cases_i_accepted rejected=$json_cases_i_rejected"
+printf '%s\n' "JSONTestSuite strict mismatches: $json_failures"
+
+if [ "$json_cases_y" -ne 95 ] || [ "$json_cases_n" -ne 188 ] || [ "$json_cases_i" -ne 35 ]
+then
+  printf '%s\n' 'JSONTestSuite fixture counts do not match the pinned corpus' >&2
+  exit 3
+fi
+
+[ "$json_failures" -eq 0 ] || exit 1
+exit 0

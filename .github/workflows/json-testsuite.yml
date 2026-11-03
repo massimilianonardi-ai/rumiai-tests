@@ -1,0 +1,46 @@
+name: JSONTestSuite - POSIX json conformance
+
+on:
+  push:
+    paths:
+      - .github/workflows/json-testsuite.yml
+      - tests/rumiai-os/json/json-testsuite.run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out validation suite
+        uses: actions/checkout@v4
+        with:
+          path: rumiai-tests
+          persist-credentials: false
+      - name: Check out exact parser revision
+        uses: actions/checkout@v4
+        with:
+          repository: massimilianonardi-ai/rumiai-os
+          ref: 53bac942ff9552de1770d7439dd2d547017aa9ea
+          path: rumiai-os
+          persist-credentials: false
+      - name: Check out exact external corpus
+        uses: actions/checkout@v4
+        with:
+          repository: nst/JSONTestSuite
+          ref: 1ef36fa01286573e846ac449e8683f8833c5b26a
+          path: JSONTestSuite
+          persist-credentials: false
+      - name: Report exact revisions and run raw conformance fixtures
+        shell: sh
+        run: |
+          set -eu
+          git -C rumiai-os rev-parse HEAD
+          git -C rumiai-tests rev-parse HEAD
+          git -C JSONTestSuite rev-parse HEAD
+          sh rumiai-tests/tests/rumiai-os/json/json-testsuite.run \
+            "$GITHUB_WORKSPACE/rumiai-os/bin/sys/json" \
+            "$GITHUB_WORKSPACE/JSONTestSuite/test_parsing"
