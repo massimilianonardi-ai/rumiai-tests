@@ -160,3 +160,20 @@ errori da floating point binario quando vengono importati in un DB.
 **La base dati non dimostra capacità predittiva.** In particolare,
 quote e numeri di vincite di un concorso sono noti soltanto dopo
 l'estrazione e non possono essere usati per prevederlo.
+
+
+## SQLite opzionale (nessun campo derivato)
+
+Per interrogare tutte le tabelle in un database relazionale locale, oltre ai CSV
+versionati è disponibile lo script Python standard library:
+
+\`\`\`bash
+python3 create_sqlite.py /percorso/archivio-superenalotto.sqlite
+\`\`\`
+
+Crea un database SQLite **locale** con chiavi, indici e controllo delle
+relazioni tra estrazioni, montepremi, premi, fonti storiche e Lotto.
+Mantiene gli importi monetari come **TEXT decimale esatto**, non
+floating point, e converte i campi vuoti in \`NULL\`. Non inventa
+alcun valore mancante, non calcola ritardi/frequenze e non modifica
+i CSV. La procedura non sovrascrive un database esistente.
