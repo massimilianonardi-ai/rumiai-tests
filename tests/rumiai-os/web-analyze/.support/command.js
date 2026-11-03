@@ -160,7 +160,7 @@ async function main()
     assert(capabilities.protocol.domains.some(domain =>
       domain.name === 'Network' && domain.commands.includes('getResponseBody')));
     const wire = fs.readFileSync(path.join(capture,'cdp-wire.jsonl'),'utf8')
-      .trim().split('\\n').filter(Boolean).map(JSON.parse);
+      .trim().split('\n').filter(Boolean).map(JSON.parse);
     assert(wire.length > 20, 'CDP wire ledger is unexpectedly small');
     assert(wire.every((entry,i) => entry.sequence === i + 1),
       'wire ledger ordering or sequence has a gap');
