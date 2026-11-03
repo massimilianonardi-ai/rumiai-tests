@@ -1,0 +1,138 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/json/command-conformance.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) : ;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+group_dir=${test_dir%/*}
+rumiai_os_group=${group_dir%/*}
+tests_dir=${rumiai_os_group%/*}
+suite_root=$tests_dir
+target_library=$suite_root/lib/rumiai-os-target.lib
+[ -f "$target_library" ] || error 'target helper is missing'
+. "$target_library" || error 'cannot load target helper'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) skip 'rumiai-os target checkout not found';;
+  2) fail 'explicit rumiai-os target is invalid';;
+  *) error 'target discovery failed';;
+esac
+command_file=$root/bin/sys/json
+[ -f "$command_file" ] && [ -x "$command_file" ] || fail 'json command is missing or not executable'
+IFS= read -r first_line < "$command_file" || first_line=
+[ "$first_line" = '#!/bin/sh' ] || fail 'json requires an exact POSIX shebang'
+
+# This is a standalone command; it must run without the m bootstrap.
+unset m_ROOT
+
+valid()
+{
+  input=$1
+  expected=$2
+  actual=$(printf '%s' "$input" | "$command_file") || fail "valid JSON rejected: $input"
+  [ "$actual" = "$expected" ] || fail "compaction mismatch for $input: $actual"
+  printf '%s' "$input" | "$command_file" -c > "$temp_dir/check-out" 2> "$temp_dir/check-err" || fail "check mode rejected $input"
+  [ ! -s "$temp_dir/check-out" ] || fail 'check mode wrote output'
+}
+invalid()
+{
+  input=$1
+  expected_status=$2
+  printf '%s' "$input" | "$command_file" > "$temp_dir/out" 2> "$temp_dir/err"
+  actual_status=$?
+  [ "$actual_status" -eq "$expected_status" ] || fail "invalid JSON returned $actual_status, expected $expected_status: $input"
+  [ ! -s "$temp_dir/out" ] || fail "invalid JSON leaked output: $input"
+  [ -s "$temp_dir/err" ] || fail 'invalid JSON did not explain the failure'
+}
+
+temp_dir=${TMPDIR:-/tmp}/rumiai-json-test-$$
+umask 077
+mkdir -m 700 -- "$temp_dir" || error 'cannot create temporary directory'
+trap 'rm -f -- "$temp_dir"/*; rmdir -- "$temp_dir"' 0
+trap 'exit 3' 1 2 3 15
+
+valid '{}' '{}'
+valid '[]' '[]'
+valid '0' '0'
+valid '-0' '-0'
+valid '2e999999999999999999999999999' '2e999999999999999999999999999'
+valid 'true' 'true'
+valid 'false' 'false'
+valid 'null' 'null'
+valid '"str"' '"str"'
+valid '"\u0000\n\t\uD800"' '"\u0000\n\t\uD800"'
+valid '{ "z": [ true, false, null, -1.25E+20 ], "z": { "x": "\\\\" } }' '{"z":[true,false,null,-1.25E+20],"z":{"x":"\\\\"}}'
+valid '[{},[],[0],{"a":{}},1e-200]' '[{},[],[0],{"a":{}},1e-200]'
+
+invalid '' 6
+invalid ' ' 6
+invalid '01' 6
+invalid '-01' 6
+invalid '1e+' 4
+invalid '1.' 4
+invalid '-' 4
+invalid '+1' 4
+invalid '.1' 4
+invalid 'true false' 6
+invalid '[1,]' 6
+invalid '[,]' 6
+invalid '[1 2]' 6
+invalid '{"a":1,}' 6
+invalid '[{"a":1,}]' 6
+invalid '{"a" 1}' 6
+invalid '{"a":1 "b":2}' 6
+invalid '{"a":}' 6
+invalid '"bad\q"' 4
+invalid '"bad\u12xz"' 4
+invalid '"unfinished' 4
+invalid '[1' 6
+invalid '{"a":1' 6
+invalid 'False' 4
+invalid 'NaN' 4
+
+# RFC 3629 byte-level UTF-8 regression cases (including overlong forms).
+for bad in 192 193 128 255
+do
+  LC_ALL=C command -p awk -v b="$bad" 'BEGIN { printf "\"%c\"", b }' |
+    "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err"
+  [ "$?" -eq 5 ] || fail "invalid UTF-8 byte $bad was not rejected as UTF-8"
+  [ ! -s "$temp_dir/out" ] || fail 'malformed UTF-8 leaked output'
+done
+LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c\"",237,160,128 }' |
+  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'UTF-8 surrogate encoding accepted'
+LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c%c\"",244,144,128,128 }' |
+  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'out-of-range UTF-8 accepted'
+LC_ALL=C command -p awk 'BEGIN { printf "%c%c%c{}",239,187,191 }' |
+  "$command_file" -c > "$temp_dir/out" 2> "$temp_dir/err" && fail 'BOM accepted'
+LC_ALL=C command -p awk 'BEGIN { printf "\"%c%c%c\"",226,130,172 }' |
+  "$command_file" -c || fail 'valid multibyte UTF-8 rejected'
+
+# Preserve streaming linearity for large strings and avoid recursive sh stacks.
+LC_ALL=C command -p awk 'BEGIN { printf "[\""; for (i=0;i<100000;i++) printf "x"; printf "\"]" }' > "$temp_dir/large" || error 'cannot generate large fixture'
+"$command_file" -c -- "$temp_dir/large" || fail 'large JSON document rejected'
+LC_ALL=C command -p awk 'BEGIN { for (i=0;i<1000;i++) printf "["; printf "0"; for (i=0;i<1000;i++) printf "]" }' | "$command_file" -c || fail '1000-level nesting rejected'
+
+"$command_file" -- "$temp_dir/large" > "$temp_dir/out" || fail 'file operand failed'
+[ -s "$temp_dir/out" ] || fail 'file operand produced no result'
+"$command_file" -- "$temp_dir/missing" > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 3 ] || fail 'missing file did not return status 3'
+"$command_file" -unknown > "$temp_dir/out" 2> "$temp_dir/err"
+[ "$?" -eq 2 ] || fail 'unknown option did not return status 2'
+
+exit 0
