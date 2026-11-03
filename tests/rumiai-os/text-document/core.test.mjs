@@ -910,7 +910,9 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   );
   assert.equal(source.toString(),'A\tX\r\n😀e\u0301Q\n');
   assert.equal(source.revision,textRevision+1);
-  assert.deepEqual(notes.annotations,[]);
+  // Edits at 'B' remove that anchor, but the unchanged prefix and
+  // existing empty row have exact source-to-view correspondence.
+  assert.deepEqual(notes.annotations,[selected[2],selected[1]]);
   const contentEvents=events.filter(e=>e.type==='content');
   assert.equal(contentEvents.length,2);
   assert.deepEqual(contentEvents[0].invalidation,{all:true});
@@ -984,7 +986,11 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   );
   assert.equal(source.toString(),'A\tQ\n😀x\n');
   assert.equal(source.revision,1);
-  assert.deepEqual(annotations.annotations,[]);
+  assert.deepEqual(annotations.annotations,
+    [
+      {id:'before',text:'start',at:point(0,1)},
+      {id:'eol',text:'empty-row',at:point(2,0)}
+    ]);
   assert.deepEqual(fold.folds,[]);
 
   fold.destroy();
