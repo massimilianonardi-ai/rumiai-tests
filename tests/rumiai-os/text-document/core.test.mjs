@@ -911,9 +911,10 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   assert.equal(source.toString(),'A\tX\r\n😀e\u0301Q\n');
   assert.equal(source.revision,textRevision+1);
   assert.deepEqual(notes.annotations,[]);
-  assert.equal(events.filter(e=>e.type==='content').length,2);
-  assert.deepEqual(events[0].invalidation,{all:true});
-  assert.deepEqual(events[1].invalidation,{all:true});
+  const contentEvents=events.filter(e=>e.type==='content');
+  assert.equal(contentEvents.length,2);
+  assert.deepEqual(contentEvents[0].invalidation,{all:true});
+  assert.deepEqual(contentEvents[1].invalidation,{all:true});
 
   notes.setAnnotations([{id:'new',text:'new',at:point(0,4)}]);
   const oldVersion=notes.revision;
