@@ -1310,4 +1310,166 @@ for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
 }
 
 
+
+// Multiple region correspondences can be composed without exposing source
+// coordinates to a consumer or allocating a second effective selection set.
+// The two inline folds conceal separate input intervals and reproject
+// four annotations through two independent row/column transforms.
+for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
+{
+  const source = new Backend('aaXX\nH1\nzzbb\nM\nccYY\nH2\nwwdd\nlast');
+  const raw = new RawDocument2D(source);
+  const notes = new AnnotationDocument2D(raw);
+  notes.setAnnotations
+  (
+    [
+      {id:'prefix1',text:'P1',at:point(0,1)},
+      {id:'hidden1',text:'H1',at:point(1,0)},
+      {id:'suffix1',text:'S1',at:point(2,3)},
+      {id:'prefix2',text:'P2',at:point(4,1)},
+      {id:'hidden2',text:'H2',at:point(5,0)},
+      {id:'suffix2',text:'S2',at:point(6,3)}
+    ]
+  );
+
+  const first = new FoldDocument2D(notes);
+  first.setInlineFold({start:point(0,2),end:point(2,2)});
+  const second = new FoldDocument2D(first);
+  second.setInlineFold({start:point(2,2),end:point(4,2)});
+  const cells = new CellDocument2D(second);
+  const before = source.toString();
+  const events = [];
+  cells.subscribe(event => events.push(event));
+
+  assert.equal(first.rowCount,6);
+  assert.equal(second.rowCount,4);
+  assert.deepEqual
+  (
+    cells.getRect(0,0,4,20),
+    ['aa…bb','M','cc…dd','last']
+  );
+  assert.deepEqual
+  (
+    cells.getRegions(0,0,4,20)
+      .map(regions => regions
+        .filter(region => region.kind === 'annotation')
+        .map(region => [region.id,region.start.row,region.start.col])),
+    [
+      [['prefix1',0,1],['suffix1',0,4]],
+      [],
+      [['prefix2',2,1],['suffix2',2,4]],
+      []
+    ]
+  );
+  assert.deepEqual
+  (
+    cells.getRegions(0,2,1,3),
+    [[{kind:'fold',text:'…',start:point(0,2),end:point(0,3)}]]
+  );
+  assert.deepEqual
+  (
+    cells.getRegions(2,2,3,3),
+    [[{kind:'fold',text:'…',start:point(2,2),end:point(2,3)}]]
+  );
+
+  // A disjoint visible selection maps all the way back to physical row 6.
+  cells.setSelections([range(2,3,2,5)]);
+  assert.deepEqual(raw.getSelections(),[range(6,2,6,4)]);
+  assert.deepEqual(cells.getSelections(),[range(2,3,2,5)]);
+  assert.deepEqual(cells.read(),['dd']);
+
+  // The left and right marker boundaries are intentionally NOT the same
+  // physical point; no whole source interval can be collapsed by equality.
+  cells.setSelections([range(0,2,0,2)]);
+  assert.deepEqual(raw.getSelections(),[range(0,2,0,2)]);
+  cells.setSelections([range(0,3,0,3)]);
+  assert.deepEqual(raw.getSelections(),[range(2,2,2,2)]);
+
+  for(const rangeEdit of [
+    {start:point(0,2),end:point(0,3),text:'X'},
+    {start:point(2,1),end:point(2,4),text:'X'},
+    {start:point(0,1),end:point(2,1),text:'X'}
+  ])
+  {
+    assert.throws
+    (
+      () => cells.replace([rangeEdit],cells.revision),
+      /folded/
+    );
+  }
+  assert.equal(source.toString(),before);
+  assert.equal(source.revision,0);
+
+  // Every layer translates the complete batch before the input's one
+  // physical commit, while all virtual configurations become invalid.
+  const stale=cells.revision;
+  cells.replace
+  (
+    [
+      {start:point(0,0),end:point(0,1),text:'A'},
+      {start:point(2,3),end:point(2,4),text:'D'}
+    ],
+    stale
+  );
+  assert.equal(source.revision,1);
+  assert.equal(source.toString(),
+    'AaXX\nH1\nzzbb\nM\nccYY\nH2\nwwDd\nlast');
+  assert.equal(first.inlineFold,null);
+  assert.equal(second.inlineFold,null);
+  assert.deepEqual(notes.annotations,[]);
+  assert.equal(cells.rowCount,8);
+  assert.equal(events.filter(event => event.type === 'content').length,1);
+  assert.deepEqual(events.find(event => event.type === 'content')
+    .invalidation,{all:true});
+  assert.throws
+  (
+    () => cells.replace
+    (
+      [{start:point(0,0),end:point(0,1),text:'Q'}],
+      stale
+    ),
+    /stale/
+  );
+
+  cells.destroy();
+  second.destroy();
+  first.destroy();
+  notes.destroy();
+  raw.destroy();
+}
+
+// The mapping must not silently choose one of two source-side insertion
+// anchors around an inline-fold marker. Both explicit points remain
+// independently addressable, although the marker itself is protected.
+{
+  const source=new extracted.PieceDocument('ab\nhidden\ncd');
+  const raw=new RawDocument2D(source);
+  const view=new FoldDocument2D(raw);
+  view.setInlineFold({start:point(0,1),end:point(2,1)});
+  assert.deepEqual(view.getRect(0,0,1,10),['a…d']);
+  assert.throws
+  (
+    () => view.replace
+    (
+      [{start:point(0,1),end:point(0,3),text:'bad'}],
+      view.revision
+    ),
+    /folded/
+  );
+  view.replace
+  (
+    [
+      {start:point(0,1),end:point(0,1),text:'L'},
+      {start:point(0,2),end:point(0,2),text:'R'}
+    ],
+    view.revision
+  );
+  assert.equal(source.toString(),'aLb\nhidden\ncRd');
+  assert.equal(source.revision,1);
+  assert.equal(view.inlineFold,null);
+  view.destroy();
+  raw.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
