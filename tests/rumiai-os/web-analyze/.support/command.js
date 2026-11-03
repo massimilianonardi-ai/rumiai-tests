@@ -16,11 +16,19 @@ ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
 const app = `document.addEventListener('DOMContentLoaded', () => {
   fetch('/data.json');
+  setTimeout(() => {
+    const hydrated = document.createElement('section');
+    hydrated.id = 'hydrated'; hydrated.textContent = 'Delayed hydrated content';
+    document.body.append(hydrated);
+    fetch('/hydrated.json');
+  }, 1200);
   document.querySelector('#list').addEventListener('scroll', () => {
     if (document.querySelector('#list').scrollTop > 50 && !document.querySelector('#lazy')) {
-      const button = document.createElement('button');
-      button.id = 'lazy'; button.textContent = 'Lazy control'; document.body.append(button);
-      fetch('/lazy.json');
+      setTimeout(() => {
+        const button = document.createElement('button');
+        button.id = 'lazy'; button.textContent = 'Lazy control'; document.body.append(button);
+        fetch('/lazy.json');
+      }, 700);
     }
   });
 });`;
@@ -56,16 +64,28 @@ async function main()
 
   const server = http.createServer((req, res) => {
     const location = new URL(req.url, 'http://127.0.0.1').pathname;
+    if (location === '/churn')
+    {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<!doctype html><title>Continuous mutations</title><body><div id="churn"></div><script>' +
+        'setInterval(() => document.querySelector("#churn").textContent = String(Date.now()), 90)' +
+        '</script></body>');
+      return;
+    }
     const data = {
       '/': [html, 'text/html'],
       '/view.css': ['.scroll {height: 160px; overflow-y: auto} p {height: 35px}', 'text/css'],
       '/app.js': [app, 'text/javascript'],
       '/data.json': ['{"initial":true}', 'application/json'],
-      '/lazy.json': ['{"lazy":true}', 'application/json']
+      '/lazy.json': ['{"lazy":true}', 'application/json'],
+      '/hydrated.json': ['{"hydrated":true}', 'application/json']
     }[location];
     if (!data) {res.statusCode=404;res.end('not found');return;}
     res.setHeader('Content-Type', data[1]);
-    res.end(data[0]);
+    if (location === '/hydrated.json')
+      setTimeout(() => res.end(data[0]), 600);
+    else
+      res.end(data[0]);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'web-analyze-command-'));
@@ -82,17 +102,34 @@ async function main()
     assert.equal(fs.statSync(capture).mode & 0o777, 0o700, 'recording directory is not private');
     for (const file of ['DOM.md', 'NETWORK.md', 'SCRIPTS.md', 'FLOWS.md',
       'LIMITATIONS.md', 'summary.json', 'resources.jsonl', 'scripts.jsonl',
-      'states/state-000.json', 'states/screen-000.png'])
+      'states/state-000.json', 'states/screen-000.png',
+      'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
+      'states/dom-rest-final.html', 'states/dom-rest-final.json'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
     assert(states.length >= 2, 'nested scroll was not explored');
+    assert.equal(states[0].settlement.status, 'settled',
+      'initial DOM must be observed after network and mutation quiescence');
+    assert.equal(states[0].settlement.inFlightRequests, 0,
+      'initial DOM must not be recorded while requests are pending');
+    assert(states[0].html.includes('Delayed hydrated content'),
+      'initial snapshot was taken before delayed hydration');
+    const initialDom = fs.readFileSync(path.join(capture, 'states/dom-rest-initial.html'), 'utf8');
+    assert(initialDom.includes('Delayed hydrated content'),
+      'full resting DOM did not capture delayed rendering');
+    const initialMeta = JSON.parse(fs.readFileSync(path.join(capture,
+      'states/dom-rest-initial.json'), 'utf8'));
+    assert.equal(initialMeta.settlement.status, 'settled');
+    assert(initialMeta.htmlBytes > 100, 'full resting DOM was empty');
+    const finalDom = fs.readFileSync(path.join(capture, 'states/dom-rest-final.html'), 'utf8');
+    assert(finalDom.includes('Lazy control'), 'final resting DOM omitted lazy control');
     assert(states.some(state => state.controls.some(control => control.label === 'Lazy control')),
       'lazy DOM control not captured');
     const responseIndex = fs.readFileSync(path.join(capture, 'resources.jsonl'), 'utf8')
       .trim().split('\n').map(JSON.parse);
-    for (const name of ['/app.js', '/view.css', '/data.json', '/lazy.json'])
+    for (const name of ['/app.js', '/view.css', '/data.json', '/lazy.json', '/hydrated.json'])
       assert(responseIndex.some(item => item.status === 'saved' && item.url?.endsWith(name)),
         'missing downloaded resource ' + name);
     assert(fs.readFileSync(path.join(capture, 'FLOWS.md'), 'utf8').includes('flowchart TD'));
@@ -102,6 +139,18 @@ async function main()
     assert.equal(repeated.code, 0, 'rerun must work without overwriting evidence: ' + repeated.stderr);
     assert.notEqual(repeated.stdout.trim(), result.stdout.trim());
     assert(fs.existsSync(report), 'rerun overwrote original report');
+
+    const continuous = await run([`http://127.0.0.1:${server.address().port}/churn`, base]);
+    assert.equal(continuous.code, 0, 'continuous page should retain timeout evidence: ' + continuous.stderr);
+    const continuousRun = path.dirname(continuous.stdout.trim());
+    const continuousState = JSON.parse(fs.readFileSync(path.join(continuousRun,
+      'states/state-000.json'), 'utf8'));
+    assert.equal(continuousState.settlement.status, 'timeout',
+      'continuous DOM changes must not be labelled settled');
+    assert(fs.existsSync(path.join(continuousRun, 'states/dom-rest-initial.html')),
+      'best-effort resting DOM must still be saved at timeout');
+    assert(fs.readFileSync(path.join(continuousRun, 'LIMITATIONS.md'), 'utf8')
+      .includes('States without confirmed settlement'), 'timeout not disclosed in report');
   }
   finally
   {
