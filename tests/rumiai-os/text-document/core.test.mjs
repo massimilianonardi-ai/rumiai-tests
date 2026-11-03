@@ -1952,6 +1952,26 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
     assert.equal(source.revision,0);
   }
 
+  // Descriptor getters are evaluated once when the derived relation is
+  // captured, even when they are stateful JavaScript accessors.
+  let sourceGetterReads=0;
+  view.setSubstitutions([
+    {
+      id:'once',
+      start:point(2,0),
+      end:point(2,1),
+      get sources()
+      {
+        sourceGetterReads++;
+        return [{start:point(1,0),end:point(1,2)}];
+      }
+    }
+  ]);
+  assert.equal(sourceGetterReads,1);
+  assert.deepEqual(view.getRect(2,0,3,4),['otnd']);
+  view.setSubstitutions([]);
+  assert.deepEqual(view.substitutions,[]);
+
   const inner=new SubstitutionDocument2D(cell);
   inner.setSubstitutions([
     {id:'protected',text:'!',start:point(1,1),end:point(1,3)}
