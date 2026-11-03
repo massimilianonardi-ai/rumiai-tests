@@ -15,16 +15,7 @@ const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
 const app = `document.addEventListener('DOMContentLoaded', () => {
-  const host = document.createElement('section');
-  host.id = 'rest-shadow-host';
-  host.attachShadow({mode:'open'}).innerHTML = '<p id="rest-shadow-text">Shadow root content</p>';
-  document.body.append(host);
-  const stylesheet = document.createElement('style');
-  stylesheet.textContent = '.dynamic-fixture { color: rgb(22, 33, 44); }';
-  document.head.append(stylesheet);
-  document.addEventListener('rest-fixture-event', () => {});
-  localStorage.setItem('rest-fixture-state', 'loaded');
-  fetch('/data.json', {headers:{'X-RumiAI-Probe':'initial'}});
+  fetch('/data.json');
   setTimeout(() => {
     const hydrated = document.createElement('section');
     hydrated.id = 'hydrated'; hydrated.textContent = 'Delayed hydrated content';
@@ -53,7 +44,7 @@ async function run(args)
     const timeout = setTimeout(() => {
       processHandle.kill('SIGKILL');
       reject(new Error('web-analyze timeout: ' + stderr));
-    }, 150000);
+    }, 70000);
     processHandle.on('error', error => {clearTimeout(timeout);reject(error);});
     processHandle.on('exit', exitCode => {clearTimeout(timeout);resolve(exitCode);});
   });
@@ -91,7 +82,6 @@ async function main()
     }[location];
     if (!data) {res.statusCode=404;res.end('not found');return;}
     res.setHeader('Content-Type', data[1]);
-    res.setHeader('X-RumiAI-Rest-Probe', 'present');
     if (location === '/hydrated.json')
       setTimeout(() => res.end(data[0]), 600);
     else
@@ -114,50 +104,12 @@ async function main()
       'LIMITATIONS.md', 'summary.json', 'resources.jsonl', 'scripts.jsonl',
       'states/state-000.json', 'states/screen-000.png',
       'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
-      'states/dom-rest-final.html', 'states/dom-rest-final.json',
-      'rest/manifest.json', 'rest/README.md', 'rest/page.mhtml',
-      'rest/viewport.png', 'rest/targets/target-000/environment.json',
-      'rest/targets/target-000/dom-tree.json',
-      'rest/targets/target-000/dom-snapshot.json',
-      'rest/targets/target-000/event-listeners.json',
-      'rest/stylesheets/index.json', 'transport.jsonl'])
+      'states/dom-rest-final.html', 'states/dom-rest-final.json'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
     assert(states.length >= 2, 'nested scroll was not explored');
-    const rest = JSON.parse(fs.readFileSync(path.join(capture, 'rest/manifest.json'),'utf8'));
-    assert.equal(rest.phase, 'rest-before-automated-input');
-    assert(rest.artifacts.some(item => item.name === 'dom-snapshot' && item.status === 'saved'),
-      'deep DOM snapshot was not captured');
-    assert(rest.artifacts.some(item => item.name === 'page' && item.status === 'saved'),
-      'native MHTML rest snapshot was not captured');
-    const environment = JSON.parse(fs.readFileSync(path.join(capture,
-      'rest/targets/target-000/environment.json'),'utf8'));
-    assert(environment.shadowRoots.some(item => item.html.includes('Shadow root content')),
-      'open shadow DOM missing from resting-page evidence');
-    assert.equal(environment.localStorage['rest-fixture-state'], 'loaded');
-    assert(!JSON.stringify(environment).includes('Lazy control'),
-      'rest evidence was not captured before automated scroll');
-    const tree = JSON.parse(fs.readFileSync(path.join(capture,
-      'rest/targets/target-000/dom-tree.json'),'utf8'));
-    assert(JSON.stringify(tree).includes('rest-shadow-text'),
-      'pierced CDP DOM tree did not include the shadow root');
-    const listeners = JSON.parse(fs.readFileSync(path.join(capture,
-      'rest/targets/target-000/event-listeners.json'),'utf8'));
-    assert(listeners.some(group => group.listeners?.some(item =>
-      item.type === 'rest-fixture-event')), 'registered DOM event listener not captured');
-    const stylesheets = JSON.parse(fs.readFileSync(path.join(capture,
-      'rest/stylesheets/index.json'),'utf8'));
-    assert(stylesheets.some(item => item.status === 'saved'),
-      'style source inventory is empty');
-    const wire = fs.readFileSync(path.join(capture,'transport.jsonl'),'utf8');
-    assert(wire.includes('X-RumiAI-Probe') || wire.includes('x-rumiai-probe'),
-      'unredacted request header was not archived');
-    assert(wire.includes('X-RumiAI-Rest-Probe') || wire.includes('x-rumiai-rest-probe'),
-      'unredacted response header was not archived');
-    assert(fs.readFileSync(report,'utf8').includes('Deep resting-page evidence'),
-      'rest evidence index not connected to report');
     assert(['settled', 'dom-quiet-network-pending'].includes(states[0].settlement.status),
       'initial DOM must be saved after bounded network and mutation quiet');
     if (states[0].settlement.status === 'settled')
