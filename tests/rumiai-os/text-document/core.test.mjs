@@ -60,7 +60,7 @@ const view=new IncompleteDocument2D();
 assert.equal(view instanceof Document2D,true);
 assert.equal(view instanceof extracted.Document,false);
 
-for(const name of ['rowCount','colCount','selectionMode','insertMode'])
+for(const name of ['rowCount','colCount','revision','selectionMode','insertMode'])
 {
   const descriptor=Object.getOwnPropertyDescriptor(Document2D.prototype,name);
   assert.equal(typeof descriptor.get,'function',name+' getter');
@@ -90,7 +90,7 @@ for
   const name of
   [
     'getRect','read','getSelections','setSelections','addSelection',
-    'remSelection','insert','subscribe','destroy'
+    'remSelection','insert','replace','subscribe','destroy'
   ]
 )
 {
@@ -360,5 +360,79 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
   view.destroy();
 }
 
+
+
+// A versioned 2D batch is translated to physical offsets before a SINGLE
+// Document commit. Its targets are independent of effective selections.
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source = new Backend('a\r\nb\tc\nlast');
+  const view = new RawDocument2D(source);
+  const notifications = [];
+
+  view.subscribe(event => notifications.push(event));
+  assert.equal(view.revision, 0);
+
+  const edits =
+  [
+    {start: point(0, 1), end: point(0, 1), text: '!'},
+    {start: point(1, 1), end: point(1, 2), text: 'X'}
+  ];
+
+  assert.strictEqual(view.replace(edits, view.revision), view);
+  assert.equal(source.toString(), 'a!\r\nbXc\nlast');
+  assert.equal(source.revision, 1);
+  assert.equal(view.revision, 1);
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].type, 'content');
+  assert.deepEqual(notifications[0].invalidation, {all: true});
+
+  const unchanged = source.toString();
+  const revision = view.revision;
+
+  assert.throws(() => view.replace(edits, 0), /stale/);
+  assert.throws(() => view.replace(edits), TypeError);
+  assert.throws(() => view.replace([], revision), RangeError);
+  assert.throws
+  (
+    () => view.replace
+    (
+      [{start: point(0, 0), end: point(0, 1), text: 'Q'},
+       {start: point(0, 0), end: point(0, 1), text: 'R'}],
+      revision
+    ),
+    RangeError
+  );
+  assert.throws
+  (
+    () => view.replace
+    (
+      [{start: point(0, 8), end: point(0, 8), text: '?'}],
+      revision
+    ),
+    RangeError
+  );
+  assert.throws
+  (
+    () => view.replace
+    (
+      [{start: point(9, 0), end: point(9, 0), text: '?'}],
+      revision
+    ),
+    RangeError
+  );
+
+  assert.equal(source.toString(), unchanged, 'rejected 2D edits do not commit');
+  assert.equal(source.revision, revision);
+  assert.equal(notifications.length, 1);
+
+  // A separate writer invalidates an old 2D coordinate snapshot.
+  source.replace(0, 0, 'z');
+  assert.equal(notifications.length, 2);
+  assert.equal(view.revision, revision + 1);
+  assert.throws(() => view.replace(edits, revision), /stale/);
+
+  view.destroy();
+}
 
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
