@@ -32,7 +32,7 @@ try
   writeFileSync(output,compilation.stdout);
   extracted=require(output).text?.document;
   assert.ok(extracted,'real core descriptor must export m.text.document');
-  assert.deepEqual(Object.keys(extracted).sort(),['CellDocument2D','Document','Document2D','FlatDocument','FoldDocument2D','PieceDocument','RawDocument2D']);
+  assert.deepEqual(Object.keys(extracted).sort(),['AnnotationDocument2D','CellDocument2D','Document','Document2D','FlatDocument','FoldDocument2D','PieceDocument','RawDocument2D']);
 }
 finally
 {
@@ -805,6 +805,252 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 
   fold.destroy();
   cells.destroy();
+  raw.destroy();
+}
+
+
+
+// Additive annotations are zero-width structured regions, not text cells.
+// The input retains exclusive ownership of selections and edit transactions.
+const AnnotationDocument2D=extracted.AnnotationDocument2D;
+assert.equal(typeof AnnotationDocument2D,'function');
+assert.throws(()=>new AnnotationDocument2D({}),TypeError);
+
+for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
+{
+  const source=new Backend('A\tB\r\n😀e\u0301Q\n');
+  const raw=new RawDocument2D(source);
+  const cells=new CellDocument2D(raw);
+  const notes=new AnnotationDocument2D(cells);
+  const events=[];
+  notes.subscribe(event=>events.push(event));
+
+  assert.equal(notes instanceof Document2D,true);
+  assert.equal(notes.rowCount,3);
+  assert.equal(notes.getRowWidth(0),5);
+  assert.equal(notes.colCount,5);
+  assert.deepEqual(notes.getRect(0,0,3,20),
+    ['A   B','😀e\u0301Q','']);
+
+  const revision=notes.revision;
+  const selected=[
+    {id:'B',at:point(0,4),text:'tooltip B'},
+    {id:'empty',at:point(2,0),text:'end-of-file'},
+    {id:'tab',at:point(0,1),text:'before tab'}
+  ];
+  assert.strictEqual(notes.setAnnotations(selected),notes);
+  assert.equal(notes.revision,revision+1);
+  assert.equal(source.revision,0,'view-local notes do not edit text');
+  assert.deepEqual(notes.annotations,
+    [selected[2],selected[0],selected[1]]);
+  assert.deepEqual(notes.getRect(0,0,3,20),
+    ['A   B','😀e\u0301Q','']);
+  assert.deepEqual
+  (
+    notes.getRegions(0,4,1,5),
+    [[
+      {kind:'annotation',id:'B',text:'tooltip B',
+        start:point(0,4),end:point(0,4)},
+      {kind:'text',text:'B',start:point(0,4),end:point(0,5)}
+    ]]
+  );
+  assert.deepEqual
+  (
+    notes.getRegions(2,0,3,1),
+    [[{kind:'annotation',id:'empty',text:'end-of-file',
+      start:point(2,0),end:point(2,0)}]]
+  );
+
+  // Published regions and configuration entries must never be writable
+  // references into either the mapping or the stored annotations.
+  const exposed=notes.getRegions(0,4,1,5)[0][0];
+  exposed.start.col=0;
+  exposed.end.col=2;
+  exposed.id='corrupt';
+  const descriptor=notes.annotations[0];
+  descriptor.at.col=99;
+  selected[0].at.col=0;
+  assert.equal(notes.annotations[1].at.col,4);
+  assert.equal(notes.getRegions(0,4,1,5)[0][0].id,'B');
+
+  const unchanged=notes.revision;
+  notes.setAnnotations(notes.annotations);
+  assert.equal(notes.revision,unchanged,'identical annotation set is a no-op');
+  assert.throws(()=>notes.setAnnotations([{id:'X',text:'a',at:point(0,2)}]),
+    /indivisible/);
+  assert.throws(()=>notes.setAnnotations(
+    [{id:'x',text:'a',at:point(0,1)},{id:'x',text:'b',at:point(0,4)}]),
+    /duplicate/);
+  assert.throws(()=>notes.setAnnotations(
+    [{id:'bad',text:'hi',at:point(3,0)}]),RangeError);
+  assert.equal(notes.revision,unchanged);
+  assert.equal(source.revision,0);
+  assert.deepEqual(notes.getRegions(0,0,1,1)[0]
+    .filter(r=>r.kind==='annotation').map(r=>r.id),[]);
+
+  // Source selected transfer cannot include annotation labels.
+  notes.setSelections([range(0,4,0,5)]);
+  assert.deepEqual(notes.read(),['B']);
+  assert.deepEqual(raw.getSelections(),[range(0,2,0,3)]);
+
+  const before=source.toString();
+  assert.throws(()=>notes.replace(
+    [{start:point(0,2),end:point(0,3),text:'?'}],notes.revision
+  ),/indivisible/);
+  assert.equal(source.toString(),before);
+  assert.throws(()=>notes.replace(
+    [{start:point(0,4),end:point(0,5),text:'!'}],revision
+  ),/stale/);
+
+  const textRevision=source.revision;
+  notes.replace
+  (
+    [{start:point(0,4),end:point(0,5),text:'X'}],
+    notes.revision
+  );
+  assert.equal(source.toString(),'A\tX\r\n😀e\u0301Q\n');
+  assert.equal(source.revision,textRevision+1);
+  assert.deepEqual(notes.annotations,[]);
+  assert.equal(events.filter(e=>e.type==='content').length,2);
+  assert.deepEqual(events[0].invalidation,{all:true});
+  assert.deepEqual(events[1].invalidation,{all:true});
+
+  notes.setAnnotations([{id:'new',text:'new',at:point(0,4)}]);
+  const oldVersion=notes.revision;
+  source.replace(0,0,'z');
+  assert.equal(notes.revision,oldVersion+1);
+  assert.deepEqual(notes.annotations,[]);
+  assert.throws(()=>notes.replace(
+    [{start:point(0,4),end:point(0,5),text:'Z'}],oldVersion
+  ),/stale/);
+
+  notes.destroy();
+  assert.doesNotThrow(()=>notes.destroy());
+  assert.throws(()=>notes.getSelections(),/destroyed/);
+  assert.doesNotThrow(()=>cells.getSelections());
+  cells.destroy();
+  raw.destroy();
+}
+
+// Annotations can also sit BELOW CellDocument2D: token/byte offsets
+// are converted to displayed cell boundaries; the note remains zero-width.
+{
+  const source=new extracted.PieceDocument('A\tB\n😀x\n');
+  const raw=new RawDocument2D(source);
+  const annotations=new AnnotationDocument2D(raw);
+  const cells=new CellDocument2D(annotations);
+  const fold=new FoldDocument2D(cells);
+
+  annotations.setAnnotations
+  (
+    [
+      {id:'before',text:'start',at:point(0,1)},
+      {id:'after',text:'end',at:point(0,2)},
+      {id:'eol',text:'empty-row',at:point(2,0)}
+    ]
+  );
+
+  assert.deepEqual(cells.getRect(0,0,3,20),['A   B','😀x','']);
+  assert.deepEqual
+  (
+    cells.getRegions(0,0,1,10)[0]
+      .filter(region=>region.kind==='annotation')
+      .map(region=>[region.id,region.start.col,region.end.col]),
+    [['before',1,1],['after',4,4]]
+  );
+  assert.deepEqual
+  (
+    cells.getRegions(2,0,3,1)[0]
+      .filter(region=>region.kind==='annotation')
+      .map(region=>[region.id,region.start.col]),
+    [['eol',0]]
+  );
+
+  // Folding passes visible annotation IDs but does not read hidden rows.
+  fold.setFolds([{startRow:1,endRow:2}]);
+  assert.deepEqual(fold.getRegions(0,0,1,10)[0]
+    .filter(r=>r.kind==='annotation').map(r=>r.id),
+    ['before','after']);
+  assert.deepEqual(fold.getRegions(1,0,2,2),
+    [[{kind:'fold',text:'…',start:point(1,0),end:point(1,1)}]]);
+  assert.deepEqual(fold.getRect(0,0,3,20),['A   B','…','']);
+
+  // Multiple layers can be composed without copy/edit of metadata.
+  fold.replace
+  (
+    [{start:point(0,4),end:point(0,5),text:'Q'}],
+    fold.revision
+  );
+  assert.equal(source.toString(),'A\tQ\n😀x\n');
+  assert.equal(source.revision,1);
+  assert.deepEqual(annotations.annotations,[]);
+  assert.deepEqual(fold.folds,[]);
+
+  fold.destroy();
+  cells.destroy();
+  annotations.destroy();
+  raw.destroy();
+}
+
+// Reject annotation endpoints on a source-less fold row; an input-owned
+// selection or edit can never target a note as if it occupied source text.
+{
+  const source=new extracted.PieceDocument('one\ntwo\nthree');
+  const raw=new RawDocument2D(source);
+  const fold=new FoldDocument2D(raw);
+  fold.setFolds([{startRow:1,endRow:2}]);
+  const notes=new AnnotationDocument2D(fold);
+  assert.throws(()=>notes.setAnnotations(
+    [{id:'bad',text:'no',at:point(1,0)}]),/source-less/);
+  notes.setAnnotations([{id:'good',text:'yes',at:point(0,1)}]);
+  assert.deepEqual(notes.getRegions(0,0,1,4)[0]
+    .filter(r=>r.kind==='annotation').map(r=>r.id),['good']);
+  assert.equal(source.toString(),'one\ntwo\nthree');
+  notes.destroy();
+  fold.destroy();
+  raw.destroy();
+}
+
+// A note at a raw UTF-16 boundary may lie inside a logical grapheme.
+// CellDocument2D must fail rather than misrepresent its view coordinate.
+{
+  const source=new extracted.PieceDocument('😀X');
+  const raw=new RawDocument2D(source);
+  const notes=new AnnotationDocument2D(raw);
+  const cells=new CellDocument2D(notes);
+  notes.setAnnotations([{id:'split',text:'bad',at:point(0,1)}]);
+  assert.throws(()=>cells.getRegions(0,0,1,4),
+    /annotation anchor splits an indivisible grapheme/);
+  assert.equal(source.toString(),'😀X');
+  cells.destroy();
+  notes.destroy();
+  raw.destroy();
+}
+
+// Bounded reads of a long physical line must not expand the complete
+// source text merely because a separate region carries an annotation.
+{
+  class ObservedRaw extends RawDocument2D
+  {
+    largestWindow=0;
+    getRegions(...args)
+    {
+      this.largestWindow=Math.max(this.largestWindow,args[3]-args[1]);
+      return super.getRegions(...args);
+    }
+  }
+
+  const source=new extracted.PieceDocument('a'.repeat(100000)+'Z');
+  const raw=new ObservedRaw(source);
+  const notes=new AnnotationDocument2D(raw);
+  const cells=new CellDocument2D(notes);
+  notes.setAnnotations([{id:'first',text:'tip',at:point(0,1)}]);
+  assert.deepEqual(cells.getRect(0,0,1,5),['aaaaa']);
+  assert.deepEqual(cells.getRegions(0,0,1,5)[0]
+    .filter(r=>r.kind==='annotation').map(r=>r.id),['first']);
+  assert.ok(raw.largestWindow<=2048);
+  cells.destroy();
+  notes.destroy();
   raw.destroy();
 }
 
