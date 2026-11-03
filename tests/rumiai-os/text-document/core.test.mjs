@@ -1085,4 +1085,227 @@ for(const Backend of [extracted.FlatDocument,extracted.PieceDocument])
 }
 
 
+
+// An inline fold joins a visible prefix and suffix from different input
+// rows without materializing the hidden rows or changing their contents.
+// A protected marker separates two independently editable source fragments.
+for(const Backend of [extracted.FlatDocument, extracted.PieceDocument])
+{
+  const source = new Backend('AAxx\r\nsecret\nzzBB\nlast');
+  const raw = new RawDocument2D(source);
+  const view = new FoldDocument2D(raw);
+  const cells = new CellDocument2D(view);
+  const pointA = point(0, 2), pointB = point(2, 2);
+  const config = {start:pointA, end:pointB};
+  const notices = [];
+
+  view.subscribe(event => notices.push(event));
+  assert.strictEqual(view.setInlineFold(config), view);
+  assert.deepEqual(view.inlineFold,config);
+  assert.deepEqual(view.folds,[]);
+  assert.equal(view.rowCount,2);
+  assert.equal(view.getRowWidth(0),5);
+  assert.equal(view.colCount,5);
+  assert.deepEqual(view.getRect(0,0,2,10),['AA…BB','last']);
+  assert.deepEqual(view.getRect(0,1,1,2),['A']);
+  assert.deepEqual(view.getRect(0,2,1,3),['…']);
+  assert.deepEqual(view.getRect(0,3,1,5),['BB']);
+  assert.deepEqual(view.getRect(0,5,1,10),['']);
+  assert.deepEqual(view.getRegions(0,2,1,4),
+    [[
+      {kind:'fold',text:'…',start:point(0,2),end:point(0,3)},
+      {kind:'text',text:'B',start:point(0,3),end:point(0,4)}
+    ]]);
+  assert.deepEqual(cells.getRect(0,0,2,10),['AA…BB','last']);
+  assert.deepEqual(cells.getRegions(0,2,1,3),
+    [[{kind:'fold',text:'…',start:point(0,2),end:point(0,3)}]]);
+  assert.equal(notices.filter(e=>e.type==='content').length,1);
+  assert.deepEqual(notices[0].invalidation,{all:true});
+
+  // Published configuration, regions and original input must be isolated.
+  config.start.col=0;
+  const exposed=view.inlineFold;
+  exposed.end.row=0;
+  const shown=view.getRegions(0,2,1,3)[0][0];
+  shown.start.col=0;
+  assert.deepEqual(view.inlineFold,
+    {start:point(0,2),end:point(2,2)});
+  assert.equal(view.getRegions(0,2,1,3)[0][0].start.col,2);
+  const sameVersion=view.revision;
+  view.setInlineFold(view.inlineFold);
+  assert.equal(view.revision,sameVersion);
+
+  const unchanged=source.toString();
+  const changes=[
+    [{start:point(0,2),end:point(0,3),text:'X'}],
+    [{start:point(0,1),end:point(0,4),text:'X'}],
+    [{start:point(0,0),end:point(1,0),text:'X'}]
+  ];
+  for(const edits of changes)
+  {
+    assert.throws(()=>view.replace(edits,view.revision),
+      /crosses inline folded/);
+    assert.throws(()=>cells.replace(edits,cells.revision),
+      /crosses inline folded/);
+  }
+  assert.equal(source.toString(),unchanged);
+  assert.equal(source.revision,0);
+
+  assert.throws(()=>view.setSelections([range(0,1,0,4)]),
+    /crosses inline folded/);
+  assert.throws(()=>view.setSelections([range(0,0,1,1)]),
+    /crosses inline folded/);
+  raw.setSelections([range(1,0,1,1)]);
+  assert.throws(()=>view.getSelections(),/folded source interval/);
+  assert.throws(()=>view.read(),/folded source interval/);
+  assert.throws(()=>view.insert('X'),/folded source interval/);
+  assert.equal(source.toString(),unchanged);
+
+  // Both editable segments round-trip through the single physical
+  // selection owner, including a caret immediately next to the fold.
+  view.setSelections([range(0,3,0,5)]);
+  assert.deepEqual(raw.getSelections(),[range(2,2,2,4)]);
+  assert.deepEqual(view.read(),['BB']);
+  assert.deepEqual(view.getSelections(),[range(0,3,0,5)]);
+  view.setSelections([range(0,0,0,2)]);
+  assert.deepEqual(raw.getSelections(),[range(0,0,0,2)]);
+  assert.deepEqual(view.read(),['AA']);
+  view.setSelections([range(0,2,0,2)]);
+  assert.deepEqual(raw.getSelections(),[range(0,2,0,2)]);
+
+  // All accepted changes are mapped before exactly one physical commit.
+  view.replace
+  (
+    [
+      {start:point(0,0),end:point(0,1),text:'a'},
+      {start:point(0,3),end:point(0,4),text:'b'}
+    ],
+    view.revision
+  );
+  assert.equal(source.toString(),'aAxx\r\nsecret\nzzbB\nlast');
+  assert.equal(source.revision,1);
+  assert.equal(view.inlineFold,null);
+  assert.equal(view.rowCount,4);
+  assert.equal(cells.rowCount,4);
+  assert.throws(()=>view.replace
+  (
+    [{start:point(0,3),end:point(0,4),text:'C'}],
+    sameVersion
+  ),/stale/);
+
+  view.setInlineFold({start:point(0,1),end:point(2,2)});
+  const staleAfterExternal=view.revision;
+  source.replace(0,0,'!');
+  assert.equal(view.inlineFold,null);
+  assert.equal(view.revision,staleAfterExternal+1);
+  assert.throws(()=>view.replace
+  (
+    [{start:point(0,0),end:point(0,1),text:'?'}],
+    staleAfterExternal
+  ),/stale/);
+  assert.equal(notices.filter(e=>e.type==='content').length,4);
+
+  // Inline and whole-row modes are mutually exclusive in one view.
+  view.setInlineFold({start:point(0,1),end:point(2,2)});
+  view.setFolds([{startRow:1,endRow:3}]);
+  assert.equal(view.inlineFold,null);
+  assert.deepEqual(view.folds,[{startRow:1,endRow:3}]);
+  view.setInlineFold({start:point(0,1),end:point(2,2)});
+  assert.deepEqual(view.folds,[]);
+  view.setInlineFold(null);
+  assert.equal(view.inlineFold,null);
+
+  assert.throws(()=>view.setInlineFold(
+    {start:point(2,1),end:point(2,2)}),RangeError);
+  assert.throws(()=>view.setInlineFold(
+    {start:point(0,100),end:point(2,2)}),RangeError);
+  assert.throws(()=>view.setInlineFold(
+    {start:point(0,1),end:point(99,1)}),RangeError);
+  assert.equal(view.inlineFold,null);
+
+  cells.destroy();
+  view.destroy();
+  raw.destroy();
+}
+
+// The suffix's TAB geometry depends on which layer owns cell expansion.
+// Both orders must remain coherent without editing the folded token.
+{
+  const source=new extracted.PieceDocument('Axxx\nhidden\n\tB\nend');
+  const raw=new RawDocument2D(source);
+  const inline=new FoldDocument2D(raw);
+  const cellAbove=new CellDocument2D(inline);
+  inline.setInlineFold({start:point(0,1),end:point(2,0)});
+  assert.deepEqual(inline.getRect(0,0,2,20),['A…\tB','end']);
+  assert.deepEqual(cellAbove.getRect(0,0,2,20),['A…  B','end']);
+
+  const cellBelow=new CellDocument2D(raw);
+  const foldedCell=new FoldDocument2D(cellBelow);
+  foldedCell.setInlineFold({start:point(0,1),end:point(2,0)});
+  assert.deepEqual(foldedCell.getRect(0,0,2,20),['A…    B','end']);
+  assert.equal(foldedCell.getRowWidth(0),7);
+  assert.throws(()=>foldedCell.setInlineFold(
+    {start:point(0,1),end:point(2,2)}),/indivisible/);
+  assert.equal(source.revision,0);
+
+  cellAbove.destroy();
+  inline.destroy();
+  foldedCell.destroy();
+  cellBelow.destroy();
+  raw.destroy();
+}
+
+// Zero-width annotations on visible prefix/suffix fragments survive the
+// row splice; annotations inside the hidden rows are absent.
+{
+  const source=new extracted.PieceDocument('abcd\nhidden\nxyzQ');
+  const raw=new RawDocument2D(source);
+  const notes=new AnnotationDocument2D(raw);
+  const view=new FoldDocument2D(notes);
+  notes.setAnnotations
+  (
+    [
+      {id:'prefix',text:'P',at:point(0,1)},
+      {id:'hidden',text:'H',at:point(1,1)},
+      {id:'suffix',text:'S',at:point(2,3)}
+    ]
+  );
+  view.setInlineFold({start:point(0,2),end:point(2,2)});
+  const visible=view.getRegions(0,0,1,10);
+  assert.deepEqual(visible[0].filter(x=>x.kind==='annotation')
+    .map(x=>[x.id,x.start.col]),
+    [['prefix',1],['suffix',4]]);
+  assert.equal(view.getRect(0,0,1,10)[0],'ab…zQ');
+  view.destroy();
+  notes.destroy();
+  raw.destroy();
+}
+
+// A joined view requests just the two visible fragments, never the
+// hidden source rows, even when they contain very long text.
+{
+  class ObservedRaw extends RawDocument2D
+  {
+    rowsRead=[];
+    getRegions(...args)
+    {
+      this.rowsRead.push(args[0]);
+      return super.getRegions(...args);
+    }
+  }
+
+  const source=new extracted.PieceDocument(
+    'prefix\n'+'x'.repeat(100000)+'\nsuffix');
+  const raw=new ObservedRaw(source);
+  const view=new FoldDocument2D(raw);
+  view.setInlineFold({start:point(0,3),end:point(2,3)});
+  raw.rowsRead=[];
+  assert.deepEqual(view.getRect(0,0,1,12),['pre…fix']);
+  view.getRegions(0,0,1,12);
+  assert.ok(raw.rowsRead.every(row=>row===0||row===2));
+  view.destroy();
+  raw.destroy();
+}
+
+
 console.log('m.text.document extraction parity PASS '+verified+' committed edit comparisons');
