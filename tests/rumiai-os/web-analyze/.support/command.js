@@ -25,6 +25,19 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('rest-probe', () => {});
   localStorage.setItem('fixtureSession', 'fixture-only-access');
   sessionStorage.setItem('fixtureView', 'test-123');
+  const database = indexedDB.open('rest-database', 1);
+  database.onupgradeneeded = () => database.result.createObjectStore('records', {keyPath:'id'});
+  database.onsuccess = () => {
+    const transaction = database.result.transaction('records', 'readwrite');
+    transaction.objectStore('records').put({id:'alpha', value:'idb-payload'});
+    transaction.oncomplete = () => {
+      document.body.dataset.idbReady = 'yes';
+      database.result.close();
+    };
+  };
+  caches.open('rest-cache')
+    .then(cache => cache.put('/cached-fixture', new Response('cached-payload')))
+    .then(() => {document.body.dataset.cacheReady = 'yes';});
   fetch('/data.json', {headers:{'X-Fixture-Request':'captured'}});
   setTimeout(() => {
     const hydrated = document.createElement('section');
@@ -122,7 +135,10 @@ async function main()
       'rest/targets/target-000/dom-snapshot.json',
       'rest/resources-at-rest.jsonl', 'rest/scripts-at-rest.jsonl',
       'rest/cookies.json', 'rest/targets/target-000/storage.json',
-      'network-details.jsonl', 'rest/network-details-at-rest.jsonl'])
+      'network-details.jsonl', 'rest/network-details-at-rest.jsonl',
+      'rest/targets/target-000/indexeddb/index.json',
+      'rest/targets/target-000/cache-storage/index.json',
+      'rest/targets/target-000/storage-usage.json'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
@@ -146,6 +162,19 @@ async function main()
       'rest/targets/target-000/storage.json'), 'utf8'));
     assert.equal(storage.localStorage.values.fixtureSession, 'fixture-only-access');
     assert.equal(storage.sessionStorage.values.fixtureView, 'test-123');
+    const dbIndex = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/indexeddb/index.json'), 'utf8'));
+    assert(dbIndex.databases.some(db => db.name === 'rest-database' &&
+      db.stores.some(store => store.name === 'records' && store.entries >= 1)),
+      'IndexedDB data was not enumerated');
+    const cacheIndex = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/cache-storage/index.json'), 'utf8'));
+    const cached = cacheIndex.caches.flatMap(cache => cache.entries)
+      .find(item => item.requestURL?.endsWith('/cached-fixture'));
+    assert(cached?.body?.status === 'saved', 'cached response body not preserved');
+    const cachedBody = fs.readFileSync(path.join(capture,
+      'rest/targets/target-000/cache-storage', cached.body.file), 'utf8');
+    assert.equal(cachedBody, 'cached-payload');
     const details = fs.readFileSync(path.join(capture, 'network-details.jsonl'), 'utf8');
     assert(details.includes('X-Fixture-Request'),
       'full HTTP request metadata was not preserved');
