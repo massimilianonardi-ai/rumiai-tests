@@ -289,8 +289,8 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     t.close();
   }
 
-  // An old nonzero-column edit cannot be mapped by the current restricted
-  // whole-row fold geometry projection; the fold still clears on commit.
+  // A direct raw-backed cell view now certifies old nonzero fold cuts,
+  // but annotations above the collapsing fold still clear conservatively.
   {
     const source=new Backend('one\ntwo\nthree');
     const raw=new classes.RawDocument2D(source);
@@ -304,7 +304,9 @@ for(const Backend of [classes.FlatDocument,classes.PieceDocument])
     source.replace(source.lineStart(2)+1,source.lineStart(2)+2,'H');
     assert.deepEqual(fold.folds,[]);
     assert.deepEqual(notes.annotations,[]);
-    assert.equal('geometry' in events.at(-1),false);
+    assert.deepEqual(events.at(-1).geometry.edits,
+      [{old:{start:p(2,1),end:p(2,2)},
+        new:{start:p(2,1),end:p(2,2)}}]);
     assert.deepEqual(events.at(-1).invalidation,{all:true});
     notes.destroy();
     fold.destroy();
