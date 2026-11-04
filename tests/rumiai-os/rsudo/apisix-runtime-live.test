@@ -372,6 +372,21 @@ do
     fail 'nonconventional Docker process prefix was not discovered and verified'
   }
 
+  # A running master with a known -p prefix but no longer an observable
+  # generated nginx.conf must not be silently counted as no candidate.
+  docker exec "$cid" sh -c '
+    mv /tmp/rsudo-apisix-alt/conf/nginx.conf /tmp/rsudo-apisix-alt/conf/nginx.conf.rsudo-held
+  ' || error 'cannot stage absent process-prefix config'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 58 ] && [ -z "$result" ] ||
+    fail 'observed master with missing generated configuration was silently skipped'
+  grep -Fx 'apisix.runtime.docker-master-generated-config-missing' "$tmp/stderr" >/dev/null ||
+    fail 'missing distinct process-prefix generated-config diagnostic'
+  docker exec "$cid" sh -c '
+    mv /tmp/rsudo-apisix-alt/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-alt/conf/nginx.conf
+  ' || error 'cannot restore process-prefix generated configuration'
+
   # Stale conventional config generated after startup must not override the
   # observed running -p prefix.
   docker exec "$cid" sh -c '
