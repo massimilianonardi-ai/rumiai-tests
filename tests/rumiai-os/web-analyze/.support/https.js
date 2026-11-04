@@ -53,7 +53,11 @@ function certificates(work)
 
 function browserTrust(work)
 {
-  const home = path.join(work, 'home');
+  // The validation environment owns its HOME. Tests may set up fixture data
+  // inside that supplied disposable environment but must not replace it.
+  const home = process.env.HOME;
+  assert(home && home === process.env.RUMIAI_TEST_TLS_EPHEMERAL_HOME,
+    'HTTPS fixture requires an externally supplied disposable HOME');
   const db = path.join(home,'.pki','nssdb');
   fs.mkdirSync(db, {mode:0o700, recursive:true});
   execute('certutil',['-N','-d','sql:' + db,'--empty-password'],work);
@@ -61,7 +65,6 @@ function browserTrust(work)
     '-A','-d','sql:' + db,'-n','RumiAI disposable fixture CA',
     '-t','C,,','-i',path.join(work,'ca.pem')
   ],work);
-  return home;
 }
 
 function run(commandArgs, env)
@@ -181,7 +184,7 @@ async function main()
   try
   {
     certificates(work);
-    const home = browserTrust(work);
+    browserTrust(work);
     const cert = fs.readFileSync(path.join(work,'server.pem'));
     server = https.createServer({
       key:fs.readFileSync(path.join(work,'server.key')), cert
@@ -194,8 +197,7 @@ async function main()
     await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
     const url = 'https://127.0.0.1:' + server.address().port +
       '/?token=tls-secret-query-marker';
-    const env = {
-      ...process.env,HOME:home,
+    const env = {...process.env,
       m_ROOT:productRoot,m_LIB_DIR:path.join(productRoot,'lib')
     };
     const result = await run([url,path.join(work,'reports')],env);
