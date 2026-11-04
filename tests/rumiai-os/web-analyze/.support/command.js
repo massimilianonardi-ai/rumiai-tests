@@ -23,6 +23,24 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   host.id = 'shadow-probe';
   host.attachShadow({mode:'open'}).innerHTML = '<b id="shadow-inner">Shadow content</b>';
   document.body.append(host);
+  // A transient node is created, changed and removed within one task.
+  const transient = document.createElement('aside');
+  transient.id = 'ephemeral-dom-history';
+  transient.textContent = 'private-transient-value';
+  document.body.append(transient);
+  transient.setAttribute('data-phase', 'created');
+  transient.firstChild.nodeValue = 'private-transient-after-change';
+  transient.remove();
+  const secretHost = document.createElement('article');
+  secretHost.id = 'closed-shadow-host';
+  const closedRoot = secretHost.attachShadow({mode:'closed'});
+  const nestedHost = document.createElement('div');
+  nestedHost.id = 'nested-shadow-host';
+  closedRoot.append(nestedHost);
+  nestedHost.attachShadow({mode:'open'}).innerHTML =
+    '<span id="nested-shadow-content">nested content</span>';
+  document.body.append(secretHost);
+  nestedHost.setAttribute('data-visible-inside-closed', 'yes');
   const dynamicStyle = document.createElement('style');
   dynamicStyle.textContent = '.dynamic-probe { color: blue; }';
   document.head.append(dynamicStyle);
@@ -150,7 +168,10 @@ async function main()
       return;
     }
     res.end('<!doctype html><title>Cross-origin frame</title>' +
-      '<body><p id="cross-origin-content">Independent origin</p></body>');
+      '<body><p id="cross-origin-content">Independent origin</p>' +
+      '<script>const marker=document.createElement("b");' +
+      'marker.id="cross-frame-transient";document.body.append(marker);' +
+      'marker.remove();</script></body>');
   });
   await new Promise(resolve => crossServer.listen(0, '127.0.0.1', resolve));
   const crossUrl = 'http://127.0.0.1:' + crossServer.address().port + '/child.html';
@@ -242,7 +263,10 @@ async function main()
         'self.addEventListener("install",()=>{});self.addEventListener("activate",()=>{});',
         'text/javascript'],
       '/frame.html': [
-        '<!doctype html><title>Frame child</title><body><p>Same-origin iframe</p></body>',
+        '<!doctype html><title>Frame child</title><body><p>Same-origin iframe</p>' +
+          '<script>const marker=document.createElement("b");' +
+          'marker.id="same-frame-transient";document.body.append(marker);' +
+          'marker.remove();</script></body>',
         'text/html'],
       '/data.json': ['{"initial":true}', 'application/json'],
       '/lazy.json': ['{"lazy":true}', 'application/json'],
@@ -293,7 +317,9 @@ async function main()
       'rest/targets/target-000/indexeddb/index.json',
       'rest/targets/target-000/cache-storage/index.json',
       'rest/targets/target-000/storage-usage.json',
-      'rest/target-graph-initial.json', 'rest/target-graph-final.json'])
+      'rest/target-graph-initial.json', 'rest/target-graph-final.json',
+      'dom-mutations.jsonl', 'rest/dom-mutations-at-rest.jsonl',
+      'rest/dom-history-contexts.json'])
       assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
@@ -342,6 +368,60 @@ async function main()
     for (const file of ['cdp-wire.jsonl','cdp-capabilities.json','cdp-protocol.json'])
       assert.equal(fs.statSync(path.join(capture,file)).mode & 0o777, 0o600,
         'CDP evidence files must be private: ' + file);
+    const history = fs.readFileSync(path.join(capture,
+      'dom-mutations.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert(history.length > 10, 'DOM history did not record page activity');
+    assert(history.every((item, index) => item.sequence === index + 1),
+      'raw DOM history contains a missing/reordered event');
+    const batches = history.filter(item => item.detail.type === 'mutation-batch');
+    const changes = batches.flatMap(item => item.detail.records);
+    const appeared = changes.flatMap(change => change.added || [])
+      .find(node => node?.html?.value?.includes('ephemeral-dom-history'));
+    assert(appeared, 'short-lived element was not captured at insertion');
+    assert(changes.some(change => change.removed?.some(node =>
+      node.id === appeared.id)), 'transient element removal was not preserved');
+    assert(changes.some(change => change.type === 'attributes' &&
+      change.name === 'data-phase'), 'DOM attribute history was not saved');
+    assert(changes.some(change => change.type === 'characterData' &&
+      change.current?.value === 'private-transient-after-change'),
+      'DOM text change was not preserved');
+    assert(history.some(item => item.detail.type === 'shadow-attached' &&
+      item.detail.mode === 'closed'), 'closed ShadowRoot attachment missing');
+    assert(history.some(item => item.detail.type === 'shadow-attached' &&
+      item.detail.mode === 'open'), 'nested open ShadowRoot attachment missing');
+    assert(changes.some(change => change.added?.some(node =>
+      node?.html?.value?.includes('nested-shadow-content'))),
+      'nested shadow subtree missing from private mutation history');
+    assert(history.some(item => item.detail.documentURL?.endsWith('/frame.html')),
+      'same-origin frame mutation chronology missing');
+    assert(history.every(item => !!item.targetId && item.executionContextId > 0),
+      'DOM history lacks CDP execution-context provenance');
+    const atRestHistory = fs.readFileSync(path.join(capture,
+      'rest/dom-mutations-at-rest.jsonl'), 'utf8');
+    assert(atRestHistory.includes('ephemeral-dom-history'),
+      'rest-phase history omitted transient node');
+    const historyContexts = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/dom-history-contexts.json'), 'utf8'));
+    assert(historyContexts.contexts.some(context =>
+      context.status === 'saved' &&
+      context.observer?.closedRootsIntercepted >= 1 &&
+      context.observer?.hookStillInstalled === true),
+      'document instrumentation did not report a healthy shadow-root observer');
+    const domSummary = JSON.parse(fs.readFileSync(path.join(capture,
+      'summary.json'), 'utf8')).resourceCapture.domHistory;
+    assert.equal(domSummary.status, 'saved');
+    assert.equal(domSummary.events, history.length);
+    assert(domSummary.records >= changes.length);
+    assert.equal(domSummary.errors.length, 0);
+    for (const file of ['dom-mutations.jsonl', 'rest/dom-mutations-at-rest.jsonl',
+      'rest/dom-history-contexts.json'])
+      assert.equal(fs.statSync(path.join(capture,file)).mode & 0o777, 0o600,
+        'DOM history evidence must remain private: ' + file);
+    assert(!fs.readFileSync(path.join(capture, 'dom.jsonl'),'utf8')
+      .includes('private-transient-value'), 'private DOM contents leaked into diagnostics');
+    assert(!fs.readFileSync(path.join(capture,
+      'states/dom-rest-initial.html'),'utf8').includes('ephemeral-dom-history'),
+      'transient element must not appear in the final-state DOM snapshot');
     const targetGraph = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/target-graph-final.json'), 'utf8'));
     assert.equal(targetGraph.discovery.status, 'saved');
