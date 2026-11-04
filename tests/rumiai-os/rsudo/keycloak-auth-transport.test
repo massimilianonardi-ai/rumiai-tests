@@ -100,6 +100,23 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path.startswith("/admin/realms/"):
+            bearer = self.headers.get("Authorization", "")
+            if bearer == "Bearer SENSITIVE-K04-ADMIN-TOKEN":
+                if self.path == "/admin/realms/master":
+                    self.response(200, {
+                        "realm": "master",
+                        "smtpPassword": "PRIVATE-REALM-CONFIG-NEVER-PRINT"
+                    })
+                else:
+                    self.response(404, {"error": "not_found"})
+            elif bearer == "Bearer SENSITIVE-K04-EXPIRED-TOKEN":
+                self.response(401, {"error": "invalid_token"})
+            elif bearer == "Bearer SENSITIVE-K04-ACCESS-TOKEN":
+                self.response(403, {"error": "forbidden"})
+            else:
+                self.response(401, {"error": "invalid_token"})
+            return
         if not self.path.endswith("/.well-known/openid-configuration"):
             self.response(404, {"error": "not_found"})
             return
@@ -213,7 +230,13 @@ rsudo()
   shift
   "$@"
 }
-rsudo_mod_keycloak_auth "$@"
+if [ "${1-}" = admin-probe ]
+then
+  shift
+  _rsudo_mod_keycloak_admin_transport_probe "$@"
+else
+  rsudo_mod_keycloak_auth "$@"
+fi
 PROBE
 real_curl=$(command -v curl)
 cat > "$tmp/bin/curl" <<'WRAPPER'
@@ -641,5 +664,62 @@ result=$(probe acquire --server "$base" --issuer-realm master \
 status=$?
 [ "$status" -eq 73 ] && [ ! -e "$tmp/not-supported" ] ||
   fail 'unimplemented grant not rejected'
+
+
+# K04 private read-only Admin REST transport, not public K05 dispatch.
+admin_probe()
+{
+  probe admin-probe --server "$base" --issuer-realm master \
+    --target-realm "$2" --token-file "$1" --ca-file "$tmp/server.pem"
+}
+result=$(admin_probe "$tmp/basic-store" master 2>"$tmp/err")
+status=$?
+[ "$status" -eq 80 ] && [ -z "$result" ] ||
+  fail "admin probe treated unprivileged token as authorized ($status)"
+printf '%s\n' '{"access_token":"SENSITIVE-K04-ADMIN-TOKEN"}' > "$tmp/admin-store"
+chmod 600 "$tmp/admin-store"
+result=$(admin_probe "$tmp/admin-store" master 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"http_status":200,"authorized":true,"body_suppressed":true}' ] ||
+  fail "admin bearer authorization or response suppression failed ($status)"
+grep -F 'PRIVATE-REALM-CONFIG-NEVER-PRINT' "$tmp/err" "$tmp/argv" >/dev/null &&
+  fail 'admin resource private fields exposed in diagnostics/process arguments'
+grep -F 'SENSITIVE-K04-ADMIN-TOKEN' "$tmp/err" "$tmp/argv" >/dev/null &&
+  fail 'admin bearer token appeared in process arguments or diagnostics'
+result=$(admin_probe "$tmp/admin-store" not-a-realm 2>"$tmp/err")
+status=$?
+[ "$status" -eq 81 ] && [ -z "$result" ] ||
+  fail "Admin REST HTTP 404 was not classified ($status)"
+printf '%s\n' '{"access_token":"SENSITIVE-K04-EXPIRED-TOKEN"}' > "$tmp/expired-store"
+chmod 600 "$tmp/expired-store"
+result=$(admin_probe "$tmp/expired-store" master 2>"$tmp/err")
+status=$?
+[ "$status" -eq 79 ] && [ -z "$result" ] ||
+  fail "Admin REST HTTP 401 was not classified ($status)"
+printf '%s\n' '{"access_token":"HEADER\r\nInjected: unsafe"}' > "$tmp/injected-store"
+chmod 600 "$tmp/injected-store"
+result=$(admin_probe "$tmp/injected-store" master 2>"$tmp/err")
+status=$?
+[ "$status" -eq 86 ] && [ -z "$result" ] ||
+  fail "bearer control-character header injection was accepted ($status)"
+result=$(probe admin-probe --server "$base" --issuer-realm master \
+  --target-realm master --token-file "$tmp/admin-store" \
+  --ca-file "$tmp/alias/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 75 ] && [ -z "$result" ] ||
+  fail "untrusted CA ancestor accepted in admin transport ($status)"
+result=$(probe admin-probe --server "http://127.0.0.1:$port" \
+  --issuer-realm master --target-realm master \
+  --token-file "$tmp/admin-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 65 ] && [ -z "$result" ] ||
+  fail "HTTP non-TLS Admin REST transport accepted ($status)"
+result=$(probe admin-probe --server "$base" --issuer-realm other \
+  --target-realm master --token-file "$tmp/admin-store" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 67 ] && [ -z "$result" ] ||
+  fail "mismatched Admin Bearer issuer was accepted ($status)"
 
 printf '%s\n' "$TEST_ID: PASS (real m, POSIX shell and HTTPS curl; SSH/sudo substituted)"
