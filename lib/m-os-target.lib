@@ -1,0 +1,22 @@
+# Test-suite helper for an explicitly supplied autonomous m-os checkout.
+# No product tree or substitute runtime is constructed by this helper.
+rumiai_test_target_m_os_find()
+{
+  [ -n "${RUMIAI_TEST_M_OS_ROOT-}" ] || return 1
+  [ -d "$RUMIAI_TEST_M_OS_ROOT" ] || return 2
+  candidate=$(CDPATH= cd -- "$RUMIAI_TEST_M_OS_ROOT" 2>/dev/null && pwd -P) || return 2
+  [ -x "$candidate/m" ] &&
+    [ -f "$candidate/lib/sys/sh/pkg/pkg-integration.lib.sh" ] || return 2
+  repository_root=$(git -C "$candidate" rev-parse --show-toplevel 2>/dev/null) || return 2
+  repository_root=$(CDPATH= cd -- "$repository_root" && pwd -P) || return 2
+  [ "$repository_root" = "$candidate" ] || return 2
+  origin=$(git -C "$candidate" config --get remote.origin.url 2>/dev/null) || return 2
+  case "$origin" in
+    https://github.com/massimilianonardi-ai/m-os | \
+    https://github.com/massimilianonardi-ai/m-os.git | \
+    git@github.com:massimilianonardi-ai/m-os.git | \
+    ssh://git@github.com/massimilianonardi-ai/m-os.git) : ;;
+    *) return 2 ;;
+  esac
+  printf '%s\n' "$candidate"
+}

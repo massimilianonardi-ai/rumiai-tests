@@ -1,0 +1,291 @@
+#!/bin/sh
+# m-os/pkg-schema-v2/mixed-provider-lifecycle.test
+# Permanent focused coverage for autonomous m-os v2, not rumiai-os/main.
+# RUMIAI_TEST_M_OS_ROOT explicitly selects the real target, and an optional
+# supplied catalog checkout provides only the external facility contract.
+TEST_ID=m-os/pkg-schema-v2/mixed-provider-lifecycle.test
+test_error()
+{
+  printf '%s: ERROR: %s\n' "$TEST_ID" "$1" >&2
+  exit 3
+}
+test_fail()
+{
+  printf '%s: FAIL: %s\n' "$TEST_ID" "$1" >&2
+  exit 1
+}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || test_error 'test location'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || test_error 'suite root'
+. "$suite_root/lib/m-os-target.lib" || test_error 'm-os target helper'
+target=$(rumiai_test_target_m_os_find)
+target_status=$?
+case "$target_status" in
+  0) : ;;
+  1) printf '%s: SKIP: autonomous m-os target not selected\n' "$TEST_ID"; exit 2 ;;
+  *) test_error 'invalid configured autonomous m-os target' ;;
+esac
+if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]
+then
+  [ -n "${RUMIAI_TEST_PKG_CATALOG_ROOT-}" ] ||
+    test_error 'pkg-catalog root must be supplied for this provider fixture'
+  catalog_root=$(CDPATH= cd -- "$RUMIAI_TEST_PKG_CATALOG_ROOT" && pwd -P) ||
+    test_error 'invalid pkg-catalog root'
+  [ -d "$catalog_root/v2/facility/nodejs" ] ||
+    test_error 'v2 nodejs facility contract unavailable'
+  CATALOG_V2="$catalog_root/v2"
+  export CATALOG_V2
+  RUMIAI_TEST_M_OS_CHILD=1
+  export RUMIAI_TEST_M_OS_CHILD
+  if "$target/m" sh "$0"
+  then
+    exit 0
+  else
+    status=$?
+    case "$status" in
+      1 | 2 | 3 | 4 | 5 | 6 | 7) test_error "scenario preparation failed at status $status" ;;
+      *) test_fail "target assertion failed at scenario status $status" ;;
+    esac
+  fi
+fi
+# The real m bootstrap supplied the installed package facility functions.
+set -eu
+[ -n "${m_ROOT-}" ] && [ -n "${m_LIB_DIR-}" ] && [ -n "${CATALOG_V2-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
+
+consumer=ci-mixed-provider-consumer
+provider=ci-mixed-node-provider
+consumer_v1="$m_PKG_DIR/$consumer@1"
+consumer_v2="$m_PKG_DIR/$consumer@2"
+provider_v1="$m_PKG_DIR/$provider@1"
+provider_v2="$m_PKG_DIR/$provider@2"
+work=$(mktemp -d) || exit 4
+
+# Refuse conflicts before installing a cleanup handler.
+for path in "$consumer_v1" "$consumer_v2" "$provider_v1" "$provider_v2" \
+  "$m_PKG_DIR/$consumer" "$m_PKG_DIR/$provider" \
+  "$m_BIN_EXT_DIR/$consumer" "$m_BIN_EXT_DIR/node"
+do
+  if [ -e "$path" ] || [ -L "$path" ]
+  then
+    printf 'INFRASTRUCTURE: existing fixture path: %s\n' "$path" >&2
+    command -p -- rm -rf -- "$work"
+    exit 5
+  fi
+done
+if "$m_ROOT/m" pkg provider default nodejs >/dev/null 2>&1 ||
+   "$m_ROOT/m" pkg provider bind "$consumer" nodejs >/dev/null 2>&1
+then
+  command -p -- rm -rf -- "$work"
+  printf '%s\n' 'INFRASTRUCTURE: existing provider selector would be replaced' >&2
+  exit 6
+fi
+
+default_set=0
+binding_set=0
+package_default_set=0
+cleanup()
+{
+  if [ "$binding_set" -eq 1 ]
+  then
+    "$m_ROOT/m" pkg provider bind -u "$consumer" nodejs >/dev/null 2>&1 || :
+  fi
+  if [ "$default_set" -eq 1 ]
+  then
+    "$m_ROOT/m" pkg provider default -u nodejs >/dev/null 2>&1 || :
+  fi
+  if [ "$package_default_set" -eq 1 ]
+  then
+    "$m_ROOT/m" pkg default -u "$consumer" >/dev/null 2>&1 || :
+  fi
+  if [ "${sentinel_created-0}" -eq 1 ]
+  then
+    command -p -- rm -f -- "$sentinel" || :
+  fi
+  command -p -- rm -rf -- "$consumer_v1" "$consumer_v2" \
+    "$provider_v1" "$provider_v2" "$work"
+}
+trap cleanup 0
+
+catalog="$work/catalog/v2"
+command -p -- mkdir -p -- "$m_PKG_DIR" "$catalog/facility" || exit 7
+command -p -- cp -R -- "$CATALOG_V2/facility/nodejs" "$catalog/facility/nodejs" || exit 8
+
+# Two installed v2 providers implement the exact same central nodejs level.
+for version in 1 2
+do
+  range="$catalog/pkg/$provider/all/n000$version=$version"
+  root="$work/root-provider-$version"
+  command -p -- mkdir -p -- "$range/facility-bin" "$root/bin" || exit 9
+  printf 'tar.gz\n' > "$range/format"
+  printf 'nodejs 26\n' > "$range/facility"
+  printf 'bin\n' > "$range/facility-bin/nodejs"
+  printf '#!/bin/sh\nprintf "provider-%s\\n"\n' "$version" > "$root/bin/node"
+  command -p -- chmod +x "$root/bin/node" || exit 10
+  pkg_facility_provider_validate "$catalog" "$range" "$root" || exit 11
+  pkg_integrate "$provider" "$version" "$range" "$root" "" v2 "$catalog" || exit 12
+done
+
+# A v1 consumer and a v2 consumer have the same package identity,
+# both declaring a facility dependency resolved at launch, not install.
+range_v1="$work/consumer-v1"
+root_v1="$work/root-consumer-v1"
+range_v2="$work/consumer-v2"
+root_v2="$work/root-consumer-v2"
+command -p -- mkdir -p -- "$range_v1/cmd" "$range_v1/link" \
+  "$root_v1/bin" "$range_v2/cmd" "$range_v2/link/bin" \
+  "$range_v2/link/target" "$root_v2/bin" || exit 13
+printf 'tar.gz\n' > "$range_v1/format"
+printf 'nodejs =26\n' > "$range_v1/dependency"
+printf 'bin/%s\n' "$consumer" > "$range_v1/link/$consumer"
+cat > "$range_v1/cmd/$consumer" <<'V1_WRAPPER'
+#!/bin/sh
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
+launcher ci-mixed-provider-consumer "$@"
+V1_WRAPPER
+cat > "$root_v1/bin/$consumer" <<'V1_TARGET'
+#!/bin/sh
+result=$(node) || exit 12
+printf 'consumer-v1:%s\n' "$result"
+V1_TARGET
+
+printf 'tar.gz\n' > "$range_v2/format"
+printf 'nodejs =26\n' > "$range_v2/dependency"
+printf '../../cmd/%s\n' "$consumer" > "$range_v2/link/bin/$consumer"
+printf '../../root/bin/%s\n' "$consumer" > "$range_v2/link/target/$consumer"
+cat > "$range_v2/cmd/$consumer" <<'V2_WRAPPER'
+#!/bin/sh
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
+launcher ci-mixed-provider-consumer "$@"
+V2_WRAPPER
+cat > "$root_v2/bin/$consumer" <<'V2_TARGET'
+#!/bin/sh
+result=$(node) || exit 12
+printf 'consumer-v2:%s\n' "$result"
+V2_TARGET
+command -p -- chmod +x "$root_v1/bin/$consumer" "$root_v2/bin/$consumer" || exit 14
+pkg_integrate "$consumer" 1 "$range_v1" "$root_v1" || exit 15
+pkg_integrate "$consumer" 2 "$range_v2" "$root_v2" "" v2 || exit 16
+
+"$m_ROOT/m" pkg default "$consumer@1" || exit 17
+package_default_set=1
+"$m_ROOT/m" pkg provider default nodejs "$provider@1" || exit 18
+default_set=1
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 19
+
+# The global facility default remains effective across consumer schema changes.
+"$m_ROOT/m" pkg default "$consumer@2" || exit 20
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v2:provider-1 ] || exit 21
+"$m_ROOT/m" pkg provider default nodejs "$provider@2" || exit 22
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v2:provider-2 ] || exit 23
+
+# The consumer-scoped binding wins over the global default and survives
+# a switch back to the legacy installed concrete.
+"$m_ROOT/m" pkg provider bind "$consumer" nodejs "$provider@1" || exit 24
+binding_set=1
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v2:provider-1 ] || exit 25
+"$m_ROOT/m" pkg default "$consumer@1" || exit 26
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 27
+"$m_ROOT/m" pkg provider bind -u "$consumer" nodejs || exit 28
+binding_set=0
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-2 ] || exit 29
+
+# Unset global selection leaves the multiple installed versions ambiguous.
+"$m_ROOT/m" pkg provider default -u nodejs || exit 30
+default_set=0
+if "$m_ROOT/m" "$consumer" >/dev/null 2>&1
+then
+  exit 31
+fi
+"$m_ROOT/m" pkg provider bind "$consumer" nodejs "$provider@1" || exit 32
+binding_set=1
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 33
+"$m_ROOT/m" pkg provider bind -u "$consumer" nodejs || exit 34
+binding_set=0
+
+# Protect explicitly referenced installed provider versions from removal.
+"$m_ROOT/m" pkg provider bind "$consumer" nodejs "$provider@1" || exit 35
+binding_set=1
+if "$m_ROOT/m" pkg uninstall "$provider@1" >/dev/null 2>&1
+then
+  exit 36
+fi
+[ -d "$provider_v1" ] && [ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 37
+
+"$m_ROOT/m" pkg provider default nodejs "$provider@2" || exit 38
+default_set=1
+if "$m_ROOT/m" pkg uninstall "$provider@2" >/dev/null 2>&1
+then
+  exit 39
+fi
+[ -d "$provider_v2" ] && [ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 40
+
+# A syntactically valid explicit selector may name an unavailable
+# concrete: keep the intent, fail resolution, never silently fall back.
+"$m_ROOT/m" pkg provider default nodejs "$provider@999" || exit 41
+[ "$("$m_ROOT/m" pkg provider default nodejs)" = "$provider@999" ] || exit 42
+if "$m_ROOT/m" pkg requirement resolve nodejs '=26' >/dev/null 2>&1
+then
+  exit 75
+fi
+# The independent consumer binding still wins over that invalid default.
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 43
+"$m_ROOT/m" pkg provider default nodejs "$provider@2" || exit 76
+# In contrast, an invalid selector *syntax* must be rejected atomically.
+if "$m_ROOT/m" pkg provider default nodejs "$provider@999!invalid" >/dev/null 2>&1
+then
+  exit 77
+fi
+[ "$("$m_ROOT/m" pkg provider default nodejs)" = "$provider@2" ] || exit 78
+
+"$m_ROOT/m" pkg provider bind -u "$consumer" nodejs || exit 44
+binding_set=0
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-2 ] || exit 45
+"$m_ROOT/m" pkg provider default -u nodejs || exit 46
+default_set=0
+"$m_ROOT/m" pkg uninstall "$provider@2" || exit 47
+[ ! -e "$provider_v2" ] && [ ! -L "$provider_v2" ] || exit 48
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 49
+
+# Uninstalling one v2 consumer leaves the v1 default and managed
+# consumer state in place. Reinstallation does not rewrite binding intent.
+consumer_home="$("$m_ROOT/m" state-path user pkg "$consumer" home)" || exit 50
+[ -d "$consumer_home" ] || exit 51
+sentinel="$consumer_home/.ci-mixed-provider-sentinel"
+[ ! -e "$sentinel" ] && [ ! -L "$sentinel" ] || exit 52
+printf 'persisted\n' > "$sentinel" || exit 53
+sentinel_created=1
+factory="$work/factory-consumer-v2"
+command -p -- cp -R -- "$consumer_v2/root" "$factory" || exit 54
+
+"$m_ROOT/m" pkg uninstall "$consumer@2" || exit 55
+[ ! -e "$consumer_v2" ] && [ ! -L "$consumer_v2" ] || exit 56
+[ "$("$m_ROOT/m" pkg default "$consumer")" = "$consumer@1" ] || exit 57
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 58
+
+command -p -- cp -R -- "$factory" "$work/consumer-v2-reinstall" || exit 59
+pkg_integrate "$consumer" 2 "$range_v2" "$work/consumer-v2-reinstall" "" v2 || exit 60
+[ "$(command -p -- cat -- "$sentinel")" = persisted ] || exit 61
+[ "$("$m_ROOT/m" pkg default "$consumer")" = "$consumer@1" ] || exit 62
+"$m_ROOT/m" pkg default "$consumer@2" || exit 63
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v2:provider-1 ] || exit 64
+
+# Removing a currently selected consumer clears the default and leaves
+# the other installed schema usable after an explicit new selection.
+"$m_ROOT/m" pkg uninstall "$consumer@2" || exit 65
+[ ! -e "$consumer_v2" ] && [ ! -L "$consumer_v2" ] || exit 66
+if "$m_ROOT/m" pkg default "$consumer" >/dev/null 2>&1
+then
+  exit 67
+fi
+[ -d "$consumer_v1" ] && [ -f "$sentinel" ] || exit 68
+"$m_ROOT/m" pkg default "$consumer@1" || exit 69
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 70
+"$m_ROOT/m" pkg uninstall "$consumer@1" || exit 71
+[ -f "$sentinel" ] || exit 72
+"$m_ROOT/m" pkg uninstall "$provider@1" || exit 73
+[ ! -e "$provider_v1" ] && [ ! -L "$provider_v1" ] || exit 74
+
+printf '%s\n' 'PASS: v1/v2 consumer lifecycle, provider reference refusal, default rollback, state and reinstall'

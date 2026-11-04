@@ -1,0 +1,266 @@
+#!/bin/sh
+# m-os/pkg-schema-v2/mixed-default-lifecycle.test
+# Permanent focused coverage for autonomous m-os v2, not rumiai-os/main.
+# RUMIAI_TEST_M_OS_ROOT explicitly selects the real target, and an optional
+# supplied catalog checkout provides only the external facility contract.
+TEST_ID=m-os/pkg-schema-v2/mixed-default-lifecycle.test
+test_error()
+{
+  printf '%s: ERROR: %s\n' "$TEST_ID" "$1" >&2
+  exit 3
+}
+test_fail()
+{
+  printf '%s: FAIL: %s\n' "$TEST_ID" "$1" >&2
+  exit 1
+}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || test_error 'test location'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || test_error 'suite root'
+. "$suite_root/lib/m-os-target.lib" || test_error 'm-os target helper'
+target=$(rumiai_test_target_m_os_find)
+target_status=$?
+case "$target_status" in
+  0) : ;;
+  1) printf '%s: SKIP: autonomous m-os target not selected\n' "$TEST_ID"; exit 2 ;;
+  *) test_error 'invalid configured autonomous m-os target' ;;
+esac
+if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]
+then
+  RUMIAI_TEST_M_OS_CHILD=1
+  export RUMIAI_TEST_M_OS_CHILD
+  if "$target/m" sh "$0"
+  then
+    exit 0
+  else
+    status=$?
+    case "$status" in
+      1 | 2 | 3 | 4 | 5 | 6 | 7) test_error "scenario preparation failed at status $status" ;;
+      *) test_fail "target assertion failed at scenario status $status" ;;
+    esac
+  fi
+fi
+# The real m bootstrap supplied the installed package facility functions.
+set -eu
+[ -n "${m_ROOT-}" ] && [ -n "${m_LIB_DIR-}" ] && [ -n "${m_PKG_DIR-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
+
+name=ci-mixed-lifecycle
+legacy="$m_PKG_DIR/$name@1"
+modern="$m_PKG_DIR/$name@2"
+selector="$m_PKG_DIR/$name"
+public="$m_BIN_EXT_DIR/$name"
+public_direct="$m_BIN_EXT_DIR/$name-direct"
+work=$(mktemp -d) || exit 4
+
+# Reject pre-existing paths before owning the selector or cleanup.
+for path in "$legacy" "$modern" "$selector" "$public" "$public_direct"
+do
+  if [ -e "$path" ] || [ -L "$path" ]
+  then
+    printf 'INFRASTRUCTURE: fixture path exists: %s\n' "$path" >&2
+    command -p -- rm -rf -- "$work"
+    exit 5
+  fi
+done
+
+cleanup()
+{
+  if [ "${damaged_link-0}" -eq 1 ]
+  then
+    command -p -- rm -f -- "$modern/link/bin/$name" || :
+    command -p -- ln -s "../../cmd/$name" "$modern/link/bin/$name" || :
+  fi
+  "$m_ROOT/m" pkg default -u "$name" >/dev/null 2>&1 || :
+  if [ "${sentinel_created-0}" -eq 1 ]
+  then
+    command -p -- rm -f -- "$sentinel" || :
+  fi
+  command -p -- rm -rf -- "$legacy" "$modern" "$work"
+}
+trap cleanup 0
+
+command -p -- mkdir -p -- "$m_PKG_DIR" "$work/v1/cmd" "$work/v1/link" \
+  "$work/root-v1/bin" "$work/v2/cmd" "$work/v2/link/bin" \
+  "$work/v2/link/target" "$work/root-v2/bin" || exit 6
+
+printf 'tar.gz\n' > "$work/v1/format"
+printf 'bin/%s\n' "$name" > "$work/v1/link/$name"
+cat > "$work/v1/cmd/$name" <<'V1_WRAPPER'
+#!/bin/sh
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
+launcher ci-mixed-lifecycle "$@"
+V1_WRAPPER
+cat > "$work/v1/env" <<'V1_ENV'
+CI_MIXED_STAGE=legacy
+export CI_MIXED_STAGE
+V1_ENV
+cat > "$work/root-v1/bin/$name" <<'V1_EXEC'
+#!/bin/sh
+printf 'legacy:%s:%s\n' "${CI_MIXED_STAGE-unset}" "${1-}"
+V1_EXEC
+
+printf 'tar.gz\n' > "$work/v2/format"
+printf '../../cmd/%s\n' "$name" > "$work/v2/link/bin/$name"
+printf '../../root/bin/%s\n' "$name" > "$work/v2/link/target/$name"
+printf '../../root/bin/%s-direct\n' "$name" > "$work/v2/link/bin/$name-direct"
+cat > "$work/v2/cmd/$name" <<'V2_WRAPPER'
+#!/bin/sh
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-launch" || exit 3
+launcher ci-mixed-lifecycle fixed "$@"
+V2_WRAPPER
+cat > "$work/v2/env" <<'V2_ENV'
+CI_MIXED_STAGE=modern
+export CI_MIXED_STAGE
+V2_ENV
+cat > "$work/root-v2/bin/$name" <<'V2_EXEC'
+#!/bin/sh
+printf 'modern:%s:%s:%s\n' "${CI_MIXED_STAGE-unset}" "${1-}" "${2-}"
+V2_EXEC
+cat > "$work/root-v2/bin/$name-direct" <<'DIRECT_EXEC'
+#!/bin/sh
+printf 'direct:%s:%s\n' "${CI_MIXED_STAGE-unset}" "${1-}"
+DIRECT_EXEC
+command -p -- chmod +x "$work/root-v1/bin/$name" \
+  "$work/root-v2/bin/$name" "$work/root-v2/bin/$name-direct" || exit 7
+
+pkg_integrate "$name" 1 "$work/v1" "$work/root-v1" || exit 8
+pkg_integrate "$name" 2 "$work/v2" "$work/root-v2" "" v2 || exit 9
+[ ! -e "$legacy/schema" ] && [ ! -L "$legacy/schema" ] || exit 10
+[ "$(command -p -- cat -- "$modern/schema")" = v2 ] || exit 11
+[ "$(command -p -- readlink "$modern/link/bin/$name")" = "../../cmd/$name" ] || exit 12
+[ "$(command -p -- readlink "$modern/link/target/$name")" = "../../root/bin/$name" ] || exit 13
+
+# Installing both concretes does not select either one.
+if "$m_ROOT/m" pkg default "$name" >/dev/null 2>&1
+then
+  exit 14
+fi
+[ ! -e "$public" ] && [ ! -L "$public" ] || exit 15
+
+"$m_ROOT/m" pkg default "$name@1" || exit 16
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@1" ] || exit 17
+[ "$(command -p -- readlink "$public")" = "../../pkg/$name/cmd/$name" ] || exit 18
+[ "$("$m_ROOT/m" "$name" first)" = legacy:legacy:first ] || exit 19
+[ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 20
+
+"$m_ROOT/m" pkg default "$name@2" || exit 21
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 22
+[ "$(command -p -- readlink "$public")" = "../../pkg/$name/link/bin/$name" ] || exit 23
+[ "$(command -p -- readlink "$public_direct")" = "../../pkg/$name/link/bin/$name-direct" ] || exit 24
+[ "$("$m_ROOT/m" "$name" second)" = modern:modern:fixed:second ] || exit 25
+[ "$(CI_MIXED_STAGE=caller "$m_ROOT/m" "$name-direct" third)" = direct:caller:third ] || exit 26
+
+# Failed selection preserves the currently published v2 command view.
+if "$m_ROOT/m" pkg default "$name@999" >/dev/null 2>&1
+then
+  exit 27
+fi
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 28
+[ "$("$m_ROOT/m" "$name" stable)" = modern:modern:fixed:stable ] || exit 29
+
+# Context changes shell-local selection without rewriting global defaults.
+baseline=$PATH
+context "pkg=$name@1" || exit 30
+[ "$(command -v "$name")" = "$legacy/cmd/$name" ] || exit 31
+context "pkg=$name@2" || exit 32
+[ "$(command -v "$name")" = "$modern/link/bin/$name" ] || exit 33
+[ "$(command -v "$name-direct")" = "$modern/link/bin/$name-direct" ] || exit 34
+context || exit 35
+[ "$PATH" = "$baseline" ] || exit 36
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 37
+
+"$m_ROOT/m" pkg default "$name@1" || exit 38
+[ "$("$m_ROOT/m" "$name" back)" = legacy:legacy:back ] || exit 39
+[ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 40
+"$m_ROOT/m" pkg default -u "$name" || exit 41
+[ ! -e "$selector" ] && [ ! -L "$selector" ] || exit 42
+[ ! -e "$public" ] && [ ! -L "$public" ] || exit 43
+[ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 44
+if "$m_ROOT/m" pkg default "$name" >/dev/null 2>&1
+then
+  exit 45
+fi
+[ -d "$legacy" ] && [ -d "$modern" ] || exit 46
+
+# User-scoped package HOME is mutable state, not part of the concrete.
+# Capture a factory payload from the installed root before uninstall.
+factory="$work/factory-v2-root"
+command -p -- cp -R -- "$modern/root" "$factory" || exit 47
+user_home="$("$m_ROOT/m" state-path user pkg "$name" home)" || exit 48
+[ -d "$user_home" ] || exit 49
+sentinel="$user_home/.ci-mixed-lifecycle-sentinel"
+[ ! -e "$sentinel" ] && [ ! -L "$sentinel" ] || exit 50
+printf 'retained-state\n' > "$sentinel" || exit 51
+sentinel_created=1
+
+# Removing the unselected v2 concrete must preserve the v1 concrete,
+# the user's state and the absence of any ordinary package default.
+"$m_ROOT/m" pkg uninstall "$name@2" || exit 52
+[ ! -e "$modern" ] && [ ! -L "$modern" ] || exit 53
+[ -d "$legacy" ] && [ -f "$sentinel" ] || exit 54
+if "$m_ROOT/m" pkg default "$name" >/dev/null 2>&1
+then
+  exit 55
+fi
+
+# Reintegrate from a fresh staging root. It must not establish a default.
+command -p -- cp -R -- "$factory" "$work/second-v2-root" || exit 56
+pkg_integrate "$name" 2 "$work/v2" "$work/second-v2-root" "" v2 || exit 57
+[ -d "$modern" ] && [ -f "$sentinel" ] || exit 58
+if "$m_ROOT/m" pkg default "$name" >/dev/null 2>&1
+then
+  exit 59
+fi
+
+"$m_ROOT/m" pkg default "$name@2" || exit 60
+[ "$("$m_ROOT/m" "$name" again)" = modern:modern:fixed:again ] || exit 61
+
+# Corrupting an installed link to a broken outside path must make the
+# current-default transition reject the invalid view without mutating it.
+command -p -- rm -f -- "$modern/link/bin/$name" || exit 62
+command -p -- ln -s "../../../../../ci-escaped-target" "$modern/link/bin/$name" || exit 63
+damaged_link=1
+if "$m_ROOT/m" pkg default "$name@1" >/dev/null 2>&1
+then
+  exit 64
+fi
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 65
+command -p -- rm -f -- "$modern/link/bin/$name" || exit 66
+command -p -- ln -s "../../cmd/$name" "$modern/link/bin/$name" || exit 67
+damaged_link=0
+[ "$("$m_ROOT/m" "$name" repaired)" = modern:modern:fixed:repaired ] || exit 68
+
+# A descriptor escaping the useful root is rejected before integration
+# consumes the staging root or publishes a new version.
+command -p -- mkdir -p -- "$work/invalid-v2/link/bin" "$work/invalid-root/bin" || exit 69
+printf 'tar.gz\n' > "$work/invalid-v2/format"
+printf '../../root/../escape\n' > "$work/invalid-v2/link/bin/$name"
+printf '#!/bin/sh\nexit 0\n' > "$work/invalid-root/bin/$name"
+command -p -- chmod +x "$work/invalid-root/bin/$name" || exit 70
+if pkg_integrate "$name" 3 "$work/invalid-v2" "$work/invalid-root" "" v2 >/dev/null 2>&1
+then
+  exit 71
+fi
+[ ! -e "$m_PKG_DIR/$name@3" ] && [ ! -L "$m_PKG_DIR/$name@3" ] || exit 72
+[ -f "$work/invalid-root/bin/$name" ] || exit 73
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 74
+[ "$("$m_ROOT/m" "$name" intact)" = modern:modern:fixed:intact ] || exit 75
+
+# Uninstalling the selected v2 concrete retracts its public commands
+# but not the independently installed legacy concrete or managed state.
+"$m_ROOT/m" pkg uninstall "$name@2" || exit 76
+[ ! -e "$modern" ] && [ ! -L "$modern" ] || exit 77
+[ ! -e "$selector" ] && [ ! -L "$selector" ] || exit 78
+[ ! -e "$public" ] && [ ! -L "$public" ] || exit 79
+[ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 80
+[ -d "$legacy" ] && [ "$(command -p -- cat -- "$sentinel")" = retained-state ] || exit 81
+"$m_ROOT/m" pkg default "$name@1" || exit 82
+[ "$("$m_ROOT/m" "$name" after)" = legacy:legacy:after ] || exit 83
+"$m_ROOT/m" pkg uninstall "$name@1" || exit 84
+[ ! -e "$legacy" ] && [ ! -L "$legacy" ] || exit 85
+[ -f "$sentinel" ] || exit 86
+
+printf '%s\n' 'PASS: v1/v2 default, uninstall/reintegration, managed state, invalid descriptor and rollback'
