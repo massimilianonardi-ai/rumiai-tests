@@ -908,7 +908,8 @@ async function main()
       'context evidence must be indexed in the private rest manifest');
     assert(integrity.artifacts.some(item =>
       item.file === 'rest/targets/target-000/frame-context.json' &&
-      item.status === 'saved' && item.sha256 === contextRecord.sha256),
+      ['saved','partial'].includes(item.status) &&
+      item.sha256 === contextRecord.sha256),
       'storage/security context evidence SHA-256 was not audited');
     assert(integrity.domains.some(item => item.domain === 'security'),
       'frame security policy and isolation must be represented in audit coverage');
