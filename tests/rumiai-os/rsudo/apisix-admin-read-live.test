@@ -2,7 +2,7 @@
 # APISIX Admin API HTTP read-only provider capability proof.
 # Isolated, network-disabled official 3.16/3.19 running gateways, no host
 # ports, and a fixed TEST-ONLY key in an ephemeral standalone API profile.
-# Uses real m/product mode resolver for the disk-versus-live drift assertion.
+# Uses real m/product resolver for drift and APISIX_PROFILE source ambiguity.
 TEST_ID=rumiai-os/rsudo/apisix-admin-read-live.test
 fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
@@ -67,7 +67,7 @@ deployment:
       ip: 127.0.0.1
       port: 9180
 ADMIN_CONFIG
-  chmod 644 -- "$tmp/config.yaml" || error 'cannot set fixture permissions'
+  chmod 644 "$tmp/config.yaml" || error 'cannot set fixture permissions'
 }
 
 cat > "$tmp/bin/rsudo-apisix-admin-mode-probe" <<'PROBE'
@@ -79,15 +79,19 @@ rsudo()
 {
   docker exec -i "$APISIX_TEST_CONTAINER" "$@"
 }
-rsudo_mod_apisix_mode /usr/local/apisix /usr/local/apisix/conf/config.yaml
+case "${APISIX_TEST_OPERATION:-mode}" in
+  mode) rsudo_mod_apisix_mode "$@" ;;
+  runtime) rsudo_mod_apisix_runtime "$@" ;;
+  *) exit 83 ;;
+esac
 PROBE
-chmod 700 -- "$tmp/bin/rsudo-apisix-admin-mode-probe" ||
+chmod 700 "$tmp/bin/rsudo-apisix-admin-mode-probe" ||
   error 'cannot make product probe executable'
 
 mode_on_disk()
 {
   APISIX_TEST_CONTAINER="$cid" PATH="$tmp/bin:$PATH" \
-    "$root/m" rsudo-apisix-admin-mode-probe
+    "$root/m" rsudo-apisix-admin-mode-probe "$@"
 }
 
 # Bash is installed by the official image entrypoint. This local HTTP
@@ -139,6 +143,10 @@ do
   docker image inspect "$image" >/dev/null 2>&1 ||
     skip "pinned APISIX image not provisioned: $image"
   write_admin_config
+  # Preserve the original API-driven source as a named profile. In the
+  # second scenario, the default source will deliberately disagree.
+  cp "$tmp/config.yaml" "$tmp/config-prod.yaml" ||
+    error 'cannot prepare independent named profile'
 
   cid=$(docker run -d --network none --cap-drop ALL \
     --security-opt no-new-privileges=true \
@@ -169,7 +177,7 @@ do
     fail 'standalone GET /configs did not become ready'
   }
 
-  observed=$(mode_on_disk 2>"$tmp/mode-stderr")
+  observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/mode-stderr")
   status=$?
   [ "$status" -eq 0 ] && [ "$observed" = standalone-api ] ||
     fail 'on-disk traditional/yaml was not classified standalone-api'
@@ -222,7 +230,7 @@ deployment:
   role_data_plane:
     config_provider: yaml
 DRIFTED_CONFIG
-  observed=$(mode_on_disk 2>"$tmp/mode-stderr")
+  observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/mode-stderr")
   status=$?
   [ "$status" -eq 0 ] && [ "$observed" = standalone-file-yaml ] ||
     fail 'changed disk config was not recognized as file-driven'
@@ -235,6 +243,70 @@ DRIFTED_CONFIG
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove isolated APISIX'
   cid=
+
+  # Start a fresh gateway using the named APISIX_PROFILE source. The
+  # default config.yaml is deliberately file-driven from the previous
+  # drift scenario, while config-prod.yaml is standalone API-driven.
+  # No production file or running gateway is changed.
+  cid=$(docker run -d --network none --cap-drop ALL \
+    --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    --mount "type=bind,src=$tmp/config-prod.yaml,dst=/usr/local/apisix/conf/config-prod.yaml,readonly" \
+    -e APISIX_PROFILE=prod -e APISIX_STAND_ALONE=true "$image") ||
+    error 'cannot launch isolated named-profile APISIX'
+  [ -n "$cid" ] || error 'Docker returned no named-profile container ID'
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    code=$(http_status /apisix/admin/configs correct)
+    status=$?
+    [ "$status" -ne 0 ] || [ "$code" != 200 ] || break
+    if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
+    then
+      docker logs "$cid" >&2 || :
+      fail 'named-profile gateway exited before Admin API became ready'
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || {
+    docker logs "$cid" >&2 || :
+    fail 'named-profile Admin API did not become ready'
+  }
+
+  # A missing explicit selector must fail, even when the profile happens
+  # to be present in the current container environment: a different
+  # sudo/service invocation might select a different environment.
+  observed=$(mode_on_disk /usr/local/apisix 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 10 ] && [ -z "$observed" ] ||
+    fail 'named profile was silently chosen from an ambiguous installation'
+
+  observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed" = standalone-file-yaml ] ||
+    fail 'default on-disk source was not classified independently'
+
+  observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config-prod.yaml 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed" = standalone-api ] ||
+    fail 'explicit named profile was not classified independently'
+
+  # Even a real matched master does not establish which source file it
+  # loaded. The live Admin API response is additional but separate
+  # evidence and does not authorize mutation.
+  observed=$(APISIX_TEST_OPERATION=runtime mode_on_disk /usr/local/apisix 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] || fail 'named-profile master process is unobservable'
+  case "$observed" in
+    *'runtime_identity=process-consistent-config-unverified'*'mutation_readiness=not-established') : ;;
+    *) fail 'named-profile master was mistaken for verified source identity' ;;
+  esac
+
+  docker rm -f "$cid" >/dev/null 2>&1 ||
+    error 'cannot remove named-profile APISIX'
+  cid=
 done
 
-printf '%s\n' "$TEST_ID: PASS (two live Admin APIs, authentication and disk/runtime drift)"
+printf '%s\n' "$TEST_ID: PASS (two live Admin APIs, drift and named-profile ambiguity)"
