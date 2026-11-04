@@ -326,8 +326,12 @@ do
   status=$?
   [ "$status" -eq 0 ] || fail "composed password sudo/real APISIX GET status $status"
   case "$result" in
-    *'"routes_conf_version"'*'"services_conf_version"'*) : ;;
-    *) fail 'real APISIX snapshot was not returned through composed SSH/sudo' ;;
+    *'"routes_conf_version"'*) : ;;
+    *) fail 'routes_conf_version absent: real APISIX snapshot was not returned through composed SSH/sudo' ;;
+  esac
+  case "$result" in
+    *'"services_conf_version"'*) : ;;
+    *) fail 'services_conf_version absent: real APISIX snapshot was not returned through composed SSH/sudo' ;;
   esac
 
   # The SSH target does not share the gateway process or mount namespace.
@@ -356,8 +360,12 @@ do
   status=$?
   [ "$status" -eq 0 ] || fail 'composed NOPASSWD/real APISIX GET failed'
   case "$result" in
-    *'"routes_conf_version"'*'"services_conf_version"'*) : ;;
-    *) fail 'real APISIX snapshot was lost through NOPASSWD SSH/sudo' ;;
+    *'"routes_conf_version"'*) : ;;
+    *) fail 'routes_conf_version absent: real APISIX snapshot was lost through NOPASSWD SSH/sudo' ;;
+  esac
+  case "$result" in
+    *'"services_conf_version"'*) : ;;
+    *) fail 'services_conf_version absent: real APISIX snapshot was lost through NOPASSWD SSH/sudo' ;;
   esac
   grep -F 'synthetic-admin-key' "$tmp/stderr" >/dev/null &&
     fail 'real APISIX credential exposed through remote diagnostics'
