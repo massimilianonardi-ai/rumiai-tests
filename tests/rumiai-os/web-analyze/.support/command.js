@@ -253,7 +253,8 @@ async function main()
       '/': [html, 'text/html'],
       '/view.css': [':root {--fixture-accent: rgb(12, 34, 56)} ' +
         '.scroll {height: 160px; overflow-y: auto} ' +
-        '#list {color: var(--fixture-accent)} p {height: 35px}', 'text/css'],
+        '#list {color: var(--fixture-accent)} p {height: 35px} ' +
+        '.unused-css-coverage-marker {outline: 9px solid magenta}', 'text/css'],
       '/app.js': [app, 'text/javascript'],
       '/background-worker.js': [
         'postMessage("worker-ready");setInterval(()=>{},5000);',
@@ -525,6 +526,33 @@ async function main()
     assert(rest.artifacts.some(item => item.name === 'css-node-details' &&
       item.file === 'css-nodes/index.json'),
       'CSS node coverage and limitations absent from rest manifest');
+    assert(capabilities.protocol.domains.some(domain =>
+      domain.name === 'CSS' && domain.commands.includes('startRuleUsageTracking') &&
+      domain.commands.includes('stopRuleUsageTracking')),
+      'native Chromium CSS rule-usage methods were not available');
+    const coverageRoot = path.join(capture, 'rest/css-rule-usage');
+    const coverageIndex = JSON.parse(fs.readFileSync(path.join(coverageRoot,
+      'index.json'), 'utf8'));
+    assert.equal(coverageIndex.status, 'saved',
+      'CSS rule-use capture should include all observed test page targets');
+    assert.equal(coverageIndex.scope, 'initial-navigation-to-rest-entry');
+    assert(coverageIndex.entries.length > 0, 'CSS coverage targets missing');
+    const usedEntries = coverageIndex.entries.filter(item => item.status === 'saved');
+    assert(usedEntries.length > 0, 'CSS rule tracking did not start before navigation');
+    const coverage = usedEntries.flatMap(item =>
+      JSON.parse(fs.readFileSync(path.join(coverageRoot, item.file), 'utf8')).ruleUsage);
+    assert(coverage.some(item => item.used === true && item.styleSheetId),
+      'used stylesheet rules missing from pre-scroll coverage');
+    assert(coverage.some(item => item.used === false && item.styleSheetId),
+      'unused stylesheet rules missing from pre-scroll coverage');
+    assert(usedEntries.every(item => Date.parse(item.stoppedAt) >=
+      Date.parse(item.startedAt)), 'CSS rule-use capture timing is invalid');
+    assert(usedEntries.every(item =>
+      fs.statSync(path.join(coverageRoot, item.file)).mode & 0o777 === 0o600),
+      'CSS rule-use records must remain private');
+    assert(rest.artifacts.some(item => item.name === 'css-rule-usage' &&
+      item.file === 'css-rule-usage/index.json'),
+      'rule usage coverage absent from rest manifest');
     assert(rest.artifacts.some(item => item.name === 'resources-at-rest' &&
       item.status === 'saved'), 'rest resource index missing');
     assert(rest.artifacts.some(item => item.name === 'scripts-at-rest' &&
@@ -700,6 +728,10 @@ async function main()
       item.file === 'rest/targets/target-000/css-nodes/' + cssIndex.pages[0].file &&
       item.status === 'saved' && item.sha256 === cssIndex.pages[0].sha256),
       'per-node CSS evidence was not verified against index SHA-256');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/css-rule-usage/' + usedEntries[0].file &&
+      item.status === 'saved' && item.sha256 === usedEntries[0].sha256),
+      'rule-usage evidence was not verified against its indexed digest');
     assert(integrity.domains.some(item => item.domain === 'dom'),
       'DOM verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'storage'),
@@ -798,6 +830,19 @@ async function main()
     assert(interruptedAudit.domains.some(item =>
       item.domain === 'capture' && item.status === 'interrupted'),
       'interruption reason missing from domain-level coverage');
+    const usageFile = path.join(coverageRoot, usedEntries[0].file);
+    const originalCoverage = fs.readFileSync(usageFile);
+    const corruptedCoverage = Buffer.from(originalCoverage);
+    corruptedCoverage[8] ^= 0x01;
+    fs.writeFileSync(usageFile, corruptedCoverage);
+    const corruptedAudit = auditWebAnalyzeEvidence(capture);
+    assert.equal(corruptedAudit.status, 'failed',
+      'same-length CSS rule coverage tampering must fail integrity verification');
+    assert(corruptedAudit.artifacts.some(item =>
+      item.file === 'rest/css-rule-usage/' + usedEntries[0].file &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'CSS rule-usage digest mismatch was not identified');
+    fs.writeFileSync(usageFile, originalCoverage);
     const binaryFile = path.join(capture, large.file);
     fs.writeFileSync(binaryFile, Buffer.from('modified artifact'));
     let tampered = auditWebAnalyzeEvidence(capture);
