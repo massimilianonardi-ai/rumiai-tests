@@ -1,0 +1,209 @@
+#!/bin/sh
+# Real m -> rsudo -> OpenSSH password auth -> remote sudo password -> sh
+# -> curl GET with root-only header file -> real loopback HTTP server.
+# Disposable Ubuntu container; no APISIX, site SSH, user keys or credentials.
+TEST_ID=rumiai-os/rsudo/apisix-admin-rsudo-ssh-live.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+cid=
+tmp=
+cleanup()
+{
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  [ -z "$tmp" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'checkout resolver missing'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'product checkout unavailable' ;;
+  2) fail 'explicit product checkout invalid' ;;
+  *) error 'target checkout failed' ;;
+esac
+
+[ "$(uname -s)" = Linux ] || skip 'Linux Docker test only'
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+command -v ssh >/dev/null 2>&1 || skip 'OpenSSH client unavailable'
+
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-ssh-real-$$
+umask 077
+mkdir -p -- "$tmp/bin" "$tmp/image" || error 'fixture creation failed'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture absolute path missing'
+
+# Build a *throwaway* SSH/sudo target; nothing is installed on the host.
+# All passwords, host keys and Admin API credentials are synthetic.
+cat > "$tmp/image/Dockerfile" <<'DOCKERFILE'
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server sudo curl python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/sh rsudoapitest \
+    && echo 'rsudoapitest:rsudo-test-only-password' | chpasswd \
+    && printf 'rsudoapitest ALL=(root) ALL\n' > /etc/sudoers.d/rsudoapitest \
+    && chmod 440 /etc/sudoers.d/rsudoapitest \
+    && mkdir -p /run/sshd \
+    && ssh-keygen -A
+COPY server.py /opt/server.py
+COPY entrypoint.sh /opt/entrypoint.sh
+RUN chmod 700 /opt/entrypoint.sh
+EXPOSE 22
+CMD ["/opt/entrypoint.sh"]
+DOCKERFILE
+
+cat > "$tmp/image/server.py" <<'PY_SERVER'
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+    def do_GET(self):
+        if self.path != '/apisix/admin/routes':
+            status, body = 404, b'{"error":"not-found"}'
+        elif self.headers.get('X-API-KEY') != 'synthetic-admin-key':
+            status, body = 401, b'{"error":"denied"}'
+        else:
+            status, body = 200, b'{"routes":[{"id":"ssh-sudo-proof"}]}'
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+HTTPServer(('127.0.0.1', 9180), Handler).serve_forever()
+PY_SERVER
+
+cat > "$tmp/image/entrypoint.sh" <<'ENTRYPOINT'
+#!/bin/sh
+set -e
+umask 077
+printf '%s\n' 'X-API-KEY: synthetic-admin-key' > /root/rsudo-test-api-header
+chmod 600 /root/rsudo-test-api-header
+python3 /opt/server.py &
+exec /usr/sbin/sshd -D -e -o PermitRootLogin=no \
+  -o PasswordAuthentication=yes -o PubkeyAuthentication=no -o UsePAM=no
+ENTRYPOINT
+
+image_tag="rsudo-apix-test-ssh-local:$(date +%s)-$$"
+docker build --quiet --tag "$image_tag" "$tmp/image" > "$tmp/image-id" ||
+  error 'isolated SSH/sudo target image build failed'
+cid=$(docker run -d --network bridge --publish 127.0.0.1::22 \
+  --security-opt no-new-privileges=false "$image_tag") ||
+  error 'isolated SSH/sudo container start failed'
+[ -n "$cid" ] || error 'Docker returned empty container identity'
+
+mapping=$(docker port "$cid" 22/tcp) || error 'SSH port mapping unavailable'
+port=${mapping##*:}
+case "$port" in
+  ''|*[!0-9]*) error 'SSH assigned an invalid port' ;;
+esac
+hostkey=$(docker exec "$cid" cat /etc/ssh/ssh_host_ed25519_key.pub) ||
+  error 'cannot read ephemeral test SSH host public key'
+set -- $hostkey
+[ "$1" = ssh-ed25519 ] && [ -n "$2" ] ||
+  error 'ephemeral SSH host key malformed'
+printf '%s %s %s\n' rsudo-apix-ephemeral "$1" "$2" > "$tmp/known_hosts" ||
+  error 'cannot write pinned test host key'
+
+cat > "$tmp/ssh_config" <<EOF_SSH_CONFIG
+Host rsudo-apix-ephemeral
+  HostName 127.0.0.1
+  HostKeyAlias rsudo-apix-ephemeral
+  Port $port
+  UserKnownHostsFile $tmp/known_hosts
+  StrictHostKeyChecking yes
+  PreferredAuthentications password
+  PasswordAuthentication yes
+  PubkeyAuthentication no
+  KbdInteractiveAuthentication no
+  IdentitiesOnly yes
+  ControlMaster no
+  ControlPath none
+  ConnectTimeout 4
+EOF_SSH_CONFIG
+
+ssh_bin=$(command -v ssh) || error 'OpenSSH client unavailable'
+cat > "$tmp/bin/ssh" <<'SSH_WRAPPER'
+#!/bin/sh
+exec "$RSUDO_TEST_REAL_SSH" -F "$RSUDO_TEST_SSH_CONFIG" "$@"
+SSH_WRAPPER
+cat > "$tmp/bin/rsudo-apisix-ssh-live-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo" || exit 82
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 83
+
+RSUDO_HOST=rsudo-apix-ephemeral
+RSUDO_USER=rsudoapitest
+RSUDO_PASSWORD=rsudo-test-only-password
+RSUDO_INTERACTIVE=
+RSUDO_ASKPASS=
+rsudo_mod_apisix_admin_read routes /root/rsudo-test-api-header 9180
+PROBE
+chmod 700 -- "$tmp/bin/ssh" "$tmp/bin/rsudo-apisix-ssh-live-probe" ||
+  error 'SSH wrapper or real-m probe not executable'
+
+run_probe()
+{
+  RSUDO_TEST_REAL_SSH="$ssh_bin" RSUDO_TEST_SSH_CONFIG="$tmp/ssh_config" \
+  PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-ssh-live-probe
+}
+
+# Wait only for the ephemeral SSH daemon, not a production network service.
+tries=0
+until docker exec "$cid" sh -c 'test -e /run/sshd.pid' >/dev/null 2>&1
+do
+  [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] ||
+    error 'SSH/sudo test container exited'
+  tries=$((tries + 1))
+  [ "$tries" -lt 50 ] || error 'SSH daemon did not start'
+  sleep 0.1
+done
+
+result=$(run_probe 2>"$tmp/stderr")
+status=$?
+if [ "$status" -ne 0 ]
+then
+  # Synthetic test passwords only; don't print them in logs.
+  tail -n 8 "$tmp/stderr" >&2
+  fail "real rsudo SSH/sudo Admin GET failed with status $status"
+fi
+[ "$result" = '{"routes":[{"id":"ssh-sudo-proof"}]}' ] ||
+  fail 'real rsudo SSH/sudo did not preserve remote curl JSON response'
+grep -F 'synthetic-admin-key' "$tmp/stderr" >/dev/null &&
+  fail 'Admin API credential leaked to diagnostics'
+grep -F 'rsudo-test-only-password' "$tmp/stderr" >/dev/null &&
+  fail 'test SSH/sudo password leaked to diagnostics'
+
+# The remote file is owned by root. Success requires that the true sudo
+# execution kept the caller's static heredoc stdin intact after auth.
+docker exec "$cid" sh -c \
+  'test "$(stat -c %U /root/rsudo-test-api-header)" = root &&
+   test "$(stat -c %a /root/rsudo-test-api-header)" = 600' ||
+  fail 'remote protected header-file boundary was invalid'
+
+# Wrong key should be an actual HTTP response failure through both transports.
+docker exec "$cid" sh -c \
+  "printf '%s\\n' 'X-API-KEY: incorrect-test' > /root/rsudo-test-api-header" ||
+  error 'cannot update synthetic remote test credential'
+result=$(run_probe 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 22 ] && [ -z "$result" ] ||
+  fail 'remote HTTP 401 did not propagate through real rsudo'
+
+printf '%s\n' "$TEST_ID: PASS (real SSH password, sudo password, stdin and curl)"
