@@ -92,11 +92,13 @@ mode_on_disk()
 # The TEST-ONLY credential is delivered via stdin, not an argv argument.
 http_read()
 {
-  docker exec -i "$cid" /bin/bash -s -- "$1" "$2" <<'BASH_HTTP'
+  docker exec -i "$cid" /bin/bash -s -- "$1" "$2" "${3:-GET}" <<'BASH_HTTP'
 path=$1
 credential_case=$2
+method=$3
+case "$method" in GET|HEAD) : ;; *) exit 74 ;; esac
 exec 3<>/dev/tcp/127.0.0.1/9180 || exit 70
-printf 'GET %s HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nConnection: close\r\n' "$path" >&3
+printf '%s %s HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nConnection: close\r\n' "$method" "$path" >&3
 case "$credential_case" in
   correct) printf 'X-API-KEY: rsudo-test-only-never-production\r\n' >&3 ;;
   incorrect) printf 'X-API-KEY: wrong-test-only-credential\r\n' >&3 ;;
@@ -110,7 +112,7 @@ BASH_HTTP
 
 http_status()
 {
-  response=$(http_read "$1" "$2" 2>"$tmp/http-stderr")
+  response=$(http_read "$1" "$2" "${3:-GET}" 2>"$tmp/http-stderr")
   status=$?
   [ "$status" -eq 0 ] || return "$status"
   case "$response" in
@@ -168,10 +170,27 @@ do
   [ "$status" -eq 0 ] && [ "$observed" = standalone-api ] ||
     fail 'on-disk traditional/yaml was not classified standalone-api'
 
-  code=$(http_status /apisix/admin/routes correct) ||
-    fail 'resource route check could not complete'
-  [ "$code" = 404 ] ||
-    fail "standalone API-driven unexpectedly exposed resource route: HTTP $code"
+  # A standalone API-driven router exposes full-document /configs only,
+  # not traditional Admin API's per-resource read endpoints.
+  for resource in routes services upstreams
+  do
+    code=$(http_status "/apisix/admin/$resource" correct) ||
+      fail "resource $resource check could not complete"
+    [ "$code" = 404 ] ||
+      fail "standalone API exposed $resource resource read: HTTP $code"
+  done
+
+  code=$(http_status /apisix/admin/configs correct HEAD) ||
+    fail 'standalone HEAD /configs request failed'
+  [ "$code" = 200 ] ||
+    fail "standalone HEAD /configs returned HTTP $code"
+
+  response=$(http_read /apisix/admin/configs correct) ||
+    fail 'standalone GET /configs payload request failed'
+  case "$response" in
+    *'"routes_conf_version"'*'"services_conf_version"'*) : ;;
+    *) fail 'standalone config payload lacks versioned resource envelope' ;;
+  esac
 
   code=$(http_status /apisix/admin/configs incorrect) ||
     fail 'incorrect-key request could not complete'
