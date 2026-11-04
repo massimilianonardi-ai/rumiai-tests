@@ -76,7 +76,9 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   const feed = new EventSource('/live-events');
   feed.onmessage = event => {
     document.body.dataset.lastEvent = event.data;
+    if (event.data === 'last-event') feed.close();
   };
+  setTimeout(() => feed.close(), 1500);
   const aborted = new AbortController();
   fetch('/abort-stream', {signal:aborted.signal}).catch(() => {});
   setTimeout(() => aborted.abort(), 450);
