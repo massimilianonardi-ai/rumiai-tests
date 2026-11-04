@@ -569,7 +569,7 @@ async function main()
     assert(switchedState.html.includes('process-ready'),
       'final origin script did not consume its response');
     const changedRequests = fs.readFileSync(path.join(switched,
-      'resources.jsonl'), 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse);
+      'resources.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
     assert(changedRequests.some(item => item.status === 'saved' &&
       item.url?.endsWith('/process-payload')),
       'post-navigation response was not saved from the new site');
