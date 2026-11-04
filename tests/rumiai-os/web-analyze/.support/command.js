@@ -336,6 +336,9 @@ async function main()
     assert(protocol.domains.some(domain => domain.domain === 'Runtime'));
     assert(capabilities.protocol.domains.some(domain =>
       domain.name === 'Network' && domain.commands.includes('getResponseBody')));
+    assert(capabilities.protocol.domains.some(domain =>
+      domain.name === 'Accessibility' && domain.commands.includes('getFullAXTree')),
+      'Chromium fixture needs the full accessibility tree CDP method');
     const wire = fs.readFileSync(path.join(capture,'cdp-wire.jsonl'),'utf8')
       .trim().split('\n').filter(Boolean).map(JSON.parse);
     assert(wire.length > 20, 'CDP wire ledger is unexpectedly small');
@@ -458,6 +461,31 @@ async function main()
     assert(!targetGraph.targets.some(target => target.type === 'worker' &&
       target.attached && !target.ready), 'attached worker was not instrumented');
     assert.equal(rest.phase, 'rest-before-automated-input');
+    const accessibilityRoot = path.join(capture,
+      'rest/targets/target-000/accessibility');
+    const accessibilityIndex = JSON.parse(fs.readFileSync(
+      path.join(accessibilityRoot, 'index.json'), 'utf8'));
+    assert(['saved','partial'].includes(accessibilityIndex.status),
+      'accessibility status must describe actual frame collection');
+    assert(accessibilityIndex.frames.length >= 1,
+      'the primary document must have an accessibility frame entry');
+    const accessibilityFrame = accessibilityIndex.frames[0];
+    assert.equal(accessibilityFrame.status, 'saved',
+      'primary frame accessibility tree was not captured');
+    const accessibilityFile = path.join(accessibilityRoot, accessibilityFrame.file);
+    const accessibilityTree = JSON.parse(fs.readFileSync(accessibilityFile, 'utf8'));
+    assert(accessibilityTree.nodes.some(node =>
+      node.role?.value === 'heading' &&
+      node.name?.value === 'private-heading-audit-marker'),
+      'full accessibility tree omitted the page heading');
+    assert(accessibilityTree.nodes.some(node =>
+      Number.isInteger(node.backendDOMNodeId)),
+      'accessibility nodes are missing DOM backend identity links');
+    assert.equal(fs.statSync(accessibilityFile).mode & 0o777, 0o600,
+      'full accessibility frame evidence must remain private');
+    assert(rest.artifacts.some(item => item.name === 'accessibility' &&
+      item.file === 'accessibility/index.json'),
+      'accessibility collection outcome omitted from rest manifest');
     assert(rest.artifacts.some(item => item.name === 'resources-at-rest' &&
       item.status === 'saved'), 'rest resource index missing');
     assert(rest.artifacts.some(item => item.name === 'scripts-at-rest' &&
@@ -635,6 +663,12 @@ async function main()
       'storage verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'listeners'),
       'event listener verification domain missing');
+    assert(integrity.domains.some(item => item.domain === 'accessibility'),
+      'accessibility integrity verification domain missing');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/targets/target-000/accessibility/' + accessibilityFrame.file &&
+      item.sha256 === accessibilityFrame.sha256 && item.status === 'saved'),
+      'accessibility tree was not byte- and SHA-256-audited');
     assert(integrity.streams.some(item => item.file === 'cdp-wire.jsonl' &&
       item.status === 'saved' && item.records === wire.length),
       'raw CDP ledger ordering and event count not reconciled');
