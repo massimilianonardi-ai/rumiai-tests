@@ -212,6 +212,17 @@ do
   [ "$status" -eq 0 ] && [ "$result" = '{"stored":true,"server_validated":false}' ] ||
     fail "Keycloak $version token-store status did not retain non-introspection boundary"
 
+  # A confidential client can explicitly request a server-side answer;
+  # the ordinary status above remains strictly structural.
+  result=$(probe status --token-file "$tmp/token-basic-$version" \
+    --server "$base" --issuer-realm master --client-id k04-service \
+    --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+    fail "Keycloak $version real access-token introspection failed ($status)"
+
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-service \
     --client-auth client-secret-post \
