@@ -138,6 +138,32 @@ http_status()
   esac
 }
 
+# Both scenarios must prove the same live Admin API read path before
+# inspecting source-selection evidence; keep startup observation shared.
+wait_for_admin()
+{
+  label=$1
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    code=$(http_status /apisix/admin/configs correct)
+    status=$?
+    if [ "$status" -eq 0 ] && [ "$code" = 200 ]
+    then
+      return 0
+    fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
+    then
+      docker logs "$cid" >&2 || :
+      fail "$label gateway exited before Admin API became ready"
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  docker logs "$cid" >&2 || :
+  fail "$label GET /configs did not become ready"
+}
+
 for image in $images
 do
   docker image inspect "$image" >/dev/null 2>&1 ||
@@ -155,27 +181,7 @@ do
     error 'cannot launch standalone API-driven APISIX'
   [ -n "$cid" ] || error 'Docker returned no container ID'
 
-  tries=0
-  while [ "$tries" -lt 30 ]
-  do
-    code=$(http_status /apisix/admin/configs correct)
-    status=$?
-    if [ "$status" -eq 0 ] && [ "$code" = 200 ]
-    then
-      break
-    fi
-    if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
-    then
-      docker logs "$cid" >&2 || :
-      fail 'standalone API gateway exited before Admin API became ready'
-    fi
-    tries=$((tries + 1))
-    sleep 1
-  done
-  [ "$tries" -lt 30 ] || {
-    docker logs "$cid" >&2 || :
-    fail 'standalone GET /configs did not become ready'
-  }
+  wait_for_admin 'default standalone API'
 
   observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/mode-stderr")
   status=$?
@@ -256,24 +262,7 @@ DRIFTED_CONFIG
     error 'cannot launch isolated named-profile APISIX'
   [ -n "$cid" ] || error 'Docker returned no named-profile container ID'
 
-  tries=0
-  while [ "$tries" -lt 30 ]
-  do
-    code=$(http_status /apisix/admin/configs correct)
-    status=$?
-    [ "$status" -ne 0 ] || [ "$code" != 200 ] || break
-    if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
-    then
-      docker logs "$cid" >&2 || :
-      fail 'named-profile gateway exited before Admin API became ready'
-    fi
-    tries=$((tries + 1))
-    sleep 1
-  done
-  [ "$tries" -lt 30 ] || {
-    docker logs "$cid" >&2 || :
-    fail 'named-profile Admin API did not become ready'
-  }
+  wait_for_admin 'named-profile'
 
   # A missing explicit selector must fail, even when the profile happens
   # to be present in the current container environment: a different
