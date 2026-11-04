@@ -37,6 +37,21 @@ const pwaManifest = {name:'Observed PWA resource fixture',short_name:'PWA fixtur
 const pwaIcon = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YuzpgAAAABJRU5ErkJggg==',
   'base64');
+// A valid 0.5-second PCM WAV: the real browser creates its player naturally.
+const wav = Buffer.alloc(44 + 4000,128);
+wav.write('RIFF',0,'ascii');
+wav.writeUInt32LE(wav.length-8,4);
+wav.write('WAVEfmt ',8,'ascii');
+wav.writeUInt32LE(16,16);
+wav.writeUInt16LE(1,20);
+wav.writeUInt16LE(1,22);
+wav.writeUInt32LE(8000,24);
+wav.writeUInt32LE(8000,28);
+wav.writeUInt16LE(1,32);
+wav.writeUInt16LE(8,34);
+wav.write('data',36,'ascii');
+wav.writeUInt32LE(4000,40);
+const sampleWavURL = 'data:audio/wav;base64,' + wav.toString('base64');
 const inlineMapURL = 'data:application/json;base64,' +
   Buffer.from(JSON.stringify(inlineMap)).toString('base64');
 const largePayload = Buffer.alloc(3 * 1024 * 1024);
@@ -69,8 +84,22 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   document.body.append(secretHost);
   nestedHost.setAttribute('data-visible-inside-closed', 'yes');
   const dynamicStyle = document.createElement('style');
-  dynamicStyle.textContent = '.dynamic-probe { color: blue; }';
+  dynamicStyle.textContent = '.dynamic-probe { color: blue; } ' +
+    '@keyframes fixture-motion { from {transform:translateX(0px)} ' +
+    'to {transform:translateX(16px)} } ' +
+    '.fixture-animated {animation:fixture-motion 2s linear both}';
   document.head.append(dynamicStyle);
+  const animationElement = document.createElement('div');
+  animationElement.id = 'fixture-css-animation';
+  animationElement.className = 'fixture-animated';
+  document.body.append(animationElement);
+  const audioElement = document.createElement('audio');
+  audioElement.id = 'fixture-media-player';
+  audioElement.src = '${sampleWavURL}';
+  audioElement.muted = true;
+  audioElement.autoplay = true;
+  document.body.append(audioElement);
+  audioElement.play().catch(() => {});
   document.addEventListener('rest-probe', () => {});
   WebAssembly.instantiate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,127,3,2,1,0,7,7,1,3,114,117,110,0,0,10,6,1,4,0,65,42,11]))
     .then(({instance}) => {
