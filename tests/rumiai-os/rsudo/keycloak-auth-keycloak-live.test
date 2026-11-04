@@ -240,8 +240,25 @@ do
     --token-store "$tmp/token-rejected-$version" \
     --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
   status=$?
-  [ "$status" -eq 71 ] && [ ! -e "$tmp/token-rejected-$version" ] ||
-    fail "Keycloak $version incorrect client secret not rejected ($status)"
+  if [ "$status" -ne 71 ]
+  then
+    # Diagnostic OAuth error *code only*, never raw token/error bodies:
+    # determine the exact real provider classification before changing it.
+    bad_basic=$(printf 'k04-service:k04-incorrect-secret' | base64 | tr -d '\r\n') ||
+      error 'cannot encode synthetic negative client credentials'
+    printf 'Authorization: Basic %s\n' "$bad_basic" > "$tmp/bad-basic-header"
+    unset bad_basic
+    bad_http=$(transport --output "$tmp/bad-json" \
+      --write-out '%{http_code}' --header "@$tmp/bad-basic-header" \
+      --data-urlencode grant_type=client_credentials \
+      --url "$base/realms/master/protocol/openid-connect/token") ||
+      error 'cannot inspect negative OAuth error'
+    bad_error=$(jq -r '.error // "missing-error"' "$tmp/bad-json") ||
+      error 'cannot parse negative OAuth error code'
+    fail "Keycloak $version wrong-client-secret class=$status; HTTP=$bad_http; OAuth=$bad_error"
+  fi
+  [ ! -e "$tmp/token-rejected-$version" ] ||
+    fail "Keycloak $version stored a token after rejecting credentials"
   printf 'k04-protected-client-secret\n' > "$tmp/secret"
 
   printf '%s: verified real Keycloak %s OAuth basic/post and permission boundary\n' \
