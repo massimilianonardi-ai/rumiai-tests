@@ -177,6 +177,29 @@ context || exit 35
 [ "$PATH" = "$baseline" ] || exit 36
 [ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 37
 
+# Selecting an already-installed v2 command through context must reject a
+# now-existing executable outside the selected concrete, without invoking it.
+# Verify that a previous valid shell-local selection remains intact.
+context "pkg=$name@1" || exit 97
+before_context=$PATH
+printf '#!/bin/sh\nexit 99\n' > "$work/outside-context-command" || exit 98
+command -p -- chmod +x "$work/outside-context-command" || exit 99
+command -p -- rm -f -- "$modern/link/bin/$name-direct" || exit 100
+command -p -- ln -s "$work/outside-context-command" "$modern/link/bin/$name-direct" || exit 101
+damaged_direct=1
+if context "pkg=$name@2" >/dev/null 2>&1
+then
+  exit 102
+fi
+[ "$PATH" = "$before_context" ] || exit 103
+[ "$(command -v "$name")" = "$legacy/cmd/$name" ] || exit 104
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@2" ] || exit 105
+command -p -- rm -f -- "$modern/link/bin/$name-direct" || exit 106
+command -p -- ln -s "../../root/bin/$name-direct" "$modern/link/bin/$name-direct" || exit 107
+damaged_direct=0
+context || exit 108
+[ "$PATH" = "$baseline" ] || exit 109
+
 "$m_ROOT/m" pkg default "$name@1" || exit 38
 [ "$("$m_ROOT/m" "$name" back)" = legacy:legacy:back ] || exit 39
 [ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 40
