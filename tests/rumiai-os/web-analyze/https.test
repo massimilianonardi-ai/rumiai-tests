@@ -17,6 +17,9 @@ case $status in 0) :;; 1) skip 'rumiai-os checkout unavailable';; 2) fail 'inval
 [ -x "$root/bin/sys/web-analyze" ] || fail 'web-analyze command missing'
 [ -f "$root/res/sys/manual/web-analyze" ] || fail 'web-analyze manual missing'
 [ -f "$root/res/sys/manual/web-analyze-rest.lib.js" ] || fail 'rest library manual missing'
+[ -n "${RUMIAI_TEST_TLS_EPHEMERAL_HOME:-}" ] &&
+  [ "${RUMIAI_TEST_TLS_EPHEMERAL_HOME:-}" = "${HOME:-}" ] ||
+  skip 'trusted HTTPS fixture requires externally prepared disposable HOME'
 for executable in node chromium openssl certutil; do
   command -v "$executable" >/dev/null 2>&1 || skip "$executable unavailable"
 done
