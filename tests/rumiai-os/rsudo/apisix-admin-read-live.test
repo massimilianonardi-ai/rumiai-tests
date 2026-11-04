@@ -268,6 +268,21 @@ DRIFTED_CONFIG
 
   wait_for_admin 'named-profile'
 
+  # Read only Docker's manager metadata for this exact selected container.
+  # A declared profile and a bind mount are startup-selection evidence,
+  # never a guarantee that the current file matches the loaded snapshot.
+  manager_profile=$(docker inspect --format \
+    '{{range .Config.Env}}{{if eq . "APISIX_PROFILE=prod"}}selected{{end}}{{end}}' "$cid") ||
+    error 'cannot inspect selected gateway profile'
+  [ "$manager_profile" = selected ] ||
+    fail 'manager did not retain named APISIX_PROFILE selector'
+  manager_mount=$(docker inspect --format \
+    '{{range .Mounts}}{{if eq .Destination "/usr/local/apisix/conf/config-prod.yaml"}}{{.Type}}:{{.RW}}{{end}}{{end}}' "$cid") ||
+    error 'cannot inspect selected profile configuration mount'
+  [ "$manager_mount" = 'bind:false' ] ||
+    fail 'manager did not retain read-only named profile bind mount'
+  unset manager_profile manager_mount
+
   # A missing explicit selector must fail, even when the profile happens
   # to be present in the current container environment: a different
   # sudo/service invocation might select a different environment.
@@ -320,6 +335,26 @@ DRIFTED_CONFIG
   [ -n "$cid" ] || error 'Docker returned no custom -c container ID'
 
   wait_for_admin 'custom -c'
+
+  # The CLI uses a source different from OpenResty's generated nginx.conf.
+  # Confirm Docker retained the actual launch command and the explicit
+  # custom-source mount, then compare against the separately observed API.
+  manager_entrypoint=$(docker inspect --format '{{.Path}}' "$cid") ||
+    error 'cannot inspect custom CLI entrypoint'
+  [ "$manager_entrypoint" = /bin/sh ] ||
+    fail 'custom -c gateway did not use the expected entrypoint'
+  manager_script=$(docker inspect --format '{{index .Args 1}}' "$cid") ||
+    error 'cannot inspect custom CLI start argument'
+  case "$manager_script" in
+    *'/mnt/rsudo-apisix-custom.yaml'*) : ;;
+    *) fail 'Docker launch command does not retain the -c source path' ;;
+  esac
+  manager_mount=$(docker inspect --format \
+    '{{range .Mounts}}{{if eq .Destination "/mnt/rsudo-apisix-custom.yaml"}}{{.Type}}:{{.RW}}{{end}}{{end}}' "$cid") ||
+    error 'cannot inspect custom CLI configuration mount'
+  [ "$manager_mount" = 'bind:false' ] ||
+    fail 'custom -c source mount was not read-only'
+  unset manager_entrypoint manager_script manager_mount
 
   observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/mode-stderr")
   status=$?
