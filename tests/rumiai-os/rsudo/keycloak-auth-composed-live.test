@@ -141,7 +141,13 @@ RSUDO_USER=k04operator
 RSUDO_PASSWORD=k04-only-ssh-password
 RSUDO_INTERACTIVE=
 RSUDO_ASKPASS=
-rsudo_mod_keycloak_auth "$@"
+if [ "${1-}" = admin-probe ]
+then
+  shift
+  _rsudo_mod_keycloak_admin_transport_probe "$@"
+else
+  rsudo_mod_keycloak_auth "$@"
+fi
 PROBE
 cat > "$tmp/bin/ssh" <<'SSH_WRAPPER'
 #!/bin/sh
@@ -322,6 +328,49 @@ EOF_SSH_CONFIG
     grep -F "$marker" "$tmp/auth.err" >/dev/null &&
       fail "Keycloak $version introspection leaked sensitive data"
   done
+
+
+  # K04 internal realm read across the full real SSH/sudo boundary:
+  # a service account without view-realm must get HTTP 403 (exit 80).
+  result=$(probe admin-probe --server https://127.0.0.1:8443 \
+    --issuer-realm master --target-realm master \
+    --token-file "/root/keycloak/basic-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 80 ] && [ -z "$result" ] ||
+    fail "Keycloak $version composed unprivileged Admin Bearer read was not forbidden ($status)"
+
+  # A separately authorized administrative token is staged into a protected
+  # file in the disposable SSH sidecar. This is *not* a production credential
+  # transfer mechanism or a public caller token-import feature.
+  docker cp "$tmp/admin-token" "$ssh_container:/root/keycloak/admin-$version" ||
+    error "Keycloak $version cannot stage isolated admin token"
+  docker exec "$ssh_container" chmod 600 "/root/keycloak/admin-$version" ||
+    error "Keycloak $version cannot protect synthetic admin token"
+  result=$(probe admin-probe --server https://127.0.0.1:8443 \
+    --issuer-realm master --target-realm master \
+    --token-file "/root/keycloak/admin-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"http_status":200,"authorized":true,"body_suppressed":true}' ] ||
+    fail "Keycloak $version composed authenticated Admin Bearer read failed ($status)"
+
+  # Even a syntactically valid expired/rejected token must fail 401-class,
+  # not silently refresh or fall back to privileged credentials.
+  docker exec "$ssh_container" sh -c \
+    'printf "%s\n" "{\"access_token\":\"K04-SYNTHETIC-EXPIRED\"}" > /root/keycloak/rejected-bearer &&
+     chmod 600 /root/keycloak/rejected-bearer' ||
+    error "Keycloak $version cannot create synthetic expired-token source"
+  result=$(probe admin-probe --server https://127.0.0.1:8443 \
+    --issuer-realm master --target-realm master \
+    --token-file /root/keycloak/rejected-bearer \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 79 ] && [ -z "$result" ] ||
+    fail "Keycloak $version composed rejected Bearer did not fail 401-class ($status)"
+  grep -F 'K04-SYNTHETIC-EXPIRED' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version composed Admin Bearer diagnostic leaked credentials"
 
   # A valid client token is not an administrative authorization. Keep the
   # bearer only in a protected header file inside the isolated SSH sidecar.
