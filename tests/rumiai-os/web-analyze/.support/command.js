@@ -324,7 +324,10 @@ async function main()
       'dom-mutations.jsonl', 'rest/dom-mutations-at-rest.jsonl',
       'rest/dom-history-contexts.json'])
       assert(fs.existsSync(path.join(capture, file)),
-        'missing ' + file + '; capture stderr: ' + result.stderr);
+        'missing ' + file + '; capture stderr: ' + result.stderr +
+        '; limitations: ' + (fs.existsSync(path.join(capture, 'LIMITATIONS.md')) ?
+          fs.readFileSync(path.join(capture, 'LIMITATIONS.md'), 'utf8') :
+          'not generated'));
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
