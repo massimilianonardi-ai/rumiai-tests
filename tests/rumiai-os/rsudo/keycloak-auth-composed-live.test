@@ -345,7 +345,8 @@ EOF_SSH_CONFIG
   # transfer mechanism or a public caller token-import feature.
   docker cp "$tmp/admin-token" "$ssh_container:/root/keycloak/admin-$version" ||
     error "Keycloak $version cannot stage isolated admin token"
-  docker exec "$ssh_container" chmod 600 "/root/keycloak/admin-$version" ||
+  docker exec "$ssh_container" sh -c     "chown 0:0 /root/keycloak/admin-$version &&
+     chmod 600 /root/keycloak/admin-$version" ||
     error "Keycloak $version cannot protect synthetic admin token"
   result=$(probe admin-probe --server https://127.0.0.1:8443 \
     --issuer-realm master --target-realm master \
