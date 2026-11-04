@@ -71,7 +71,10 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
     body:JSON.stringify({marker:'request-body-marker'})});
   fetch('/redirect-start');
   fetch('/large.bin');
-  fetch('/burst');
+  fetch('/burst').then(response => response.text()).then(text => {
+    document.body.dataset.burstComplete =
+      text === 'alpha-piece-beta-piece-gamma-piece' ? 'yes' : 'no';
+  });
   fetch('/cacheable').then(() => fetch('/cacheable'));
   const feed = new EventSource('/live-events');
   feed.onmessage = event => {
@@ -454,6 +457,8 @@ async function main()
       entry.packet.method?.startsWith('Network.') &&
       burstIds.includes(entry.packet.params?.requestId))
       .map(entry => entry.packet.method);
+    assert(states[0].html.includes('burst-complete="yes"'),
+      'fixture did not naturally consume the complete chunked response');
     assert(responseIndex.some(item => item.status === 'saved' &&
       item.url?.endsWith('/burst')), 'chunked HTTP response not saved: ' +
       JSON.stringify({
