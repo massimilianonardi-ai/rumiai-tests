@@ -300,6 +300,74 @@ do
     fail "Keycloak $version stored a token after rejecting credentials"
   printf 'k04-protected-client-secret\n' > "$tmp/secret"
 
+  # K04 refresh through the real m invocation and official server.
+  # The old store is copied for an exact no-change check on failures.
+  # Keycloak can issue a refreshed token without requiring per-realm rotation
+  # to be enabled: assert the protected replacement protocol, not an assumed
+  # token-value difference across releases.
+  refresh_store=$tmp/token-user-$version
+  cp "$refresh_store" "$tmp/refresh-before-$version" ||
+    error "Keycloak $version cannot snapshot private pre-refresh store"
+  old_inode=$(ls -id "$refresh_store" | awk '{print $1}') ||
+    error "Keycloak $version original refresh inode unavailable"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$refresh_store" --token-store "$refresh_store" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version real confidential refresh failed ($status)"
+  jq -e '(.access_token | type == "string" and length > 0) and
+    (.refresh_token | type == "string" and length > 0)' \
+    "$refresh_store" >/dev/null ||
+    fail "Keycloak $version refresh did not preserve usable token fields"
+  mode=$(LC_ALL=C ls -ld "$refresh_store"); mode=${mode%% *}
+  [ "$mode" = '-rw-------' ] ||
+    fail "Keycloak $version refresh lost private mode"
+  new_inode=$(ls -id "$refresh_store" | awk '{print $1}') ||
+    error "Keycloak $version refreshed inode unavailable"
+  [ "$new_inode" != "$old_inode" ] ||
+    fail "Keycloak $version refresh did not replace the store atomically"
+  [ ! -e "$refresh_store.keycloak-refresh-lock" ] ||
+    fail "Keycloak $version successful refresh left lock behind"
+
+  # Exercise POST client authentication on an already refreshed session.
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-post \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$refresh_store" --token-store "$refresh_store" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version client-secret-post refresh failed ($status)"
+
+  # A held lock must fail without making a token HTTP request or rewriting
+  # the existing record. This verifies cooperative serialization, not CAS
+  # against arbitrary external writers.
+  cp "$refresh_store" "$tmp/refresh-held-$version" ||
+    error "Keycloak $version cannot snapshot locked store"
+  mkdir "$refresh_store.keycloak-refresh-lock" ||
+    error "Keycloak $version cannot create refresh contention fixture"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$refresh_store" --token-store "$refresh_store" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 87 ] && [ -z "$result" ] &&
+    cmp -s "$refresh_store" "$tmp/refresh-held-$version" ||
+    fail "Keycloak $version concurrent refresh bypassed exclusive lock ($status)"
+  rmdir "$refresh_store.keycloak-refresh-lock" ||
+    error "Keycloak $version cannot release test-owned lock"
+  for sensitive in k04-protected-client-secret k04-bootstrap-only
+  do
+    grep -F "$sensitive" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version refresh diagnostic leaked a secret"
+  done
+
   # Real RFC 7009 revocation. A refresh token may also revoke this client's
   # consent. The store remains intact; HTTP 200 does NOT prove every already
   # issued JWT is unusable at all resource servers.
@@ -334,6 +402,21 @@ do
   [ "$refresh_code" = 400 ] &&
     jq -e '.error == "invalid_grant"' "$tmp/refresh-response" >/dev/null ||
     fail "Keycloak $version revoked refresh token unexpectedly accepted ($refresh_code)"
+
+  # The public refresh call must classify revoked-token invalid_grant and
+  # leave the protected session file byte-identical on failure.
+  cp "$refresh_store" "$tmp/revoked-before-$version" ||
+    error "Keycloak $version cannot snapshot revoked store"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$refresh_store" --token-store "$refresh_store" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 72 ] && [ -z "$result" ] &&
+    cmp -s "$refresh_store" "$tmp/revoked-before-$version" &&
+    [ ! -e "$refresh_store.keycloak-refresh-lock" ] ||
+    fail "Keycloak $version revoked refresh mutated store or had incorrect status ($status)"
 
   result=$(probe revoke --server "$base" --issuer-realm master \
     --client-id k04-service --client-auth client-secret-post \
