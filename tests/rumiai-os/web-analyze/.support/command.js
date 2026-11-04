@@ -105,6 +105,22 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   caches.open('rest-cache')
     .then(cache => cache.put('/cached-fixture', new Response('cached-payload')))
     .then(() => {document.body.dataset.cacheReady = 'yes';});
+  if (typeof navigator.storageBuckets?.open === 'function') {
+    navigator.storageBuckets.open('analyze-fixture-bucket').then(async bucket => {
+      if (bucket.caches?.open) {
+        const cache = await bucket.caches.open('named-bucket-cache');
+        await cache.put('/named-bucket-fixture', new Response('named-bucket-payload'));
+      }
+      if (typeof bucket.getDirectory === 'function') {
+        const root = await bucket.getDirectory();
+        const file = await root.getFileHandle('named-bucket-file', {create:true});
+        const writable = await file.createWritable();
+        await writable.write('named-bucket-file-body');
+        await writable.close();
+      }
+      document.body.dataset.namedBucketReady = 'yes';
+    }).catch(() => {document.body.dataset.namedBucketReady = 'no';});
+  }
   fetch('/data.json', {headers:{'X-Fixture-Request':'captured'}});
   fetch('/submit-data', {method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({marker:'request-body-marker'})});
@@ -665,6 +681,69 @@ async function main()
       assert(frameContext[field], 'missing read-only page inventory: ' + field);
     assert.equal(fs.statSync(contextPath).mode & 0o777, 0o600,
       'raw security and storage context metadata must remain private');
+    const partitionPath = path.join(capture,
+      'rest/targets/target-000/storage-partitions/index.json');
+    const partitions = JSON.parse(fs.readFileSync(partitionPath, 'utf8'));
+    assert.equal(partitions.scope, 'observed-storage-key-and-bucket-selections');
+    assert.equal(fs.statSync(partitionPath).mode & 0o777, 0o600,
+      'partition index must remain private');
+    if (primaryFrame.storageKey.status === 'saved')
+    {
+      assert(partitions.selections.length >= 1,
+        'an observed main-frame storage key must produce a scoped selection');
+      const scoped = partitions.selections.find(row => row.name === null &&
+        row.selector.storageBucket.storageKey === primaryFrame.storageKey.result.storageKey);
+      assert(scoped, 'default bucket must use exact frame storage key');
+      assert(scoped.sources.indexeddb && scoped.sources.cacheStorage && scoped.sources.opfs,
+        'partition acquisition must report each data source independently');
+      const selectionRoot = 'rest/targets/target-000/storage-partitions/' + scoped.id;
+      if (scoped.sources.indexeddb.status === 'saved')
+      {
+        const idb = JSON.parse(fs.readFileSync(path.join(capture,
+          selectionRoot, 'indexeddb/index.json'), 'utf8'));
+        const db = idb.databases.find(row => row.name === 'rest-database');
+        assert(db?.stores.some(row => row.entries >= 1),
+          'key-scoped IndexedDB read omitted fixture rows');
+      }
+      if (scoped.sources.cacheStorage.status === 'saved')
+      {
+        const cache = JSON.parse(fs.readFileSync(path.join(capture,
+          selectionRoot, 'cache-storage/index.json'), 'utf8'));
+        const record = cache.caches.flatMap(row => row.entries)
+          .find(row => row.requestURL?.endsWith('/cached-fixture'));
+        assert(record?.body?.status === 'saved',
+          'key-scoped Cache Storage did not preserve fixture response');
+        assert.equal(fs.readFileSync(path.join(capture, selectionRoot,
+          'cache-storage', record.body.file), 'utf8'), 'cached-payload');
+      }
+      const opfs = JSON.parse(fs.readFileSync(path.join(capture,
+        selectionRoot, 'opfs.json'), 'utf8'));
+      assert(opfs.scope === 'read-only-CDP-file-system-directory');
+      assert(opfs.directories.every(row => row.pathComponents &&
+        ['saved','partial'].includes(row.status)));
+      if (hasMethod('FileSystem','getDirectory'))
+        assert(['saved','partial'].includes(opfs.status),
+          'read-only FileSystem.getDirectory availability was lost');
+      else assert.equal(opfs.status, 'unsupported');
+      const restDom = fs.readFileSync(path.join(capture,
+        'states/dom-rest-initial.html'), 'utf8');
+      if (restDom.includes('data-named-bucket-ready="yes"') &&
+        frameContext.bucketNames.status === 'saved' &&
+        frameContext.bucketNames.names.includes('analyze-fixture-bucket'))
+      {
+        const named = partitions.selections.find(row =>
+          row.name === 'analyze-fixture-bucket');
+        assert(named, 'observed named bucket was not selected separately');
+        const namedOpfs = JSON.parse(fs.readFileSync(path.join(capture,
+          'rest/targets/target-000/storage-partitions', named.id,
+          'opfs.json'), 'utf8'));
+        if (namedOpfs.status === 'saved')
+          assert(namedOpfs.directories.some(row =>
+            row.result?.directory?.nestedFiles?.some(file =>
+              file.name === 'named-bucket-file')),
+          'read-only CDP OPFS listing lost fixture-created file metadata');
+      }
+    }
     const storage = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/storage.json'), 'utf8'));
     assert.equal(storage.localStorage.values.fixtureSession, 'fixture-only-access');
@@ -902,6 +981,18 @@ async function main()
       'DOM verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'storage'),
       'storage verification domain missing');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/targets/target-000/storage-partitions/index.json' &&
+      item.status !== 'failed'),
+      'partition index was not independently verified');
+    if (primaryFrame.storageKey.status === 'saved')
+    {
+      const opfsReference = partitions.selections[0].sources.opfs;
+      assert(integrity.artifacts.some(item =>
+        item.file === 'rest/targets/target-000/' + opfsReference.file &&
+        item.sha256 === opfsReference.sha256 && item.status !== 'failed'),
+        'scoped OPFS metadata was not digest-audited');
+    }
     const contextRecord = rest.artifacts.find(item =>
       item.name === 'frame-context' && item.target === mainCoverageTarget.targetId);
     assert(contextRecord && contextRecord.sha256 && contextRecord.bytes,
@@ -1007,6 +1098,18 @@ async function main()
     assert(interruptedAudit.domains.some(item =>
       item.domain === 'capture' && item.status === 'interrupted'),
       'interruption reason missing from domain-level coverage');
+    const originalPartitions = fs.readFileSync(partitionPath);
+    const brokenPartitions = Buffer.from(originalPartitions);
+    brokenPartitions[15] ^= 1;
+    fs.writeFileSync(partitionPath, brokenPartitions);
+    const invalidPartition = auditWebAnalyzeEvidence(capture);
+    assert.equal(invalidPartition.status, 'failed',
+      'same-length bucket index tampering must fail audit');
+    assert(invalidPartition.artifacts.some(item =>
+      item.file === 'rest/targets/target-000/storage-partitions/index.json' &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'tampered bucket index SHA mismatch was not reported');
+    fs.writeFileSync(partitionPath, originalPartitions);
     const originalContext = fs.readFileSync(contextPath);
     const alteredContext = Buffer.from(originalContext);
     alteredContext[12] ^= 1;
