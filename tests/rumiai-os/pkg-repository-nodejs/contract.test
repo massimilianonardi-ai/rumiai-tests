@@ -49,7 +49,9 @@ then
 fi
 case "$mode:$url" in
   body:https://nodejs.org/dist/index.json)
-    printf '%s\n' '[{"version":"v26.11.1"},{"version":"v26.10.0"},{"version":"v25.9.0"},{"version":"v26.8.2"}]'
+    # The official upstream index now begins with a later-major alpha.
+    # It must not make exact stable v26 resolution fail.
+    printf '%s\n' '[{"version":"v27.0.0-alpha.0.0.0"},{"version":"v26.11.1"},{"version":"v26.10.0"},{"version":"v25.9.0"},{"version":"v26.8.2"}]'
     ;;
   body:https://nodejs.org/dist/v26.11.1/SHASUMS256.txt)
     printf '%s\n' 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  node-v26.11.1-linux-arm64.tar.xz'
@@ -79,6 +81,7 @@ loadsyslib "pkg/repository/pkg-repository-nodejs" || error "cannot load Node.js 
 versions="$(pkg_repository_list_versions "$tmp/repository")" || fail "list versions failed"
 printf '%s\n' "$versions" | grep -Fx v26.11.1 >/dev/null 2>&1 || fail "latest v26 missing from list"
 printf '%s\n' "$versions" | grep -Fx v25.9.0 >/dev/null 2>&1 && fail "wrong major leaked into list"
+printf '%s\n' "$versions" | grep -F 'v27.0.0-alpha' >/dev/null 2>&1 && fail "future-major prerelease leaked into stable v26 list"
 
 [ "$(pkg_repository_resolve_version "$tmp/repository")" = v26.11.1 ] || fail "latest Node.js version resolution failed"
 [ "$(pkg_repository_resolve_version "$tmp/repository" v26.8.2)" = v26.8.2 ] || fail "exact Node.js version resolution failed"
