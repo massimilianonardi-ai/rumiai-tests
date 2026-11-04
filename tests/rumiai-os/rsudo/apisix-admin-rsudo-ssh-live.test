@@ -297,6 +297,46 @@ do
     error 'cannot start official APISIX sharing the SSH target network namespace'
   [ -n "$apisix_cid" ] || error 'official APISIX container ID missing'
 
+  # Inspect the *actual* Linux namespace identities from both containers.
+  # Docker's selected network mode is manager evidence, not proof of
+  # process/filesystem ownership. Matching network inode with distinct
+  # process and mount inodes confirms the boundary exercised below.
+  manager_network_mode=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$apisix_cid") ||
+    error 'cannot inspect selected gateway network mode'
+  [ "$manager_network_mode" = "container:$cid" ] ||
+    fail 'gateway did not retain the expected manager-selected network mode'
+
+  ssh_netns=$(docker exec "$cid" readlink /proc/self/ns/net) ||
+    error 'SSH target network namespace unobservable'
+  apisix_netns=$(docker exec "$apisix_cid" readlink /proc/self/ns/net) ||
+    error 'gateway network namespace unobservable'
+  [ "$ssh_netns" = "$apisix_netns" ] ||
+    fail 'gateway and SSH target do not share the expected network namespace'
+
+  ssh_pidns=$(docker exec "$cid" readlink /proc/self/ns/pid) ||
+    error 'SSH target process namespace unobservable'
+  apisix_pidns=$(docker exec "$apisix_cid" readlink /proc/self/ns/pid) ||
+    error 'gateway process namespace unobservable'
+  [ "$ssh_pidns" != "$apisix_pidns" ] ||
+    fail 'gateway unexpectedly shares the SSH target process namespace'
+
+  ssh_mntns=$(docker exec "$cid" readlink /proc/self/ns/mnt) ||
+    error 'SSH target mount namespace unobservable'
+  apisix_mntns=$(docker exec "$apisix_cid" readlink /proc/self/ns/mnt) ||
+    error 'gateway mount namespace unobservable'
+  [ "$ssh_mntns" != "$apisix_mntns" ] ||
+    fail 'gateway unexpectedly shares the SSH target mount namespace'
+  unset ssh_netns apisix_netns ssh_pidns apisix_pidns ssh_mntns apisix_mntns manager_network_mode
+
+  # Prove Docker still owns the selected config bind mount. The existence
+  # of this mount does NOT prove the running gateway loaded its current bytes.
+  config_mount=$(docker inspect --format \
+    '{{range .Mounts}}{{if eq .Destination "/usr/local/apisix/conf/config.yaml"}}{{.Type}}:{{.RW}}{{end}}{{end}}' "$apisix_cid") ||
+    error 'cannot inspect selected gateway configuration mount'
+  [ "$config_mount" = 'bind:false' ] ||
+    fail 'selected gateway did not retain the read-only configuration bind mount'
+  unset config_mount
+
   tries=0
   while [ "$tries" -lt 30 ]
   do
