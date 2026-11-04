@@ -57,7 +57,7 @@ cat > "$tmp/bin/luajit" <<'LUAJIT_FIXTURE'
 [ "$#" -eq 2 ] && [ "$1" = "-e" ] || exit 70
 printf '%s\n' "${APISIX_MODE_RESULT:-standalone-file-yaml}"
 LUAJIT_FIXTURE
-chmod 700 -- "$tmp/bin/luajit" || error 'cannot make fixture executable'
+chmod 700 "$tmp/bin/luajit" || error 'cannot make fixture executable'
 
 cat > "$tmp/bin/rsudo-apisix-mode-probe" <<'PROBE'
 #!/bin/sh
@@ -79,7 +79,7 @@ case "${APISIX_TEST_OPERATION:-mode}" in
   *) exit 83;;
 esac
 PROBE
-chmod 700 -- "$tmp/bin/rsudo-apisix-mode-probe" || error 'cannot make probe executable'
+chmod 700 "$tmp/bin/rsudo-apisix-mode-probe" || error 'cannot make probe executable'
 
 result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe "$tmp/home" 2>"$tmp/error")
 status=$?
