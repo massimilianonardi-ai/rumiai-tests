@@ -246,6 +246,47 @@ do
   grep -F 'k04-protected-client-secret' "$tmp/auth.err" >/dev/null &&
     fail "Keycloak $version HS256 secret leaked to diagnostics"
 
+  # The same HS256 authenticator must also handle a user Direct Grant,
+  # protected refresh rotation and explicit refresh-token revocation.
+  printf 'k04-bootstrap-only\n' > "$tmp/jwt-user-password"
+  chmod 600 "$tmp/jwt-user-password"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin \
+    --password-file "$tmp/jwt-user-password" \
+    --client-id k04-signed --client-auth client-secret-jwt \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/jwt-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] ||
+    fail "Keycloak $version HS256 user Direct Grant failed ($status)"
+  jq -e '(.refresh_token | type == "string" and length > 0)' \
+    "$tmp/jwt-user-$version" >/dev/null ||
+    fail "Keycloak $version HS256 Direct Grant refresh token absent"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-signed --client-auth client-secret-jwt \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$tmp/jwt-user-$version" \
+    --token-store "$tmp/jwt-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version HS256 Direct Grant refresh failed ($status)"
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-signed --client-auth client-secret-jwt \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$tmp/jwt-user-$version" \
+    --token-type-hint refresh_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version HS256 refresh-token revoke failed ($status)"
+  grep -F 'k04-protected-client-secret' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version HS256 lifecycle leaked secret in diagnostics"
+
   # A separate target realm gives a real master-issued, target-scoped
   # delegated authority test. Keycloak creates a target-realm management
   # client in master, rather than using realm-management for master itself.
