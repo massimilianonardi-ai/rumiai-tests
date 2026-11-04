@@ -22,8 +22,16 @@ esac
 if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]; then
   RUMIAI_TEST_M_OS_CHILD=1
   export RUMIAI_TEST_M_OS_CHILD
-  "$target/m" sh "$0"
-  exit $?
+  if "$target/m" sh "$0"
+  then
+    exit 0
+  else
+    child_status=$?
+    case "$child_status" in
+      1) exit 1 ;;
+      *) printf 'nodejs-index.test: ERROR: target bootstrap/test status %s\n' "$child_status" >&2; exit 3 ;;
+    esac
+  fi
 fi
 . "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 3
 loadsyslib "pkg/repository/pkg-repository-nodejs" || exit 3
