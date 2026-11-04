@@ -19,6 +19,7 @@ case "$target_status" in
     exit 3
     ;;
 esac
+command -p -- sh -n "$target/lib/sys/sh/pkg/repository/pkg-repository-nodejs.lib.sh" || exit 1
 if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]; then
   RUMIAI_TEST_M_OS_CHILD=1
   export RUMIAI_TEST_M_OS_CHILD
