@@ -351,7 +351,7 @@ async function main()
       'states/state-000.json', 'states/screen-000.png',
       'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
       'states/dom-rest-final.html', 'states/dom-rest-final.json',
-      'rest/manifest.json', 'rest/page.mhtml',
+      'rest/manifest.json', 'rest/security/index.json', 'rest/page.mhtml',
       'rest/targets/target-000/dom-tree.json',
       'rest/targets/target-000/dom-snapshot.json',
       'rest/resources-at-rest.jsonl', 'rest/scripts-at-rest.jsonl',
@@ -744,6 +744,27 @@ async function main()
           'read-only CDP OPFS listing lost fixture-created file metadata');
       }
     }
+    const securityPath = path.join(capture, 'rest/security/index.json');
+    const security = JSON.parse(fs.readFileSync(securityPath, 'utf8'));
+    assert.equal(security.scope, 'observed-frame-and-network-security');
+    assert.equal(security.source.status, 'saved',
+      'native CDP response events were not available for security correlation');
+    assert(security.frames.some(item => item.frameId === primaryFrame.frameId &&
+      item.securityOrigin?.includes('127.0.0.1')),
+    'frame security origin must be derived from the real Chromium frame tree');
+    assert(security.responses.some(item =>
+      item.url?.includes('127.0.0.1') && item.tlsDetailsStatus === 'inapplicable'),
+    'insecure local fixture transport must not be misrepresented as TLS');
+    assert.equal(security.certificateDiscovery, 'inapplicable',
+      'HTTP-only fixture has no HTTPS certificate chain to recover');
+    assert.equal(security.certificates.length, 0);
+    assert.equal(security.certificateMethod.support,
+      hasMethod('Network', 'getCertificate') ? 'supported' : 'unsupported');
+    assert.equal(fs.statSync(securityPath).mode & 0o777, 0o600,
+      'transport security evidence is private');
+    assert(rest.artifacts.some(item => item.name === 'security-trust' &&
+      item.file === 'security/index.json'),
+      'security evidence missing from the resting manifest');
     const storage = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/storage.json'), 'utf8'));
     assert.equal(storage.localStorage.values.fixtureSession, 'fixture-only-access');
@@ -1004,6 +1025,10 @@ async function main()
       'storage/security context evidence SHA-256 was not audited');
     assert(integrity.domains.some(item => item.domain === 'security'),
       'frame security policy and isolation must be represented in audit coverage');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/security/index.json' &&
+      item.status !== 'failed'),
+      'frame/transport security index must be independently audited');
     assert(integrity.domains.some(item => item.domain === 'listeners'),
       'event listener verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'accessibility'),
@@ -1098,6 +1123,18 @@ async function main()
     assert(interruptedAudit.domains.some(item =>
       item.domain === 'capture' && item.status === 'interrupted'),
       'interruption reason missing from domain-level coverage');
+    const originalSecurity = fs.readFileSync(securityPath);
+    const alteredSecurity = Buffer.from(originalSecurity);
+    alteredSecurity[18] ^= 1;
+    fs.writeFileSync(securityPath, alteredSecurity);
+    const tamperedSecurity = auditWebAnalyzeEvidence(capture);
+    assert.equal(tamperedSecurity.status, 'failed',
+      'same-length transport security index corruption must fail audit');
+    assert(tamperedSecurity.artifacts.some(item =>
+      item.file === 'rest/security/index.json' &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'security index SHA-256 mismatch was not detected');
+    fs.writeFileSync(securityPath, originalSecurity);
     const originalPartitions = fs.readFileSync(partitionPath);
     const brokenPartitions = Buffer.from(originalPartitions);
     brokenPartitions[15] ^= 1;
