@@ -768,6 +768,55 @@ async function main()
     assert(fs.readFileSync(path.join(capture, 'FLOWS.md'), 'utf8').includes('flowchart TD'));
     const scriptIndex = fs.readFileSync(path.join(capture, 'scripts.jsonl'), 'utf8');
     assert(scriptIndex.includes('"status":"saved"'), 'compiled JS not recorded');
+    const scriptRows = scriptIndex.trim().split('\n').map(JSON.parse);
+    assert(scriptRows.some(item =>
+      item.status === 'saved' && item.scriptLanguage === 'JavaScript' &&
+      item.sourceMapURL?.startsWith('data:application/json;base64,')),
+      'inline JavaScript source-map provenance missing from scriptParsed');
+    const wasmRow = scriptRows.find(item =>
+      item.scriptLanguage === 'WebAssembly' && item.status === 'saved' &&
+      item.sourceKind === 'wasm-bytecode');
+    assert(wasmRow, 'native Chromium WebAssembly bytecode was not archived: ' +
+      JSON.stringify(scriptRows.filter(item => item.scriptLanguage === 'WebAssembly')
+        .map(item => ({status:item.status,kind:item.sourceKind,error:item.errorCode}))));
+    assert.deepEqual(fs.readFileSync(path.join(capture, wasmRow.file)), wasmPayload,
+      'CDP WebAssembly bytecode differs from the naturally compiled module');
+    assert.equal(wasmRow.bytecodeStatus, 'saved');
+    assert.equal(wasmRow.sha256,
+      crypto.createHash('sha256').update(wasmPayload).digest('hex'));
+    assert(fs.readFileSync(path.join(capture, 'states/dom-rest-initial.html'), 'utf8')
+      .includes('data-wasm-result="42"'),
+      'the actual page did not instantiate the test WebAssembly module');
+    const mapsRoot = path.join(capture, 'rest/source-maps');
+    const mapsIndex = JSON.parse(fs.readFileSync(path.join(mapsRoot, 'index.json'),'utf8'));
+    assert.equal(mapsIndex.policy, 'offline-existing-evidence-only');
+    assert.equal(mapsIndex.noNetworkRequests, true);
+    assert.equal(mapsIndex.scriptIndexStatus, 'saved');
+    assert.equal(mapsIndex.resourceIndexStatus, 'saved');
+    const inlineEntry = mapsIndex.entries.find(item =>
+      item.kind === 'inline-data' && item.status === 'saved');
+    assert(inlineEntry, 'inline data source map was not saved from the CDP script reference');
+    assert.equal(inlineEntry.sourcesContent, 1);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(capture, 'rest', inlineEntry.file),
+      'utf8')), inlineMap, 'inlined original source content was modified');
+    const externalEntry = mapsIndex.entries.find(item =>
+      item.kind === 'external' && item.resolvedURL?.endsWith('/background-worker.js.map'));
+    assert(externalEntry && externalEntry.status === 'saved',
+      'naturally fetched external source map was not recovered: ' +
+      JSON.stringify(mapsIndex.entries.map(item => ({
+        kind:item.kind,status:item.status,code:item.errorCode || null,
+        url:item.resolvedURL || null
+      }))));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(capture, 'rest',
+      externalEntry.file), 'utf8')), workerMap);
+    assert(responseIndex.some(item => item.status === 'saved' &&
+      item.url === externalEntry.resolvedURL && item.file === externalEntry.resource),
+      'external map provenance was not linked to an actually archived response');
+    assert.equal(fs.statSync(path.join(capture, 'rest', inlineEntry.file)).mode & 0o777,
+      0o600, 'source-map bodies must remain private');
+    assert(rest.artifacts.some(item => item.name === 'source-maps' &&
+      item.file === 'source-maps/index.json'),
+      'rest manifest omitted source-map resolution outcomes');
     const integrity = JSON.parse(fs.readFileSync(path.join(capture,
       'evidence-integrity.json'), 'utf8'));
     assert(['saved','partial','interrupted'].includes(integrity.status),
@@ -775,6 +824,18 @@ async function main()
     assert(integrity.artifacts.some(item => item.file === large.file &&
       item.status === 'saved' && item.sha256 === large.sha256),
       'root binary was not independently verified against its index');
+    assert(integrity.artifacts.some(item =>
+      item.file === wasmRow.file && item.status === 'saved' &&
+      item.sha256 === wasmRow.sha256),
+      'WebAssembly bytecode was not independently audited');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/' + inlineEntry.file && item.status === 'saved' &&
+      item.sha256 === inlineEntry.sha256),
+      'inline map payload was not byte- and SHA-256-audited');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/' + externalEntry.file && item.status === 'saved' &&
+      item.sha256 === externalEntry.sha256),
+      'archived external map payload was not byte- and SHA-256-audited');
     assert(integrity.artifacts.some(item =>
       item.file.endsWith('/indexeddb/' + indexedStore.pages[0].file) &&
       item.status === 'saved'), 'IndexedDB page digest was not verified');
@@ -890,6 +951,19 @@ async function main()
     assert(interruptedAudit.domains.some(item =>
       item.domain === 'capture' && item.status === 'interrupted'),
       'interruption reason missing from domain-level coverage');
+    const inlineMapFile = path.join(capture, 'rest', inlineEntry.file);
+    const originalInlineMap = fs.readFileSync(inlineMapFile);
+    const alteredInlineMap = Buffer.from(originalInlineMap);
+    alteredInlineMap[10] ^= 0x01;
+    fs.writeFileSync(inlineMapFile, alteredInlineMap);
+    const mapTamperAudit = auditWebAnalyzeEvidence(capture);
+    assert.equal(mapTamperAudit.status, 'failed',
+      'same-length source-map tampering must invalidate the audit');
+    assert(mapTamperAudit.artifacts.some(item =>
+      item.file === 'rest/' + inlineEntry.file &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'source-map SHA-256 mismatch was not detected');
+    fs.writeFileSync(inlineMapFile, originalInlineMap);
     const usageFile = path.join(coverageRoot, usedEntries[0].file);
     const originalCoverage = fs.readFileSync(usageFile);
     const corruptedCoverage = Buffer.from(originalCoverage);
