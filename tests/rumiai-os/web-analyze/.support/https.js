@@ -135,9 +135,14 @@ function inspect(capture, url, expectedLeaf)
   assert(integrity.artifacts.some(item => item.file === 'rest/' + cert.file &&
     item.status === 'saved' && item.sha256 === cert.sha256),
   'certificate payload was not recursively audited');
+  const securityBytes = fs.readFileSync(securityFile);
   assert(integrity.artifacts.some(item =>
-    item.file === 'rest/security/index.json' && item.status === 'saved'),
-  'security index integrity is missing');
+    item.file === 'rest/security/index.json' &&
+    ['saved','partial'].includes(item.status) &&
+    item.bytes === securityBytes.length &&
+    item.sha256 === crypto.createHash('sha256')
+      .update(securityBytes).digest('hex')),
+  'security index contents were not independently SHA-256 audited');
   const wire = fs.readFileSync(path.join(capture,'cdp-wire.jsonl'),'utf8')
     .trim().split('\n').map(JSON.parse)
     .map(row => ({direction:row.direction,packet:JSON.parse(row.raw)}));
