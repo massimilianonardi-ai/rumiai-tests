@@ -544,12 +544,16 @@ async function main()
           'rest/css-rule-usage-error.json'), 'utf8') : 'none recorded'));
     const coverageIndex = JSON.parse(fs.readFileSync(path.join(coverageRoot,
       'index.json'), 'utf8'));
-    assert.equal(coverageIndex.status, 'saved',
-      'CSS rule-use capture should include all observed test page targets');
+    assert(['saved','partial'].includes(coverageIndex.status),
+      'CSS rule-use target omissions must remain explicitly partial');
     assert.equal(coverageIndex.scope, 'initial-navigation-to-rest-entry');
     assert(coverageIndex.entries.length > 0, 'CSS coverage targets missing');
     const usedEntries = coverageIndex.entries.filter(item => item.status === 'saved');
     assert(usedEntries.length > 0, 'CSS rule tracking did not start before navigation');
+    const mainCoverageTarget = rest.targets.find(item => item.main);
+    assert(mainCoverageTarget && usedEntries.some(item =>
+      item.targetId === mainCoverageTarget.targetId),
+      'initial page selector usage was not obtained from its CDP target');
     const coverage = usedEntries.flatMap(item =>
       JSON.parse(fs.readFileSync(path.join(coverageRoot, item.file), 'utf8')).ruleUsage);
     assert(coverage.some(item => item.used === true && item.styleSheetId),
