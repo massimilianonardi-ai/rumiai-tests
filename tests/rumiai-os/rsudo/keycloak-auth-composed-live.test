@@ -90,6 +90,19 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "secret": "k04-disposable-client-secret"
 }
 CLIENT_JSON
+cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
+{
+  "clientId": "k04-signed",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "clientAuthenticatorType": "client-secret-jwt",
+  "secret": "k04-disposable-client-secret",
+  "attributes": {"token.endpoint.auth.signing.alg": "HS256"}
+}
+CLIENT_JWT_JSON
 
 cat > "$tmp/keycloak/Dockerfile" <<'KC_DOCKERFILE'
 ARG KC_VERSION
@@ -102,7 +115,7 @@ cat > "$tmp/ssh/Dockerfile" <<'SSH_DOCKERFILE'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-server sudo curl jq ca-certificates \
+    openssh-server sudo curl jq python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -s /bin/sh k04operator \
     && echo 'k04operator:k04-only-ssh-password' | chpasswd \
@@ -252,6 +265,15 @@ do
   [ "$create_http" = 201 ] ||
     fail "Keycloak $version service-client provisioning rejected ($create_http)"
 
+  jwt_client_http=$(host_https --output "$tmp/jwt-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-jwt.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version SSH test JWT client provisioning HTTP failed"
+  [ "$jwt_client_http" = 201 ] ||
+    fail "Keycloak $version SSH test JWT client provisioning rejected ($jwt_client_http)"
+
   # Shared Docker network namespace makes the actual Keycloak listener
   # reachable as HTTPS 127.0.0.1:8443 from the real SSH/sudo target.
   ssh_container=$(docker run -d \
@@ -289,6 +311,40 @@ EOF_SSH_CONFIG
     tries=$((tries+1))
     [ "$tries" -lt 60 ] || error "Keycloak $version SSH daemon not ready"
     sleep 0.1
+  done
+
+  # Signed assertion is created and sent on the real remote sudo target.
+  # SSH shell arguments contain selectors and protected file paths only.
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-signed --client-auth client-secret-jwt \
+    --client-secret-file /root/keycloak/secret \
+    --token-store "/root/keycloak/signed-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version composed SSH HS256 client-secret-jwt failed ($status)"
+  docker exec "$ssh_container" sh -c \
+    "test \"\$(stat -c %a /root/keycloak/signed-$version)\" = 600 &&
+     jq -e '.access_token | type == \"string\" and length > 0' /root/keycloak/signed-$version >/dev/null" ||
+    fail "Keycloak $version composed HS256 token was not stored privately"
+  result=$(probe status --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-signed \
+    --client-auth client-secret-jwt \
+    --client-secret-file /root/keycloak/secret \
+    --token-file "/root/keycloak/signed-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version composed HS256 introspection failed ($status)"
+  for sensitive in k04-disposable-client-secret '"access_token"' 'eyJhbGciOiJIUzI1Ni'
+  do
+    grep -F "$sensitive" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version composed JWT assertions/secrets leaked to diagnostics"
   done
 
   result=$(acquire client-secret-basic "basic-$version" 2>"$tmp/auth.err")
