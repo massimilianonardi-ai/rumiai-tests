@@ -300,6 +300,58 @@ do
     fail "Keycloak $version stored a token after rejecting credentials"
   printf 'k04-protected-client-secret\n' > "$tmp/secret"
 
+  # Real RFC 7009 revocation. A refresh token may also revoke this client's
+  # consent. The store remains intact; HTTP 200 does NOT prove every already
+  # issued JWT is unusable at all resource servers.
+  jq -e '.refresh_token | type == "string" and length > 0' \
+    "$tmp/token-user-$version" >/dev/null ||
+    fail "Keycloak $version did not supply refresh token for Direct Grant"
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$tmp/token-user-$version" \
+    --token-type-hint refresh_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version refresh revocation rejected ($status)"
+  [ -f "$tmp/token-user-$version" ] ||
+    fail "Keycloak $version revoke removed the protected source store"
+
+  jq -jr '.refresh_token' "$tmp/token-user-$version" > "$tmp/refresh-probe" ||
+    error "Keycloak $version test refresh extraction failed"
+  client_basic=$(printf 'k04-service:k04-protected-client-secret' | base64 | tr -d '\r\n') ||
+    error 'cannot create synthetic confidential test auth header'
+  printf 'Authorization: Basic %s\n' "$client_basic" > "$tmp/refresh-client-header"
+  unset client_basic
+  refresh_code=$(transport --output "$tmp/refresh-response" \
+    --write-out '%{http_code}' --header "@$tmp/refresh-client-header" \
+    --data-urlencode grant_type=refresh_token \
+    --data-urlencode "refresh_token@$tmp/refresh-probe" \
+    --url "$base/realms/master/protocol/openid-connect/token") ||
+    error "Keycloak $version refresh-after-revoke HTTP failed"
+  [ "$refresh_code" = 400 ] &&
+    jq -e '.error == "invalid_grant"' "$tmp/refresh-response" >/dev/null ||
+    fail "Keycloak $version revoked refresh token unexpectedly accepted ($refresh_code)"
+
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-post \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$tmp/token-basic-$version" \
+    --token-type-hint access_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"access_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version access revocation rejected ($status)"
+
+  for sensitive in k04-protected-client-secret k04-bootstrap-only
+  do
+    grep -F "$sensitive" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version revocation secret leaked to diagnostics"
+  done
+
   printf '%s: verified real Keycloak %s OAuth basic/post and permission boundary\n' \
     "$TEST_ID" "$version"
   stop_keycloak
