@@ -326,6 +326,7 @@ do
       /usr/bin/apisix init
       mkdir -p /tmp/rsudo-apisix-alt/conf /tmp/rsudo-apisix-alt/logs
       cp -R /usr/local/apisix/conf/. /tmp/rsudo-apisix-alt/conf/
+      ln -s /usr/local/apisix/deps /tmp/rsudo-apisix-alt/deps
       rm /usr/local/apisix/conf/nginx.conf
       exec /usr/local/openresty/bin/openresty -p /tmp/rsudo-apisix-alt -g "daemon off;"
     ') || error 'cannot launch nonconventional OpenResty process prefix'
