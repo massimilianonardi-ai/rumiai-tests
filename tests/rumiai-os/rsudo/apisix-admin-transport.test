@@ -105,11 +105,11 @@ cat > "$tmp/bin/curl" <<'CURL_WRAPPER'
 printf '%s\n' "$@" > "$APISIX_CURL_ARGV_LOG"
 exec "$APISIX_CURL_BINARY" "$@"
 CURL_WRAPPER
-chmod 700 -- "$tmp/bin/rsudo-apisix-transport-probe" "$tmp/bin/curl" ||
+chmod 700 "$tmp/bin/rsudo-apisix-transport-probe" "$tmp/bin/curl" ||
   error 'probe/wrapper not executable'
 
 printf 'X-API-KEY: %s\n' 'test-secret-credential-never-in-process-argv' > "$tmp/admin-header"
-chmod 600 -- "$tmp/admin-header" || error 'protected remote header fixture unavailable'
+chmod 600 "$tmp/admin-header" || error 'protected remote header fixture unavailable'
 
 python3 -u "$tmp/server.py" "$tmp/port" > "$tmp/server.out" 2>"$tmp/server.err" &
 pid=$!
@@ -157,13 +157,13 @@ status=$?
 [ "$status" -eq 22 ] && [ -z "$result" ] ||
   fail 'HTTP 401 did not propagate curl failure without response-body leak'
 
-chmod 644 -- "$tmp/admin-header"
+chmod 644 "$tmp/admin-header"
 result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
 status=$?
 [ "$status" -eq 48 ] && [ -z "$result" ] ||
   fail 'group/world readable key file was not rejected'
 
-chmod 600 -- "$tmp/admin-header"
+chmod 600 "$tmp/admin-header"
 printf '%s\n' 'Authorization: Bearer bad' > "$tmp/admin-header"
 result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
 status=$?
