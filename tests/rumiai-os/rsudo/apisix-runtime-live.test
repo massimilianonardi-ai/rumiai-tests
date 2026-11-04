@@ -169,6 +169,47 @@ do
     fail 'automatic single-container APISIX observation did not match the verified master'
   }
 
+  # A configuration candidate remains on disk after removing its PID file.
+  # The explicit observer may truthfully report pidfile-missing, but automatic
+  # runtime discovery must not present that as a running instance.
+  docker exec "$cid" sh -c '
+    mv /usr/local/apisix/logs/nginx.pid /usr/local/apisix/logs/nginx.pid.rsudo-held
+  ' || error 'cannot stage disposable missing-master-pid fixture'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 51 ] && [ -z "$result" ] ||
+    fail 'candidate without a master PID was reported as a discovered runtime'
+  grep -F 'runtime-discovered-master-unverified' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific discovery/master diagnostic'
+  docker exec "$cid" sh -c '
+    mv /usr/local/apisix/logs/nginx.pid.rsudo-held /usr/local/apisix/logs/nginx.pid
+  ' || error 'cannot restore disposable master PID'
+
+  # A readable symlink to a generated file is not accepted as an owned,
+  # ordinary config source. Preserve the running master and restore its file.
+  docker exec "$cid" sh -c '
+    mv /usr/local/apisix/conf/nginx.conf /usr/local/apisix/conf/nginx.conf.rsudo-held &&
+    ln -s nginx.conf.rsudo-held /usr/local/apisix/conf/nginx.conf
+  ' || error 'cannot stage disposable symlinked generated-config fixture'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 53 ] && [ -z "$result" ] ||
+    fail 'symlinked Docker generated configuration was silently accepted'
+  grep -Fx 'apisix.runtime.docker-generated-config-unsafe' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific unsafe Docker-generated-config diagnostic'
+
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 53 ] && [ -z "$result" ] ||
+    fail 'symlinked host generated configuration was silently accepted'
+  grep -Fx 'apisix.runtime.host-generated-config-unsafe' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific unsafe host-generated-config diagnostic'
+
+  docker exec "$cid" sh -c '
+    rm /usr/local/apisix/conf/nginx.conf &&
+    mv /usr/local/apisix/conf/nginx.conf.rsudo-held /usr/local/apisix/conf/nginx.conf
+  ' || error 'cannot restore disposable generated configuration'
+
   # Two real running APISIX installations must fail as ambiguous; the
   # resolver may not choose the first docker ps entry.
   other_cid=$(docker run -d --network none --cap-drop ALL \
