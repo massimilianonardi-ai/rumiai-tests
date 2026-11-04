@@ -66,6 +66,11 @@ done
 
 cleanup()
 {
+  if [ "${damaged_direct-0}" -eq 1 ]
+  then
+    command -p -- rm -f -- "$modern/link/bin/$name-direct" || :
+    command -p -- ln -s "../../root/bin/$name-direct" "$modern/link/bin/$name-direct" || :
+  fi
   if [ "${damaged_link-0}" -eq 1 ]
   then
     command -p -- rm -f -- "$modern/link/bin/$name" || :
@@ -175,6 +180,26 @@ context || exit 35
 "$m_ROOT/m" pkg default "$name@1" || exit 38
 [ "$("$m_ROOT/m" "$name" back)" = legacy:legacy:back ] || exit 39
 [ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 40
+
+# Regression: a *previously installed* direct v2 link must not become
+# an executable outside the selected concrete when a default is published.
+# The outside fixture is only checked for executable existence; never run.
+printf '#!/bin/sh\nexit 99\n' > "$work/outside-command" || exit 87
+command -p -- chmod +x "$work/outside-command" || exit 88
+command -p -- rm -f -- "$modern/link/bin/$name-direct" || exit 89
+command -p -- ln -s "$work/outside-command" "$modern/link/bin/$name-direct" || exit 90
+damaged_direct=1
+if "$m_ROOT/m" pkg default "$name@2" >/dev/null 2>&1
+then
+  exit 91
+fi
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@1" ] || exit 92
+[ "$("$m_ROOT/m" "$name" protected)" = legacy:legacy:protected ] || exit 93
+[ ! -e "$public_direct" ] && [ ! -L "$public_direct" ] || exit 94
+command -p -- rm -f -- "$modern/link/bin/$name-direct" || exit 95
+command -p -- ln -s "../../root/bin/$name-direct" "$modern/link/bin/$name-direct" || exit 96
+damaged_direct=0
+
 "$m_ROOT/m" pkg default -u "$name" || exit 41
 [ ! -e "$selector" ] && [ ! -L "$selector" ] || exit 42
 [ ! -e "$public" ] && [ ! -L "$public" ] || exit 43
