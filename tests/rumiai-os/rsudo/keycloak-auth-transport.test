@@ -266,6 +266,36 @@ status=$?
 [ "$status" -eq 70 ] && [ -z "$result" ] ||
   fail 'token-store symlink was accepted'
 
+# Concurrent writers must never replace one another. The loser may
+# detect the existing file early or fail the final atomic no-replace link.
+acquire client-secret-basic "$tmp/secret" "$tmp/race-store" \
+  >"$tmp/race1.out" 2>"$tmp/race1.err" &
+race1=$!
+acquire client-secret-post "$tmp/secret" "$tmp/race-store" \
+  >"$tmp/race2.out" 2>"$tmp/race2.err" &
+race2=$!
+wait "$race1"
+status1=$?
+wait "$race2"
+status2=$?
+if [ "$status1" -eq 0 ] && [ "$status2" -eq 87 ]
+then
+  [ ! -s "$tmp/race2.out" ] || fail 'loser emitted success data'
+elif [ "$status1" -eq 87 ] && [ "$status2" -eq 0 ]
+then
+  [ ! -s "$tmp/race1.out" ] || fail 'loser emitted success data'
+else
+  fail "exclusive token-store concurrent publication failed ($status1/$status2)"
+fi
+[ "$(jq -r '.access_token' "$tmp/race-store")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+  fail 'concurrent store was replaced or malformed'
+mode=$(LC_ALL=C ls -ld "$tmp/race-store"); mode=${mode%% *}
+[ "$mode" = '-rw-------' ] || fail 'concurrent store permissions are unsafe'
+find "$tmp" -name '.keycloak-token.*' -print | grep . >/dev/null &&
+  fail 'staging token file left behind after concurrent publication'
+grep -F 'SENSITIVE-K04-ACCESS-TOKEN' "$tmp/race1.err" "$tmp/race2.err" >/dev/null &&
+  fail 'concurrent path exposed a token in diagnostics'
+
 result=$(probe acquire --server "$base" --issuer-realm other \
   --auth-mode client-credentials --client-id service \
   --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
