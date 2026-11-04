@@ -200,7 +200,7 @@ do
 
   result=$(probe 2>"$tmp/stderr")
   status=$?
-  [ "$status" -eq 53 ] && [ -z "$result" ] ||
+  [ "$status" -eq 55 ] && [ -z "$result" ] ||
     fail 'symlinked host generated configuration was silently accepted'
   grep -Fx 'apisix.runtime.host-generated-config-unsafe' "$tmp/stderr" >/dev/null ||
     fail 'missing specific unsafe host-generated-config diagnostic'
