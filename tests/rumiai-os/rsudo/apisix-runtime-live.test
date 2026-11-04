@@ -143,6 +143,19 @@ do
   [ "$result" = "$expected" ] ||
     fail 'real process observation did not preserve runtime-identity limitations'
 
+  # In the real APISIX container's own process/mount namespace, no-operand
+  # discovery selects the conventional host candidate without requiring
+  # a Docker CLI or importing Docker manager metadata.
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  host_expected=$(printf '%s\n' \
+    'discovery_evidence=unique-conventional-candidate' \
+    'discovered_scope=host' "$expected")
+  [ "$status" -eq 0 ] && [ "$result" = "$host_expected" ] || {
+    cat "$tmp/stderr" >&2
+    fail 'automatic conventional-host APISIX runtime did not match the real master'
+  }
+
   # No operands should discover one conventional Docker installation through
   # real Docker manager evidence and revalidate the master in its namespace.
   # The host-scoped probe is the only external rsudo boundary substitution.
