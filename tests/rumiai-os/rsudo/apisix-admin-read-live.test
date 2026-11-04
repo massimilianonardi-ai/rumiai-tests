@@ -300,6 +300,71 @@ DRIFTED_CONFIG
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove named-profile APISIX'
   cid=
+
+  # The APISIX CLI's -c selector is different from APISIX_PROFILE:
+  # startup may consume a custom YAML outside conf/ while OpenResty's master
+  # still exposes only the generated nginx.conf in its process title.
+  # Use a real CLI launch, not the stock Docker entrypoint. The container
+  # remains isolated and the only Admin key is disposable test material.
+  cid=$(docker run -d --network none --cap-drop ALL \
+    --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    --mount "type=bind,src=$tmp/config-prod.yaml,dst=/mnt/rsudo-apisix-custom.yaml,readonly" \
+    -e APISIX_STAND_ALONE=true --entrypoint /bin/sh "$image" -c '
+      cd /usr/local/apisix || exit 70
+      /usr/local/openresty/luajit/bin/luajit \
+        /usr/local/apisix/apisix/cli/apisix.lua start \
+        -c /mnt/rsudo-apisix-custom.yaml || exit 71
+      while :; do sleep 60; done
+    ') || error 'cannot launch isolated APISIX custom -c CLI'
+  [ -n "$cid" ] || error 'Docker returned no custom -c container ID'
+
+  wait_for_admin 'custom -c'
+
+  observed=$(mode_on_disk /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed" = standalone-file-yaml ] ||
+    fail 'custom -c default source was not independently classified'
+
+  observed=$(mode_on_disk /usr/local/apisix /mnt/rsudo-apisix-custom.yaml 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed" = standalone-api ] ||
+    fail 'custom -c source was not independently classified'
+
+  observed=$(APISIX_TEST_OPERATION=runtime mode_on_disk /usr/local/apisix 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] || fail 'custom -c master process is unobservable'
+  case "$observed" in
+    *'runtime_identity=process-consistent-config-unverified'*'mutation_readiness=not-established') : ;;
+    *) fail 'custom -c source was inferred solely from process arguments' ;;
+  esac
+
+  # Bind the observed HTTP listener causally to the disposable Nginx master:
+  # terminate that exact PID and require subsequent *new* HTTP connections
+  # to stop returning successful Admin API responses. This proves a local
+  # live association only, not generic host or controller ownership.
+  pid=$(docker exec "$cid" cat /usr/local/apisix/logs/nginx.pid) ||
+    error 'cannot read custom -c master PID'
+  docker exec "$cid" sh -c 'kill -TERM "$1"' sh "$pid" ||
+    error 'cannot terminate disposable custom -c master'
+  tries=0
+  while [ "$tries" -lt 15 ]
+  do
+    code=$(http_status /apisix/admin/configs correct)
+    status=$?
+    if [ "$status" -ne 0 ] || [ "$code" != 200 ]
+    then
+      break
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 15 ] ||
+    fail 'Admin listener remained active after its observed master terminated'
+
+  docker rm -f "$cid" >/dev/null 2>&1 ||
+    error 'cannot remove custom -c APISIX'
+  cid=
 done
 
-printf '%s\n' "$TEST_ID: PASS (two live Admin APIs, drift and named-profile ambiguity)"
+printf '%s\n' "$TEST_ID: PASS (two live releases, profile/-c drift and isolated listener causality)"
