@@ -202,11 +202,15 @@ async function main()
 
   const burstStats = {started:0, chunks:0, ended:0, closed:0};
   let secondaryBucketReady = 0;
+  let secondaryCacheReady = 0;
   const crossServer = http.createServer((req, res) => {
-    const endpoint = new URL(req.url, 'http://localhost').pathname;
+    const location = new URL(req.url, 'http://localhost');
+    const endpoint = location.pathname;
     if (endpoint === '/secondary-bucket-ready')
     {
       secondaryBucketReady++;
+      if (location.searchParams.get('cache') === '1')
+        secondaryCacheReady++;
       res.setHeader('Content-Type','text/plain');
       res.end('ready');
       return;
@@ -234,11 +238,13 @@ async function main()
       '(async()=>{' +
       'if(typeof navigator.storageBuckets?.open!=="function") return;' +
       'const bucket=await navigator.storageBuckets.open("secondary-frame-bucket");' +
+      'let cacheReady=false;' +
       'if(typeof bucket.caches?.open==="function"){' +
       'const cache=await bucket.caches.open("secondary-frame-cache");' +
-      'await cache.put("/secondary-cache-entry",new Response("secondary-cache-body"));}' +
+      'await cache.put("/secondary-cache-entry",new Response("secondary-cache-body"));' +
+      'cacheReady=true;}' +
       'document.body.dataset.secondaryBucketReady="yes";' +
-      'fetch("/secondary-bucket-ready");' +
+      'fetch("/secondary-bucket-ready?cache="+(cacheReady?"1":"0"));' +
       '})().catch(()=>{document.body.dataset.secondaryBucketReady="no"});' +
       '</script></body>');
   });
@@ -777,6 +783,20 @@ async function main()
       item.discovery.frameId === secondary.frame.frameId);
     assert(selectedSecondary,
       'child named bucket must be selected using its own observed storage key');
+    if (secondaryCacheReady && selectedSecondary.sources.cacheStorage.status === 'saved')
+    {
+      const childRoot = path.join(capture,'rest/targets',
+        secondary.capturedTarget.name);
+      const index = JSON.parse(fs.readFileSync(path.join(childRoot,
+        selectedSecondary.sources.cacheStorage.file),'utf8'));
+      const entry = index.caches.flatMap(cache => cache.entries)
+        .find(item => item.requestURL?.endsWith('/secondary-cache-entry'));
+      assert(entry?.body?.status === 'saved',
+        'child named bucket Cache Storage was reported saved without fixture data');
+      assert.equal(fs.readFileSync(path.join(childRoot,
+        'storage-partitions',selectedSecondary.id,'cache-storage',
+        entry.body.file),'utf8'),'secondary-cache-body');
+    }
     const childContextMode = secondary.frame.bucketNames.contextSelector;
     if (secondary.capturedTarget.main)
     {
