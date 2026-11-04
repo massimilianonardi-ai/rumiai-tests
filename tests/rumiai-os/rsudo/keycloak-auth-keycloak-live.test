@@ -94,6 +94,21 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "secret": "k04-protected-client-secret"
 }
 CLIENT_JSON
+cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
+{
+  "clientId": "k04-signed",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "clientAuthenticatorType": "client-secret-jwt",
+  "secret": "k04-protected-client-secret",
+  "attributes": {
+    "token.endpoint.auth.signing.alg": "HS256"
+  }
+}
+CLIENT_JWT_JSON
 
 cat > "$tmp/bin/k04-keycloak-live-probe" <<'PROBE'
 #!/bin/sh
@@ -194,6 +209,42 @@ do
     error "Keycloak $version Admin REST bootstrap client request failed"
   [ "$create_code" = 201 ] ||
     fail "Keycloak $version rejected service account provisioning ($create_code)"
+
+  # Signed JWT with confidential client secret is an independently selected
+  # Keycloak authenticator, not a fallback from Basic or POST.
+  jwt_client_http=$(transport --output "$tmp/jwt-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-jwt.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version client-secret-jwt client provisioning failed"
+  [ "$jwt_client_http" = 201 ] ||
+    fail "Keycloak $version client-secret-jwt client create HTTP $jwt_client_http"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-signed \
+    --client-auth client-secret-jwt \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-jwt-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version client-secret-jwt token acquisition failed ($status)"
+  jq -e '.access_token | type == "string" and length > 0' \
+    "$tmp/token-jwt-$version" >/dev/null ||
+    fail "Keycloak $version HS256 session record missing access token"
+  result=$(probe status --token-file "$tmp/token-jwt-$version" \
+    --server "$base" --issuer-realm master --client-id k04-signed \
+    --client-auth client-secret-jwt --client-secret-file "$tmp/secret" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version HS256 authenticated introspection failed ($status)"
+  grep -F 'k04-protected-client-secret' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version HS256 secret leaked to diagnostics"
 
   # A separate target realm gives a real master-issued, target-scoped
   # delegated authority test. Keycloak creates a target-realm management
