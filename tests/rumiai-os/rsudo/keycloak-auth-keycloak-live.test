@@ -219,9 +219,16 @@ do
     --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
     --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
   status=$?
-  [ "$status" -eq 0 ] &&
-    [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
-    fail "Keycloak $version real access-token introspection failed ($status)"
+  if [ "$status" -ne 0 ] ||
+    [ "$result" != '{"stored":true,"server_validated":true,"active":true}' ]
+  then
+    # Print only a parsed boolean/absence marker; never provider claims or
+    # arbitrary response bytes in diagnostics.
+    observed_active=$(printf '%s' "$result" |
+      jq -r 'if .active == true then "true" elif .active == false then "false" else "missing" end' 2>/dev/null) ||
+      observed_active=invalid-output
+    fail "Keycloak $version real access-token introspection failed ($status; active=$observed_active)"
+  fi
 
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-service \
