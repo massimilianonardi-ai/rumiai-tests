@@ -89,6 +89,7 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "protocol": "openid-connect",
   "publicClient": false,
   "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
   "clientAuthenticatorType": "client-secret",
   "secret": "k04-protected-client-secret"
 }
@@ -223,6 +224,39 @@ do
   jq -e '.access_token | type == "string" and length > 0' \
     "$tmp/token-post-$version" >/dev/null ||
     fail "Keycloak $version POST token store invalid"
+
+  # Enabled confidential Direct Access Grant for the synthetic admin:
+  # never pass the user password as an ordinary CLI operand.
+  printf 'k04-bootstrap-only\n' > "$tmp/user-password"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin \
+    --password-file "$tmp/user-password" --client-id k04-service \
+    --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] ||
+    fail "Keycloak $version explicit confidential direct grant failed ($status)"
+  jq -e '.access_token | type == "string" and length > 0' \
+    "$tmp/token-user-$version" >/dev/null ||
+    fail "Keycloak $version Direct Grant token missing"
+  grep -F 'k04-bootstrap-only' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version user password leaked to diagnostics"
+
+  printf 'k04-invalid-user-password\n' > "$tmp/user-password"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin \
+    --password-file "$tmp/user-password" --client-id k04-service \
+    --client-auth client-secret-post \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-user-rejected-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 72 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-user-rejected-$version" ] ||
+    fail "Keycloak $version wrong Direct Grant password not rejected ($status)"
 
   # Authenticated OAuth client has no administrator role by default.
   # Access to global /admin/serverinfo must not be inferred from its token.
