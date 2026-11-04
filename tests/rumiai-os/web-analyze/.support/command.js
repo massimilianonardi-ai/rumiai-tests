@@ -15,6 +15,20 @@ const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
 <body><h1>private-heading-audit-marker</h1><div id="list" class="scroll">
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
+const wasmPayload = Buffer.from(
+  '0061736d010000000105016000017f030201000707010372756e00000a06010400412a0b', 'hex');
+const inlineMap = {
+  version:3, sources:['app.source.js'],
+  sourcesContent:['// private-inline-original-source-marker'],
+  names:[], mappings:''
+};
+const workerMap = {
+  version:3, sources:['worker.source.js'],
+  sourcesContent:['// private-external-original-source-marker'],
+  names:[], mappings:''
+};
+const inlineMapURL = 'data:application/json;base64,' +
+  Buffer.from(JSON.stringify(inlineMap)).toString('base64');
 const largePayload = Buffer.alloc(3 * 1024 * 1024);
 for (let index = 0; index < largePayload.length; index++)
   largePayload[index] = (index * 31 + 19) & 255;
@@ -45,6 +59,13 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   dynamicStyle.textContent = '.dynamic-probe { color: blue; }';
   document.head.append(dynamicStyle);
   document.addEventListener('rest-probe', () => {});
+  WebAssembly.instantiate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,127,3,2,1,0,7,7,1,3,114,117,110,0,0,10,6,1,4,0,65,42,11]))
+    .then(({instance}) => {
+      document.body.dataset.wasmResult = String(instance.exports.run());
+    });
+  // The page itself naturally requests the worker map: web-analyze must
+  // recover the archived response without issuing another network request.
+  fetch('/background-worker.js.map');
   const worker = new Worker('/background-worker.js');
   worker.addEventListener('message', event => {
     document.body.dataset.workerReply = String(event.data);
@@ -118,7 +139,8 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
       }, 700);
     }
   });
-});`;
+});
+//# sourceMappingURL=${inlineMapURL}`;
 
 async function run(args)
 {
@@ -257,8 +279,10 @@ async function main()
         '.unused-css-coverage-marker {outline: 9px solid magenta}', 'text/css'],
       '/app.js': [app, 'text/javascript'],
       '/background-worker.js': [
-        'postMessage("worker-ready");setInterval(()=>{},5000);',
+        'postMessage("worker-ready");setInterval(()=>{},5000);' +
+          '\\n//# sourceMappingURL=/background-worker.js.map',
         'text/javascript'],
+      '/background-worker.js.map': [JSON.stringify(workerMap), 'application/json'],
       '/shared-worker.js': [
         'onconnect=e=>{e.ports[0].postMessage("shared-ready");e.ports[0].start()};',
         'text/javascript'],
