@@ -584,7 +584,7 @@ async function main()
     assert(usedEntries.every(item => Date.parse(item.stoppedAt) >=
       Date.parse(item.startedAt)), 'CSS rule-use capture timing is invalid');
     assert(usedEntries.every(item =>
-      fs.statSync(path.join(coverageRoot, item.file)).mode & 0o777 === 0o600),
+      (fs.statSync(path.join(coverageRoot, item.file)).mode & 0o777) === 0o600),
       'CSS rule-use records must remain private');
     assert(rest.artifacts.some(item => item.name === 'css-rule-usage' &&
       item.file === 'css-rule-usage/index.json'),
