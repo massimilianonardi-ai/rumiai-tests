@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const {spawn, spawnSync} = require('node:child_process');
 
 const root = process.argv[2];
@@ -14,6 +15,9 @@ const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
 <body><h1>Interactive view</h1><div id="list" class="scroll">
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
+const largePayload = Buffer.alloc(3 * 1024 * 1024);
+for (let index = 0; index < largePayload.length; index++)
+  largePayload[index] = (index * 31 + 19) & 255;
 const app = `document.addEventListener('DOMContentLoaded', () => {
   const host = document.createElement('section');
   host.id = 'shadow-probe';
@@ -65,6 +69,17 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   fetch('/data.json', {headers:{'X-Fixture-Request':'captured'}});
   fetch('/submit-data', {method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({marker:'request-body-marker'})});
+  fetch('/redirect-start');
+  fetch('/large.bin');
+  fetch('/burst');
+  fetch('/cacheable').then(() => fetch('/cacheable'));
+  const feed = new EventSource('/live-events');
+  feed.onmessage = event => {
+    document.body.dataset.lastEvent = event.data;
+  };
+  const aborted = new AbortController();
+  fetch('/abort-stream', {signal:aborted.signal}).catch(() => {});
+  setTimeout(() => aborted.abort(), 450);
   setTimeout(() => {
     const hydrated = document.createElement('section');
     hydrated.id = 'hydrated'; hydrated.textContent = 'Delayed hydrated content';
@@ -128,6 +143,47 @@ async function main()
         '</script></body>');
       return;
     }
+    if (location === '/redirect-start')
+    {
+      res.statusCode = 302;
+      res.setHeader('Location', '/redirect-end');
+      res.end();
+      return;
+    }
+    if (location === '/large.bin')
+    {
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.end(largePayload);
+      return;
+    }
+    if (location === '/burst' || location === '/abort-stream' ||
+        location === '/live-events')
+    {
+      res.setHeader('Content-Type',
+        location === '/live-events' ? 'text/event-stream' : 'text/plain');
+      res.setHeader('Cache-Control', 'no-store');
+      res.flushHeaders();
+      const fragments = location === '/live-events' ?
+        ['data: first-event\\n\\n', 'data: last-event\\n\\n'] :
+        ['alpha-piece-', 'beta-piece-', 'gamma-piece'];
+      let index = 0;
+      const timer = setInterval(() =>
+      {
+        if (res.destroyed || index >= fragments.length)
+        {
+          clearInterval(timer);
+          return;
+        }
+        res.write(fragments[index++]);
+        if (index === fragments.length && location === '/burst')
+        {
+          clearInterval(timer);
+          res.end();
+        }
+      }, 120);
+      res.on('close', () => clearInterval(timer));
+      return;
+    }
     const data = {
       '/': [html, 'text/html'],
       '/view.css': ['.scroll {height: 160px; overflow-y: auto} p {height: 35px}', 'text/css'],
@@ -147,12 +203,16 @@ async function main()
       '/data.json': ['{"initial":true}', 'application/json'],
       '/lazy.json': ['{"lazy":true}', 'application/json'],
       '/hydrated.json': ['{"hydrated":true}', 'application/json'],
-      '/submit-data': ['{"accepted":true}', 'application/json']
+      '/submit-data': ['{"accepted":true}', 'application/json'],
+      '/redirect-end': ['redirect-target', 'text/plain'],
+      '/cacheable': ['cached-once', 'text/plain']
     }[location];
     if (!data) {res.statusCode=404;res.end('not found');return;}
     res.setHeader('Content-Type', data[1]);
     if (location === '/')
       res.setHeader('Set-Cookie', 'fixture_cookie=fixture-only-secret; HttpOnly; SameSite=Lax; Path=/');
+    if (location === '/cacheable')
+      res.setHeader('Cache-Control', 'public, max-age=300');
     if (location === '/hydrated.json')
       setTimeout(() => res.end(data[0]), 600);
     else if (location === '/')
@@ -359,6 +419,45 @@ async function main()
       'lazy DOM control not captured');
     const responseIndex = fs.readFileSync(path.join(capture, 'resources.jsonl'), 'utf8')
       .trim().split('\n').map(JSON.parse);
+    const large = responseIndex.find(item => item.status === 'saved' &&
+      item.url?.endsWith('/large.bin'));
+    assert(large, 'large response body was not archived');
+    assert.equal(large.bytes, largePayload.length, 'large response was truncated');
+    assert.equal(large.sha256,
+      crypto.createHash('sha256').update(largePayload).digest('hex'),
+      'large response digest mismatch');
+    assert.deepEqual(fs.readFileSync(path.join(capture, large.file)), largePayload);
+    assert(responseIndex.some(item => item.status === 'redirect-no-body' &&
+      item.url?.endsWith('/redirect-start') &&
+      item.redirectToUrl?.endsWith('/redirect-end')),
+      'redirect chain missing explicit destination');
+    assert(responseIndex.some(item => item.status === 'saved' &&
+      item.url?.endsWith('/redirect-end') &&
+      item.redirectedFrom?.endsWith('/redirect-start')),
+      'redirect chain missing source provenance');
+    assert(responseIndex.some(item => item.status === 'saved' &&
+      item.url?.endsWith('/burst')), 'chunked HTTP response not saved');
+    assert(responseIndex.some(item => item.url?.endsWith('/cacheable')),
+      'cacheable request missing from archive');
+    const streaming = responseIndex.find(item =>
+      item.url?.endsWith('/live-events'));
+    assert(streaming, 'long-lived EventSource request must be indexed');
+    assert(['unfinished-at-shutdown','request-failed','body-unavailable']
+      .includes(streaming.status), 'live stream was mislabeled complete');
+    if (streaming.partialBody)
+    {
+      const file = path.join(capture, streaming.partialBody.file);
+      assert(fs.existsSync(file), 'partial stream body artifact is missing');
+      assert(fs.readFileSync(file,'utf8').includes('data:'),
+        'partial streamed EventSource bytes were not persisted');
+      assert.equal(streaming.partialBody.status, 'partial');
+    }
+    const configuration = JSON.parse(fs.readFileSync(path.join(capture,
+      'summary.json'),'utf8')).resourceCapture.networkConfiguration;
+    assert(configuration.some(item => item.enabled === 'buffered'),
+      'CDP response buffer settings were not negotiated');
+    assert(configuration.some(item => ['enabled','unsupported','unavailable']
+      .includes(item.durable)), 'durable configuration status was not recorded');
     for (const name of ['/app.js', '/view.css', '/data.json', '/lazy.json', '/hydrated.json'])
       assert(responseIndex.some(item => item.status === 'saved' && item.url?.endsWith(name)),
         'missing downloaded resource ' + name);
