@@ -142,6 +142,15 @@ do
   [ "$status" -eq 39 ] && [ -z "$result" ] ||
     fail 'wrong installation prefix accepted for a real nginx master'
 
+  # Stale pidfile: must fail as unobservable, never claim a running gateway.
+  docker exec "$cid" sh -c \
+    'printf "2147483647\n" > "$1/logs/nginx.pid"' sh "$fixture" ||
+    error 'cannot prepare stale PID fixture'
+  result=$(probe "$fixture" 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 37 ] && [ -z "$result" ] ||
+    fail 'stale PID was accepted or misclassified'
+
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove isolated APISIX container'
   cid=
