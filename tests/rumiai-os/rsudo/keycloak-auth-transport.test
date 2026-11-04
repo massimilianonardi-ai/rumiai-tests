@@ -116,17 +116,26 @@ class Handler(BaseHTTPRequestHandler):
         args = parse_qs(body.decode("utf-8"))
         auth = self.headers.get("Authorization", "")
         basic = "Basic " + base64.b64encode(b"service:protected-k04-secret").decode()
-        valid = args.get("grant_type") == ["client_credentials"] and (
+        client_valid = (
             auth == basic or
             (args.get("client_id") == ["service"] and
              args.get("client_secret") == ["protected-k04-secret"])
         )
-        if not valid:
+        if not client_valid:
             # Exercise both Keycloak-observed 401 unauthorized_client (Basic)
             # and conventional invalid_client (form-client authentication).
             self.response(401, {
                 "error": "unauthorized_client" if auth else "invalid_client"
             })
+            return
+        grant = args.get("grant_type")
+        if grant == ["password"]:
+            if (args.get("username") != ["k04tester"] or
+                    args.get("password") != ["password with spaces"]):
+                self.response(400, {"error": "invalid_grant"})
+                return
+        elif grant != ["client_credentials"]:
+            self.response(400, {"error": "unsupported_grant_type"})
             return
         self.response(200, {
             "access_token": "SENSITIVE-K04-ACCESS-TOKEN",
@@ -247,6 +256,46 @@ result=$(probe acquire --server "$base" --issuer-realm master \
 status=$?
 [ "$status" -eq 75 ] && [ ! -e "$tmp/unsafe-ca-store" ] ||
   fail "symlinked CA ancestor accepted ($status)"
+
+# Explicit user Direct Access Grant: password contains spaces but never
+# enters a curl argument, log, or shell program. The OAuth server must have
+# enabled the direct grant on this confidential client.
+printf 'password with spaces\n' > "$tmp/user-password"
+chmod 600 "$tmp/user-password"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode password --username k04tester \
+  --password-file "$tmp/user-password" --client-id service \
+  --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/password-store" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] &&
+  [ "$(jq -r .access_token "$tmp/password-store")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+  fail "explicit password grant via protected file failed ($status)"
+grep -F 'password with spaces' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'user password leaked through HTTP argv or diagnostics'
+printf 'wrong password\n' > "$tmp/user-password"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode password --username k04tester \
+  --password-file "$tmp/user-password" --client-id service \
+  --client-auth client-secret-post --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/password-rejected-store" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 72 ] && [ -z "$result" ] &&
+  [ ! -e "$tmp/password-rejected-store" ] ||
+  fail "invalid user credentials not rejected as invalid_grant ($status)"
+printf 'password with spaces\n' > "$tmp/user-password"
+
+# User-grant selectors must never be silently forwarded to client_credentials.
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --username k04tester \
+  --password-file "$tmp/user-password" --client-id service \
+  --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/unsafe-fallback" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ ! -e "$tmp/unsafe-fallback" ] ||
+  fail 'user auth selectors were accepted for service-account grant'
 
 result=$(acquire client-secret-post "$tmp/secret" "$tmp/post-store" 2>"$tmp/err")
 status=$?
