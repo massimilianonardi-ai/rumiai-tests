@@ -206,6 +206,11 @@ do
     "$tmp/token-basic-$version" >/dev/null ||
     fail "Keycloak $version Basic token store invalid"
 
+  result=$(probe status --token-file "$tmp/token-basic-$version" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = '{"stored":true,"server_validated":false}' ] ||
+    fail "Keycloak $version token-store status did not retain non-introspection boundary"
+
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-service \
     --client-auth client-secret-post \
