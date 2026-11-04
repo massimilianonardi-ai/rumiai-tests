@@ -154,6 +154,13 @@ class Handler(BaseHTTPRequestHandler):
             # Hold the HTTP request while a competing shell call attempts
             # the same protected store, exercising real lock contention.
             time.sleep(0.7)
+            if args.get("refresh_token") == ["SENSITIVE-K04-NO-SUCCESSOR-TOKEN"]:
+                self.response(200, {
+                    "access_token": "SENSITIVE-K04-ROTATED-ACCESS-TOKEN",
+                    "token_type": "Bearer",
+                    "expires_in": 60
+                })
+                return
             if args.get("refresh_token") not in (
                     ["SENSITIVE-K04-REFRESH-TOKEN"],
                     ["SENSITIVE-K04-ROTATED-REFRESH-TOKEN"]):
@@ -381,6 +388,30 @@ mode=$(LC_ALL=C ls -ld "$tmp/password-store"); mode=${mode%% *}
   fail 'overlapping refresh weakened token-store permissions'
 find "$tmp" -name '.keycloak-token.*' -print | grep . >/dev/null &&
   fail 'overlapping refresh left an unprotected stage file'
+
+# A 200 response without a successor cannot rotate a protected store.
+printf '%s\n' '{"access_token":"EXISTING-ACCESS","refresh_token":"SENSITIVE-K04-NO-SUCCESSOR-TOKEN","token_type":"Bearer","expires_in":60}' \
+  > "$tmp/no-successor-store"
+chmod 600 "$tmp/no-successor-store"
+cp "$tmp/no-successor-store" "$tmp/no-successor-before"
+result=$(refresh "$tmp/no-successor-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 86 ] && [ -z "$result" ] &&
+  cmp -s "$tmp/no-successor-store" "$tmp/no-successor-before" &&
+  [ ! -e "$tmp/no-successor-store.keycloak-refresh-lock" ] ||
+  fail "response without successor replaced store ($status)"
+# Actual OAuth 400 invalid_grant is different from structural invalidity;
+# a rejected refresh must leave the stored bytes untouched.
+printf '%s\n' '{"access_token":"EXISTING-ACCESS","refresh_token":"SENSITIVE-K04-REVOKED-TOKEN","token_type":"Bearer","expires_in":60}' \
+  > "$tmp/rejected-refresh-store"
+chmod 600 "$tmp/rejected-refresh-store"
+cp "$tmp/rejected-refresh-store" "$tmp/rejected-refresh-before"
+result=$(refresh "$tmp/rejected-refresh-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 72 ] && [ -z "$result" ] &&
+  cmp -s "$tmp/rejected-refresh-store" "$tmp/rejected-refresh-before" &&
+  [ ! -e "$tmp/rejected-refresh-store.keycloak-refresh-lock" ] ||
+  fail "rejected refresh changed existing store ($status)"
 
 result=$(probe refresh --server "$base" --issuer-realm master \
   --client-id service --client-auth client-secret-basic \
