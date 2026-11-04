@@ -25,6 +25,8 @@ case "$status" in 0) :;; 1) skip "rumiai-os target checkout not found";; 2) fail
 
 test_script="$test_dir/${TEST_ID##*/}"
 rumiai_test_target_rumiai_os_enter_m "$root" "$test_script" || error "cannot re-enter through target m bootstrap"
+[ -n "${m_ROOT:-}" ] || error "m root environment missing"
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || error "cannot load m core shell runtime"
 
 library="$root/lib/sys/sh/pkg/repository/pkg-repository-nodejs.lib.sh"
 [ -f "$library" ] && [ ! -L "$library" ] && [ -r "$library" ] && [ ! -x "$library" ] || fail "Node.js adapter missing or invalid mode"
