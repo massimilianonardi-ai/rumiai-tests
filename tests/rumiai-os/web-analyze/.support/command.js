@@ -323,7 +323,8 @@ async function main()
       'rest/target-graph-initial.json', 'rest/target-graph-final.json',
       'dom-mutations.jsonl', 'rest/dom-mutations-at-rest.jsonl',
       'rest/dom-history-contexts.json'])
-      assert(fs.existsSync(path.join(capture, file)), 'missing ' + file);
+      assert(fs.existsSync(path.join(capture, file)),
+        'missing ' + file + '; capture stderr: ' + result.stderr);
     const states = fs.readdirSync(path.join(capture, 'states'))
       .filter(name => /^state-\d+\.json$/.test(name))
       .map(name => JSON.parse(fs.readFileSync(path.join(capture, 'states', name), 'utf8')));
