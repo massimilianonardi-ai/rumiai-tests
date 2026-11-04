@@ -1,0 +1,166 @@
+#!/bin/sh
+# Verify a package-default rollback after the public selection has changed
+# but global facility-environment regeneration rejects installed metadata.
+TEST_ID=m-os/pkg-schema-v2/default-transaction-rollback.test
+test_error()
+{
+  printf '%s: ERROR: %s\n' "$TEST_ID" "$1" >&2
+  exit 3
+}
+test_fail()
+{
+  printf '%s: FAIL: %s\n' "$TEST_ID" "$1" >&2
+  exit 1
+}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || test_error 'test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || test_error 'suite directory'
+. "$suite_root/lib/m-os-target.lib" || test_error 'target discovery helper'
+target=$(rumiai_test_target_m_os_find)
+case $? in
+  0) : ;;
+  1) printf '%s: SKIP: autonomous m-os target not supplied\n' "$TEST_ID"; exit 2 ;;
+  *) test_error 'invalid autonomous m-os target' ;;
+esac
+if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]
+then
+  RUMIAI_TEST_M_OS_CHILD=1
+  export RUMIAI_TEST_M_OS_CHILD
+  if "$target/m" sh "$0"
+  then
+    exit 0
+  else
+    code=$?
+    case "$code" in
+      1 | 2 | 3 | 4 | 5 | 6 | 7) test_error "setup failed ($code)" ;;
+      *) test_fail "transaction rollback assertion ($code)" ;;
+    esac
+  fi
+fi
+
+set -eu
+[ -n "${m_ROOT-}" ] && [ -n "${m_LIB_DIR-}" ] &&
+  [ -n "${m_PKG_DIR-}" ] && [ -n "${m_STATE_SYS_DIR-}" ] || exit 1
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 2
+loadsyslib "pkg/pkg-integration" || exit 3
+
+name=ci-transaction-provider
+facility=ci-transaction
+one="$m_PKG_DIR/$name@1"
+two="$m_PKG_DIR/$name@2"
+public="$m_BIN_EXT_DIR/$name"
+work=$(mktemp -d) || exit 4
+
+for path in "$one" "$two" "$m_PKG_DIR/$name" "$public"
+do
+  if [ -e "$path" ] || [ -L "$path" ]
+  then
+    command -p -- rm -rf -- "$work"
+    printf '%s: existing fixture identity %s\n' "$TEST_ID" "$path" >&2
+    exit 5
+  fi
+done
+if "$m_ROOT/m" pkg provider default "$facility" >/dev/null 2>&1
+then
+  command -p -- rm -rf -- "$work"
+  printf '%s: existing facility default\n' "$TEST_ID" >&2
+  exit 6
+fi
+
+bad_env=0
+cleanup()
+{
+  if [ "$bad_env" -eq 1 ]
+  then
+    printf 'CI_ROLLBACK\tliteral two\n' > "$two/facility-env/$facility" || :
+  fi
+  "$m_ROOT/m" pkg provider default -u "$facility" >/dev/null 2>&1 || :
+  "$m_ROOT/m" pkg default -u "$name" >/dev/null 2>&1 || :
+  command -p -- rm -rf -- "$one" "$two" "$work"
+}
+trap cleanup 0
+
+catalog="$work/catalog/v2"
+contract="$catalog/facility/$facility/1/env"
+command -p -- mkdir -p -- "$m_PKG_DIR" "$contract" || exit 7
+: > "$contract/CI_ROLLBACK" || exit 8
+
+for version in 1 2
+do
+  range="$catalog/pkg/$name/all/n000$version=$version"
+  root="$work/root-$version"
+  command -p -- mkdir -p -- "$range/link/bin" \
+    "$range/facility-env/$facility" "$root/bin" || exit 9
+  printf 'tar.gz\n' > "$range/format"
+  printf '%s 1\n' "$facility" > "$range/facility"
+  printf '../../root/bin/%s\n' "$name" > "$range/link/bin/$name"
+  case "$version" in
+    1) label=one ;;
+    2) label=two ;;
+  esac
+  printf 'literal %s\n' "$label" > "$range/facility-env/$facility/CI_ROLLBACK"
+  printf '#!/bin/sh\nprintf "version-%s\\n"\n' "$version" > "$root/bin/$name"
+  command -p -- chmod +x "$root/bin/$name" || exit 10
+  pkg_facility_provider_validate "$catalog" "$range" "$root" || exit 11
+  pkg_integrate "$name" "$version" "$range" "$root" "" v2 "$catalog" || exit 12
+done
+
+"$m_ROOT/m" pkg default "$name@1" || exit 13
+"$m_ROOT/m" pkg provider default "$facility" "$name" || exit 14
+[ "$("$m_ROOT/m" pkg requirement resolve "$facility" '=1')" = "$name@1" ] || exit 15
+[ "$("$m_ROOT/m" "$name")" = version-1 ] || exit 16
+[ "$("$m_ROOT/m" sh -c 'printf "%s\n" "$CI_ROLLBACK"')" = one ] || exit 17
+before_public=$(command -p -- readlink "$public") || exit 18
+before_env=$( 
+  cache="$m_STATE_SYS_DIR/sys/environment/cache"
+  for osarch in generic linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64 windows-arm64
+  do
+    if [ "$osarch" = generic ]
+    then
+      path="$cache/env"
+    else
+      path="$cache/env-$osarch"
+    fi
+    [ -f "$path" ] || exit 1
+    command -p -- cksum "$path" || exit 1
+  done
+) || exit 19
+
+# Corrupt only the *external fixture's installed provider metadata*.
+# The public package-default mutation must reach environment regeneration,
+# reject the invalid typed descriptor and restore the old selection/view.
+printf 'CI_ROLLBACK\tinvalid-descriptor\n' > "$two/facility-env/$facility" || exit 20
+bad_env=1
+if "$m_ROOT/m" pkg default "$name@2" > "$work/change.out" 2> "$work/change.err"
+then
+  exit 21
+fi
+[ "$("$m_ROOT/m" pkg default "$name")" = "$name@1" ] || exit 22
+[ "$(command -p -- readlink "$public")" = "$before_public" ] || exit 23
+[ "$("$m_ROOT/m" "$name")" = version-1 ] || exit 24
+[ "$("$m_ROOT/m" sh -c 'printf "%s\n" "$CI_ROLLBACK"')" = one ] || exit 25
+[ "$("$m_ROOT/m" pkg provider default "$facility")" = "$name" ] || exit 26
+after_env=$( 
+  cache="$m_STATE_SYS_DIR/sys/environment/cache"
+  for osarch in generic linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64 windows-arm64
+  do
+    if [ "$osarch" = generic ]
+    then
+      path="$cache/env"
+    else
+      path="$cache/env-$osarch"
+    fi
+    command -p -- cksum "$path" || exit 1
+  done
+) || exit 27
+[ "$before_env" = "$after_env" ] || exit 28
+
+# Repaired metadata permits the normal transition and real bootstrap.
+printf 'CI_ROLLBACK\tliteral two\n' > "$two/facility-env/$facility" || exit 29
+bad_env=0
+"$m_ROOT/m" pkg default "$name@2" || exit 30
+[ "$("$m_ROOT/m" "$name")" = version-2 ] || exit 31
+[ "$("$m_ROOT/m" sh -c 'printf "%s\n" "$CI_ROLLBACK"')" = two ] || exit 32
+"$m_ROOT/m" pkg default "$name@1" || exit 33
+[ "$("$m_ROOT/m" sh -c 'printf "%s\n" "$CI_ROLLBACK"')" = one ] || exit 34
+
+printf '%s\n' 'PASS: failed post-mutation package default restores selector, command and all cached global env snapshots'
