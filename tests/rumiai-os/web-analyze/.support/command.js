@@ -625,6 +625,46 @@ async function main()
     assert(cookies.some(item => item.name === 'fixture_cookie' &&
       item.value === 'fixture-only-secret' && item.httpOnly === true),
       'HTTP-only cookie unavailable from the private rest dump');
+    const contextPath = path.join(capture,
+      'rest/targets/target-000/frame-context.json');
+    const frameContext = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
+    assert(frameContext.frames.length >= 1,
+      'frame-level storage/security inventory was not collected');
+    assert.equal(frameContext.scope, 'observed-read-only-context-metadata');
+    const primaryFrame = frameContext.frames[0];
+    assert(primaryFrame.frameId, 'main frame identity was not retained');
+    const hasMethod = (domain, method) => capabilities.protocol.domains.some(item =>
+      item.name === domain && item.commands.includes(method));
+    if (hasMethod('Storage', 'getStorageKey'))
+    {
+      assert.equal(primaryFrame.storageKey.status, 'saved',
+        'supported storage-key lookup should succeed for the main frame');
+      assert.equal(typeof primaryFrame.storageKey.result.storageKey, 'string');
+      assert(primaryFrame.storageKey.result.storageKey.includes('127.0.0.1'),
+        'main storage key should be derived from the actual local fixture frame');
+    }
+    for (const [field, domain, method] of [
+      ['permissionsPolicy', 'Page', 'getPermissionsPolicyState'],
+      ['originTrials', 'Page', 'getOriginTrials'],
+      ['securityIsolation', 'Network', 'getSecurityIsolationStatus']
+    ])
+    {
+      assert(primaryFrame[field], 'missing per-frame ' + method + ' outcome');
+      if (hasMethod(domain, method))
+        assert(['saved', 'partial'].includes(primaryFrame[field].status),
+          'supported browser method outcome was lost: ' + method);
+      else
+        assert.equal(primaryFrame[field].status, 'unsupported',
+          'absent browser method was incorrectly treated as available: ' + method);
+    }
+    assert(frameContext.bucketNames && frameContext.opfsSupport,
+      'bucket and OPFS capability outcomes were not recorded');
+    assert.equal(frameContext.opfsSupport.enumerated, false,
+      'OPFS must not be entered implicitly during passive rest inspection');
+    for (const field of ['resourceTree', 'appManifest'])
+      assert(frameContext[field], 'missing read-only page inventory: ' + field);
+    assert.equal(fs.statSync(contextPath).mode & 0o777, 0o600,
+      'raw security and storage context metadata must remain private');
     const storage = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/storage.json'), 'utf8'));
     assert.equal(storage.localStorage.values.fixtureSession, 'fixture-only-access');
@@ -862,6 +902,16 @@ async function main()
       'DOM verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'storage'),
       'storage verification domain missing');
+    const contextRecord = rest.artifacts.find(item =>
+      item.name === 'frame-context' && item.target === mainCoverageTarget.targetId);
+    assert(contextRecord && contextRecord.sha256 && contextRecord.bytes,
+      'context evidence must be indexed in the private rest manifest');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/targets/target-000/frame-context.json' &&
+      item.status === 'saved' && item.sha256 === contextRecord.sha256),
+      'storage/security context evidence SHA-256 was not audited');
+    assert(integrity.domains.some(item => item.domain === 'security'),
+      'frame security policy and isolation must be represented in audit coverage');
     assert(integrity.domains.some(item => item.domain === 'listeners'),
       'event listener verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'accessibility'),
@@ -956,6 +1006,18 @@ async function main()
     assert(interruptedAudit.domains.some(item =>
       item.domain === 'capture' && item.status === 'interrupted'),
       'interruption reason missing from domain-level coverage');
+    const originalContext = fs.readFileSync(contextPath);
+    const alteredContext = Buffer.from(originalContext);
+    alteredContext[12] ^= 1;
+    fs.writeFileSync(contextPath, alteredContext);
+    const contextTamperAudit = auditWebAnalyzeEvidence(capture);
+    assert.equal(contextTamperAudit.status, 'failed',
+      'same-length security context tampering must fail audit');
+    assert(contextTamperAudit.artifacts.some(item =>
+      item.file === 'rest/targets/target-000/frame-context.json' &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'security context SHA mismatch was not detected');
+    fs.writeFileSync(contextPath, originalContext);
     const inlineMapFile = path.join(capture, 'rest', inlineEntry.file);
     const originalInlineMap = fs.readFileSync(inlineMapFile);
     const alteredInlineMap = Buffer.from(originalInlineMap);
