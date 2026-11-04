@@ -44,6 +44,17 @@ apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d2
 tmp=${TMPDIR:-/tmp}/rsudo-apisix-runtime-live-$$
 umask 077
 mkdir -p -- "$tmp/bin" || error 'temporary fixture creation failed'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'temporary fixture path unresolved'
+# An installed config.yaml may be traditional/etcd. The official Docker
+# entrypoint preserves it, even when APISIX_STAND_ALONE=true is set.
+# Select file-driven standalone explicitly in this isolated container only.
+cat > "$tmp/config.yaml" <<'APISIX_STANDALONE'
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+APISIX_STANDALONE
+chmod 644 -- "$tmp/config.yaml" || error 'standalone fixture unreadable'
 cat > "$tmp/bin/rsudo-apisix-runtime-live-probe" <<'PROBE'
 #!/bin/sh
 [ -n "${m_ROOT:-}" ] || exit 80
@@ -73,6 +84,7 @@ do
   # entrypoint initializes the file-driven standalone gateway in this container.
   cid=$(docker run -d --network none --cap-drop ALL \
     --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
     -e APISIX_STAND_ALONE=true "$image") ||
     error 'cannot launch disposable APISIX'
   [ -n "$cid" ] || error 'Docker returned no container ID'
