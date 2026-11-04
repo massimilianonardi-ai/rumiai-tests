@@ -471,6 +471,41 @@ status=$?
   fail "invalid user credentials not rejected as invalid_grant ($status)"
 printf 'password with spaces\n' > "$tmp/user-password"
 
+# A JWT-authenticated Direct Grant, subsequent refresh and explicit
+# revocation must each produce their own signed assertion under one client.
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode password --username k04tester \
+  --password-file "$tmp/user-password" --client-id service \
+  --client-auth client-secret-jwt --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/jwt-password-store" --ca-file "$tmp/server.pem" \
+  2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] &&
+  [ "$(jq -r .refresh_token "$tmp/jwt-password-store")" = SENSITIVE-K04-REFRESH-TOKEN ] ||
+  fail "HS256 client JWT user Direct Grant failed ($status)"
+result=$(probe refresh --server "$base" --issuer-realm master \
+  --client-id service --client-auth client-secret-jwt \
+  --client-secret-file "$tmp/secret" \
+  --token-file "$tmp/jwt-password-store" --token-store "$tmp/jwt-password-store" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] &&
+  [ "$(jq -r .refresh_token "$tmp/jwt-password-store")" = SENSITIVE-K04-ROTATED-REFRESH-TOKEN ] ||
+  fail "HS256 client JWT token refresh failed ($status)"
+result=$(probe revoke --server "$base" --issuer-realm master \
+  --client-id service --client-auth client-secret-jwt \
+  --client-secret-file "$tmp/secret" \
+  --token-file "$tmp/jwt-password-store" --token-type-hint refresh_token \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+  fail "HS256 client JWT revocation failed ($status)"
+grep -F 'eyJhbGciOiJIUzI1Ni' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'HS256 JWT client assertion escaped arguments or diagnostics'
+
 # Refresh must use only the protected store, replace atomically and preserve
 # the existing private mode. Missing successor/refresh is not success.
 refresh()
