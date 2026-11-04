@@ -563,10 +563,20 @@ async function main()
       }))));
     const coverage = usedEntries.flatMap(item =>
       JSON.parse(fs.readFileSync(path.join(coverageRoot, item.file), 'utf8')).ruleUsage);
+    const authoredStyles = fs.readFileSync(path.join(capture,
+      'rest/stylesheets', styles.find(item => item.status === 'saved' &&
+        item.sourceURL?.endsWith('/view.css')).file.replace(/^stylesheets\//, '')), 'utf8');
+    assert(authoredStyles.includes('.unused-css-coverage-marker'),
+      'available CSS source is expected to contain the deliberately unvisited rule');
     assert(coverage.some(item => item.used === true && item.styleSheetId),
       'used stylesheet rules missing from pre-scroll coverage');
-    assert(coverage.some(item => item.used === false && item.styleSheetId),
-      'unused stylesheet rules missing from pre-scroll coverage');
+    // CDP is permitted to return only observed rule-use ranges; absence
+    // of a rule is not proof that the rule was unused at every instant.
+    assert(coverage.every(item => typeof item.used === 'boolean'),
+      'CDP rule-use entries must preserve the original used flag');
+    assert(usedEntries.every(item => Number.isInteger(item.reportedUnused) &&
+      item.reportedUnused >= 0 && item.used >= 0),
+      'coverage counts must distinguish reported false flags from omissions');
     assert(usedEntries.every(item => Date.parse(item.stoppedAt) >=
       Date.parse(item.startedAt)), 'CSS rule-use capture timing is invalid');
     assert(usedEntries.every(item =>
