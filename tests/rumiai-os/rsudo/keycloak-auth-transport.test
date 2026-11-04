@@ -107,16 +107,19 @@ class Handler(BaseHTTPRequestHandler):
         self.response(200, {
             "issuer": root + "/realms/master",
             "token_endpoint": root + "/realms/master/protocol/openid-connect/token",
-            "revocation_endpoint": root + "/realms/master/protocol/openid-connect/revoke"
+            "revocation_endpoint": root + "/realms/master/protocol/openid-connect/revoke",
+            "introspection_endpoint": root + "/realms/master/protocol/openid-connect/token/introspect"
         })
 
     def do_POST(self):
         if self.path not in (
                 "/realms/master/protocol/openid-connect/token",
-                "/realms/master/protocol/openid-connect/revoke"):
+                "/realms/master/protocol/openid-connect/revoke",
+                "/realms/master/protocol/openid-connect/token/introspect"):
             self.response(404, {"error": "not_found"})
             return
         revoke = self.path.endswith("/revoke")
+        introspect = self.path.endswith("/introspect")
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         args = parse_qs(body.decode("utf-8"))
         auth = self.headers.get("Authorization", "")
@@ -131,6 +134,14 @@ class Handler(BaseHTTPRequestHandler):
             # and conventional invalid_client (form-client authentication).
             self.response(401, {
                 "error": "unauthorized_client" if auth else "invalid_client"
+            })
+            return
+        if introspect:
+            self.response(200, {
+                "active": args.get("token") in (
+                    ["SENSITIVE-K04-ACCESS-TOKEN"],
+                    ["SENSITIVE-K04-ROTATED-ACCESS-TOKEN"]),
+                "username": "SENSITIVE-K04-CLAIM-DO-NOT-ECHO"
             })
             return
         if revoke:
@@ -266,6 +277,48 @@ status=$?
 [ "$status" -eq 0 ] && \
   [ "$result" = '{"stored":true,"server_validated":false}' ] ||
   fail 'protected token-store status failed'
+
+# Online status is explicitly opt-in through a complete issuer/client context.
+# Provider claims beyond the boolean active state must never be printed.
+introspect()
+{
+  probe status --token-file "$1" --server "$base" --issuer-realm master \
+    --client-id service --client-auth "$2" \
+    --client-secret-file "$3" --ca-file "$tmp/server.pem"
+}
+result=$(introspect "$tmp/basic-store" client-secret-basic "$tmp/secret" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+  fail "authorized Basic introspection did not confirm active token ($status)"
+result=$(introspect "$tmp/basic-store" client-secret-post "$tmp/secret" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+  fail "authorized POST introspection failed ($status)"
+printf '%s\n' '{"access_token":"SENSITIVE-K04-INACTIVE-TOKEN","token_type":"Bearer","expires_in":60}' \
+  > "$tmp/inactive-token"
+chmod 600 "$tmp/inactive-token"
+result=$(introspect "$tmp/inactive-token" client-secret-basic "$tmp/secret" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"server_validated":true,"active":false}' ] ||
+  fail "introspection active=false incorrectly treated as request failure ($status)"
+printf 'wrong-introspection-secret\n' > "$tmp/bad-introspection-secret"
+chmod 600 "$tmp/bad-introspection-secret"
+result=$(introspect "$tmp/basic-store" client-secret-basic \
+  "$tmp/bad-introspection-secret" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 71 ] && [ -z "$result" ] ||
+  fail "introspection rejected-client error was masked ($status)"
+result=$(probe status --token-file "$tmp/basic-store" --server "$base" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ -z "$result" ] ||
+  fail 'incomplete online status was silently downgraded to local-only'
+grep -F 'SENSITIVE-K04-CLAIM-DO-NOT-ECHO' "$tmp/err" "$tmp/argv" >/dev/null &&
+  fail 'introspection leaked provider claims through diagnostics/argv'
+grep -F 'SENSITIVE-K04-ACCESS-TOKEN' "$tmp/err" "$tmp/argv" >/dev/null &&
+  fail 'introspection leaked access token through diagnostics/argv'
 
 # A safe basename is not enough: reject symlinks anywhere in the path,
 # as well as dot segments that could disguise the actual credential source.
