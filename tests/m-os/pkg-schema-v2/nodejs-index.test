@@ -1,0 +1,31 @@
+#!/bin/sh
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || exit 3
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || exit 3
+. "$suite_root/lib/m-os-target.lib" || exit 3
+target=$(rumiai_test_target_m_os_find)
+case $? in
+  0) : ;;
+  1) exit 2 ;;
+  *) exit 3 ;;
+esac
+if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]; then
+  RUMIAI_TEST_M_OS_CHILD=1
+  export RUMIAI_TEST_M_OS_CHILD
+  "$target/m" sh "$0"
+  exit $?
+fi
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 3
+loadsyslib "pkg/repository/pkg-repository-nodejs" || exit 3
+records='s:v27.invalid
+s:v26.13.0-rc.1
+s:v26.12.1
+s:v25.9.0
+s:v26.11.9'
+actual=$(_pkg_repository_nodejs_filter_versions 26 "$records") || exit 1
+expected='v26.12.1
+v26.11.9'
+[ "$actual" = "$expected" ] || exit 1
+if _pkg_repository_nodejs_filter_versions 26 's:v26.invalid' >/dev/null 2>&1; then
+  exit 1
+fi
+exit 0
