@@ -1,5 +1,5 @@
 #!/bin/sh
-# Real APISIX 3.19.0 LuaJIT/YAML/defaults boundary through the actual m
+# Real APISIX 3.16.0 and 3.19.0 LuaJIT/YAML/defaults through the actual m
 # entrypoint and product shell module. Only rsudo remote SSH/sudo is replaced
 # by network-disabled Docker stdin execution; no live APISIX gateway is tested.
 
@@ -35,11 +35,10 @@ esac
 command -v docker >/dev/null 2>&1 ||
   skip 'Docker unavailable: installed APISIX parser not exercised'
 
-# Official Apache APISIX 3.19.0 Debian multiarch image index digest.
-# The pinned image is provisioned by the workflow; an absent image is SKIP.
-image='apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
-docker image inspect "$image" >/dev/null 2>&1 ||
-  skip 'pinned APISIX image not locally provisioned'
+# Immutable multiarch image index digests for the two tested releases.
+# Images are provisioned by the workflow, never silently pulled by the test.
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
 
 tmp=${TMPDIR:-/tmp}/rsudo-apisix-parser-$$
 umask 077
@@ -66,13 +65,6 @@ rsudo_mod_apisix_mode /usr/local/apisix "$@"
 PROBE
 chmod 700 -- "$tmp/bin/rsudo-apisix-parser-probe" ||
   error 'cannot make probe executable'
-
-docker run --rm --read-only --network none --cap-drop ALL \
-  --entrypoint /bin/sh "$image" -c \
-  'test -r /usr/local/apisix/conf/config.yaml &&
-   test -r /usr/local/apisix/apisix/cli/config.lua &&
-   command -v luajit >/dev/null 2>&1' ||
-  error 'pinned image lacks expected APISIX installation'
 
 write_case()
 {
@@ -145,17 +137,31 @@ write_case unresolved 'deployment:
   role_traditional:
     config_provider: ${{UNRESOLVED_PROVIDER}}'
 
-expect_mode default traditional-admin
-expect_mode traditional traditional-admin
-expect_mode control traditional-admin
-expect_mode api standalone-api
-expect_mode file_yaml standalone-file-yaml
-expect_mode file_json standalone-file-json
-expect_mode data_etcd no-admin-data-plane
-expect_failure future
-expect_failure malformed
-expect_failure structure
-expect_failure disabled
-expect_failure unresolved
+# Both releases must independently exercise the *installed* APISIX parser.
+# A missing image makes this integration test SKIP, not a synthetic PASS.
+for image in $images
+do
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    skip "pinned APISIX image $image not locally provisioned"
+  docker run --rm --read-only --network none --cap-drop ALL \
+    --entrypoint /bin/sh "$image" -c \
+    'test -r /usr/local/apisix/conf/config.yaml &&
+     test -r /usr/local/apisix/apisix/cli/config.lua &&
+     command -v luajit >/dev/null 2>&1' ||
+    error "pinned image $image lacks expected APISIX installation"
 
-printf '%s\n' "$TEST_ID: PASS (installed APISIX parser, no gateway process)"
+  expect_mode default traditional-admin
+  expect_mode traditional traditional-admin
+  expect_mode control traditional-admin
+  expect_mode api standalone-api
+  expect_mode file_yaml standalone-file-yaml
+  expect_mode file_json standalone-file-json
+  expect_mode data_etcd no-admin-data-plane
+  expect_failure future
+  expect_failure malformed
+  expect_failure structure
+  expect_failure disabled
+  expect_failure unresolved
+done
+
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16.0 and 3.19.0 parsers; no gateway process)"
