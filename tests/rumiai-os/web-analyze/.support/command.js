@@ -251,7 +251,9 @@ async function main()
     }
     const data = {
       '/': [html, 'text/html'],
-      '/view.css': ['.scroll {height: 160px; overflow-y: auto} p {height: 35px}', 'text/css'],
+      '/view.css': [':root {--fixture-accent: rgb(12, 34, 56)} ' +
+        '.scroll {height: 160px; overflow-y: auto} ' +
+        '#list {color: var(--fixture-accent)} p {height: 35px}', 'text/css'],
       '/app.js': [app, 'text/javascript'],
       '/background-worker.js': [
         'postMessage("worker-ready");setInterval(()=>{},5000);',
@@ -486,6 +488,43 @@ async function main()
     assert(rest.artifacts.some(item => item.name === 'accessibility' &&
       item.file === 'accessibility/index.json'),
       'accessibility collection outcome omitted from rest manifest');
+    const cssRoot = path.join(capture, 'rest/targets/target-000/css-nodes');
+    const cssIndex = JSON.parse(fs.readFileSync(path.join(cssRoot,'index.json'), 'utf8'));
+    assert.equal(cssIndex.methods.computed, true,
+      'browser-specific CSS computed-style method not discovered');
+    assert.equal(cssIndex.methods.matched, true,
+      'browser-specific CSS matched-style method not discovered');
+    assert(cssIndex.observedElements >= cssIndex.selectedElements,
+      'CSS enumeration counters are inconsistent');
+    assert(cssIndex.pages.length > 0, 'per-node CSS results are missing');
+    const cssPages = cssIndex.pages.flatMap(page => JSON.parse(
+      fs.readFileSync(path.join(cssRoot,page.file), 'utf8')).nodes);
+    const cssNode = cssPages.find(node => {
+      const attributes = node.attributes || [];
+      return attributes.some((value,index) =>
+        value === 'id' && attributes[index+1] === 'list');
+    });
+    assert(cssNode, 'CSS node catalog omitted known nested scroller');
+    assert.equal(cssNode.methods.computed.status, 'saved',
+      'scroller full computed style was not captured');
+    assert.equal(cssNode.methods.matched.status, 'saved',
+      'scroller full CSS rule cascade was not captured');
+    const computed = cssNode.methods.computed.result.computedStyle;
+    assert(computed.some(item => item.name === 'color' &&
+      item.value === 'rgb(12, 34, 56)'),
+      'resolved CSS variable did not affect computed style');
+    assert(computed.some(item => item.name === '--fixture-accent'),
+      'CSS custom property was missing from computed style');
+    assert(cssNode.methods.matched.result.matchedCSSRules.some(item =>
+      item.rule?.selectorList?.text?.includes('#list')),
+      'CSS selector/rule provenance was not saved');
+    assert(cssPages.some(node => node.methods.fonts?.status === 'saved'),
+      'platform font inventory was not attempted successfully');
+    assert.equal(fs.statSync(path.join(cssRoot,cssIndex.pages[0].file)).mode & 0o777,
+      0o600, 'private CSS node output must not be world readable');
+    assert(rest.artifacts.some(item => item.name === 'css-node-details' &&
+      item.file === 'css-nodes/index.json'),
+      'CSS node coverage and limitations absent from rest manifest');
     assert(rest.artifacts.some(item => item.name === 'resources-at-rest' &&
       item.status === 'saved'), 'rest resource index missing');
     assert(rest.artifacts.some(item => item.name === 'scripts-at-rest' &&
@@ -657,6 +696,10 @@ async function main()
     assert(integrity.artifacts.some(item => item.file.endsWith('.css') &&
       item.source === 'CSS.getStyleSheetText' && item.status === 'saved'),
       'stylesheet body was not verified from the CSS index');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/targets/target-000/css-nodes/' + cssIndex.pages[0].file &&
+      item.status === 'saved' && item.sha256 === cssIndex.pages[0].sha256),
+      'per-node CSS evidence was not verified against index SHA-256');
     assert(integrity.domains.some(item => item.domain === 'dom'),
       'DOM verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'storage'),
