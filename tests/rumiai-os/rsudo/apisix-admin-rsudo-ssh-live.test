@@ -1,7 +1,8 @@
 #!/bin/sh
 # Real m -> rsudo -> OpenSSH password auth -> remote sudo password -> sh
-# -> curl GET with root-only header file -> real loopback HTTP server.
-# Disposable Ubuntu container; no APISIX, site SSH, user keys or credentials.
+# -> curl GET with root-only header file -> first a synthetic HTTP server,
+# then pinned official APISIX 3.16/3.19 sharing only the SSH network namespace.
+# Disposable Ubuntu/OpenSSH and gateway containers; no site credentials.
 TEST_ID=rumiai-os/rsudo/apisix-admin-rsudo-ssh-live.test
 fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
 error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
@@ -17,9 +18,11 @@ resolve_test_dir()
 }
 
 cid=
+apisix_cid=
 tmp=
 cleanup()
 {
+  [ -z "$apisix_cid" ] || docker rm -f "$apisix_cid" >/dev/null 2>&1 || :
   [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
   [ -z "$tmp" ] || rm -rf -- "$tmp"
 }
@@ -40,6 +43,16 @@ esac
 [ "$(uname -s)" = Linux ] || skip 'Linux Docker test only'
 command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
 command -v ssh >/dev/null 2>&1 || skip 'OpenSSH client unavailable'
+
+# The workflow provisions digest-pinned releases; never silently substitute
+# a tag or claim real APISIX coverage using the synthetic HTTP fixture.
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
+for image in $images
+do
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    skip "pinned APISIX image not provisioned: $image"
+done
 
 tmp=${TMPDIR:-/tmp}/rsudo-apisix-ssh-real-$$
 umask 077
@@ -94,6 +107,7 @@ umask 077
 printf '%s\n' 'X-API-KEY: synthetic-admin-key' > /root/rsudo-test-api-header
 chmod 600 /root/rsudo-test-api-header
 python3 /opt/server.py &
+printf '%s\n' "$!" > /run/rsudo-test-http.pid
 exec /usr/sbin/sshd -D -e -o PermitRootLogin=no \
   -o PasswordAuthentication=yes -o PubkeyAuthentication=no -o UsePAM=no
 ENTRYPOINT
@@ -153,7 +167,11 @@ RSUDO_USER=rsudoapitest
 RSUDO_PASSWORD=rsudo-test-only-password
 RSUDO_INTERACTIVE=
 RSUDO_ASKPASS=
-rsudo_mod_apisix_admin_read routes /root/rsudo-test-api-header 9180
+case "${1:-routes}" in
+  runtime) rsudo_mod_apisix_runtime /usr/local/apisix ;;
+  routes|configs) rsudo_mod_apisix_admin_read "${1:-routes}" /root/rsudo-test-api-header 9180 ;;
+  *) exit 84 ;;
+esac
 PROBE
 chmod 700 -- "$tmp/bin/ssh" "$tmp/bin/rsudo-apisix-ssh-live-probe" ||
   error 'SSH wrapper or real-m probe not executable'
@@ -161,7 +179,7 @@ chmod 700 -- "$tmp/bin/ssh" "$tmp/bin/rsudo-apisix-ssh-live-probe" ||
 run_probe()
 {
   RSUDO_TEST_REAL_SSH="$ssh_bin" RSUDO_TEST_SSH_CONFIG="$tmp/ssh_config" \
-  PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-ssh-live-probe
+  PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-ssh-live-probe "$@"
 }
 
 # Wait only for the ephemeral SSH daemon, not a production network service.
@@ -224,4 +242,131 @@ status=$?
 grep -F 'synthetic-admin-key' "$tmp/stderr" >/dev/null &&
   fail 'credential leaked during NOPASSWD rsudo'
 
-printf '%s\n' "$TEST_ID: PASS (real SSH password, sudo password and NOPASSWD, stdin and curl)"
+# Stop only the synthetic HTTP fixture. Keep the same authenticated
+# OpenSSH/sudo target alive and replace its loopback HTTP backend with a real
+# pinned APISIX gateway in the *same network namespace*.
+docker exec "$cid" sh -c 'kill -TERM "$(cat /run/rsudo-test-http.pid)"' ||
+  error 'cannot stop disposable synthetic HTTP server'
+tries=0
+while docker exec "$cid" curl -q --silent --noproxy '*' --proxy '' \
+  --connect-timeout 1 --max-time 2 \
+  --url http://127.0.0.1:9180/apisix/admin/routes >/dev/null 2>&1
+do
+  tries=$((tries + 1))
+  [ "$tries" -lt 20 ] ||
+    fail 'synthetic HTTP listener remained bound before real gateway test'
+  sleep 0.2
+done
+
+# The only network port published to the host is the ephemeral SSH port.
+# A different container has the APISIX process/filesystem namespace, so
+# successful remote curl cannot, by itself, establish APISIX runtime identity.
+cat > "$tmp/config.yaml" <<'APISIX_CONFIG'
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: yaml
+  admin:
+    admin_key_required: true
+    admin_key:
+      - name: test-viewer
+        key: synthetic-admin-key
+        role: viewer
+    admin_listen:
+      ip: 127.0.0.1
+      port: 9180
+APISIX_CONFIG
+chmod 644 "$tmp/config.yaml" || error 'real APISIX configuration fixture unreadable'
+
+for image in $images
+do
+  # Exercise sudo both with a password and with NOPASSWD against the real
+  # gateway, not just against the earlier synthetic HTTP server.
+  docker exec "$cid" sh -c \
+    "printf 'rsudoapitest ALL=(root) ALL\n' > /etc/sudoers.d/rsudoapitest &&
+     chmod 440 /etc/sudoers.d/rsudoapitest" ||
+    error 'cannot restore password-required sudo fixture'
+  docker exec "$cid" sh -c \
+    "printf '%s\n' 'X-API-KEY: synthetic-admin-key' > /root/rsudo-test-api-header" ||
+    error 'cannot restore protected test Admin key'
+
+  apisix_cid=$(docker run -d --network "container:$cid" \
+    --cap-drop ALL --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    -e APISIX_STAND_ALONE=true "$image") ||
+    error 'cannot start official APISIX sharing the SSH target network namespace'
+  [ -n "$apisix_cid" ] || error 'official APISIX container ID missing'
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    if docker exec "$cid" curl -q --silent --fail --noproxy '*' --proxy '' \
+      --connect-timeout 1 --max-time 2 \
+      --header '@/root/rsudo-test-api-header' \
+      --url http://127.0.0.1:9180/apisix/admin/configs >/dev/null 2>&1
+    then
+      break
+    fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$apisix_cid" 2>/dev/null)" != true ]
+    then
+      docker logs "$apisix_cid" >&2 || :
+      fail 'official APISIX exited before Admin API became ready'
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || {
+    docker logs "$apisix_cid" >&2 || :
+    fail 'official APISIX Admin API not ready in SSH network namespace'
+  }
+
+  # End-to-end composed path: real m -> OpenSSH -> sudo password -> curl
+  # -> real APISIX. The API-driven /configs resource is not a fake /routes.
+  result=$(run_probe configs 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || fail "composed password sudo/real APISIX GET status $status"
+  case "$result" in
+    *'"routes_conf_version"'*'"services_conf_version"'*) : ;;
+    *) fail 'real APISIX snapshot was not returned through composed SSH/sudo' ;;
+  esac
+
+  # The SSH target does not share the gateway process or mount namespace.
+  # Runtime identity must fail closed despite successful loopback GET.
+  result=$(run_probe runtime 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 32 ] && [ -z "$result" ] ||
+    fail 'reachable Admin API was incorrectly treated as a local APISIX process'
+
+  docker exec "$cid" sh -c \
+    "printf '%s\n' 'X-API-KEY: incorrect-test' > /root/rsudo-test-api-header" ||
+    error 'cannot set incorrect real APISIX key'
+  result=$(run_probe configs 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 22 ] && [ -z "$result" ] ||
+    fail 'real APISIX wrong-key error did not propagate through OpenSSH/sudo'
+
+  docker exec "$cid" sh -c \
+    "printf '%s\n' 'X-API-KEY: synthetic-admin-key' > /root/rsudo-test-api-header" ||
+    error 'cannot restore real APISIX key'
+  docker exec "$cid" sh -c \
+    "printf 'rsudoapitest ALL=(root) NOPASSWD: ALL\n' > /etc/sudoers.d/rsudoapitest &&
+     chmod 440 /etc/sudoers.d/rsudoapitest" ||
+    error 'cannot configure real APISIX NOPASSWD sudo fixture'
+  result=$(run_probe configs 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || fail 'composed NOPASSWD/real APISIX GET failed'
+  case "$result" in
+    *'"routes_conf_version"'*'"services_conf_version"'*) : ;;
+    *) fail 'real APISIX snapshot was lost through NOPASSWD SSH/sudo' ;;
+  esac
+  grep -F 'synthetic-admin-key' "$tmp/stderr" >/dev/null &&
+    fail 'real APISIX credential exposed through remote diagnostics'
+  grep -F 'rsudo-test-only-password' "$tmp/stderr" >/dev/null &&
+    fail 'rsudo password exposed through remote diagnostics'
+
+  docker rm -f "$apisix_cid" >/dev/null 2>&1 ||
+    error 'cannot remove isolated real APISIX'
+  apisix_cid=
+done
+
+printf '%s\n' "$TEST_ID: PASS (real OpenSSH/sudo -> synthetic HTTP and official APISIX 3.16/3.19)"
