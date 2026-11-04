@@ -1,0 +1,70 @@
+#!/bin/sh
+# Protect catalog-backed v1 Java provider and Maven consumer through public m/pkg.
+# The caller supplies the real autonomous m checkout and the exact catalog checkout.
+TEST_ID=m-os/pkg-java-v1/java-provider-and-maven.test
+error()
+{
+  printf '%s: ERROR: %s\n' "$TEST_ID" "$1" >&2
+  exit 3
+}
+fail()
+{
+  printf '%s: FAIL: %s\n' "$TEST_ID" "$1" >&2
+  exit 1
+}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || error 'test location'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/m-os-target.lib" || error 'autonomous m target helper'
+target=$(rumiai_test_target_m_os_find)
+status=$?
+case "$status" in
+  0) : ;;
+  1)
+    [ -z "${RUMIAI_TEST_M_OS_ROOT-}" ] && exit 2
+    error 'configured m checkout unavailable'
+    ;;
+  *) error 'invalid configured m checkout' ;;
+esac
+[ -n "${RUMIAI_TEST_PKG_CATALOG_ROOT-}" ] || error 'catalog checkout must be supplied'
+catalog=$(CDPATH= cd -- "$RUMIAI_TEST_PKG_CATALOG_ROOT" && pwd -P) || error 'invalid catalog checkout'
+[ -d "$catalog/v1/pkg/temurin" ] && [ -d "$catalog/v1/pkg/maven" ] || error 'v1 Java catalog definitions unavailable'
+[ -f "$target/lib/sys/sh/pkg/repository/pkg-repository-temurin.lib.sh" ] &&
+  [ -f "$target/lib/sys/sh/pkg/repository/pkg-repository-apache-maven.lib.sh" ] || error 'real Java repository adapters unavailable'
+conf=$("$target/m" state-path system sys pkg conf) || error 'package configuration unavailable'
+[ -r "$conf/catalog" ] || error 'catalog configuration not prepared by caller'
+# This live integration test owns both package identities only in an empty target.
+for item in "$target/pkg"/temurin@* "$target/pkg"/maven@*
+do
+  [ ! -e "$item" ] && [ ! -L "$item" ] || error 'existing Java package would be modified'
+done
+if "$target/m" pkg provider default java >/dev/null 2>&1
+then
+  error 'existing Java provider selection would be modified'
+fi
+cleanup()
+{
+  "$target/m" pkg uninstall maven >/dev/null 2>&1 || :
+  "$target/m" pkg provider default -u java >/dev/null 2>&1 || :
+  "$target/m" pkg uninstall temurin >/dev/null 2>&1 || :
+}
+trap cleanup 0
+trap 'exit 3' HUP INT TERM
+# External transfer failures cannot establish the product behavior: ERROR.
+"$target/m" pkg install 'temurin@21+35' || error 'real Temurin install could not be observed; inspect upstream diagnostics'
+java_concrete=$("$target/m" pkg default temurin) || fail 'Temurin default not published'
+case "$java_concrete" in
+  'temurin@21+35!'*) : ;;
+  *) fail 'unexpected Temurin concrete identity' ;;
+esac
+"$target/m" pkg provider default java "$java_concrete" || fail 'Java provider default rejected real Temurin concrete'
+selected=$("$target/m" pkg provider default java) || fail 'Java provider selection unavailable'
+[ "$selected" = "$java_concrete" ] || fail 'Java provider selection mismatch'
+"$target/m" java -version || fail 'real managed Java command did not execute'
+"$target/m" pkg install maven || error 'real Maven install could not be observed; inspect upstream diagnostics'
+maven_concrete=$("$target/m" pkg default maven) || fail 'Maven default not published'
+case "$maven_concrete" in
+  'maven@4.'*'!'*) : ;;
+  *) fail 'unexpected Maven concrete identity' ;;
+esac
+"$target/m" mvn -version || fail 'real Maven command did not execute with selected Java provider'
+printf '%s\n' 'PASS: live v1 Temurin provider and Maven consumer through public m pkg'
