@@ -62,7 +62,15 @@ cat > "$tmp/bin/rsudo-apisix-runtime-live-probe" <<'PROBE'
 loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
 rsudo()
 {
-  docker exec -i "$APISIX_TEST_CONTAINER" "$@"
+  # Both paths execute the real product's static remote program in the
+  # selected APISIX namespace. Only the rsudo SSH/sudo transport is replaced.
+  if [ "$1" = docker ]
+  then
+    shift
+    docker "$@"
+  else
+    docker exec -i "$APISIX_TEST_CONTAINER" "$@"
+  fi
 }
 rsudo_mod_apisix_runtime "$@"
 PROBE
@@ -129,6 +137,30 @@ do
     'mutation_readiness=not-established')
   [ "$result" = "$expected" ] ||
     fail 'real process observation did not preserve runtime-identity limitations'
+
+  # The optional full-ID selector enters the exact same container via the
+  # remote manager path, then executes the unmodified product shell program.
+  result=$(probe /usr/local/apisix "$cid" 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = "$expected" ] ||
+    fail 'explicit Docker-scoped runtime observation differed from host-scoped evidence'
+
+  # Names, short IDs and option-like selectors must not reach Docker.
+  for invalid in wrong-container-id 123456789012 --privileged
+  do
+    result=$(probe /usr/local/apisix "$invalid" 2>"$tmp/stderr")
+    status=$?
+    [ "$status" -eq 44 ] && [ -z "$result" ] ||
+      fail 'invalid Docker selector was accepted or reached the manager'
+  done
+
+  # An absent but well-formed immutable ID must fail, not fall back to the
+  # ambient host process or silently select another running gateway.
+  missing_id='0000000000000000000000000000000000000000000000000000000000000000'
+  result=$(probe /usr/local/apisix "$missing_id" 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -ne 0 ] && [ -z "$result" ] ||
+    fail 'missing Docker container incorrectly produced runtime evidence'
 
   # Same live master, deliberately wrong installation prefix: fail closed.
   fixture="/tmp/rsudo-apisix-runtime-$$"
