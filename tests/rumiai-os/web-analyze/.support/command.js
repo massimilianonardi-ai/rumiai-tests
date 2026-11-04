@@ -392,6 +392,7 @@ async function main()
       'states/dom-rest-final.html', 'states/dom-rest-final.json',
       'rest/manifest.json', 'rest/security/index.json',
        'rest/worker-provenance/index.json',
+       'rest/optional-domains/index.json',
        'rest/pwa-resources/index.json', 'rest/page.mhtml',
       'rest/targets/target-000/dom-tree.json',
       'rest/targets/target-000/dom-snapshot.json',
@@ -813,6 +814,51 @@ async function main()
       assert(secondary.frame.bucketNames.executionTargetId,
         'secondary execution target provenance missing');
     }
+    const optionalPath = path.join(capture,
+      'rest/optional-domains/index.json');
+    const optional = JSON.parse(fs.readFileSync(optionalPath,'utf8'));
+    assert.equal(optional.scope,'installed-browser-passive-optional-CDP-domains');
+    assert.equal(optional.policy,'inventory-only-no-domain-enablement');
+    assert.equal(optional.protocolStatus,'saved',
+      'installed Chromium protocol should be the source of capability claims');
+    assert.equal(optional.source.status,'saved');
+    assert.equal(optional.source.invalidPackets,0);
+    assert.equal(optional.domains.length,10);
+    for (const domain of optional.domains)
+    {
+      const declared = protocol.domains.find(item => item.domain === domain.domain);
+      if (!declared)
+        assert.equal(domain.status,'unsupported',
+          'absent browser CDP domain was mislabeled available');
+      else
+      {
+        assert.deepEqual(domain.commandsAvailable,
+          (declared.commands || []).map(item => item.name));
+        assert.deepEqual(domain.eventsAvailable,
+          (declared.events || []).map(item => item.name));
+        assert(['observed','not-enabled','enabled-no-event-observed']
+          .includes(domain.status),
+        'installed domain must distinguish actual event evidence from capability');
+        const events = parsedWire.filter(item =>
+          item.direction === 'inbound' &&
+          item.packet.method?.startsWith(domain.domain + '.')).length;
+        const commands = parsedWire.filter(item =>
+          item.direction === 'outbound' &&
+          item.packet.method?.startsWith(domain.domain + '.')).length;
+        assert.equal(domain.inboundEvents,events,
+          'optional domain event count is not reconciled to raw CDP wire');
+        assert.equal(domain.outboundCommands,commands,
+          'optional domain command count is not reconciled to raw CDP wire');
+        if (!events && !domain.enabledTargets.length)
+          assert.equal(domain.status,'not-enabled',
+            'schema support alone was incorrectly counted as observed coverage');
+      }
+    }
+    assert.equal(fs.statSync(optionalPath).mode & 0o777,0o600,
+      'optional CDP domain provenance must be private');
+    assert(rest.artifacts.some(item => item.name === 'optional-domains' &&
+      item.file === 'optional-domains/index.json'),
+      'optional CDP domain inventory absent from private rest manifest');
     const workerProvenancePath = path.join(capture,
       'rest/worker-provenance/index.json');
     const workerProvenance = JSON.parse(fs.readFileSync(workerProvenancePath,'utf8'));
@@ -1250,6 +1296,10 @@ async function main()
       item.file === 'rest/worker-provenance/index.json' &&
       item.status !== 'failed'),
       'worker and frame provenance index must be independently SHA-256 audited');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/optional-domains/index.json' &&
+      item.status !== 'failed'),
+      'optional CDP domain inventory must be independently SHA-256 audited');
     assert(integrity.artifacts.some(item =>
       item.file === 'rest/pwa-resources/index.json' &&
       item.status !== 'failed'),
