@@ -106,7 +106,13 @@ rsudo()
   shift
   "$@"
 }
-rsudo_mod_keycloak_auth "$@"
+if [ "${1-}" = admin-probe ]
+then
+  shift
+  _rsudo_mod_keycloak_admin_transport_probe "$@"
+else
+  rsudo_mod_keycloak_auth "$@"
+fi
 PROBE
 chmod 700 "$tmp/bin/k04-keycloak-live-probe" ||
   error 'm test entrypoint unavailable'
@@ -306,6 +312,95 @@ do
     error "Keycloak $version admin permission boundary HTTP failed"
   [ "$denied" = 403 ] ||
     fail "Keycloak $version service account unexpectedly accessed serverinfo ($denied)"
+
+
+  # Private K04 realm GET: an authenticated service account with no realm
+  # management role must be denied, not misreported as success.
+  admin_probe()
+  {
+    probe admin-probe --server "$base" --issuer-realm master \
+      --target-realm "$2" --token-file "$1" \
+      --ca-file "$tmp/image/server.pem"
+  }
+  result=$(admin_probe "$tmp/token-basic-$version" master 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 80 ] && [ -z "$result" ] ||
+    fail "Keycloak $version unauthorised service account Admin GET was not 403 ($status)"
+
+  # Delegate only view-realm through Keycloak's actual Admin REST API.
+  # The role belongs to realm-management's internal client UUID, not the
+  # external clientId string and not an arbitrary assumed UUID.
+  svc_clients_code=$(transport --output "$tmp/svc-clients" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/clients?clientId=k04-service") ||
+    error "Keycloak $version service-client lookup failed"
+  [ "$svc_clients_code" = 200 ] ||
+    fail "Keycloak $version service-client lookup HTTP $svc_clients_code"
+  svc_uuid=$(jq -er '.[] | select(.clientId == "k04-service") | .id' \
+    "$tmp/svc-clients") ||
+    fail "Keycloak $version service-client internal UUID not found"
+  svc_user_code=$(transport --output "$tmp/svc-user" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/clients/$svc_uuid/service-account-user") ||
+    error "Keycloak $version service-account user lookup failed"
+  [ "$svc_user_code" = 200 ] ||
+    fail "Keycloak $version service-account lookup HTTP $svc_user_code"
+  svc_user=$(jq -er '.id' "$tmp/svc-user") ||
+    fail "Keycloak $version service-account user UUID unavailable"
+  management_code=$(transport --output "$tmp/mgmt-clients" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/clients?clientId=realm-management") ||
+    error "Keycloak $version realm-management lookup failed"
+  [ "$management_code" = 200 ] ||
+    fail "Keycloak $version realm-management lookup HTTP $management_code"
+  mgmt_uuid=$(jq -er '.[] | select(.clientId == "realm-management") | .id' \
+    "$tmp/mgmt-clients") ||
+    fail "Keycloak $version realm-management internal UUID unavailable"
+  role_code=$(transport --output "$tmp/view-realm-role" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/clients/$mgmt_uuid/roles/view-realm") ||
+    error "Keycloak $version view-realm lookup failed"
+  [ "$role_code" = 200 ] ||
+    fail "Keycloak $version view-realm lookup HTTP $role_code"
+  jq -e -c '[.]' "$tmp/view-realm-role" > "$tmp/delegated-role" ||
+    error "Keycloak $version cannot create delegated-role JSON"
+  grant_code=$(transport --output "$tmp/role-grant-response" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/delegated-role" \
+    --url "$base/admin/realms/master/users/$svc_user/role-mappings/clients/$mgmt_uuid") ||
+    error "Keycloak $version role assignment request failed"
+  [ "$grant_code" = 204 ] ||
+    fail "Keycloak $version view-realm role grant rejected HTTP $grant_code"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-service \
+    --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-delegated-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] ||
+    fail "Keycloak $version delegated-service token acquisition failed ($status)"
+  result=$(admin_probe "$tmp/token-delegated-$version" master 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"http_status":200,"authorized":true,"body_suppressed":true}' ] ||
+    fail "Keycloak $version delegated view-realm Admin GET not authorized ($status)"
+
+  # An opaque but syntactically valid rejected bearer must map to public 79,
+  # not 403, and never trigger refresh or privilege escalation.
+  printf '%s\n' '{"access_token":"K04-SYNTHETIC-INVALID-ACCESS-TOKEN"}' \
+    > "$tmp/invalid-bearer-$version"
+  chmod 600 "$tmp/invalid-bearer-$version"
+  result=$(admin_probe "$tmp/invalid-bearer-$version" master 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 79 ] && [ -z "$result" ] ||
+    fail "Keycloak $version invalid Admin bearer was not 401-class ($status)"
+  for secret_marker in k04-protected-client-secret K04-SYNTHETIC-INVALID-ACCESS-TOKEN
+  do
+    grep -F "$secret_marker" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version private Admin Bearer diagnostic leaked credentials"
+  done
 
   printf 'k04-incorrect-secret\n' > "$tmp/secret"
   result=$(probe acquire --server "$base" --issuer-realm master \
