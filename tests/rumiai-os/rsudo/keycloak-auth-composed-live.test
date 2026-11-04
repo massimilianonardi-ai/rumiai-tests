@@ -85,6 +85,7 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "protocol": "openid-connect",
   "publicClient": false,
   "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
   "clientAuthenticatorType": "client-secret",
   "secret": "k04-disposable-client-secret"
 }
@@ -119,7 +120,8 @@ cat > "$tmp/ssh/entrypoint.sh" <<'SSH_ENTRYPOINT'
 set -e
 umask 077
 printf 'k04-disposable-client-secret\n' > /root/keycloak/secret
-chmod 600 /root/keycloak/secret
+printf 'k04-only-bootstrap\n' > /root/keycloak/user-password
+chmod 600 /root/keycloak/secret /root/keycloak/user-password
 exec /usr/sbin/sshd -D -e -o PermitRootLogin=no \
   -o PasswordAuthentication=yes -o PubkeyAuthentication=no -o UsePAM=no
 SSH_ENTRYPOINT
@@ -332,6 +334,38 @@ EOF_SSH_CONFIG
     grep -F "$marker" "$tmp/auth.err" >/dev/null &&
       fail "Keycloak $version secrets leaked through real SSH/sudo diagnostics"
   done
+
+  # Human Direct Access Grant is explicit: no fallback or password in argv.
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode password --username k04admin \
+    --password-file /root/keycloak/user-password \
+    --client-id k04-service --client-auth client-secret-basic \
+    --client-secret-file /root/keycloak/secret \
+    --token-store "/root/keycloak/user-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] ||
+    fail "Keycloak $version composed SSH/Direct Grant failed ($status)"
+  docker exec "$ssh_container" sh -c \
+    "test \"\$(stat -c %a /root/keycloak/user-$version)\" = 600 &&
+     jq -e '.access_token | type == \"string\" and length > 0' /root/keycloak/user-$version >/dev/null" ||
+    fail "Keycloak $version user password grant stored insecure token"
+  grep -F 'k04-only-bootstrap' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version user password leaked in SSH diagnostics"
+  docker exec "$ssh_container" sh -c \
+    "printf 'k04-invalid-user-password\\n' > /root/keycloak/user-password" ||
+    error 'cannot stage synthetic invalid user password'
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode password --username k04admin \
+    --password-file /root/keycloak/user-password \
+    --client-id k04-service --client-auth client-secret-post \
+    --client-secret-file /root/keycloak/secret \
+    --token-store "/root/keycloak/user-rejected-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 72 ] && [ -z "$result" ] ||
+    fail "Keycloak $version invalid user password not rejected ($status)"
 
   printf '%s: Keycloak %s verified across composed SSH+sudo+HTTPS boundary\n' \
     "$TEST_ID" "$version"
