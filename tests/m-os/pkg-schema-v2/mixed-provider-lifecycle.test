@@ -86,6 +86,11 @@ binding_set=0
 package_default_set=0
 cleanup()
 {
+  if [ "${damaged_provider_facility-0}" -eq 1 ]
+  then
+    command -p -- rm -f -- "$provider_v2/facility-cmd/nodejs/node" || :
+    command -p -- ln -s "../../link/bin/node" "$provider_v2/facility-cmd/nodejs/node" || :
+  fi
   if [ "$binding_set" -eq 1 ]
   then
     "$m_ROOT/m" pkg provider bind -u "$consumer" nodejs >/dev/null 2>&1 || :
@@ -174,6 +179,27 @@ package_default_set=1
 "$m_ROOT/m" pkg provider default nodejs "$provider@1" || exit 18
 default_set=1
 [ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 19
+
+# An installed v2 facility command is a managed projection of its own
+# link/bin member, not a free-form symlink to an arbitrary executable.
+# Reject a switch to a candidate whose facility-cmd symlink was redirected
+# to a real executable outside its provider concrete, without running it.
+original_global=$(command -p -- readlink "$m_BIN_EXT_DIR/node") || exit 79
+printf '#!/bin/sh\nexit 99\n' > "$work/foreign-provider-executable" || exit 80
+command -p -- chmod +x "$work/foreign-provider-executable" || exit 81
+command -p -- rm -f -- "$provider_v2/facility-cmd/nodejs/node" || exit 82
+command -p -- ln -s "$work/foreign-provider-executable" "$provider_v2/facility-cmd/nodejs/node" || exit 83
+damaged_provider_facility=1
+if "$m_ROOT/m" pkg provider default nodejs "$provider@2" >/dev/null 2>&1
+then
+  exit 84
+fi
+[ "$("$m_ROOT/m" pkg provider default nodejs)" = "$provider@1" ] || exit 85
+[ "$(command -p -- readlink "$m_BIN_EXT_DIR/node")" = "$original_global" ] || exit 86
+[ "$("$m_ROOT/m" "$consumer")" = consumer-v1:provider-1 ] || exit 87
+command -p -- rm -f -- "$provider_v2/facility-cmd/nodejs/node" || exit 88
+command -p -- ln -s "../../link/bin/node" "$provider_v2/facility-cmd/nodejs/node" || exit 89
+damaged_provider_facility=0
 
 # The global facility default remains effective across consumer schema changes.
 "$m_ROOT/m" pkg default "$consumer@2" || exit 20
