@@ -325,6 +325,8 @@ async function main()
       'rest/dom-history-contexts.json'])
       assert(fs.existsSync(path.join(capture, file)),
         'missing ' + file + '; capture stderr: ' + result.stderr +
+        '; rest entries: ' + (fs.existsSync(path.join(capture, 'rest')) ?
+          fs.readdirSync(path.join(capture, 'rest')).join(', ') : 'absent') +
         '; limitations: ' + (fs.existsSync(path.join(capture, 'LIMITATIONS.md')) ?
           fs.readFileSync(path.join(capture, 'LIMITATIONS.md'), 'utf8') :
           'not generated'));
