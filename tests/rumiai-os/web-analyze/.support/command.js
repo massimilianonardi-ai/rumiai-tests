@@ -537,6 +537,11 @@ async function main()
       domain.commands.includes('stopRuleUsageTracking')),
       'native Chromium CSS rule-usage methods were not available');
     const coverageRoot = path.join(capture, 'rest/css-rule-usage');
+    assert(fs.existsSync(path.join(coverageRoot, 'index.json')),
+      'CSS rule-use index missing; private fixture error: ' +
+      (fs.existsSync(path.join(capture, 'rest/css-rule-usage-error.json')) ?
+        fs.readFileSync(path.join(capture,
+          'rest/css-rule-usage-error.json'), 'utf8') : 'none recorded'));
     const coverageIndex = JSON.parse(fs.readFileSync(path.join(coverageRoot,
       'index.json'), 'utf8'));
     assert.equal(coverageIndex.status, 'saved',
