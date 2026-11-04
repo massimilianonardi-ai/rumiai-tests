@@ -86,6 +86,11 @@ binding_set=0
 package_default_set=0
 cleanup()
 {
+  if [ "${damaged_provider_direct-0}" -eq 1 ]
+  then
+    command -p -- rm -f -- "$provider_v2/link/bin/node" || :
+    command -p -- ln -s "../../root/bin/node" "$provider_v2/link/bin/node" || :
+  fi
   if [ "${damaged_provider_facility-0}" -eq 1 ]
   then
     command -p -- rm -f -- "$provider_v2/facility-cmd/nodejs/node" || :
@@ -200,6 +205,21 @@ fi
 command -p -- rm -f -- "$provider_v2/facility-cmd/nodejs/node" || exit 88
 command -p -- ln -s "../../link/bin/node" "$provider_v2/facility-cmd/nodejs/node" || exit 89
 damaged_provider_facility=0
+
+# The canonical facility-cmd projection must also reject a tampered
+# underlying v2 link/bin target even when that indirection itself is intact.
+command -p -- rm -f -- "$provider_v2/link/bin/node" || exit 90
+command -p -- ln -s "$work/foreign-provider-executable" "$provider_v2/link/bin/node" || exit 91
+damaged_provider_direct=1
+if "$m_ROOT/m" pkg provider default nodejs "$provider@2" >/dev/null 2>&1
+then
+  exit 92
+fi
+[ "$("$m_ROOT/m" pkg provider default nodejs)" = "$provider@1" ] || exit 93
+[ "$(command -p -- readlink "$m_BIN_EXT_DIR/node")" = "$original_global" ] || exit 94
+command -p -- rm -f -- "$provider_v2/link/bin/node" || exit 95
+command -p -- ln -s "../../root/bin/node" "$provider_v2/link/bin/node" || exit 96
+damaged_provider_direct=0
 
 # The global facility default remains effective across consumer schema changes.
 "$m_ROOT/m" pkg default "$consumer@2" || exit 20
