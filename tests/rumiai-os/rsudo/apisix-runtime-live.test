@@ -1,0 +1,138 @@
+#!/bin/sh
+# Real disposable APISIX master process, installed OpenResty and pidfile.
+# Real m/module runtime function; only rsudo SSH/sudo is replaced with Docker
+# exec in the *same* container/process namespace. No Admin API or site access.
+TEST_ID=rumiai-os/rsudo/apisix-runtime-live.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+cid=
+tmp=
+cleanup()
+{
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  [ -z "$tmp" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test path unavailable'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver missing'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'product checkout unavailable' ;;
+  2) fail 'explicit product checkout invalid' ;;
+  *) error 'target resolver failed' ;;
+esac
+
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
+
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-runtime-live-$$
+umask 077
+mkdir -p -- "$tmp/bin" || error 'temporary fixture creation failed'
+cat > "$tmp/bin/rsudo-apisix-runtime-live-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  docker exec -i "$APISIX_TEST_CONTAINER" "$@"
+}
+rsudo_mod_apisix_runtime "$@"
+PROBE
+chmod 700 -- "$tmp/bin/rsudo-apisix-runtime-live-probe" ||
+  error 'probe cannot be executed'
+
+probe()
+{
+  APISIX_TEST_CONTAINER="$cid" PATH="$tmp/bin:$PATH" \
+    "$root/m" rsudo-apisix-runtime-live-probe "$@"
+}
+
+for image in $images
+do
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    skip "pinned APISIX image not provisioned: $image"
+
+  # No host ports, no network, no external stores or credentials. The official
+  # entrypoint initializes the file-driven standalone gateway in this container.
+  cid=$(docker run -d --network none --cap-drop ALL \
+    --security-opt no-new-privileges=true \
+    -e APISIX_STAND_ALONE=true "$image") ||
+    error 'cannot launch disposable APISIX'
+  [ -n "$cid" ] || error 'Docker returned no container ID'
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    if docker exec "$cid" sh -c \
+      'test -s /usr/local/apisix/logs/nginx.pid &&
+       test -r /usr/local/apisix/conf/nginx.conf' >/dev/null 2>&1
+    then
+      break
+    fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
+    then
+      docker logs "$cid" >&2 || :
+      fail 'APISIX container exited before writing nginx master PID'
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || {
+    docker logs "$cid" >&2 || :
+    fail 'APISIX master PID file not observed'
+  }
+
+  result=$(probe /usr/local/apisix 2>"$tmp/stderr")
+  status=$?
+  if [ "$status" -ne 0 ]
+  then
+    cat "$tmp/stderr" >&2
+    # The disposable image has no operator secrets, so this diagnostic is safe.
+    docker exec "$cid" sh -c \
+      'pid=$(cat /usr/local/apisix/logs/nginx.pid); ps -p "$pid" -o args=' >&2 || :
+    fail "real APISIX master observation failed with status $status"
+  fi
+
+  pid=$(docker exec "$cid" cat /usr/local/apisix/logs/nginx.pid) ||
+    fail 'cannot read running gateway PID'
+  expected=$(printf '%s\n' 'runtime_evidence=pidfile-and-master-args' \
+    "process_pid=$pid" 'runtime_identity=process-consistent-config-unverified' \
+    'mutation_readiness=not-established')
+  [ "$result" = "$expected" ] ||
+    fail 'real process observation did not preserve runtime-identity limitations'
+
+  # Same live master, deliberately wrong installation prefix: fail closed.
+  fixture="/tmp/rsudo-apisix-runtime-$$"
+  docker exec "$cid" sh -c \
+    'mkdir -p "$1/conf" "$1/logs" &&
+     : > "$1/conf/nginx.conf" &&
+     cp /usr/local/apisix/logs/nginx.pid "$1/logs/nginx.pid"' sh "$fixture" ||
+    error 'cannot prepare alternate-root fixture'
+  result=$(probe "$fixture" 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 39 ] && [ -z "$result" ] ||
+    fail 'wrong installation prefix accepted for a real nginx master'
+
+  docker rm -f "$cid" >/dev/null 2>&1 ||
+    error 'cannot remove isolated APISIX container'
+  cid=
+done
+
+printf '%s\n' "$TEST_ID: PASS (two real APISIX masters, no real rsudo)"
