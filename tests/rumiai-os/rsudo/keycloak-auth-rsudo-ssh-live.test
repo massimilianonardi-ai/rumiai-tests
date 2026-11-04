@@ -1,0 +1,278 @@
+#!/bin/sh
+# K04 transport: actual m -> rsudo -> OpenSSH -> sudo -> sh -> curl/TLS.
+# Ubuntu container is disposable. The HTTPS endpoint is an OAuth fixture,
+# NOT a real Keycloak server; credentials/host keys never leave the fixture.
+TEST_ID=rumiai-os/rsudo/keycloak-auth-rsudo-ssh-live.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+cid= image_tag= tmp=
+cleanup()
+{
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  [ -z "$image_tag" ] || docker image rm "$image_tag" >/dev/null 2>&1 || :
+  [ -z "$tmp" ] || rm -rf "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test directory unresolved'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'product checkout not found' ;;
+  2) fail 'explicit target checkout is invalid' ;;
+  *) error 'target checkout discovery failed' ;;
+esac
+
+[ "$(uname -s)" = Linux ] || skip 'Docker/SSH test requires Linux'
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+command -v ssh >/dev/null 2>&1 || skip 'OpenSSH unavailable'
+
+tmp=${TMPDIR:-/tmp}/keycloak-ssh-live-$$
+umask 077
+mkdir -p "$tmp/bin" "$tmp/image" || error 'cannot create fixture'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'absolute fixture directory unavailable'
+
+cat > "$tmp/image/Dockerfile" <<'DOCKERFILE'
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server sudo curl jq python3 openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/sh k04operator \
+    && echo 'k04operator:k04-synthetic-ssh-password' | chpasswd \
+    && printf 'k04operator ALL=(root) ALL\n' > /etc/sudoers.d/k04operator \
+    && chmod 440 /etc/sudoers.d/k04operator \
+    && mkdir -p /run/sshd /root/keycloak \
+    && chmod 700 /root/keycloak \
+    && ssh-keygen -A
+COPY server.py /opt/server.py
+COPY entrypoint.sh /opt/entrypoint.sh
+RUN chmod 700 /opt/entrypoint.sh
+CMD ["/opt/entrypoint.sh"]
+DOCKERFILE
+
+cat > "$tmp/image/server.py" <<'PY_SERVER'
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import parse_qs
+from pathlib import Path
+import base64
+import json
+import ssl
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def send_json(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path != "/realms/master/.well-known/openid-configuration":
+            self.send_json(404, {"error": "not-found"})
+            return
+        base = "https://127.0.0.1:9443/realms/master"
+        self.send_json(200, {
+            "issuer": base,
+            "token_endpoint": base + "/protocol/openid-connect/token"
+        })
+
+    def do_POST(self):
+        if self.path != "/realms/master/protocol/openid-connect/token":
+            self.send_json(404, {"error": "not-found"})
+            return
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        fields = parse_qs(body.decode("utf-8"))
+        expected_basic = "Basic " + base64.b64encode(
+            b"service:k04-protected-client-secret").decode()
+        correct = fields.get("grant_type") == ["client_credentials"] and (
+            self.headers.get("Authorization") == expected_basic or (
+                fields.get("client_id") == ["service"] and
+                fields.get("client_secret") == ["k04-protected-client-secret"]
+            )
+        )
+        if not correct:
+            self.send_json(401, {"error": "invalid_client"})
+            return
+        self.send_json(200, {
+            "access_token": "K04-SYNTHETIC-SECRET-TOKEN",
+            "token_type": "Bearer",
+            "expires_in": 120
+        })
+
+server = HTTPServer(("127.0.0.1", 9443), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain("/root/keycloak/server.pem", "/root/keycloak/server.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+PY_SERVER
+
+cat > "$tmp/image/entrypoint.sh" <<'ENTRYPOINT'
+#!/bin/sh
+set -e
+umask 077
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj '/CN=127.0.0.1' -addext 'subjectAltName=IP:127.0.0.1' \
+  -keyout /root/keycloak/server.key -out /root/keycloak/server.pem \
+  >/dev/null 2>&1
+printf 'k04-protected-client-secret\n' > /root/keycloak/secret
+chmod 600 /root/keycloak/secret /root/keycloak/server.key
+python3 /opt/server.py &
+exec /usr/sbin/sshd -D -e -o PermitRootLogin=no \
+  -o PasswordAuthentication=yes -o PubkeyAuthentication=no -o UsePAM=no
+ENTRYPOINT
+
+image_tag=keycloak-k04-ssh-test:$$
+docker build --quiet --tag "$image_tag" "$tmp/image" > "$tmp/image-id" ||
+  error 'disposable SSH/OAuth image could not build'
+cid=$(docker run -d --network bridge --publish 127.0.0.1::22 \
+  --security-opt no-new-privileges=false "$image_tag") ||
+  error 'disposable container did not start'
+[ -n "$cid" ] || error 'Docker returned empty container identity'
+
+mapping=$(docker port "$cid" 22/tcp) || error 'SSH port mapping unavailable'
+port=${mapping##*:}
+case "$port" in
+  ''|*[!0-9]*) error 'invalid SSH test port' ;;
+esac
+hostkey=$(docker exec "$cid" cat /etc/ssh/ssh_host_ed25519_key.pub) ||
+  error 'ephemeral host key unavailable'
+set -- $hostkey
+[ "$1" = ssh-ed25519 ] && [ -n "$2" ] ||
+  error 'ephemeral SSH host key malformed'
+printf '%s %s %s\n' k04-ephemeral "$1" "$2" > "$tmp/known_hosts" ||
+  error 'known-hosts pin could not be written'
+
+cat > "$tmp/ssh_config" <<EOF_CONFIG
+Host k04-ephemeral
+  HostName 127.0.0.1
+  HostKeyAlias k04-ephemeral
+  Port $port
+  UserKnownHostsFile $tmp/known_hosts
+  StrictHostKeyChecking yes
+  PreferredAuthentications password
+  PasswordAuthentication yes
+  PubkeyAuthentication no
+  KbdInteractiveAuthentication no
+  IdentitiesOnly yes
+  ControlMaster no
+  ControlPath none
+  ConnectTimeout 4
+EOF_CONFIG
+
+ssh_bin=$(command -v ssh) || error 'SSH binary unavailable'
+cat > "$tmp/bin/ssh" <<'SSH_WRAPPER'
+#!/bin/sh
+exec "$K04_REAL_SSH" -F "$K04_SSH_CONFIG" "$@"
+SSH_WRAPPER
+
+cat > "$tmp/bin/k04-ssh-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 91
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 92
+loadsyslib "rsudo/rsudo" || exit 93
+loadsyslib "rsudo/rsudo-mod-keycloak" || exit 94
+
+RSUDO_HOST=k04-ephemeral
+RSUDO_USER=k04operator
+RSUDO_PASSWORD=k04-synthetic-ssh-password
+RSUDO_INTERACTIVE=
+RSUDO_ASKPASS=
+rsudo_mod_keycloak_auth "$@"
+PROBE
+chmod 700 "$tmp/bin/ssh" "$tmp/bin/k04-ssh-probe" ||
+  error 'test wrappers not executable'
+
+probe()
+{
+  K04_REAL_SSH="$ssh_bin" K04_SSH_CONFIG="$tmp/ssh_config" \
+    PATH="$tmp/bin:$PATH" "$root/m" k04-ssh-probe "$@"
+}
+acquire()
+{
+  probe acquire --server https://127.0.0.1:9443 --issuer-realm master \
+    --auth-mode client-credentials --client-id service --client-auth "$1" \
+    --client-secret-file /root/keycloak/secret \
+    --token-store "/root/keycloak/$2" \
+    --ca-file /root/keycloak/server.pem
+}
+
+tries=0
+until docker exec "$cid" sh -c 'test -e /run/sshd.pid' >/dev/null 2>&1
+do
+  [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] ||
+    error 'SSH test container exited'
+  tries=$((tries + 1))
+  [ "$tries" -lt 80 ] || error 'SSH daemon readiness timed out'
+  sleep 0.1
+done
+
+result=$(acquire client-secret-basic token-basic 2>"$tmp/err")
+status=$?
+if [ "$status" -ne 0 ]
+then
+  tail -n 7 "$tmp/err" >&2
+  fail "real SSH/password sudo/HTTPS acquisition failed ($status)"
+fi
+[ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+  fail 'real SSH/sudo returned unexpected token status'
+value=$(docker exec "$cid" sh -c 'jq -r .access_token /root/keycloak/token-basic') ||
+  error 'stored token unreadable inside disposable target'
+[ "$value" = K04-SYNTHETIC-SECRET-TOKEN ] ||
+  fail 'remote sudo target did not store a valid OAuth token'
+docker exec "$cid" sh -c \
+  'test "$(stat -c %U /root/keycloak/token-basic)" = root &&
+   test "$(stat -c %a /root/keycloak/token-basic)" = 600' ||
+  fail 'remote credential store ownership/permissions are wrong'
+grep -F 'k04-protected-client-secret' "$tmp/err" >/dev/null &&
+  fail 'client secret leaked from real rsudo invocation'
+grep -F 'K04-SYNTHETIC-SECRET-TOKEN' "$tmp/err" >/dev/null &&
+  fail 'token leaked from real rsudo invocation'
+grep -F 'k04-synthetic-ssh-password' "$tmp/err" >/dev/null &&
+  fail 'SSH/sudo password leaked from real rsudo invocation'
+
+result=$(probe status --token-file /root/keycloak/token-basic 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"stored":true,"server_validated":false}' ] ||
+  fail 'real SSH/sudo status inspection failed'
+
+# Same real SSH password, but sudo now requires no password; the static
+# heredoc must still reach the remote sh unchanged.
+docker exec "$cid" sh -c \
+  "printf 'k04operator ALL=(root) NOPASSWD: ALL\n' > /etc/sudoers.d/k04operator &&
+   chmod 440 /etc/sudoers.d/k04operator" ||
+  error 'cannot configure isolated NOPASSWD sudo'
+result=$(acquire client-secret-post token-post 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+  fail "real SSH/NOPASSWD sudo/HTTPS POST acquisition failed ($status)"
+value=$(docker exec "$cid" sh -c 'jq -r .access_token /root/keycloak/token-post') ||
+  error 'NOPASSWD token unreadable inside disposable target'
+[ "$value" = K04-SYNTHETIC-SECRET-TOKEN ] ||
+  fail 'real SSH/NOPASSWD sudo corrupted remote OAuth token'
+grep -F 'k04-protected-client-secret' "$tmp/err" >/dev/null &&
+  fail 'client secret leaked under NOPASSWD sudo'
+grep -F 'K04-SYNTHETIC-SECRET-TOKEN' "$tmp/err" >/dev/null &&
+  fail 'token leaked under NOPASSWD sudo'
+grep -F 'k04-synthetic-ssh-password' "$tmp/err" >/dev/null &&
+  fail 'SSH candidate secret leaked under NOPASSWD sudo'
+
+printf '%s\n' "$TEST_ID: PASS (real m/SSH/sudo password and NOPASSWD/curl TLS; OAuth fixture)"
