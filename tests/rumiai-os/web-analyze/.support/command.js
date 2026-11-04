@@ -729,6 +729,15 @@ async function main()
     assert(tampered.artifacts.some(item => item.file === large.file &&
       item.errorCode === 'evidence-byte-count-mismatch'),
       'tampered response byte count was not identified');
+    const sameSizeTamper = Buffer.from(largePayload);
+    sameSizeTamper[0] ^= 0xff;
+    fs.writeFileSync(binaryFile, sameSizeTamper);
+    tampered = auditWebAnalyzeEvidence(capture);
+    assert.equal(tampered.status, 'failed',
+      'same-length corrupted response body did not fail hash validation');
+    assert(tampered.artifacts.some(item => item.file === large.file &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'same-length corruption was not identified by SHA-256');
     fs.writeFileSync(binaryFile, largePayload);
     const cachedFile = path.join(capture, 'rest/targets/target-000/cache-storage',
       cached.body.file);
