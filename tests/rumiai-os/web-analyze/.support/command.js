@@ -475,6 +475,21 @@ async function main()
     const parsedWire = wire.map(entry => ({
       direction:entry.direction, packet:JSON.parse(entry.raw)
     }));
+    const pageScriptSchema = protocol.domains.find(item =>
+      item.domain === 'Page')?.commands?.find(item =>
+      item.name === 'addScriptToEvaluateOnNewDocument');
+    const runImmediately = !!pageScriptSchema?.parameters?.some(item =>
+      item.name === 'runImmediately');
+    assert.equal(capabilities.protocol.pageScriptRunImmediatelySupported,
+      runImmediately, 'existing-context injection support must match installed schema');
+    const installedScripts = parsedWire.filter(entry =>
+      entry.direction === 'outbound' &&
+      entry.packet.method === 'Page.addScriptToEvaluateOnNewDocument');
+    assert(installedScripts.length > 0,
+      'document-start observer injection was never negotiated with Chromium');
+    assert(installedScripts.every(entry =>
+      entry.packet.params?.runImmediately === (runImmediately ? true : undefined)),
+      'existing-context observer injection was not browser-schema gated');
     assert(parsedWire.some(entry => entry.direction === 'inbound' &&
       entry.packet.method === 'Runtime.executionContextCreated'),
       'unhandled-by-dispatcher CDP event was silently discarded');
@@ -541,8 +556,36 @@ async function main()
     assert(changes.some(change => change.added?.some(node =>
       node?.html?.value?.includes('nested-shadow-content'))),
       'nested shadow subtree missing from private mutation history');
-    assert(history.some(item => item.detail.documentURL?.endsWith('/frame.html')),
-      'same-origin frame mutation chronology missing');
+    const sameFrameHistory = history.filter(item =>
+      item.detail.documentURL?.endsWith('/frame.html'));
+    const sameFrameMutationRecords = sameFrameHistory
+      .filter(item => item.detail.type === 'mutation-batch')
+      .flatMap(item => item.detail.records);
+    const frameNavigation = parsedWire.find(item =>
+      item.direction === 'inbound' &&
+      item.packet.method === 'Page.frameNavigated' &&
+      item.packet.params?.frame?.url?.endsWith('/frame.html'));
+    const frameId = frameNavigation?.packet.params?.frame?.id;
+    const frameContexts = parsedWire.filter(item =>
+      item.direction === 'inbound' &&
+      item.packet.method === 'Runtime.executionContextCreated' &&
+      item.packet.params?.context?.auxData?.frameId === frameId);
+    const frameBindings = parsedWire.filter(item =>
+      item.direction === 'inbound' &&
+      item.packet.method === 'Runtime.bindingCalled' &&
+      frameContexts.some(context =>
+        context.packet.params?.context?.id === item.packet.params?.executionContextId &&
+        context.packet.sessionId === item.packet.sessionId));
+    assert(sameFrameHistory.length > 0,
+      'same-origin frame mutation chronology missing: ' +
+      JSON.stringify({frameNavigated:!!frameId, contexts:frameContexts.length,
+        bindings:frameBindings.length, historyEvents:sameFrameHistory.length}));
+    assert(sameFrameMutationRecords.some(change => change.added?.some(node =>
+      node?.html?.value?.includes('same-frame-transient'))),
+      'synchronous same-origin iframe insertion was not captured');
+    assert(sameFrameMutationRecords.some(change => change.removed?.some(node =>
+      node?.html?.value?.includes('same-frame-transient'))),
+      'synchronous same-origin iframe removal was not captured');
     assert(history.some(item => item.detail.documentURL?.endsWith('/child.html')),
       'cross-origin iframe mutation chronology missing');
     assert(history.some(item => item.frameId),
