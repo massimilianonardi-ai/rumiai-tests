@@ -128,6 +128,7 @@ async function main()
   const wrongScheme = spawnSync(command, ['file:///etc/passwd', '/tmp/unused'], {env, encoding: 'utf8'});
   assert.equal(wrongScheme.status, 4);
 
+  const burstStats = {started:0, chunks:0, ended:0, closed:0};
   const crossServer = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
     res.end('<!doctype html><title>Cross-origin frame</title>' +
@@ -161,6 +162,7 @@ async function main()
     if (location === '/burst' || location === '/abort-stream' ||
         location === '/live-events')
     {
+      if (location === '/burst') burstStats.started++;
       res.setHeader('Content-Type',
         location === '/live-events' ? 'text/event-stream' : 'text/plain');
       res.setHeader('Cache-Control', 'no-store');
@@ -177,13 +179,18 @@ async function main()
           return;
         }
         res.write(fragments[index++]);
+        if (location === '/burst') burstStats.chunks++;
         if (index === fragments.length && location === '/burst')
         {
           clearInterval(timer);
+          burstStats.ended++;
           res.end();
         }
       }, 120);
-      res.on('close', () => clearInterval(timer));
+      res.on('close', () => {
+        if (location === '/burst') burstStats.closed++;
+        clearInterval(timer);
+      });
       return;
     }
     const data = {
@@ -437,14 +444,27 @@ async function main()
       item.url?.endsWith('/redirect-end') &&
       item.redirectedFrom?.endsWith('/redirect-start')),
       'redirect chain missing source provenance');
+    const burstIds = parsedWire.filter(entry =>
+      entry.direction === 'inbound' &&
+      entry.packet.method === 'Network.requestWillBeSent' &&
+      entry.packet.params.request?.url?.endsWith('/burst'))
+      .map(entry => entry.packet.params.requestId);
+    const burstEvents = parsedWire.filter(entry =>
+      entry.direction === 'inbound' &&
+      entry.packet.method?.startsWith('Network.') &&
+      burstIds.includes(entry.packet.params?.requestId))
+      .map(entry => entry.packet.method);
     assert(responseIndex.some(item => item.status === 'saved' &&
       item.url?.endsWith('/burst')), 'chunked HTTP response not saved: ' +
-      JSON.stringify(responseIndex.filter(item => item.url?.endsWith('/burst'))
-        .map(item => ({
-          status:item.status, source:item.source,
-          errorCode:item.errorCode, fallbackErrorCode:item.fallbackErrorCode,
-          partialBytes:item.partialBody?.bytes
-        }))));
+      JSON.stringify({
+        server:burstStats, networkEvents:burstEvents,
+        outcomes:responseIndex.filter(item => item.url?.endsWith('/burst'))
+          .map(item => ({
+            status:item.status, httpStatus:item.httpStatus,
+            source:item.source, errorCode:item.errorCode,
+            partialBytes:item.partialBody?.bytes
+          }))
+      }));
     assert(responseIndex.some(item => item.url?.endsWith('/cacheable')),
       'cacheable request missing from archive');
     const streaming = responseIndex.find(item =>
