@@ -159,6 +159,9 @@ function _cdp(url) {
     external?.close();
     if(session) await session.stop();
     server.close();
-    fs.rmSync(directory, {force:true, recursive:true});
+    // Chromium may still be releasing profile files immediately after stop.
+    // Retry only the test fixture cleanup, never product data removal.
+    fs.rmSync(directory, {force:true, recursive:true,
+      maxRetries:10, retryDelay:250});
   }
 })().catch(error => {console.error(error); process.exitCode=1;});
