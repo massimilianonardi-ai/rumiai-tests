@@ -234,8 +234,9 @@ async function main()
       '(async()=>{' +
       'if(typeof navigator.storageBuckets?.open!=="function") return;' +
       'const bucket=await navigator.storageBuckets.open("secondary-frame-bucket");' +
+      'if(typeof bucket.caches?.open==="function"){' +
       'const cache=await bucket.caches.open("secondary-frame-cache");' +
-      'await cache.put("/secondary-cache-entry",new Response("secondary-cache-body"));' +
+      'await cache.put("/secondary-cache-entry",new Response("secondary-cache-body"));}' +
       'document.body.dataset.secondaryBucketReady="yes";' +
       'fetch("/secondary-bucket-ready");' +
       '})().catch(()=>{document.body.dataset.secondaryBucketReady="no"});' +
