@@ -12,6 +12,7 @@ const command = path.join(root, 'bin/sys/web-analyze');
 const env = {...process.env, m_ROOT: root, m_LIB_DIR: path.join(root, 'lib')};
 const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
 <link rel="stylesheet" href="/view.css"><link rel="manifest" href="/app.webmanifest">
+<script type="speculationrules">{"prefetch":[{"source":"list","urls":["/preload-candidate"],"eagerness":"conservative"}]}</script>
 <script defer src="/app.js"></script></head>
 <body><h1>private-heading-audit-marker</h1><div id="list" class="scroll">
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
@@ -386,6 +387,7 @@ async function main()
           'marker.remove();</script></body>',
         'text/html'],
       '/data.json': ['{"initial":true}', 'application/json'],
+      '/preload-candidate': ['prefetch-candidate', 'text/plain'],
       '/lazy.json': ['{"lazy":true}', 'application/json'],
       '/hydrated.json': ['{"hydrated":true}', 'application/json'],
       '/submit-data': ['{"accepted":true}', 'application/json'],
@@ -854,7 +856,7 @@ async function main()
     const optional = JSON.parse(fs.readFileSync(optionalPath,'utf8'));
     assert.equal(optional.scope,'installed-browser-passive-optional-CDP-domains');
     assert.equal(optional.policy,
-      'selective-passive-animation-media-webaudio-and-network-reporting-observers');
+      'selective-passive-animation-media-webaudio-preload-and-network-reporting-observers');
     assert.equal(optional.protocolStatus,'saved',
       'installed Chromium protocol should be the source of capability claims');
     assert.equal(optional.source.status,'saved');
@@ -866,8 +868,8 @@ async function main()
     {
       const declared = protocol.domains.find(item => item.domain === domain.domain);
       assert.equal(domain.passiveObserverRequested,
-        ['Animation','Media','WebAudio'].includes(domain.domain),
-        'only Animation, Media and WebAudio may receive optional event subscriptions');
+        ['Animation','Media','WebAudio','Preload'].includes(domain.domain),
+        'only Animation, Media, WebAudio and Preload may subscribe to events');
       if (!declared)
         assert.equal(domain.status,'unsupported',
           'absent browser CDP domain was mislabeled available');
@@ -893,7 +895,7 @@ async function main()
         if (!events && !domain.enabledTargets.length)
           assert.equal(domain.status,'not-enabled',
             'schema support alone was incorrectly counted as observed coverage');
-        if (['Animation','Media','WebAudio'].includes(domain.domain) &&
+        if (['Animation','Media','WebAudio','Preload'].includes(domain.domain) &&
           declared.commands?.some(item => item.name === 'enable'))
         {
           assert(domain.enabledTargets.includes(mainCoverageTarget.targetId),
@@ -903,7 +905,8 @@ async function main()
             'selected passive observer was not negotiated over native CDP');
           const expectedEvent = domain.domain === 'Animation' ?
             'animationStarted' : domain.domain === 'Media' ?
-              'playerCreated' : 'contextCreated';
+              'playerCreated' : domain.domain === 'WebAudio' ?
+                'contextCreated' : 'ruleSetUpdated';
           assert(domain.observedEvents[expectedEvent] > 0 &&
             domain.status === 'observed',
             'natural animation/audio fixture did not emit the expected event: ' +
@@ -911,6 +914,13 @@ async function main()
           if (domain.domain === 'WebAudio')
             assert(domain.observedEvents.audioNodeCreated > 0,
               'real disconnected AudioContext gain node was not observed');
+          if (domain.domain === 'Preload')
+          {
+            assert(parsedWire.some(item => item.direction === 'inbound' &&
+              item.packet.method === 'Preload.ruleSetUpdated' &&
+              item.packet.params?.ruleSet?.sourceText?.includes('/preload-candidate')),
+            'browser did not observe the native speculation rule set');
+          }
         }
       }
     }
@@ -976,7 +986,7 @@ async function main()
       /^Network\.reportingApi/.test(item.packet.method || '')),
       'observer must not issue synthetic Reporting API commands');
     assert(!parsedWire.some(item => item.direction === 'outbound' &&
-      /^(?:Animation|Media|WebAudio)\.(?!enable$)/.test(item.packet.method || '')),
+      /^(?:Animation|Media|WebAudio|Preload)\.(?!enable$)/.test(item.packet.method || '')),
       'optional event observers must never control animation, media or audio graph');
     assert.equal(fs.statSync(optionalPath).mode & 0o777,0o600,
       'optional CDP domain provenance must be private');
