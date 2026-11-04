@@ -303,6 +303,23 @@ EOF_SSH_CONFIG
   [ "$status" -eq 0 ] && [ "$result" = '{"stored":true,"server_validated":false}' ] ||
     fail "Keycloak $version SSH/password-sudo token status failed"
 
+  # Online status must introspect through the same authenticated remote
+  # SSH/sudo boundary; no token or provider claims enter caller stdout.
+  result=$(probe status --token-file "/root/keycloak/basic-$version" \
+    --server https://127.0.0.1:8443 --issuer-realm master \
+    --client-id k04-service --client-auth client-secret-basic \
+    --client-secret-file /root/keycloak/secret \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+    fail "Keycloak $version composed SSH introspection failed ($status)"
+  for marker in k04-disposable-client-secret k04-only-ssh-password '"access_token"'
+  do
+    grep -F "$marker" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version introspection leaked sensitive data"
+  done
+
   # A valid client token is not an administrative authorization. Keep the
   # bearer only in a protected header file inside the isolated SSH sidecar.
   docker exec "$ssh_container" sh -c \
