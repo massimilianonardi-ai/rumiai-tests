@@ -218,6 +218,36 @@ status=$?
   [ "$result" = '{"stored":true,"server_validated":false}' ] ||
   fail 'protected token-store status failed'
 
+# A safe basename is not enough: reject symlinks anywhere in the path,
+# as well as dot segments that could disguise the actual credential source.
+ln -s "$tmp" "$tmp/alias" || error 'credential ancestry fixture failed'
+result=$(probe status --token-file "$tmp/alias/basic-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail "symlinked token-store ancestor accepted ($status)"
+result=$(probe status --token-file "$tmp/./basic-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail "dot segment in protected token path accepted ($status)"
+result=$(acquire client-secret-basic "$tmp/alias/secret" "$tmp/alias-secret-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ ! -e "$tmp/alias-secret-store" ] ||
+  fail "symlinked secret ancestor accepted ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service \
+  --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/alias/store" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 87 ] && [ ! -e "$tmp/store" ] ||
+  fail "symlinked output-directory ancestor accepted ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service \
+  --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/unsafe-ca-store" --ca-file "$tmp/alias/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 75 ] && [ ! -e "$tmp/unsafe-ca-store" ] ||
+  fail "symlinked CA ancestor accepted ($status)"
+
 result=$(acquire client-secret-post "$tmp/secret" "$tmp/post-store" 2>"$tmp/err")
 status=$?
 [ "$status" -eq 0 ] || fail 'POST client credentials failed'
