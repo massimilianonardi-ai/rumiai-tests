@@ -314,8 +314,7 @@ EOF_SSH_CONFIG
   [ "$status" -eq 0 ] ||
     fail "Keycloak $version composed SSH introspection transport failed ($status)"
   case "$result" in
-    '{"stored":true,"server_validated":true,"active":true}'|
-    '{"stored":true,"server_validated":true,"active":false}') : ;;
+    '{"stored":true,"server_validated":true,"active":true}'|'{"stored":true,"server_validated":true,"active":false}') : ;;
     *) fail "Keycloak $version composed SSH introspection returned an unsafe/nonboolean status" ;;
   esac
   for marker in k04-disposable-client-secret k04-only-ssh-password '"access_token"'
