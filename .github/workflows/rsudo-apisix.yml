@@ -79,12 +79,14 @@ jobs:
         run: |
           git -C rumiai-tests config user.name "github-actions[bot]"
           git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Provision pinned Apache APISIX 3.19.0 parser image (Linux only)
+      - name: Provision pinned Apache APISIX 3.16 and 3.19 parsers (Linux only)
         if: runner.os == 'Linux'
         shell: bash
         run: |
+          docker pull apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
           docker pull apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141
-          docker image inspect apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141
+          docker image inspect --format '{{.Id}}' apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+          docker image inspect --format '{{.Id}}' apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141
 
       - name: Run scoped APISIX module verification
         shell: bash
