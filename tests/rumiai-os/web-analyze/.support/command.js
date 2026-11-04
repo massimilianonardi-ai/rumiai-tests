@@ -11,7 +11,8 @@ const root = process.argv[2];
 const command = path.join(root, 'bin/sys/web-analyze');
 const env = {...process.env, m_ROOT: root, m_LIB_DIR: path.join(root, 'lib')};
 const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
-<link rel="stylesheet" href="/view.css"><script defer src="/app.js"></script></head>
+<link rel="stylesheet" href="/view.css"><link rel="manifest" href="/app.webmanifest">
+<script defer src="/app.js"></script></head>
 <body><h1>private-heading-audit-marker</h1><div id="list" class="scroll">
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
@@ -27,6 +28,15 @@ const workerMap = {
   sourcesContent:['// private-external-original-source-marker'],
   names:[], mappings:''
 };
+const pwaManifest = {name:'Observed PWA resource fixture',short_name:'PWA fixture',
+  start_url:'/?token=private-query-audit-marker',scope:'/',display:'standalone',
+  icons:[
+    {src:'/pwa-icon.png',sizes:'1x1',type:'image/png'},
+    {src:'/pwa-icon-not-observed.png',sizes:'1x1',type:'image/png'}
+  ]};
+const pwaIcon = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YuzpgAAAABJRU5ErkJggg==',
+  'base64');
 const inlineMapURL = 'data:application/json;base64,' +
   Buffer.from(JSON.stringify(inlineMap)).toString('base64');
 const largePayload = Buffer.alloc(3 * 1024 * 1024);
@@ -37,6 +47,9 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   host.id = 'shadow-probe';
   host.attachShadow({mode:'open'}).innerHTML = '<b id="shadow-inner">Shadow content</b>';
   document.body.append(host);
+  const observedIcon = new Image();
+  observedIcon.src = '/pwa-icon.png';
+  document.body.append(observedIcon);
   // A transient node is created, changed and removed within one task.
   const transient = document.createElement('aside');
   transient.id = 'ephemeral-dom-history';
@@ -289,6 +302,8 @@ async function main()
     }
     const data = {
       '/': [html, 'text/html'],
+      '/app.webmanifest': [JSON.stringify(pwaManifest), 'application/manifest+json'],
+      '/pwa-icon.png': [pwaIcon, 'image/png'],
       '/view.css': [':root {--fixture-accent: rgb(12, 34, 56)} ' +
         '.scroll {height: 160px; overflow-y: auto} ' +
         '#list {color: var(--fixture-accent)} p {height: 35px} ' +
@@ -351,7 +366,8 @@ async function main()
       'states/state-000.json', 'states/screen-000.png',
       'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
       'states/dom-rest-final.html', 'states/dom-rest-final.json',
-      'rest/manifest.json', 'rest/security/index.json', 'rest/page.mhtml',
+      'rest/manifest.json', 'rest/security/index.json',
+       'rest/pwa-resources/index.json', 'rest/page.mhtml',
       'rest/targets/target-000/dom-tree.json',
       'rest/targets/target-000/dom-snapshot.json',
       'rest/resources-at-rest.jsonl', 'rest/scripts-at-rest.jsonl',
@@ -409,6 +425,10 @@ async function main()
     assert.deepEqual(securityCommands.map(entry => entry.packet.method), [],
       'passive HTTP capture must neither change certificate handling nor ' +
       'request a TLS chain from a non-HTTPS origin');
+    assert(!parsedWire.some(entry => entry.direction === 'outbound' &&
+      ['Page.getResourceContent','Page.navigateToHistoryEntry',
+        'Page.reload'].includes(entry.packet.method)),
+      'PWA evidence must not issue new page resource fetches or navigations');
     const sent = new Set(parsedWire.filter(entry => entry.direction === 'outbound')
       .map(entry => entry.packet.id));
     assert(parsedWire.some(entry => entry.direction === 'inbound' &&
@@ -772,6 +792,42 @@ async function main()
     assert(rest.artifacts.some(item => item.name === 'security-trust' &&
       item.file === 'security/index.json'),
       'security evidence missing from the resting manifest');
+    const pwaPath = path.join(capture, 'rest/pwa-resources/index.json');
+    const pwa = JSON.parse(fs.readFileSync(pwaPath, 'utf8'));
+    assert.equal(pwa.scope, 'observed-offline-pwa-resource-provenance');
+    assert.equal(pwa.policy, 'no-navigation-no-refetch');
+    assert.equal(pwa.sources['resources-at-rest'].status, 'saved');
+    assert.equal(pwa.sources['network-details-at-rest'].status, 'saved');
+    assert.equal(fs.statSync(pwaPath).mode & 0o777, 0o600,
+      'raw PWA provenance must remain private');
+    const documentPwa = pwa.documents.find(item =>
+      item.targetId === mainCoverageTarget.targetId);
+    assert(documentPwa && documentPwa.manifest.url?.endsWith('/app.webmanifest'),
+      'real Chromium did not report the page-declared PWA manifest');
+    const manifestReference = documentPwa.references.find(item =>
+      item.kind === 'manifest' && item.url.endsWith('/app.webmanifest'));
+    assert(manifestReference, 'manifest source URL was not indexed');
+    const iconReference = documentPwa.references.find(item =>
+      item.kind === 'icon' && item.url.endsWith('/pwa-icon.png'));
+    assert(iconReference && ['body-archived','network-observed',
+      'frame-resource-observed'].includes(iconReference.status),
+      'naturally consumed icon was not correlated with browser evidence');
+    if (iconReference.status === 'body-archived')
+      assert.deepEqual(fs.readFileSync(path.join(capture,
+        iconReference.archived.file)),pwaIcon,
+        'PWA resource provenance points to incorrect archived icon bytes');
+    const missingReference = documentPwa.references.find(item =>
+      item.kind === 'icon' && item.url.endsWith('/pwa-icon-not-observed.png'));
+    assert(missingReference, 'manifest-declared but unobserved icon was omitted');
+    if (missingReference.status === 'not-observed')
+      assert(!missingReference.archived,
+        'unobserved icon must not acquire invented payload provenance');
+    assert(pwa.workers.some(item => item.type === 'service_worker' &&
+      item.status === 'not-a-document'),
+      'service worker must not be silently counted as a page manifest');
+    assert(rest.artifacts.some(item =>
+      item.name === 'pwa-resources' && item.file === 'pwa-resources/index.json'),
+      'PWA provenance missing from rest manifest');
     const storage = JSON.parse(fs.readFileSync(path.join(capture,
       'rest/targets/target-000/storage.json'), 'utf8'));
     assert.equal(storage.localStorage.values.fixtureSession, 'fixture-only-access');
@@ -1036,6 +1092,16 @@ async function main()
       item.file === 'rest/security/index.json' &&
       item.status !== 'failed'),
       'frame/transport security index must be independently audited');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/pwa-resources/index.json' &&
+      item.status !== 'failed'),
+      'PWA provenance index was not audited');
+    if (iconReference.archived)
+      assert(integrity.artifacts.some(item =>
+        item.file === iconReference.archived.file &&
+        item.sha256 === iconReference.archived.sha256 &&
+        item.status === 'saved'),
+        'archived PWA icon body was not independently SHA-256 checked');
     assert(integrity.domains.some(item => item.domain === 'listeners'),
       'event listener verification domain missing');
     assert(integrity.domains.some(item => item.domain === 'accessibility'),
@@ -1130,6 +1196,18 @@ async function main()
     assert(interruptedAudit.domains.some(item =>
       item.domain === 'capture' && item.status === 'interrupted'),
       'interruption reason missing from domain-level coverage');
+    const originalPwa = fs.readFileSync(pwaPath);
+    const brokenPwa = Buffer.from(originalPwa);
+    brokenPwa[25] ^= 1;
+    fs.writeFileSync(pwaPath, brokenPwa);
+    const damagedPwaAudit = auditWebAnalyzeEvidence(capture);
+    assert.equal(damagedPwaAudit.status, 'failed',
+      'same-sized PWA provenance modification must invalidate audit');
+    assert(damagedPwaAudit.artifacts.some(item =>
+      item.file === 'rest/pwa-resources/index.json' &&
+      item.errorCode === 'evidence-sha256-mismatch'),
+      'PWA index tamper failure was not attributed');
+    fs.writeFileSync(pwaPath, originalPwa);
     const originalSecurity = fs.readFileSync(securityPath);
     const alteredSecurity = Buffer.from(originalSecurity);
     alteredSecurity[18] ^= 1;
