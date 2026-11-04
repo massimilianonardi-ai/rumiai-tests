@@ -476,6 +476,23 @@ do
   docker exec "$cid" sh -c '
     mv /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
   ' || error 'cannot restore background-master generated config'
+
+  # A symlink at the selected generated-config path must be rejected even
+  # when the observed non-PID1 master still runs from that process prefix.
+  docker exec "$cid" sh -c '
+    mv /tmp/rsudo-apisix-background/conf/nginx.conf /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held
+    ln -s nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
+  ' || error 'cannot stage background-master symlinked config'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 53 ] && [ -z "$result" ] ||
+    fail 'symlinked background-master generated config was accepted'
+  grep -Fx 'apisix.runtime.docker-generated-config-unsafe' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific symlinked background-master config diagnostic'
+  docker exec "$cid" sh -c '
+    rm /tmp/rsudo-apisix-background/conf/nginx.conf
+    mv /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
+  ' || error 'cannot restore safe background-master generated config'
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove background APISIX container'
   cid=
