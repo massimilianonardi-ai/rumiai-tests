@@ -305,8 +305,7 @@ EOF_SSH_CONFIG
   # bearer only in a protected header file inside the isolated SSH sidecar.
   docker exec "$ssh_container" sh -c \
     "jq -r '.access_token' /root/keycloak/basic-$version |
-     { IFS= read -r token; printf 'Authorization: Bearer %s\\n' \"\$token\"; } >
-     /root/keycloak/bearer-header &&
+     { IFS= read -r token; printf 'Authorization: Bearer %s\\n' \"\$token\"; } > /root/keycloak/bearer-header &&
      chmod 600 /root/keycloak/bearer-header &&
      curl -q --silent --noproxy '*' --proxy '' --proto '=https' \
        --cacert /root/keycloak/ca.pem --output /root/keycloak/admin-result \
