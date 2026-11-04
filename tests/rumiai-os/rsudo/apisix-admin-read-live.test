@@ -173,6 +173,10 @@ do
   # second scenario, the default source will deliberately disagree.
   cp "$tmp/config.yaml" "$tmp/config-prod.yaml" ||
     error 'cannot prepare independent named profile'
+  # The gateway worker may run as a different UID than the test runner.
+  # Only disposable test credentials are present in this fixture.
+  chmod 644 "$tmp/config-prod.yaml" ||
+    error 'cannot make named profile readable to APISIX'
 
   cid=$(docker run -d --network none --cap-drop ALL \
     --security-opt no-new-privileges=true \
