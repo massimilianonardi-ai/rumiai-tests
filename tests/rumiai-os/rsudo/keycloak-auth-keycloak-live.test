@@ -1,0 +1,251 @@
+#!/bin/sh
+# K04 real-server boundary: official Keycloak 26.7.3 and 26.8.1, TLS,
+# client-credentials and permission separation. External SSH/sudo is replaced.
+# All server state/credentials/images are disposable and isolated.
+TEST_ID=rumiai-os/rsudo/keycloak-auth-keycloak-live.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+cid= image_tag= tmp=
+stop_keycloak()
+{
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  cid=
+  [ -z "$image_tag" ] || docker image rm "$image_tag" >/dev/null 2>&1 || :
+  image_tag=
+}
+cleanup()
+{
+  stop_keycloak
+  [ -z "$tmp" ] || rm -rf "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test path unresolved'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'product checkout resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'product checkout not available' ;;
+  2) fail 'selected product checkout invalid' ;;
+  *) error 'product checkout discovery failed' ;;
+esac
+[ "$(uname -s)" = Linux ] || skip 'Linux/Docker real Keycloak boundary'
+for cmd in docker curl jq openssl
+do
+  command -v "$cmd" >/dev/null 2>&1 || skip "$cmd required for live Keycloak test"
+done
+
+tmp=${TMPDIR:-/tmp}/keycloak-live-$$
+umask 077
+mkdir -p "$tmp/image" "$tmp/bin" || error 'fixture directory unavailable'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture path unavailable'
+cat > "$tmp/openssl.cnf" <<'CERTCONF'
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = ext
+[dn]
+CN = 127.0.0.1
+[ext]
+subjectAltName = IP:127.0.0.1
+basicConstraints = critical,CA:TRUE
+keyUsage = digitalSignature,keyCertSign
+CERTCONF
+openssl req -x509 -newkey rsa:2048 -nodes -config "$tmp/openssl.cnf" \
+  -extensions ext -days 1 \
+  -keyout "$tmp/image/server.key" -out "$tmp/image/server.pem" \
+  >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'test-only TLS issuer preparation failed'
+
+# Test credentials are synthetic; bootstrap password is passed through a
+# Docker env-file and curl form-file, never through its command argument value.
+printf 'KC_BOOTSTRAP_ADMIN_USERNAME=k04admin\nKC_BOOTSTRAP_ADMIN_PASSWORD=k04-bootstrap-only\n' \
+  > "$tmp/bootstrap.env"
+printf 'k04-bootstrap-only' > "$tmp/bootstrap-password"
+printf 'k04-protected-client-secret\n' > "$tmp/secret"
+
+cat > "$tmp/image/Dockerfile" <<'DOCKERFILE'
+ARG KC_VERSION
+FROM quay.io/keycloak/keycloak:${KC_VERSION}
+COPY --chown=1000:0 --chmod=600 server.key /opt/keycloak/conf/k04-server.key
+COPY --chown=1000:0 --chmod=644 server.pem /opt/keycloak/conf/k04-server.pem
+DOCKERFILE
+cat > "$tmp/client.json" <<'CLIENT_JSON'
+{
+  "clientId": "k04-service",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "clientAuthenticatorType": "client-secret",
+  "secret": "k04-protected-client-secret"
+}
+CLIENT_JSON
+
+cat > "$tmp/bin/k04-keycloak-live-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 91
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 92
+loadsyslib "rsudo/rsudo-mod-keycloak" || exit 93
+rsudo()
+{
+  [ "$1" = -- ] || return 94
+  shift
+  "$@"
+}
+rsudo_mod_keycloak_auth "$@"
+PROBE
+chmod 700 "$tmp/bin/k04-keycloak-live-probe" ||
+  error 'm test entrypoint unavailable'
+
+probe()
+{
+  PATH="$tmp/bin:$PATH" "$root/m" k04-keycloak-live-probe "$@"
+}
+transport()
+{
+  curl -q --silent --show-error --noproxy '*' --proxy '' \
+    --cacert "$tmp/image/server.pem" --proto '=https' \
+    --max-redirs 0 --connect-timeout 3 --max-time 25 "$@"
+}
+
+for version in 26.7.3 26.8.1
+do
+  image_tag=keycloak-k04-real-$version-$$
+  docker build --quiet --build-arg "KC_VERSION=$version" \
+    --tag "$image_tag" "$tmp/image" > "$tmp/image-id" ||
+    error "official Keycloak $version test image unavailable"
+  cid=$(docker run -d --memory 2g --network bridge \
+    --publish 127.0.0.1::8443 \
+    --env-file "$tmp/bootstrap.env" "$image_tag" \
+    start-dev --http-enabled=false --hostname-strict=false \
+    --https-certificate-file=/opt/keycloak/conf/k04-server.pem \
+    --https-certificate-key-file=/opt/keycloak/conf/k04-server.key) ||
+    error "Keycloak $version container could not start"
+  [ -n "$cid" ] || error 'Keycloak container identity is empty'
+  mapping=$(docker port "$cid" 8443/tcp) || error 'Keycloak HTTPS port missing'
+  port=${mapping##*:}
+  case "$port" in
+    ''|*[!0-9]*) error 'Keycloak HTTPS port invalid' ;;
+  esac
+  base=https://127.0.0.1:$port
+
+  tries=0
+  until transport --output "$tmp/ready" --fail \
+    --url "$base/realms/master/.well-known/openid-configuration" \
+    >/dev/null 2>"$tmp/ready.err"
+  do
+    [ "$(docker inspect --format '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] || {
+      docker logs --tail 18 "$cid" >&2
+      error "Keycloak $version container exited"
+    }
+    tries=$((tries + 1))
+    [ "$tries" -lt 150 ] || {
+      docker logs --tail 18 "$cid" >&2
+      error "Keycloak $version did not become HTTPS-ready"
+    }
+    sleep 1
+  done
+
+  jq -e --arg expected "$base/realms/master" '.issuer == $expected' \
+    "$tmp/ready" >/dev/null ||
+    fail "Keycloak $version returned unexpected issuer identity"
+
+  admin_code=$(transport --output "$tmp/admin-token" \
+    --write-out '%{http_code}' \
+    --data-urlencode grant_type=password \
+    --data-urlencode client_id=admin-cli \
+    --data-urlencode username=k04admin \
+    --data-urlencode "password@$tmp/bootstrap-password" \
+    --url "$base/realms/master/protocol/openid-connect/token") ||
+    error "Keycloak $version initial admin OAuth request failed"
+  [ "$admin_code" = 200 ] ||
+    fail "Keycloak $version initial admin login returned HTTP $admin_code"
+  admin_token=$(jq -er '.access_token' "$tmp/admin-token") ||
+    error "Keycloak $version bootstrap token missing"
+  printf 'Authorization: Bearer %s\n' "$admin_token" > "$tmp/bootstrap-header"
+  unset admin_token
+
+  create_code=$(transport --output "$tmp/create-response" \
+    --write-out '%{http_code}' \
+    --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version Admin REST bootstrap client request failed"
+  [ "$create_code" = 201 ] ||
+    fail "Keycloak $version rejected service account provisioning ($create_code)"
+
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-service \
+    --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-basic-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  if [ "$status" -ne 0 ]
+  then
+    tail -n 7 "$tmp/auth.err" >&2
+    fail "Keycloak $version Basic authentication failed ($status)"
+  fi
+  [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version Basic acquisition status malformed"
+  jq -e '.access_token | type == "string" and length > 0' \
+    "$tmp/token-basic-$version" >/dev/null ||
+    fail "Keycloak $version Basic token store invalid"
+
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-service \
+    --client-auth client-secret-post \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-post-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] ||
+    fail "Keycloak $version client secret POST authentication failed ($status)"
+  jq -e '.access_token | type == "string" and length > 0' \
+    "$tmp/token-post-$version" >/dev/null ||
+    fail "Keycloak $version POST token store invalid"
+
+  # Authenticated OAuth client has no administrator role by default.
+  # Access to global /admin/serverinfo must not be inferred from its token.
+  client_token=$(jq -er '.access_token' "$tmp/token-basic-$version") ||
+    error "Keycloak $version service token cannot be read by test"
+  printf 'Authorization: Bearer %s\n' "$client_token" > "$tmp/client-header"
+  unset client_token
+  denied=$(transport --output "$tmp/forbidden-response" \
+    --write-out '%{http_code}' --header "@$tmp/client-header" \
+    --url "$base/admin/serverinfo") ||
+    error "Keycloak $version admin permission boundary HTTP failed"
+  [ "$denied" = 403 ] ||
+    fail "Keycloak $version service account unexpectedly accessed serverinfo ($denied)"
+
+  printf 'k04-incorrect-secret\n' > "$tmp/secret"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-service \
+    --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/token-rejected-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ ! -e "$tmp/token-rejected-$version" ] ||
+    fail "Keycloak $version incorrect client secret not rejected ($status)"
+  printf 'k04-protected-client-secret\n' > "$tmp/secret"
+
+  printf '%s: verified real Keycloak %s OAuth basic/post and permission boundary\n' \
+    "$TEST_ID" "$version"
+  stop_keycloak
+done
+printf '%s\n' "$TEST_ID: PASS (two real Keycloak releases, HTTPS and OAuth; SSH replaced)"
