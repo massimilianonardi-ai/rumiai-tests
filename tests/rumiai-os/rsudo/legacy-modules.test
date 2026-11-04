@@ -1,0 +1,100 @@
+#!/bin/sh
+# Protects: LIB-05 and LIB-07; rsudo module public identity and forwarding.
+# This is a loader/forwarder test, not a remote APISIX/Keycloak behavior test.
+
+TEST_ID=rumiai-os/rsudo/legacy-modules.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case $self in */*) :;; *) self=$(command -v "$self" 2>/dev/null) || return 1;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+cleanup() { [ -z "${tmp-}" ] || rm -rf "$tmp"; }
+trap cleanup 0 HUP INT TERM
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve own path'
+suite_root=${test_dir%/*/*/*}
+
+. "$suite_root/lib/rumiai-os-target.lib" ||
+  error 'cannot source target resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) :;;
+  1) skip 'target not found';;
+  2) fail 'invalid target';;
+  *) error 'target resolver failed';;
+esac
+
+tmp=${TMPDIR:-/tmp}/rsudo-legacy-test-$$
+umask 077
+mkdir "$tmp" || error 'cannot create temporary directory'
+
+for module in apisix keycloak
+do
+  for kind in '' legacy
+  do
+    path=$root/lib/sys/sh/rsudo/rsudo-mod-$module$kind.lib.sh
+    manual=$root/res/sys/manual/rsudo-mod-$module$kind.lib.sh
+    [ -f "$path" ] && [ ! -x "$path" ] ||
+      fail "library missing or executable: $path"
+    [ -f "$manual" ] || fail "manual missing: $manual"
+    command -p sh -n "$path" || fail "shell syntax invalid: $path"
+  done
+
+  legacy=$root/lib/sys/sh/rsudo/rsudo-mod-${module}legacy.lib.sh
+  facade=$root/lib/sys/sh/rsudo/rsudo-mod-$module.lib.sh
+  awk -v prefix="rsudo_mod_${module}legacy_" '
+    index($0, prefix) == 1 && $0 ~ /^[[:alpha:]_][[:alnum:]_]*\(\)$/ {
+      sub(/\(\)$/, "", $0)
+      print $0
+    }
+  ' "$legacy" > "$tmp/public" || error 'cannot enumerate functions'
+
+  while IFS= read -r name
+  do
+    case $module in
+      apisix) suffix=${name#rsudo_mod_apisixlegacy_};;
+      keycloak) suffix=${name#rsudo_mod_keycloaklegacy_};;
+    esac
+    new=rsudo_mod_$module"_"$suffix
+    grep -F "$new()" "$facade" >/dev/null ||
+      fail "missing facade function $new"
+    grep -F "$name " "$root/res/sys/manual/rsudo-mod-${module}legacy.lib.sh" >/dev/null ||
+      fail "missing legacy manual function $name"
+    grep -F "$new " "$root/res/sys/manual/rsudo-mod-$module.lib.sh" >/dev/null ||
+      fail "missing facade manual function $new"
+  done < "$tmp/public"
+done
+
+probe=$tmp/module-probe
+cat > "$probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 10
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 11
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 12
+loadsyslib "rsudo/rsudo-mod-keycloak" || exit 13
+rsudo_mod_apisixlegacy_get() { printf 'apisix:%s:%s\n' "$#" "$1"; }
+rsudo_mod_keycloaklegacy_get_client() { printf 'keycloak:%s:%s\n' "$#" "$1"; }
+rsudo_mod_apisix_get 'a b'
+rsudo_mod_keycloak_get_client 'c d'
+PROBE
+chmod 700 "$probe" || error 'cannot execute probe'
+result=$(PATH="$tmp:$PATH" "$root/m" "$probe" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/stderr" >&2
+  fail "real loader/forwarder returned $status"
+}
+expected=$(printf 'apisix:1:a b\nkeycloak:1:c d')
+[ "$result" = "$expected" ] ||
+  fail 'legacy forwarder lost or changed arguments'
+
+printf '%s\n' "$TEST_ID: PASS"
