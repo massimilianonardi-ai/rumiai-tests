@@ -400,6 +400,85 @@ do
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove nonconventional APISIX container'
   cid=
+
+  # The master also needs discovery when a container supervisor/shell is PID 1
+  # and OpenResty itself daemonizes as a child process. Use the real installed
+  # APISIX config generator and nginx master, not a forged /proc title.
+  cid=$(docker run -d --network none --cap-drop ALL \
+    --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    --entrypoint sh "$image" -c '
+      set -eu
+      /usr/bin/apisix init
+      mkdir -p /tmp/rsudo-apisix-background/conf /tmp/rsudo-apisix-background/logs
+      cp -R /usr/local/apisix/conf/. /tmp/rsudo-apisix-background/conf/
+      ln -s /usr/local/apisix/deps /tmp/rsudo-apisix-background/deps
+      rm /usr/local/apisix/conf/nginx.conf
+      /usr/local/openresty/bin/openresty -p /tmp/rsudo-apisix-background \
+        -c /tmp/rsudo-apisix-background/conf/nginx.conf
+      while :
+      do
+        sleep 60
+      done
+    ') || error 'cannot launch background OpenResty master'
+  [ -n "$cid" ] || error 'background-master container ID missing'
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    if docker exec "$cid" sh -c '
+      test -s /tmp/rsudo-apisix-background/logs/nginx.pid &&
+      test -r /tmp/rsudo-apisix-background/conf/nginx.conf &&
+      test ! -e /usr/local/apisix/conf/nginx.conf
+    ' >/dev/null 2>&1
+    then
+      break
+    fi
+    [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] || {
+      docker logs "$cid" >&2 || :
+      fail 'background APISIX master container exited'
+    }
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || {
+    docker logs "$cid" >&2 || :
+    fail 'background OpenResty master PID was not observed'
+  }
+  background_pid=$(docker exec "$cid" cat /tmp/rsudo-apisix-background/logs/nginx.pid) ||
+    error 'cannot inspect background APISIX PID'
+  [ "$background_pid" -gt 1 ] 2>/dev/null ||
+    fail 'background APISIX master unexpectedly holds namespace PID 1'
+  background_expected=$(printf '%s\n' \
+    'discovery_evidence=unique-process-prefix-candidate' \
+    'discovered_scope=docker' "container_id=$cid" \
+    'installation_root=/tmp/rsudo-apisix-background' \
+    'runtime_evidence=pidfile-and-master-args' "process_pid=$background_pid" \
+    'runtime_identity=process-consistent-config-unverified' \
+    'mutation_readiness=not-established')
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = "$background_expected" ] || {
+    cat "$tmp/stderr" >&2
+    fail 'non-PID1 Docker OpenResty master was not discovered and revalidated'
+  }
+
+  # The generated source must still be present; a running background master
+  # cannot make a missing generated config into an accepted candidate.
+  docker exec "$cid" sh -c '
+    mv /tmp/rsudo-apisix-background/conf/nginx.conf /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held
+  ' || error 'cannot stage missing background-master generated config'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 58 ] && [ -z "$result" ] ||
+    fail 'missing background-master generated config was silently ignored'
+  grep -Fx 'apisix.runtime.docker-master-generated-config-missing' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific background-master generated-config diagnostic'
+  docker exec "$cid" sh -c '
+    mv /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
+  ' || error 'cannot restore background-master generated config'
+  docker rm -f "$cid" >/dev/null 2>&1 ||
+    error 'cannot remove background APISIX container'
+  cid=
 done
 
-printf '%s\n' "$TEST_ID: PASS (two real APISIX releases and nonconventional Docker process discovery)"
+printf '%s\n' "$TEST_ID: PASS (two real APISIX releases, PID1 and non-PID1 Docker master discovery)"
