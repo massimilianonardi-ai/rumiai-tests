@@ -549,11 +549,18 @@ async function main()
     assert.equal(coverageIndex.scope, 'initial-navigation-to-rest-entry');
     assert(coverageIndex.entries.length > 0, 'CSS coverage targets missing');
     const usedEntries = coverageIndex.entries.filter(item => item.status === 'saved');
-    assert(usedEntries.length > 0, 'CSS rule tracking did not start before navigation');
+    assert(usedEntries.length > 0,
+      'CSS rule tracking did not start before navigation: ' +
+      JSON.stringify(coverageIndex.entries.map(item => ({
+        type:item.type, status:item.status, errorCode:item.errorCode || null
+      }))));
     const mainCoverageTarget = rest.targets.find(item => item.main);
     assert(mainCoverageTarget && usedEntries.some(item =>
       item.targetId === mainCoverageTarget.targetId),
-      'initial page selector usage was not obtained from its CDP target');
+      'initial page selector usage was not obtained from its CDP target: ' +
+      JSON.stringify(coverageIndex.entries.map(item => ({
+        type:item.type, status:item.status, errorCode:item.errorCode || null
+      }))));
     const coverage = usedEntries.flatMap(item =>
       JSON.parse(fs.readFileSync(path.join(coverageRoot, item.file), 'utf8')).ruleUsage);
     assert(coverage.some(item => item.used === true && item.styleSheetId),
