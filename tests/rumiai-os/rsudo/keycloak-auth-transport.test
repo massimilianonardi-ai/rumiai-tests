@@ -137,7 +137,8 @@ class Handler(BaseHTTPRequestHandler):
                     ["access_token"], ["refresh_token"]) or
                     args.get("token") not in (
                         ["SENSITIVE-K04-ACCESS-TOKEN"],
-                        ["SENSITIVE-K04-REFRESH-TOKEN"])):
+                        ["SENSITIVE-K04-REFRESH-TOKEN"],
+                        ["SENSITIVE-K04-ROTATED-REFRESH-TOKEN"])):
                 self.response(400, {"error": "invalid_request"})
                 return
             self.response(200, {})
@@ -148,6 +149,19 @@ class Handler(BaseHTTPRequestHandler):
                     args.get("password") != ["password with spaces"]):
                 self.response(400, {"error": "invalid_grant"})
                 return
+        elif grant == ["refresh_token"]:
+            if args.get("refresh_token") not in (
+                    ["SENSITIVE-K04-REFRESH-TOKEN"],
+                    ["SENSITIVE-K04-ROTATED-REFRESH-TOKEN"]):
+                self.response(400, {"error": "invalid_grant"})
+                return
+            self.response(200, {
+                "access_token": "SENSITIVE-K04-ROTATED-ACCESS-TOKEN",
+                "refresh_token": "SENSITIVE-K04-ROTATED-REFRESH-TOKEN",
+                "token_type": "Bearer",
+                "expires_in": 60
+            })
+            return
         elif grant != ["client_credentials"]:
             self.response(400, {"error": "unsupported_grant_type"})
             return
@@ -302,6 +316,48 @@ status=$?
   fail "invalid user credentials not rejected as invalid_grant ($status)"
 printf 'password with spaces\n' > "$tmp/user-password"
 
+# Refresh must use only the protected store, replace atomically and preserve
+# the existing private mode. Missing successor/refresh is not success.
+refresh()
+{
+  probe refresh --server "$base" --issuer-realm master \
+    --client-id service --client-auth client-secret-basic \
+    --client-secret-file "$tmp/secret" \
+    --token-file "$1" --token-store "$1" --ca-file "$tmp/server.pem"
+}
+result=$(refresh "$tmp/password-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] &&
+  [ "$(jq -r .refresh_token "$tmp/password-store")" = SENSITIVE-K04-ROTATED-REFRESH-TOKEN ] ||
+  fail "protected token refresh/rotation failed ($status)"
+mode=$(LC_ALL=C ls -ld "$tmp/password-store"); mode=${mode%% *}
+[ "$mode" = '-rw-------' ] || fail 'refreshed store lost private permissions'
+[ ! -e "$tmp/password-store.keycloak-refresh-lock" ] ||
+  fail 'refresh lock leaked after success'
+grep -F 'SENSITIVE-K04-REFRESH-TOKEN' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'refresh token escaped into curl arguments/diagnostics'
+result=$(refresh "$tmp/basic-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 73 ] &&
+  [ "$(jq -r .access_token "$tmp/basic-store")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+  fail "store without refresh token was changed or accepted ($status)"
+mkdir "$tmp/password-store.keycloak-refresh-lock" ||
+  error 'refresh contention fixture unavailable'
+result=$(refresh "$tmp/password-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 87 ] && [ -z "$result" ] ||
+  fail "busy refresh lock was ignored ($status)"
+rmdir "$tmp/password-store.keycloak-refresh-lock"
+result=$(probe refresh --server "$base" --issuer-realm master \
+  --client-id service --client-auth client-secret-basic \
+  --client-secret-file "$tmp/secret" \
+  --token-file "$tmp/password-store" --token-store "$tmp/other-store" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ ! -e "$tmp/other-store" ] ||
+  fail 'refresh allowed non-atomic alternate output'
+
 # Explicit OIDC revocation: only named token kind; the selected token and
 # client secret may appear in protected files but never process arguments.
 result=$(probe revoke --server "$base" --issuer-realm master \
@@ -315,7 +371,7 @@ status=$?
   fail "refresh-token revocation did not receive safe acknowledgement ($status)"
 grep -F 'SENSITIVE-K04-REFRESH-TOKEN' "$tmp/argv" "$tmp/err" >/dev/null &&
   fail 'refresh token escaped into curl argv or diagnostics'
-[ "$(jq -r '.refresh_token' "$tmp/password-store")" = SENSITIVE-K04-REFRESH-TOKEN ] ||
+[ "$(jq -r '.refresh_token' "$tmp/password-store")" = SENSITIVE-K04-ROTATED-REFRESH-TOKEN ] ||
   fail 'revocation silently rewrote a stored token'
 
 result=$(probe revoke --server "$base" --issuer-realm master \
