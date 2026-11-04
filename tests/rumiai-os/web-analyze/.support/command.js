@@ -847,7 +847,7 @@ async function main()
       'rest/optional-domains/index.json');
     const optional = JSON.parse(fs.readFileSync(optionalPath,'utf8'));
     assert.equal(optional.scope,'installed-browser-passive-optional-CDP-domains');
-    assert.equal(optional.policy,'inventory-only-no-domain-enablement');
+    assert.equal(optional.policy,'selective-passive-animation-media-observers');
     assert.equal(optional.protocolStatus,'saved',
       'installed Chromium protocol should be the source of capability claims');
     assert.equal(optional.source.status,'saved');
@@ -856,6 +856,9 @@ async function main()
     for (const domain of optional.domains)
     {
       const declared = protocol.domains.find(item => item.domain === domain.domain);
+      assert.equal(domain.passiveObserverRequested,
+        ['Animation','Media'].includes(domain.domain),
+        'only Animation and Media may receive optional event subscriptions');
       if (!declared)
         assert.equal(domain.status,'unsupported',
           'absent browser CDP domain was mislabeled available');
@@ -881,8 +884,26 @@ async function main()
         if (!events && !domain.enabledTargets.length)
           assert.equal(domain.status,'not-enabled',
             'schema support alone was incorrectly counted as observed coverage');
+        if (['Animation','Media'].includes(domain.domain) &&
+          declared.commands?.some(item => item.name === 'enable'))
+        {
+          assert(domain.enabledTargets.includes(mainCoverageTarget.targetId),
+            'selected passive observer was not enabled on the main page');
+          assert(parsedWire.some(item => item.direction === 'outbound' &&
+            item.packet.method === domain.domain + '.enable'),
+            'selected passive observer was not negotiated over native CDP');
+          const expectedEvent = domain.domain === 'Animation' ?
+            'animationStarted' : 'playerCreated';
+          assert(domain.observedEvents[expectedEvent] > 0 &&
+            domain.status === 'observed',
+            'natural animation/audio fixture did not emit the expected event: ' +
+            domain.domain + ' ' + JSON.stringify(domain.observedEvents));
+        }
       }
     }
+    assert(!parsedWire.some(item => item.direction === 'outbound' &&
+      /^Animation\.(?!enable$)|^Media\.(?!enable$)/.test(item.packet.method || '')),
+      'optional event observers must never change animation timing or media playback');
     assert.equal(fs.statSync(optionalPath).mode & 0o777,0o600,
       'optional CDP domain provenance must be private');
     assert(rest.artifacts.some(item => item.name === 'optional-domains' &&
