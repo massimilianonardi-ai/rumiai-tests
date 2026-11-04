@@ -315,6 +315,75 @@ do
   status=$?
   [ "$status" -eq 48 ] && [ -z "$result" ] || \
     fail 'automatic runtime discovery falsely selected a removed APISIX'
+
+  # Generate the actual APISIX nginx config with its pinned installed CLI,
+  # then launch the official OpenResty at a nonconventional -p root.
+  cid=$(docker run -d --network none --cap-drop ALL \
+    --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    --entrypoint sh "$image" -c '
+      set -eu
+      /usr/bin/apisix init
+      mkdir -p /tmp/rsudo-apisix-alt/conf /tmp/rsudo-apisix-alt/logs
+      cp /usr/local/apisix/conf/nginx.conf /tmp/rsudo-apisix-alt/conf/nginx.conf
+      rm /usr/local/apisix/conf/nginx.conf
+      exec /usr/local/openresty/bin/openresty -p /tmp/rsudo-apisix-alt -g "daemon off;"
+    ') || error 'cannot launch nonconventional OpenResty process prefix'
+  [ -n "$cid" ] || error 'nonconventional process container ID missing'
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    if docker exec "$cid" sh -c '
+      test -s /tmp/rsudo-apisix-alt/logs/nginx.pid &&
+      test -r /tmp/rsudo-apisix-alt/conf/nginx.conf &&
+      test ! -e /usr/local/apisix/conf/nginx.conf
+    ' >/dev/null 2>&1
+    then
+      break
+    fi
+    [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] || {
+      docker logs "$cid" >&2 || :
+      fail 'nonconventional APISIX master exited'
+    }
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || {
+    docker logs "$cid" >&2 || :
+    fail 'nonconventional APISIX master PID was not observed'
+  }
+
+  alt_pid=$(docker exec "$cid" cat /tmp/rsudo-apisix-alt/logs/nginx.pid) ||
+    error 'cannot inspect nonconventional APISIX PID'
+  alt_expected=$(printf '%s\n' \
+    'discovery_evidence=unique-process-prefix-candidate' \
+    'discovered_scope=docker' "container_id=$cid" \
+    'installation_root=/tmp/rsudo-apisix-alt' \
+    'runtime_evidence=pidfile-and-master-args' "process_pid=$alt_pid" \
+    'runtime_identity=process-consistent-config-unverified' \
+    'mutation_readiness=not-established')
+
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = "$alt_expected" ] || {
+    cat "$tmp/stderr" >&2
+    fail 'nonconventional Docker process prefix was not discovered and verified'
+  }
+
+  # Stale conventional config generated after startup must not override the
+  # observed running -p prefix.
+  docker exec "$cid" sh -c '
+    cp /tmp/rsudo-apisix-alt/conf/nginx.conf /usr/local/apisix/conf/nginx.conf
+  ' || error 'cannot stage stale conventional nginx.conf'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = "$alt_expected" ] ||
+    fail 'stale conventional config displaced live nonconventional process evidence'
+
+  docker rm -f "$cid" >/dev/null 2>&1 ||
+    error 'cannot remove nonconventional APISIX container'
+  cid=
 done
 
-printf '%s\n' "$TEST_ID: PASS (two real APISIX releases, unique/ambiguous/absent automatic discovery)"
+printf '%s\n' "$TEST_ID: PASS (two real APISIX releases and nonconventional Docker process discovery)"
