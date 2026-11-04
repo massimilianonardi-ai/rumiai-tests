@@ -12,7 +12,7 @@ const command = path.join(root, 'bin/sys/web-analyze');
 const env = {...process.env, m_ROOT: root, m_LIB_DIR: path.join(root, 'lib')};
 const html = `<!DOCTYPE html><html><head><title>Dynamic evidence fixture</title>
 <link rel="stylesheet" href="/view.css"><script defer src="/app.js"></script></head>
-<body><h1>Interactive view</h1><div id="list" class="scroll">
+<body><h1>private-heading-audit-marker</h1><div id="list" class="scroll">
 ${Array.from({length: 50}, (_,i)=>`<p>row ${i}</p>`).join('')}
 </div><form action="/submit" method="post"><input name="search" aria-label="Search term"></form></body></html>`;
 const largePayload = Buffer.alloc(3 * 1024 * 1024);
@@ -293,7 +293,7 @@ async function main()
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'web-analyze-command-'));
   try
   {
-    const uri = `http://127.0.0.1:${server.address().port}/`;
+    const uri = `http://127.0.0.1:${server.address().port}/?token=private-query-audit-marker`;
     const base = path.join(work, 'reports');
     const result = await run([uri, base, '--scroll']);
     assert.equal(result.code, 0, `analysis exit ${result.code}: ${result.stderr}`);
@@ -613,6 +613,46 @@ async function main()
     assert(fs.readFileSync(path.join(capture, 'FLOWS.md'), 'utf8').includes('flowchart TD'));
     const scriptIndex = fs.readFileSync(path.join(capture, 'scripts.jsonl'), 'utf8');
     assert(scriptIndex.includes('"status":"saved"'), 'compiled JS not recorded');
+    const integrity = JSON.parse(fs.readFileSync(path.join(capture,
+      'evidence-integrity.json'), 'utf8'));
+    assert(['saved','partial','interrupted'].includes(integrity.status),
+      'integrity ledger did not produce an explicit capture outcome');
+    assert(integrity.artifacts.some(item => item.file === large.file &&
+      item.status === 'saved' && item.sha256 === large.sha256),
+      'root binary was not independently verified against its index');
+    assert(integrity.artifacts.some(item =>
+      item.file.endsWith('/indexeddb/' + indexedStore.pages[0].file) &&
+      item.status === 'saved'), 'IndexedDB page digest was not verified');
+    assert(integrity.artifacts.some(item =>
+      item.file.endsWith('/cache-storage/' + cached.body.file) &&
+      item.status === 'saved'), 'cached response digest was not verified');
+    assert(integrity.artifacts.some(item => item.file.endsWith('.css') &&
+      item.source === 'CSS.getStyleSheetText' && item.status === 'saved'),
+      'stylesheet body was not verified from the CSS index');
+    assert(integrity.domains.some(item => item.domain === 'dom'),
+      'DOM verification domain missing');
+    assert(integrity.domains.some(item => item.domain === 'storage'),
+      'storage verification domain missing');
+    assert(integrity.domains.some(item => item.domain === 'listeners'),
+      'event listener verification domain missing');
+    assert(integrity.streams.some(item => item.file === 'cdp-wire.jsonl' &&
+      item.status === 'saved' && item.records === wire.length),
+      'raw CDP ledger ordering and event count not reconciled');
+    assert.equal(fs.statSync(path.join(capture, 'evidence-integrity.json')).mode & 0o777,
+      0o600, 'integrity ledger includes private metadata and must be private');
+    for (const file of ['README.md','DOM.md','NETWORK.md','SCRIPTS.md',
+      'FLOWS.md','LIMITATIONS.md'])
+    {
+      const readable = fs.readFileSync(path.join(capture, file), 'utf8');
+      assert(!readable.includes('private-query-audit-marker'),
+        'human-readable report leaked a signed URL parameter: ' + file);
+      assert(!readable.includes('private-heading-audit-marker'),
+        'human-readable report leaked page contents: ' + file);
+    }
+    assert(fs.readFileSync(path.join(capture, 'cdp-wire.jsonl'),'utf8')
+      .includes('private-query-audit-marker'),
+      'raw evidence was incorrectly redacted or lost');
+
     const repeated = await run([uri, base]);
     assert.equal(repeated.code, 0, 'rerun must work without overwriting evidence: ' + repeated.stderr);
     assert.notEqual(repeated.stdout.trim(), result.stdout.trim());
@@ -671,6 +711,28 @@ async function main()
     assert(changedWire.includes('/process-start') &&
       changedWire.includes('/process-done'),
       'site-driven cross-origin navigation was not recorded on CDP wire');
+
+    const {auditWebAnalyzeEvidence} = require(path.join(root,
+      'lib/sys/js/web-analyze-rest.lib.js'));
+    const binaryFile = path.join(capture, large.file);
+    fs.writeFileSync(binaryFile, Buffer.from('modified artifact'));
+    let tampered = auditWebAnalyzeEvidence(capture);
+    assert.equal(tampered.status, 'failed',
+      'corrupted response body was not reported as a failed capture');
+    assert(tampered.artifacts.some(item => item.file === large.file &&
+      item.errorCode === 'evidence-byte-count-mismatch'),
+      'tampered response byte count was not identified');
+    fs.writeFileSync(binaryFile, largePayload);
+    const cachedFile = path.join(capture, 'rest/targets/target-000/cache-storage',
+      cached.body.file);
+    fs.unlinkSync(cachedFile);
+    tampered = auditWebAnalyzeEvidence(capture);
+    assert.equal(tampered.status, 'failed',
+      'missing nested cache body was not reported as a failed capture');
+    assert(tampered.artifacts.some(item =>
+      item.file.endsWith('/cache-storage/' + cached.body.file) &&
+      item.errorCode === 'evidence-file-missing'),
+      'cache body path from nested index was not independently checked');
   }
   finally
   {
