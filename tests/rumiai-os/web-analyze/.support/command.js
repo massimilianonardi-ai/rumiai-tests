@@ -436,7 +436,13 @@ async function main()
       item.redirectedFrom?.endsWith('/redirect-start')),
       'redirect chain missing source provenance');
     assert(responseIndex.some(item => item.status === 'saved' &&
-      item.url?.endsWith('/burst')), 'chunked HTTP response not saved');
+      item.url?.endsWith('/burst')), 'chunked HTTP response not saved: ' +
+      JSON.stringify(responseIndex.filter(item => item.url?.endsWith('/burst'))
+        .map(item => ({
+          status:item.status, source:item.source,
+          errorCode:item.errorCode, fallbackErrorCode:item.fallbackErrorCode,
+          partialBytes:item.partialBody?.bytes
+        }))));
     assert(responseIndex.some(item => item.url?.endsWith('/cacheable')),
       'cacheable request missing from archive');
     const streaming = responseIndex.find(item =>
