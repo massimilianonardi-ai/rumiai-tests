@@ -826,6 +826,12 @@ async function main()
     assert(workerProvenance.workers.some(item =>
       item.type === 'worker' && item.targetId === workerTarget.targetId),
       'dedicated worker target was lost in provenance graph');
+    assert(workerProvenance.targetTransitions.some(item =>
+      item.method === 'Target.attachedToTarget' && item.targetId),
+      'raw target attachment chronology was not preserved');
+    assert(workerProvenance.targetTransitions.every(item =>
+      item.method.startsWith('Target.') && item.observedAt),
+      'target provenance chronology must identify its CDP events and timestamps');
     assert(workerProvenance.workers.some(item => item.type === 'service_worker'),
       'service worker target was omitted from provenance graph');
     assert(workerProvenance.frames.some(item =>
