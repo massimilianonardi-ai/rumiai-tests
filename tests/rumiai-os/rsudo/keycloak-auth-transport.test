@@ -78,13 +78,14 @@ chmod 600 "$tmp/server.key" "$tmp/server.pem" ||
   error 'TLS fixture permissions unavailable'
 
 cat > "$tmp/server.py" <<'PYTHON'
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs
 import base64
 import json
 import ssl
 import sys
+import time
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -150,6 +151,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.response(400, {"error": "invalid_grant"})
                 return
         elif grant == ["refresh_token"]:
+            # Hold the HTTP request while a competing shell call attempts
+            # the same protected store, exercising real lock contention.
+            time.sleep(0.7)
             if args.get("refresh_token") not in (
                     ["SENSITIVE-K04-REFRESH-TOKEN"],
                     ["SENSITIVE-K04-ROTATED-REFRESH-TOKEN"]):
@@ -172,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
             "expires_in": 60
         })
 
-server = HTTPServer(("127.0.0.1", 0), Handler)
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[2], sys.argv[3])
 server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -349,6 +353,35 @@ status=$?
 [ "$status" -eq 87 ] && [ -z "$result" ] ||
   fail "busy refresh lock was ignored ($status)"
 rmdir "$tmp/password-store.keycloak-refresh-lock"
+
+# Two actual overlapping callers: only the lock owner may publish.
+refresh "$tmp/password-store" >"$tmp/refresh-race1.out" \
+  2>"$tmp/refresh-race1.err" &
+refresh1=$!
+refresh "$tmp/password-store" >"$tmp/refresh-race2.out" \
+  2>"$tmp/refresh-race2.err" &
+refresh2=$!
+wait "$refresh1"
+status1=$?
+wait "$refresh2"
+status2=$?
+case "$status1/$status2" in
+  0/87)
+    [ ! -s "$tmp/refresh-race2.out" ] ||
+      fail 'losing refresh emitted success output' ;;
+  87/0)
+    [ ! -s "$tmp/refresh-race1.out" ] ||
+      fail 'losing refresh emitted success output' ;;
+  *) fail "overlapping refresh did not serialize ($status1/$status2)" ;;
+esac
+[ ! -e "$tmp/password-store.keycloak-refresh-lock" ] ||
+  fail 'overlapping refresh leaked store lock'
+mode=$(LC_ALL=C ls -ld "$tmp/password-store"); mode=${mode%% *}
+[ "$mode" = '-rw-------' ] ||
+  fail 'overlapping refresh weakened token-store permissions'
+find "$tmp" -name '.keycloak-token.*' -print | grep . >/dev/null &&
+  fail 'overlapping refresh left an unprotected stage file'
+
 result=$(probe refresh --server "$base" --issuer-realm master \
   --client-id service --client-auth client-secret-basic \
   --client-secret-file "$tmp/secret" \
