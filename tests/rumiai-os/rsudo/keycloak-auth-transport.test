@@ -122,7 +122,11 @@ class Handler(BaseHTTPRequestHandler):
              args.get("client_secret") == ["protected-k04-secret"])
         )
         if not valid:
-            self.response(401, {"error": "invalid_client"})
+            # Exercise both Keycloak-observed 401 unauthorized_client (Basic)
+            # and conventional invalid_client (form-client authentication).
+            self.response(401, {
+                "error": "unauthorized_client" if auth else "invalid_client"
+            })
             return
         self.response(200, {
             "access_token": "SENSITIVE-K04-ACCESS-TOKEN",
@@ -234,6 +238,11 @@ result=$(acquire client-secret-basic "$tmp/secret" "$tmp/denied-store" 2>"$tmp/e
 status=$?
 [ "$status" -eq 71 ] && [ -z "$result" ] && [ ! -e "$tmp/denied-store" ] ||
   fail 'bad Basic client secret was accepted or misclassified'
+
+result=$(acquire client-secret-post "$tmp/secret" "$tmp/denied-post-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 71 ] && [ ! -e "$tmp/denied-post-store" ] ||
+  fail 'invalid_client form rejection was not classified as client auth'
 
 chmod 644 "$tmp/secret"
 result=$(acquire client-secret-post "$tmp/secret" "$tmp/insecure-store" 2>"$tmp/err")
