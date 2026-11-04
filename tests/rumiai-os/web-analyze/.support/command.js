@@ -201,8 +201,16 @@ async function main()
   assert.equal(wrongScheme.status, 4);
 
   const burstStats = {started:0, chunks:0, ended:0, closed:0};
+  let secondaryBucketReady = 0;
   const crossServer = http.createServer((req, res) => {
     const endpoint = new URL(req.url, 'http://localhost').pathname;
+    if (endpoint === '/secondary-bucket-ready')
+    {
+      secondaryBucketReady++;
+      res.setHeader('Content-Type','text/plain');
+      res.end('ready');
+      return;
+    }
     if (endpoint === '/process-payload')
     {
       res.setHeader('Content-Type', 'text/plain');
@@ -222,7 +230,16 @@ async function main()
       '<body><p id="cross-origin-content">Independent origin</p>' +
       '<script>const marker=document.createElement("b");' +
       'marker.id="cross-frame-transient";document.body.append(marker);' +
-      'marker.remove();</script></body>');
+      'marker.remove();' +
+      '(async()=>{' +
+      'if(typeof navigator.storageBuckets?.open!=="function") return;' +
+      'const bucket=await navigator.storageBuckets.open("secondary-frame-bucket");' +
+      'const cache=await bucket.caches.open("secondary-frame-cache");' +
+      'await cache.put("/secondary-cache-entry",new Response("secondary-cache-body"));' +
+      'document.body.dataset.secondaryBucketReady="yes";' +
+      'fetch("/secondary-bucket-ready");' +
+      '})().catch(()=>{document.body.dataset.secondaryBucketReady="no"});' +
+      '</script></body>');
   });
   await new Promise(resolve => crossServer.listen(0, '127.0.0.1', resolve));
   const crossUrl = 'http://127.0.0.1:' + crossServer.address().port + '/child.html';
@@ -708,6 +725,65 @@ async function main()
       assert(frameContext[field], 'missing read-only page inventory: ' + field);
     assert.equal(fs.statSync(contextPath).mode & 0o777, 0o600,
       'raw security and storage context metadata must remain private');
+    assert(secondaryBucketReady > 0,
+      'cross-origin child never populated its own named Storage Bucket');
+    const observedSecondary = [];
+    for (const capturedTarget of rest.targets.filter(target =>
+      !['worker','shared_worker','service_worker'].includes(target.type)))
+    {
+      const prefix = path.join(capture,'rest/targets',capturedTarget.name);
+      let childContext, tree, partition;
+      try
+      {
+        childContext = JSON.parse(fs.readFileSync(
+          path.join(prefix,'frame-context.json'),'utf8'));
+        tree = JSON.parse(fs.readFileSync(path.join(prefix,'frame-tree.json'),'utf8'));
+        partition = JSON.parse(fs.readFileSync(
+          path.join(prefix,'storage-partitions/index.json'),'utf8'));
+      }
+      catch (_) {continue;}
+      const queue = tree.frameTree ? [tree.frameTree] : [];
+      const urls = new Map();
+      while (queue.length)
+      {
+        const node = queue.shift();
+        if (node.frame?.id) urls.set(node.frame.id,node.frame.url);
+        queue.push(...(node.childFrames || []));
+      }
+      for (const frame of childContext.frames)
+      {
+        if (urls.get(frame.frameId) !== crossUrl) continue;
+        observedSecondary.push({frame,partition,capturedTarget});
+      }
+    }
+    assert(observedSecondary.length > 0,
+      'real Chromium child frame was absent from captured frame trees');
+    const secondary = observedSecondary.find(item =>
+      item.frame.bucketNames?.status === 'saved' &&
+      item.frame.bucketNames.names?.includes('secondary-frame-bucket'));
+    assert(secondary,
+      'cross-origin frame bucket names were not queried in the observed frame world: ' +
+      JSON.stringify(observedSecondary.map(item => ({
+        target:item.capturedTarget.name,
+        status:item.frame.bucketNames?.status || 'missing',
+        code:item.frame.bucketNames?.errorCode || null
+      }))));
+    const secondaryKey = secondary.frame.storageKey?.result?.storageKey;
+    assert.equal(typeof secondaryKey,'string');
+    const selectedSecondary = secondary.partition.selections.find(item =>
+      item.name === 'secondary-frame-bucket' &&
+      item.selector.storageBucket.storageKey === secondaryKey &&
+      item.discovery.frameId === secondary.frame.frameId);
+    assert(selectedSecondary,
+      'child named bucket must be selected using its own observed storage key');
+    const childContextMode = secondary.frame.bucketNames.contextSelector;
+    if (secondary.capturedTarget.main)
+    {
+      assert(['uniqueContextId','contextId'].includes(childContextMode),
+        'same-target child must use an explicit observed execution context');
+      assert(secondary.frame.bucketNames.executionTargetId,
+        'secondary execution target provenance missing');
+    }
     const partitionPath = path.join(capture,
       'rest/targets/target-000/storage-partitions/index.json');
     const partitions = JSON.parse(fs.readFileSync(partitionPath, 'utf8'));
