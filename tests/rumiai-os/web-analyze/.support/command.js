@@ -503,7 +503,8 @@ async function main()
     server.closeAllConnections();
     crossServer.close();
     crossServer.closeAllConnections();
-    fs.rmSync(work, {recursive: true, force: true});
+    fs.rmSync(work, {recursive: true, force: true,
+      maxRetries:10, retryDelay:250});
   }
 }
 main().catch(error => {console.error(error);process.exitCode=1;});
