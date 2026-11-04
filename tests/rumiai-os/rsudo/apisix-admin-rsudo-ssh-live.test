@@ -206,4 +206,22 @@ status=$?
 [ "$status" -eq 22 ] && [ -z "$result" ] ||
   fail 'remote HTTP 401 did not propagate through real rsudo'
 
-printf '%s\n' "$TEST_ID: PASS (real SSH password, sudo password, stdin and curl)"
+# The documented rsudo noninteractive path must also preserve stdin when the
+# remote sudo does not ask for a password, despite SSH using password auth.
+# No modifications escape this disposable container.
+docker exec "$cid" sh -c \
+  "printf 'rsudoapitest ALL=(root) NOPASSWD: ALL\n' > /etc/sudoers.d/rsudoapitest &&
+   chmod 440 /etc/sudoers.d/rsudoapitest" ||
+  error 'cannot configure isolated sudo NOPASSWD case'
+docker exec "$cid" sh -c \
+  "printf '%s\n' 'X-API-KEY: synthetic-admin-key' > /root/rsudo-test-api-header" ||
+  error 'cannot restore synthetic remote API key'
+
+result=$(run_probe 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"routes":[{"id":"ssh-sudo-proof"}]}' ] ||
+  fail 'rsudo lost remote command stdin with NOPASSWD sudo'
+grep -F 'synthetic-admin-key' "$tmp/stderr" >/dev/null &&
+  fail 'credential leaked during NOPASSWD rsudo'
+
+printf '%s\n' "$TEST_ID: PASS (real SSH password, sudo password and NOPASSWD, stdin and curl)"
