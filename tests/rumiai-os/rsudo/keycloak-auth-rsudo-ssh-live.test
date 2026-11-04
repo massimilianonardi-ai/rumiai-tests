@@ -254,6 +254,40 @@ status=$?
 [ "$status" -eq 0 ] && [ "$result" = '{"stored":true,"server_validated":false}' ] ||
   fail 'real SSH/sudo status inspection failed'
 
+# A file readable by sudo is not automatically an authorized credential:
+# the effective sudo identity must also own the file and output directory.
+docker exec "$cid" chown k04operator:k04operator /root/keycloak/secret ||
+  error 'cannot set foreign-owned secret fixture'
+result=$(acquire client-secret-basic foreign-secret-token 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail "foreign-owned remote secret accepted through real SSH ($status)"
+docker exec "$cid" chown root:root /root/keycloak/secret ||
+  error 'cannot restore test-only secret ownership'
+
+docker exec "$cid" chown k04operator:k04operator /root/keycloak/token-basic ||
+  error 'cannot set foreign-owned token fixture'
+result=$(probe status --token-file /root/keycloak/token-basic 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail "foreign-owned stored bearer accepted through real SSH ($status)"
+docker exec "$cid" chown root:root /root/keycloak/token-basic ||
+  error 'cannot restore test-only token ownership'
+
+docker exec "$cid" sh -c   'mkdir /root/keycloak/foreign-output &&
+   chown k04operator:k04operator /root/keycloak/foreign-output &&
+   chmod 700 /root/keycloak/foreign-output' ||
+  error 'cannot set foreign-owned token directory fixture'
+result=$(probe acquire --server https://127.0.0.1:9443 --issuer-realm master \
+  --auth-mode client-credentials --client-id service \
+  --client-auth client-secret-basic \
+  --client-secret-file /root/keycloak/secret \
+  --token-store /root/keycloak/foreign-output/token \
+  --ca-file /root/keycloak/server.pem 2>"$tmp/err")
+status=$?
+[ "$status" -eq 87 ] && [ -z "$result" ] ||
+  fail "foreign-owned token directory accepted through real SSH ($status)"
+
 # Same real SSH password, but sudo now requires no password; the static
 # heredoc must still reach the remote sh unchanged.
 docker exec "$cid" sh -c \
