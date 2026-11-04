@@ -563,9 +563,13 @@ async function main()
       }))));
     const coverage = usedEntries.flatMap(item =>
       JSON.parse(fs.readFileSync(path.join(coverageRoot, item.file), 'utf8')).ruleUsage);
-    const authoredStyles = fs.readFileSync(path.join(capture,
-      'rest/stylesheets', styles.find(item => item.status === 'saved' &&
-        item.sourceURL?.endsWith('/view.css')).file.replace(/^stylesheets\//, '')), 'utf8');
+    const availableStyleRows = JSON.parse(fs.readFileSync(path.join(capture,
+      'rest/stylesheets/index.json'), 'utf8'));
+    const availableFixtureSheet = availableStyleRows.find(item =>
+      item.status === 'saved' && item.sourceURL?.endsWith('/view.css'));
+    assert(availableFixtureSheet, 'original fixture stylesheet not indexed');
+    const authoredStyles = fs.readFileSync(path.join(capture, 'rest',
+      availableFixtureSheet.file), 'utf8');
     assert(authoredStyles.includes('.unused-css-coverage-marker'),
       'available CSS source is expected to contain the deliberately unvisited rule');
     assert(coverage.some(item => item.used === true && item.styleSheetId),
