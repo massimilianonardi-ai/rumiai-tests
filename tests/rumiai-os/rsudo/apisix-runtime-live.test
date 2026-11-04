@@ -242,6 +242,20 @@ do
   grep -Fx 'apisix.runtime.candidates-ambiguous' "$tmp/stderr" >/dev/null ||
     fail 'missing specific multiple-candidate diagnostic'
 
+  # A paused container still appears in the manager's running set, but
+  # Docker cannot exec inside it. Its unknown contents cannot be treated
+  # as a negative candidate just because one other APISIX is observable.
+  docker pause "$other_cid" >/dev/null ||
+    error 'cannot pause disposable APISIX for unreadable-candidate scenario'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 52 ] && [ -z "$result" ] ||
+    fail 'uninspectable Docker candidate was silently excluded'
+  grep -Fx 'apisix.runtime.docker-probe-failed' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific indeterminate Docker-probe diagnostic'
+  docker unpause "$other_cid" >/dev/null ||
+    error 'cannot unpause disposable APISIX after negative test'
+
   docker rm -f "$other_cid" >/dev/null 2>&1 ||
     error 'cannot remove second disposable APISIX'
   other_cid=
