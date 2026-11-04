@@ -184,6 +184,32 @@ La modalità predefinita `--isolation=session` usa un ambiente per l'intera invo
 
 I dettagli operativi sono in `VALIDATION.md`.
 
+## Test mirati del package manager tecnico `m-os`
+
+Il gruppo `tests/m-os/pkg-schema-v2/` contiene verifiche permanenti del
+branch tecnico autonomo `m-os/pkg-schema-v2`. Non viene interpretato come
+un test della revisione `rumiai-os` in uso.
+
+Per eseguire il gruppo attraverso il runner canonico, fornire un checkout
+reale di `m-os` tramite `RUMIAI_TEST_M_OS_ROOT`. Le verifiche che usano
+il contratto di facility Node.js richiedono inoltre
+`RUMIAI_TEST_PKG_CATALOG_ROOT` con il checkout reale del catalogo.
+Esempio di invocazione, con i due percorsi scelti dal chiamante:
+
+```sh
+RUMIAI_TEST_M_OS_ROOT=/percorso/m-os \
+RUMIAI_TEST_PKG_CATALOG_ROOT=/percorso/pkg-catalog \
+./rumiai-test m-os/pkg-schema-v2
+```
+
+In assenza del target `m-os` esplicitamente fornito, questi test
+restituiscono `SKIP`, non `PASS`. Un target indicato ma invalido produce
+`ERROR`. Il gruppo usa il runtime e le operazioni package reali con
+payload esterni di fixture; non dimostra l'installazione di runtime
+Node.js scaricati da upstream. L'esecuzione tramite `rumiai-test` su
+checkout tecnici non equivale alla preparazione e all'evidenza formale
+del target `rumiai-os` tramite `rumiai-validate`.
+
 ## CLI iniziale
 
 La CLI canonica iniziale è:
