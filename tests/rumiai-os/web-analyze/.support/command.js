@@ -796,6 +796,8 @@ async function main()
     const pwa = JSON.parse(fs.readFileSync(pwaPath, 'utf8'));
     assert.equal(pwa.scope, 'observed-offline-pwa-resource-provenance');
     assert.equal(pwa.policy, 'no-navigation-no-refetch');
+    assert.equal(pwa.correlation,
+      'exact-resource-url-only; request identity not inferred');
     assert.equal(pwa.sources['resources-at-rest'].status, 'saved');
     assert.equal(pwa.sources['network-details-at-rest'].status, 'saved');
     assert.equal(fs.statSync(pwaPath).mode & 0o777, 0o600,
