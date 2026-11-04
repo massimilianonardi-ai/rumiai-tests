@@ -83,6 +83,8 @@ from pathlib import Path
 from urllib.parse import parse_qs
 import base64
 import json
+import hashlib
+import hmac
 import ssl
 import sys
 import time
@@ -146,6 +148,42 @@ class Handler(BaseHTTPRequestHandler):
             (args.get("client_id") == ["service"] and
              args.get("client_secret") == ["protected-k04-secret"])
         )
+        if (not client_valid and
+                args.get("client_id") == ["service"] and
+                args.get("client_assertion_type") ==
+                ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"] and
+                len(args.get("client_assertion", [])) == 1):
+            try:
+                assertion = args["client_assertion"][0]
+                head, payload, signature = assertion.split(".")
+                decode = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+                header = json.loads(decode(head))
+                body_claims = json.loads(decode(payload))
+                expected_signature = base64.urlsafe_b64encode(
+                    hmac.new(b"protected-k04-secret",
+                             (head + "." + payload).encode("ascii"),
+                             hashlib.sha256).digest()
+                ).rstrip(b"=").decode("ascii")
+                now = int(time.time())
+                client_valid = (
+                    header.get("alg") == "HS256" and
+                    header.get("typ") == "JWT" and
+                    hmac.compare_digest(signature, expected_signature) and
+                    body_claims.get("iss") == "service" and
+                    body_claims.get("sub") == "service" and
+                    body_claims.get("aud") ==
+                    "https://127.0.0.1:" + str(self.server.server_port) + "/realms/master" and
+                    isinstance(body_claims.get("jti"), str) and
+                    len(body_claims["jti"]) >= 16 and
+                    isinstance(body_claims.get("iat"), int) and
+                    isinstance(body_claims.get("nbf"), int) and
+                    isinstance(body_claims.get("exp"), int) and
+                    now - 5 <= body_claims["iat"] <= now + 5 and
+                    body_claims["nbf"] <= now and
+                    now < body_claims["exp"] <= now + 60
+                )
+            except (ValueError, TypeError, KeyError, UnicodeError):
+                client_valid = False
         if not client_valid:
             # Exercise both Keycloak-observed 401 unauthorized_client (Basic)
             # and conventional invalid_client (form-client authentication).
@@ -278,6 +316,31 @@ acquire()
     --token-store "$3" --ca-file "$tmp/server.pem"
 }
 
+# K04 signed client assertion uses protected HS256 client-secret-jwt. The
+# server independently verifies signature, iss/sub/aud, time and jti.
+result=$(acquire client-secret-jwt "$tmp/secret" "$tmp/jwt-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+  [ -f "$tmp/jwt-store" ] ||
+  fail "HS256 client-secret-jwt grant failed ($status)"
+[ "$(jq -r '.access_token' "$tmp/jwt-store")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+  fail 'HS256 client-secret-jwt store does not contain provider token'
+[ "$(LC_ALL=C ls -ld "$tmp/jwt-store" | cut -c 1-10)" = '-rw-------' ] ||
+  fail 'HS256 client-secret-jwt token store is not private'
+grep -F 'protected-k04-secret' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'HS256 client JWT secret escaped in arguments or diagnostics'
+grep -F 'eyJhbGciOiJIUzI1Ni' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'HS256 signed assertion escaped in arguments or diagnostics'
+printf '%s\n' 'wrong-hmac-secret' > "$tmp/jwt-wrong-secret"
+chmod 600 "$tmp/jwt-wrong-secret"
+result=$(acquire client-secret-jwt "$tmp/jwt-wrong-secret" "$tmp/jwt-rejected" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 71 ] && [ -z "$result" ] && [ ! -e "$tmp/jwt-rejected" ] ||
+  fail "HS256 wrong client assertion secret was accepted ($status)"
+grep -F 'wrong-hmac-secret' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'negative HS256 client JWT secret escaped in argv or diagnostics'
+
 result=$(acquire client-secret-basic "$tmp/secret" "$tmp/basic-store" 2>"$tmp/err")
 status=$?
 [ "$status" -eq 0 ] && [ "$result" = \
@@ -309,6 +372,11 @@ introspect()
     --client-id service --client-auth "$2" \
     --client-secret-file "$3" --ca-file "$tmp/server.pem"
 }
+result=$(introspect "$tmp/jwt-store" client-secret-jwt "$tmp/secret" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+  fail "HS256 client-secret-jwt introspection failed ($status)"
 result=$(introspect "$tmp/basic-store" client-secret-basic "$tmp/secret" 2>"$tmp/err")
 status=$?
 [ "$status" -eq 0 ] &&
