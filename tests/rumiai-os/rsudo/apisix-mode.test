@@ -55,7 +55,7 @@ cat > "$tmp/bin/luajit" <<'LUAJIT_FIXTURE'
 #!/bin/sh
 # External LuaJIT boundary. The real parser is intentionally not simulated.
 [ "$#" -eq 2 ] && [ "$1" = "-e" ] || exit 70
-printf '%s\n' 'standalone-file-yaml'
+printf '%s\n' "${APISIX_MODE_RESULT:-standalone-file-yaml}"
 LUAJIT_FIXTURE
 chmod 700 -- "$tmp/bin/luajit" || error 'cannot make fixture executable'
 
@@ -72,7 +72,11 @@ rsudo()
   "$@"
 }
 
-rsudo_mod_apisix_mode "$@"
+case "${APISIX_TEST_OPERATION:-mode}" in
+  mode) rsudo_mod_apisix_mode "$@";;
+  inspect) rsudo_mod_apisix_inspect "$@";;
+  *) exit 83;;
+esac
 PROBE
 chmod 700 -- "$tmp/bin/rsudo-apisix-mode-probe" || error 'cannot make probe executable'
 
@@ -106,5 +110,34 @@ status=$?
 result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe "$tmp/home" relative.yaml 2>"$tmp/error")
 status=$?
 [ "$status" -ne 0 ] || fail 'relative config path unexpectedly accepted'
+
+
+# Inspection must report configured evidence explicitly and must not suggest
+# that reading an on-disk configuration verified the live APISIX process.
+result=$(APISIX_TEST_OPERATION=inspect PATH="$tmp/bin:$PATH" "$root/m" \
+  rsudo-apisix-mode-probe "$tmp/home" "$tmp/home/conf/config.yaml" 2>"$tmp/error")
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/error" >&2
+  fail "read-only inspection failed with status $status"
+}
+expected=$(printf '%s\n' \
+  'configured_mode=standalone-file-yaml' \
+  'configuration_evidence=on-disk' \
+  'runtime_identity=unverified' \
+  'mutation_readiness=not-established')
+[ "$result" = "$expected" ] ||
+  fail 'inspection must distinguish configured mode from live runtime evidence'
+
+# A transport boundary yielding an unexpected backend cannot become a
+# successful inspection result or permission to mutate APISIX.
+result=$(APISIX_TEST_OPERATION=inspect APISIX_MODE_RESULT=unexpected-provider \
+  PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe \
+  "$tmp/home" "$tmp/home/conf/config.yaml" 2>"$tmp/error")
+status=$?
+[ "$status" -eq 22 ] || fail "unexpected backend status is $status, expected 22"
+[ -z "$result" ] || fail 'unexpected backend produced inspection output'
+grep -F 'inspect-unrecognized-backend' "$tmp/error" >/dev/null ||
+  fail 'unknown backend did not emit branch-specific diagnostic'
 
 printf '%s\n' "$TEST_ID: PASS"
