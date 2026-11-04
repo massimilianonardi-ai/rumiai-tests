@@ -1,0 +1,110 @@
+#!/bin/sh
+# Protects the transitional rsudo APISIX configured-mode public interface,
+# read-only transport and fail-closed source-selection boundaries.
+# The LuaJIT fixture is an external dependency boundary: this does NOT validate
+# APISIX's real YAML parser, effective runtime configuration or live process.
+
+TEST_ID=rumiai-os/rsudo/apisix-mode.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in
+    */*) :;;
+    *) self=$(command -v "$self" 2>/dev/null) || return 1;;
+  esac
+  self_dir=${self%/*}
+  [ "$self_dir" != "$self" ] || self_dir=.
+  CDPATH= cd -- "$self_dir" 2>/dev/null && pwd -P
+}
+
+cleanup()
+{
+  [ -z "${tmp-}" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+test_dir=$(resolve_test_dir) || error 'cannot resolve test location'
+suite_root=${test_dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) :;;
+  1) skip 'target checkout not found';;
+  2) fail 'invalid explicitly selected checkout';;
+  *) error 'target resolution failed';;
+esac
+
+library=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
+[ -f "$library" ] && [ ! -x "$library" ] || fail 'APISIX module absent or executable'
+[ -f "$manual" ] || fail 'APISIX library manual missing'
+grep -F 'rsudo_mod_apisix_mode' "$manual" >/dev/null ||
+  fail 'APISIX manual missing configured-mode public function'
+command -p sh -n "$library" || fail 'APISIX library shell syntax invalid'
+
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-mode-$$
+umask 077
+mkdir -p -- "$tmp/bin" "$tmp/home/conf" || error 'cannot create isolated boundary fixture'
+: > "$tmp/home/conf/config.yaml"
+cat > "$tmp/bin/luajit" <<'LUAJIT_FIXTURE'
+#!/bin/sh
+# External LuaJIT boundary. The real parser is intentionally not simulated.
+[ "$#" -eq 2 ] && [ "$1" = "-e" ] || exit 70
+printf '%s\n' 'standalone-file-yaml'
+LUAJIT_FIXTURE
+chmod 700 -- "$tmp/bin/luajit" || error 'cannot make fixture executable'
+
+cat > "$tmp/bin/rsudo-apisix-mode-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+
+# Interposes only the remote SSH/sudo boundary. The real module sources the
+# actual static remote program and this fixture executes it with the real sh.
+rsudo()
+{
+  "$@"
+}
+
+rsudo_mod_apisix_mode "$@"
+PROBE
+chmod 700 -- "$tmp/bin/rsudo-apisix-mode-probe" || error 'cannot make probe executable'
+
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe "$tmp/home" 2>"$tmp/error")
+status=$?
+[ "$status" -eq 0 ] || {
+  cat "$tmp/error" >&2
+  fail "mode discovery read-only path failed with status $status"
+}
+[ "$result" = 'standalone-file-yaml' ] ||
+  fail 'mode discovery did not propagate configured backend'
+
+# Custom configuration selection must bypass profile ambiguity and not expose
+# arbitrary YAML contents on stdout.
+: > "$tmp/home/conf/config-extra.yaml"
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe "$tmp/home" 2>"$tmp/error")
+status=$?
+[ "$status" -ne 0 ] || fail 'ambiguous profile accepted without override'
+grep -F 'apisix.mode.profile-config-ambiguous' "$tmp/error" >/dev/null ||
+  fail 'missing specific profile ambiguity diagnostic'
+
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe "$tmp/home" "$tmp/home/conf/config.yaml" 2>"$tmp/error")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = standalone-file-yaml ] ||
+  fail 'explicit selected-config override failed'
+
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe relative 2>"$tmp/error")
+status=$?
+[ "$status" -ne 0 ] || fail 'relative home path unexpectedly accepted'
+
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-mode-probe "$tmp/home" relative.yaml 2>"$tmp/error")
+status=$?
+[ "$status" -ne 0 ] || fail 'relative config path unexpectedly accepted'
+
+printf '%s\n' "$TEST_ID: PASS"
