@@ -766,6 +766,11 @@ async function main()
       assert(responseIndex.some(item => item.status === 'saved' && item.url?.endsWith(name)),
         'missing downloaded resource ' + name);
     assert(fs.readFileSync(path.join(capture, 'FLOWS.md'), 'utf8').includes('flowchart TD'));
+    const scriptsReport = fs.readFileSync(path.join(capture, 'SCRIPTS.md'), 'utf8');
+    assert(scriptsReport.includes('WebAssembly') &&
+      scriptsReport.includes('Archive kind') &&
+      scriptsReport.includes('rest/source-maps/index.json'),
+      'human-readable script report omitted binary/text distinction or map index');
     const scriptIndex = fs.readFileSync(path.join(capture, 'scripts.jsonl'), 'utf8');
     assert(scriptIndex.includes('"status":"saved"'), 'compiled JS not recorded');
     const scriptRows = scriptIndex.trim().split('\n').map(JSON.parse);
