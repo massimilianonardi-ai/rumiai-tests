@@ -194,13 +194,13 @@ status=$?
 # A single newline is not sufficient when binary/control bytes are present.
 # Some POSIX read implementations discard NUL; the production byte-count
 # check must reject what curl would otherwise read from the header file.
-printf 'X-API-KEY: correct\\000\\n' > "$tmp/admin-header"
+printf 'X-API-KEY: correct\000\n' > "$tmp/admin-header"
 result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
 status=$?
 [ "$status" -eq 49 ] && [ -z "$result" ] ||
   fail 'credential file with embedded NUL was not rejected'
 
-printf 'X-API-KEY: correct\\nX-Extra: injected\\n' > "$tmp/admin-header"
+printf 'X-API-KEY: correct\nX-Extra: injected\n' > "$tmp/admin-header"
 result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
 status=$?
 [ "$status" -eq 49 ] && [ -z "$result" ] ||
