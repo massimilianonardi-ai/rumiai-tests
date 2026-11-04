@@ -194,8 +194,10 @@ acquire()
 result=$(acquire client-secret-basic "$tmp/secret" "$tmp/basic-store" 2>"$tmp/err")
 status=$?
 [ "$status" -eq 0 ] && [ "$result" = \
-  '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+  '{"stored":true,"grant":"client_credentials","server_validated":false}' ] || {
+  cat "$tmp/err" >&2
   fail "Basic client credentials did not store token ($status)"
+}
 [ "$(jq -r '.access_token' "$tmp/basic-store")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
   fail 'Basic token store missing provider content'
 [ ! -L "$tmp/basic-store" ] || fail 'token store created as symlink'
@@ -240,6 +242,29 @@ status=$?
   fail 'world-readable secret not rejected'
 chmod 600 "$tmp/secret"
 printf 'protected-k04-secret\n' > "$tmp/secret"
+
+# Reject untrusted TLS certificates without an explicit CA or system trust.
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service \
+  --client-auth client-secret-basic --client-secret-file "$tmp/secret" \
+  --token-store "$tmp/untrusted-tls" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 75 ] && [ ! -e "$tmp/untrusted-tls" ] ||
+  fail "TLS trust bypass or misclassified certificate error ($status)"
+
+chmod 644 "$tmp/basic-store"
+result=$(probe status --token-file "$tmp/basic-store" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail 'world-readable access token store was accepted'
+chmod 600 "$tmp/basic-store"
+
+ln -s "$tmp/basic-store" "$tmp/token-symlink" ||
+  error 'cannot construct symlink case'
+result=$(probe status --token-file "$tmp/token-symlink" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail 'token-store symlink was accepted'
 
 result=$(probe acquire --server "$base" --issuer-realm other \
   --auth-mode client-credentials --client-id service \
