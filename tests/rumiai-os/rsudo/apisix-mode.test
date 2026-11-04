@@ -75,6 +75,7 @@ rsudo()
 case "${APISIX_TEST_OPERATION:-mode}" in
   mode) rsudo_mod_apisix_mode "$@";;
   inspect) rsudo_mod_apisix_inspect "$@";;
+  runtime) rsudo_mod_apisix_runtime "$@";;
   *) exit 83;;
 esac
 PROBE
@@ -139,5 +140,18 @@ status=$?
 [ -z "$result" ] || fail 'unexpected backend produced inspection output'
 grep -F 'inspect-unrecognized-backend' "$tmp/error" >/dev/null ||
   fail 'unknown backend did not emit branch-specific diagnostic'
+
+
+# Runtime observation runs through the real m/module with rsudo replaced by
+# local sh. A missing PID file is an observation, not a stopped-service claim.
+: > "$tmp/home/conf/nginx.conf"
+mkdir -p -- "$tmp/home/logs" || error 'cannot create nginx fixture'
+result=$(APISIX_TEST_OPERATION=runtime PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-mode-probe "$tmp/home" 2>"$tmp/error")
+status=$?
+expected=$(printf '%s\n' 'runtime_evidence=pidfile-missing' \
+  'runtime_identity=unverified' 'mutation_readiness=not-established')
+[ "$status" -eq 0 ] && [ "$result" = "$expected" ] ||
+  fail 'runtime missing-PID evidence did not remain unverified'
 
 printf '%s\n' "$TEST_ID: PASS"
