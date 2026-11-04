@@ -391,6 +391,7 @@ async function main()
       'states/dom-rest-initial.html', 'states/dom-rest-initial.json',
       'states/dom-rest-final.html', 'states/dom-rest-final.json',
       'rest/manifest.json', 'rest/security/index.json',
+       'rest/worker-provenance/index.json',
        'rest/pwa-resources/index.json', 'rest/page.mhtml',
       'rest/targets/target-000/dom-tree.json',
       'rest/targets/target-000/dom-snapshot.json',
@@ -449,6 +450,13 @@ async function main()
     assert.deepEqual(securityCommands.map(entry => entry.packet.method), [],
       'passive HTTP capture must neither change certificate handling nor ' +
       'request a TLS chain from a non-HTTPS origin');
+    assert(!parsedWire.some(entry => entry.direction === 'outbound' &&
+      ['ServiceWorker.startWorker','ServiceWorker.stopWorker',
+        'ServiceWorker.stopAllWorkers','ServiceWorker.unregister',
+        'ServiceWorker.updateRegistration','ServiceWorker.skipWaiting',
+        'ServiceWorker.deliverPushMessage','ServiceWorker.setForceUpdateOnPageLoad']
+        .includes(entry.packet.method)),
+      'passive worker inventory must never change registration or worker state');
     assert(!parsedWire.some(entry => entry.direction === 'outbound' &&
       ['Page.getResourceContent','Page.navigateToHistoryEntry',
         'Page.reload'].includes(entry.packet.method)),
@@ -805,6 +813,47 @@ async function main()
       assert(secondary.frame.bucketNames.executionTargetId,
         'secondary execution target provenance missing');
     }
+    const workerProvenancePath = path.join(capture,
+      'rest/worker-provenance/index.json');
+    const workerProvenance = JSON.parse(fs.readFileSync(workerProvenancePath,'utf8'));
+    assert.equal(workerProvenance.scope,
+      'observed-worker-frame-and-registration-provenance');
+    assert.equal(workerProvenance.phase,'rest-before-automated-input');
+    assert.equal(workerProvenance.source.status,'saved');
+    assert(workerProvenance.source.records > 0);
+    assert.equal(workerProvenance.targetGraphs.initial,'saved');
+    assert.equal(workerProvenance.targetGraphs.final,'saved');
+    assert(workerProvenance.workers.some(item =>
+      item.type === 'worker' && item.targetId === workerTarget.targetId),
+      'dedicated worker target was lost in provenance graph');
+    assert(workerProvenance.workers.some(item => item.type === 'service_worker'),
+      'service worker target was omitted from provenance graph');
+    assert(workerProvenance.frames.some(item =>
+      item.url?.endsWith('/child.html') && item.frameId),
+      'observed child frame navigation missing from CDP provenance index');
+    if (hasMethod('ServiceWorker','enable'))
+    {
+      const observedPage = workerProvenance.subscriptions.find(item =>
+        item.targetId === mainCoverageTarget.targetId);
+      assert(observedPage && observedPage.status === 'enabled',
+        'supported ServiceWorker observer did not enable on actual browser page');
+      const registrations = workerProvenance.registrations.filter(item =>
+        item.scopeURL?.includes('127.0.0.1'));
+      assert(registrations.length,
+        'real service worker registration update not observed in CDP ledger');
+      assert(workerProvenance.versions.some(item =>
+        item.scriptURL?.endsWith('/service-worker.js') &&
+        item.registrationObserved && item.versionId),
+        'real worker version was not correlated with its observed registration');
+    }
+    else assert(workerProvenance.limitations.some(message =>
+      message.includes('observer not enabled')),
+    'unsupported observer should appear as a partial outcome');
+    assert.equal(fs.statSync(workerProvenancePath).mode & 0o777,0o600,
+      'private worker and frame provenance must be stored with mode 0600');
+    assert(rest.artifacts.some(item => item.name === 'worker-provenance' &&
+      item.file === 'worker-provenance/index.json'),
+      'worker provenance must be registered in the rest manifest');
     const partitionPath = path.join(capture,
       'rest/targets/target-000/storage-partitions/index.json');
     const partitions = JSON.parse(fs.readFileSync(partitionPath, 'utf8'));
@@ -1191,6 +1240,10 @@ async function main()
       item.file === 'rest/security/index.json' &&
       item.status !== 'failed'),
       'frame/transport security index must be independently audited');
+    assert(integrity.artifacts.some(item =>
+      item.file === 'rest/worker-provenance/index.json' &&
+      item.status !== 'failed'),
+      'worker and frame provenance index must be independently SHA-256 audited');
     assert(integrity.artifacts.some(item =>
       item.file === 'rest/pwa-resources/index.json' &&
       item.status !== 'failed'),
