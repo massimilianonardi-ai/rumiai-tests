@@ -345,22 +345,30 @@ DRIFTED_CONFIG
   # live association only, not generic host or controller ownership.
   pid=$(docker exec "$cid" cat /usr/local/apisix/logs/nginx.pid) ||
     error 'cannot read custom -c master PID'
+  printf '%s\n' "$observed" | grep -Fx "process_pid=$pid" >/dev/null ||
+    fail 'runtime observation PID differs from custom -c master PID'
   docker exec "$cid" sh -c 'kill -TERM "$1"' sh "$pid" ||
     error 'cannot terminate disposable custom -c master'
   tries=0
   while [ "$tries" -lt 15 ]
   do
+    # A removed listener causes the /dev/tcp connect to fail with status 70;
+    # do not accept arbitrary HTTP 4xx/5xx or test-driver failures as proof.
     code=$(http_status /apisix/admin/configs correct)
     status=$?
-    if [ "$status" -ne 0 ] || [ "$code" != 200 ]
+    if [ "$status" -eq 70 ]
     then
+      [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] ||
+        error 'container stopped before listener observation completed'
       break
     fi
+    [ "$status" -eq 0 ] ||
+      error "post-termination HTTP fixture returned unexpected status $status"
     tries=$((tries + 1))
     sleep 1
   done
   [ "$tries" -lt 15 ] ||
-    fail 'Admin listener remained active after its observed master terminated'
+    fail 'Admin listener accepted connections after its observed master terminated'
 
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove custom -c APISIX'
