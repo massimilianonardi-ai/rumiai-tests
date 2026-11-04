@@ -17,9 +17,11 @@ resolve_test_dir()
 }
 
 cid=
+other_cid=
 tmp=
 cleanup()
 {
+  [ -z "$other_cid" ] || docker rm -f "$other_cid" >/dev/null 2>&1 || :
   [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
   [ -z "$tmp" ] || rm -rf -- "$tmp"
 }
@@ -64,7 +66,10 @@ rsudo()
 {
   # Both paths execute the real product's static remote program in the
   # selected APISIX namespace. Only the rsudo SSH/sudo transport is replaced.
-  if [ "$1" = docker ]
+  if [ "${APISIX_TEST_HOST_CONTEXT:-}" = 1 ]
+  then
+    "$@"
+  elif [ "$1" = docker ]
   then
     shift
     docker "$@"
@@ -79,8 +84,8 @@ chmod 700 -- "$tmp/bin/rsudo-apisix-runtime-live-probe" ||
 
 probe()
 {
-  APISIX_TEST_CONTAINER="$cid" PATH="$tmp/bin:$PATH" \
-    "$root/m" rsudo-apisix-runtime-live-probe "$@"
+  APISIX_TEST_CONTAINER="$cid" APISIX_TEST_HOST_CONTEXT="${APISIX_TEST_HOST_CONTEXT:-}" \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-runtime-live-probe "$@"
 }
 
 for image in $images
@@ -138,6 +143,55 @@ do
   [ "$result" = "$expected" ] ||
     fail 'real process observation did not preserve runtime-identity limitations'
 
+  # No operands should discover one conventional Docker installation through
+  # real Docker manager evidence and revalidate the master in its namespace.
+  # The host-scoped probe is the only external rsudo boundary substitution.
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  automatic_expected=$(printf '%s\n' \
+    'discovery_evidence=unique-conventional-candidate' \
+    'discovered_scope=docker' "container_id=$cid" "$expected")
+  [ "$status" -eq 0 ] && [ "$result" = "$automatic_expected" ] || {
+    cat "$tmp/stderr" >&2
+    fail 'automatic single-container APISIX observation did not match the verified master'
+  }
+
+  # Two real running APISIX installations must fail as ambiguous; the
+  # resolver may not choose the first docker ps entry.
+  other_cid=$(docker run -d --network none --cap-drop ALL \
+    --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    -e APISIX_STAND_ALONE=true "$image") ||
+    error 'cannot start second isolated APISIX candidate'
+  [ -n "$other_cid" ] || error 'second APISIX container ID missing'
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    if docker exec "$other_cid" sh -c \
+      'test -s /usr/local/apisix/logs/nginx.pid && test -r /usr/local/apisix/conf/nginx.conf' \
+      >/dev/null 2>&1
+    then
+      break
+    fi
+    [ "$(docker inspect -f '{{.State.Running}}' "$other_cid" 2>/dev/null)" = true ] ||
+      error 'second APISIX container stopped before master startup'
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || fail 'second APISIX master did not become observable'
+
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 49 ] && [ -z "$result" ] || \
+    fail 'ambiguous APISIX containers were not rejected'
+  grep -Fx 'apisix.runtime.candidates-ambiguous' "$tmp/stderr" >/dev/null ||
+    fail 'missing specific multiple-candidate diagnostic'
+
+  docker rm -f "$other_cid" >/dev/null 2>&1 ||
+    error 'cannot remove second disposable APISIX'
+  other_cid=
+
   # The optional full-ID selector enters the exact same container via the
   # remote manager path, then executes the unmodified product shell program.
   result=$(probe /usr/local/apisix "$cid" 2>"$tmp/stderr")
@@ -186,6 +240,13 @@ do
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove isolated APISIX container'
   cid=
+
+  # No conventional host/container candidate is observable in the isolated
+  # runner after removing all scenario-owned gateways.
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 48 ] && [ -z "$result" ] || \
+    fail 'automatic runtime discovery falsely selected a removed APISIX'
 done
 
-printf '%s\n' "$TEST_ID: PASS (two real APISIX masters, no real rsudo)"
+printf '%s\n' "$TEST_ID: PASS (two real APISIX releases, unique/ambiguous/absent automatic discovery)"
