@@ -394,6 +394,10 @@ async function main()
       'nested shadow subtree missing from private mutation history');
     assert(history.some(item => item.detail.documentURL?.endsWith('/frame.html')),
       'same-origin frame mutation chronology missing');
+    assert(history.some(item => item.detail.documentURL?.endsWith('/child.html')),
+      'cross-origin iframe mutation chronology missing');
+    assert(history.some(item => item.frameId),
+      'DOM history lacks individual frame identifiers');
     assert(history.every(item => !!item.targetId && item.executionContextId > 0),
       'DOM history lacks CDP execution-context provenance');
     const atRestHistory = fs.readFileSync(path.join(capture,
@@ -633,6 +637,12 @@ async function main()
       'best-effort resting DOM must still be saved at timeout');
     assert(fs.readFileSync(path.join(continuousRun, 'LIMITATIONS.md'), 'utf8')
       .includes('States without confirmed settlement'), 'timeout not disclosed in report');
+    const continuousHistory = fs.readFileSync(path.join(continuousRun,
+      'dom-mutations.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    assert(continuousHistory.some(item => item.detail.type === 'mutation-batch' &&
+      item.detail.records.some(record => record.type === 'childList' ||
+        record.type === 'characterData')),
+      'continuous DOM history must retain mutations even if settlement fails');
 
     // A page-driven navigation to a different site is observation, not a
     // simulated click: preserve the old request's outcome and new response.
