@@ -367,6 +367,30 @@ EOF_SSH_CONFIG
   [ "$status" -eq 72 ] && [ -z "$result" ] ||
     fail "Keycloak $version invalid user password not rejected ($status)"
 
+  # Refresh the user session through the composed m/rsudo/SSH/sudo path.
+  # Credentials and token bytes stay in protected files on the SSH target.
+  result=$(probe refresh --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-service \
+    --client-auth client-secret-post \
+    --client-secret-file /root/keycloak/secret \
+    --token-file "/root/keycloak/user-$version" \
+    --token-store "/root/keycloak/user-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version composed SSH refresh failed ($status)"
+  docker exec "$ssh_container" sh -c \
+    "test \"\$(stat -c %a /root/keycloak/user-$version)\" = 600 &&
+     jq -e '.refresh_token | type == \"string\" and length > 0' /root/keycloak/user-$version >/dev/null &&
+     test ! -e /root/keycloak/user-$version.keycloak-refresh-lock" ||
+    fail "Keycloak $version composed refresh store/lock unsafe"
+  for marker in k04-disposable-client-secret k04-only-ssh-password '"access_token"'
+  do
+    grep -F "$marker" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version composed refresh leaked confidential data"
+  done
+
   # The new K04 revocation operation must cross the same real SSH/sudo
   # boundary; the protected refresh token is read only on the remote host.
   result=$(probe revoke --server https://127.0.0.1:8443 \
@@ -399,6 +423,17 @@ EOF_SSH_CONFIG
   [ "$refresh_http" = 400 ] &&
     jq -e '.error == "invalid_grant"' "$tmp/revoked-refresh-response" >/dev/null ||
     fail "Keycloak $version revoked remote refresh token remained refreshable ($refresh_http)"
+
+  result=$(probe refresh --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-service \
+    --client-auth client-secret-basic \
+    --client-secret-file /root/keycloak/secret \
+    --token-file "/root/keycloak/user-$version" \
+    --token-store "/root/keycloak/user-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 72 ] && [ -z "$result" ] ||
+    fail "Keycloak $version composed revoked refresh did not fail closed ($status)"
 
   result=$(probe revoke --server https://127.0.0.1:8443 \
     --issuer-realm master --client-id k04-service \
