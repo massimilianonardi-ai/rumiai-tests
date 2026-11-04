@@ -714,6 +714,13 @@ async function main()
 
     const {auditWebAnalyzeEvidence} = require(path.join(root,
       'lib/sys/js/web-analyze-rest.lib.js'));
+    const interruptedAudit = auditWebAnalyzeEvidence(capture,
+      {interrupted:true});
+    assert.equal(interruptedAudit.status, 'interrupted',
+      'explicitly interrupted validation must not be reported as saved');
+    assert(interruptedAudit.domains.some(item =>
+      item.domain === 'capture' && item.status === 'interrupted'),
+      'interruption reason missing from domain-level coverage');
     const binaryFile = path.join(capture, large.file);
     fs.writeFileSync(binaryFile, Buffer.from('modified artifact'));
     let tampered = auditWebAnalyzeEvidence(capture);
