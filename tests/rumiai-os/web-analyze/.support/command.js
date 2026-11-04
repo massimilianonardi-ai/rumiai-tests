@@ -853,12 +853,15 @@ async function main()
       'rest/optional-domains/index.json');
     const optional = JSON.parse(fs.readFileSync(optionalPath,'utf8'));
     assert.equal(optional.scope,'installed-browser-passive-optional-CDP-domains');
-    assert.equal(optional.policy,'selective-passive-animation-media-webaudio-observers');
+    assert.equal(optional.policy,
+      'selective-passive-animation-media-webaudio-and-network-reporting-observers');
     assert.equal(optional.protocolStatus,'saved',
       'installed Chromium protocol should be the source of capability claims');
     assert.equal(optional.source.status,'saved');
     assert.equal(optional.source.invalidPackets,0);
-    assert.equal(optional.domains.length,10);
+    assert.equal(optional.domains.length,9);
+    assert(!optional.domains.some(item => item.domain === 'ReportingAPI'),
+      'Reporting API must not be represented as a separate CDP domain');
     for (const domain of optional.domains)
     {
       const declared = protocol.domains.find(item => item.domain === domain.domain);
@@ -911,6 +914,67 @@ async function main()
         }
       }
     }
+    const networkProtocol = protocol.domains.find(item =>
+      item.domain === 'Network');
+    const feature = optional.features?.reportingApi;
+    assert(feature, 'Network Reporting API feature coverage missing');
+    assert.equal(feature.cdpDomain,'Network');
+    assert.equal(feature.method,'enableReportingApi');
+    assert.equal(feature.passiveObserverRequested,true);
+    const reportingAvailable = !!networkProtocol?.commands?.some(item =>
+      item.name === 'enableReportingApi');
+    assert.equal(feature.methodAvailable,reportingAvailable,
+      'Reporting API method support must be read from Network schema');
+    assert.deepEqual(feature.eventsAvailable,
+      ['reportingApiReportAdded','reportingApiReportUpdated',
+        'reportingApiEndpointsChangedForOrigin'].filter(name =>
+        networkProtocol?.events?.some(item => item.name === name)),
+      'Reporting API event support must be read from Network schema');
+    const reportingEvents = new Set(['Network.reportingApiReportAdded',
+      'Network.reportingApiReportUpdated',
+      'Network.reportingApiEndpointsChangedForOrigin']);
+    const observedReporting = parsedWire.filter(item =>
+      item.direction === 'inbound' &&
+      reportingEvents.has(item.packet.method));
+    const enabledReporting = parsedWire.filter(item =>
+      item.direction === 'outbound' &&
+      item.packet.method === 'Network.enableReportingApi');
+    assert.equal(feature.inboundEvents,observedReporting.length,
+      'Reporting API event totals differ from native CDP evidence');
+    assert.equal(feature.outboundCommands,enabledReporting.length,
+      'Reporting API subscription totals differ from native CDP evidence');
+    for (const method of reportingEvents)
+    {
+      const name = method.slice('Network.'.length);
+      const count = observedReporting.filter(item =>
+        item.packet.method === method).length;
+      assert.equal(feature.observedEvents[name] || 0,count,
+        'Reporting API event provenance differs for ' + method);
+    }
+    assert(enabledReporting.every(item => item.packet.params?.enable === true),
+      'Reporting API observer must only enable passive notifications');
+    if (reportingAvailable)
+    {
+      assert(enabledReporting.length > 0,
+        'supported Network.enableReportingApi was not requested');
+      assert(feature.enabledTargets.includes(mainCoverageTarget.targetId),
+        'main page Reporting API observer not enabled');
+      assert(['observed','enabled-no-event-observed'].includes(feature.status),
+        'missing report events must not be misclassified as unsupported');
+      if (!observedReporting.length)
+        assert.equal(feature.status,'enabled-no-event-observed',
+          'Reporting API with no natural report events is not fully observed');
+    }
+    else
+    {
+      assert.equal(feature.status,'unsupported',
+        'absent Network Reporting API command must remain unsupported');
+      assert.equal(enabledReporting.length,0,
+        'unsupported Reporting API command must not be attempted');
+    }
+    assert(!parsedWire.some(item => item.direction === 'outbound' &&
+      /^Network\.reportingApi/.test(item.packet.method || '')),
+      'observer must not issue synthetic Reporting API commands');
     assert(!parsedWire.some(item => item.direction === 'outbound' &&
       /^(?:Animation|Media|WebAudio)\.(?!enable$)/.test(item.packet.method || '')),
       'optional event observers must never control animation, media or audio graph');
