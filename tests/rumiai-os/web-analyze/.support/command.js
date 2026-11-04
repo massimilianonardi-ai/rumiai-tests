@@ -498,7 +498,9 @@ async function main()
   finally
   {
     server.close();
+    server.closeAllConnections();
     crossServer.close();
+    crossServer.closeAllConnections();
     fs.rmSync(work, {recursive: true, force: true});
   }
 }
