@@ -195,6 +195,19 @@ do
   [ "$create_code" = 201 ] ||
     fail "Keycloak $version rejected service account provisioning ($create_code)"
 
+  # A separate target realm gives a real master-issued, target-scoped
+  # delegated authority test. Keycloak creates a target-realm management
+  # client in master, rather than using realm-management for master itself.
+  printf '%s\n' '{"realm":"k04-target","enabled":true}' > "$tmp/target-realm.json"
+  new_realm_code=$(transport --output "$tmp/new-realm-response" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/target-realm.json" \
+    --url "$base/admin/realms") ||
+    error "Keycloak $version target realm creation failed"
+  [ "$new_realm_code" = 201 ] ||
+    fail "Keycloak $version target realm create HTTP $new_realm_code"
+
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-service \
     --client-auth client-secret-basic \
@@ -322,7 +335,7 @@ do
       --target-realm "$2" --token-file "$1" \
       --ca-file "$tmp/image/server.pem"
   }
-  result=$(admin_probe "$tmp/token-basic-$version" master 2>"$tmp/auth.err")
+  result=$(admin_probe "$tmp/token-basic-$version" k04-target 2>"$tmp/auth.err")
   status=$?
   [ "$status" -eq 80 ] && [ -z "$result" ] ||
     fail "Keycloak $version unauthorised service account Admin GET was not 403 ($status)"
@@ -349,11 +362,11 @@ do
     fail "Keycloak $version service-account user UUID unavailable"
   management_code=$(transport --output "$tmp/mgmt-clients" \
     --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
-    --url "$base/admin/realms/master/clients?clientId=realm-management") ||
+    --url "$base/admin/realms/master/clients?clientId=k04-target-realm") ||
     error "Keycloak $version realm-management lookup failed"
   [ "$management_code" = 200 ] ||
     fail "Keycloak $version realm-management lookup HTTP $management_code"
-  mgmt_uuid=$(jq -er '.[] | select(.clientId == "realm-management") | .id' \
+  mgmt_uuid=$(jq -er '.[] | select(.clientId == "k04-target-realm") | .id' \
     "$tmp/mgmt-clients") ||
     fail "Keycloak $version realm-management internal UUID unavailable"
   role_code=$(transport --output "$tmp/view-realm-role" \
@@ -381,7 +394,7 @@ do
   status=$?
   [ "$status" -eq 0 ] ||
     fail "Keycloak $version delegated-service token acquisition failed ($status)"
-  result=$(admin_probe "$tmp/token-delegated-$version" master 2>"$tmp/auth.err")
+  result=$(admin_probe "$tmp/token-delegated-$version" k04-target 2>"$tmp/auth.err")
   status=$?
   [ "$status" -eq 0 ] &&
     [ "$result" = '{"http_status":200,"authorized":true,"body_suppressed":true}' ] ||
