@@ -60,6 +60,9 @@ deployment:
       - name: test-viewer
         key: rsudo-test-only-never-production
         role: viewer
+      - name: test-admin
+        key: rsudo-admin-test-only-never-production
+        role: admin
     admin_listen:
       ip: 127.0.0.1
       port: 9180
@@ -101,6 +104,7 @@ exec 3<>/dev/tcp/127.0.0.1/9180 || exit 70
 printf '%s %s HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nConnection: close\r\n' "$method" "$path" >&3
 case "$credential_case" in
   correct) printf 'X-API-KEY: rsudo-test-only-never-production\r\n' >&3 ;;
+  admin) printf 'X-API-KEY: rsudo-admin-test-only-never-production\r\n' >&3 ;;
   incorrect) printf 'X-API-KEY: wrong-test-only-credential\r\n' >&3 ;;
   absent) : ;;
   *) exit 71 ;;
@@ -180,16 +184,26 @@ do
       fail "standalone API exposed $resource resource read: HTTP $code"
   done
 
+  # APISIX viewer role grants GET but explicitly denies HEAD.
   code=$(http_status /apisix/admin/configs correct HEAD) ||
-    fail 'standalone HEAD /configs request failed'
+    fail 'viewer HEAD /configs request failed'
+  [ "$code" = 401 ] ||
+    fail "viewer unexpectedly authorized for HEAD /configs: HTTP $code"
+
+  code=$(http_status /apisix/admin/configs admin HEAD) ||
+    fail 'admin HEAD /configs request failed'
   [ "$code" = 200 ] ||
-    fail "standalone HEAD /configs returned HTTP $code"
+    fail "admin HEAD /configs returned HTTP $code"
 
   response=$(http_read /apisix/admin/configs correct) ||
     fail 'standalone GET /configs payload request failed'
   case "$response" in
-    *'"routes_conf_version"'*'"services_conf_version"'*) : ;;
-    *) fail 'standalone config payload lacks versioned resource envelope' ;;
+    *'"routes_conf_version"'*) : ;;
+    *) fail 'standalone config payload lacks routes_conf_version' ;;
+  esac
+  case "$response" in
+    *'"services_conf_version"'*) : ;;
+    *) fail 'standalone config payload lacks services_conf_version' ;;
   esac
 
   code=$(http_status /apisix/admin/configs incorrect) ||
