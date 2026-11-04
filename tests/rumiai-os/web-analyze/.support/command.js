@@ -280,7 +280,7 @@ async function main()
       '/app.js': [app, 'text/javascript'],
       '/background-worker.js': [
         'postMessage("worker-ready");setInterval(()=>{},5000);' +
-          '\\n//# sourceMappingURL=/background-worker.js.map',
+          '\n//# sourceMappingURL=/background-worker.js.map',
         'text/javascript'],
       '/background-worker.js.map': [JSON.stringify(workerMap), 'application/json'],
       '/shared-worker.js': [
