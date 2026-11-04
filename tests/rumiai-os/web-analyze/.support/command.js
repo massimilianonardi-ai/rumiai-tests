@@ -133,7 +133,22 @@ async function main()
 
   const burstStats = {started:0, chunks:0, ended:0, closed:0};
   const crossServer = http.createServer((req, res) => {
+    const endpoint = new URL(req.url, 'http://localhost').pathname;
+    if (endpoint === '/process-payload')
+    {
+      res.setHeader('Content-Type', 'text/plain');
+      res.end('process-ready');
+      return;
+    }
     res.setHeader('Content-Type', 'text/html');
+    if (endpoint === '/process-done')
+    {
+      res.end('<!doctype html><title>Process destination</title>' +
+        '<body><h1>Natural cross-origin navigation</h1>' +
+        '<script>fetch("/process-payload").then(r=>r.text()).then(t=>' +
+        '{document.body.dataset.processReady=t})</script></body>');
+      return;
+    }
     res.end('<!doctype html><title>Cross-origin frame</title>' +
       '<body><p id="cross-origin-content">Independent origin</p></body>');
   });
@@ -141,6 +156,23 @@ async function main()
   const crossUrl = 'http://127.0.0.1:' + crossServer.address().port + '/child.html';
   const server = http.createServer((req, res) => {
     const location = new URL(req.url, 'http://127.0.0.1').pathname;
+    if (location === '/process-start')
+    {
+      const destination = 'http://localhost:' + crossServer.address().port +
+        '/process-done';
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<!doctype html><title>Process origin</title><body>' +
+        '<script>fetch("/before-process").then(r=>r.text()).catch(()=>{});' +
+        'setTimeout(()=>location.href=' + JSON.stringify(destination) +
+        ',700)</script></body>');
+      return;
+    }
+    if (location === '/before-process')
+    {
+      res.setHeader('Content-Type', 'text/plain');
+      setTimeout(() => res.end('late-before-process'), 1300);
+      return;
+    }
     if (location === '/churn')
     {
       res.setHeader('Content-Type', 'text/html');
@@ -521,6 +553,34 @@ async function main()
       'best-effort resting DOM must still be saved at timeout');
     assert(fs.readFileSync(path.join(continuousRun, 'LIMITATIONS.md'), 'utf8')
       .includes('States without confirmed settlement'), 'timeout not disclosed in report');
+
+    // A page-driven navigation to a different site is observation, not a
+    // simulated click: preserve the old request's outcome and new response.
+    const moved = await run([
+      `http://127.0.0.1:${server.address().port}/process-start`, base
+    ]);
+    assert.equal(moved.code, 0,
+      'natural cross-origin navigation capture failed: ' + moved.stderr);
+    const switched = path.dirname(moved.stdout.trim());
+    const switchedState = JSON.parse(fs.readFileSync(path.join(switched,
+      'states/state-000.json'), 'utf8'));
+    assert(switchedState.url.includes('/process-done'),
+      'final site-driven document navigation was not observed');
+    assert(switchedState.html.includes('process-ready'),
+      'final origin script did not consume its response');
+    const changedRequests = fs.readFileSync(path.join(switched,
+      'resources.jsonl'), 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse);
+    assert(changedRequests.some(item => item.status === 'saved' &&
+      item.url?.endsWith('/process-payload')),
+      'post-navigation response was not saved from the new site');
+    assert(changedRequests.some(item =>
+      item.url?.endsWith('/before-process')),
+      'pre-navigation request outcome was silently omitted');
+    const changedWire = fs.readFileSync(path.join(switched,
+      'cdp-wire.jsonl'), 'utf8');
+    assert(changedWire.includes('/process-start') &&
+      changedWire.includes('/process-done'),
+      'site-driven cross-origin navigation was not recorded on CDP wire');
   }
   finally
   {
