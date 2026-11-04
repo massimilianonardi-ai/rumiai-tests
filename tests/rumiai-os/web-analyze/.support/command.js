@@ -402,6 +402,13 @@ async function main()
     assert(parsedWire.some(entry => entry.direction === 'outbound' &&
       entry.packet.method === 'Browser.getVersion'),
       'browser-level CDP commands were not archived');
+    const securityCommands = parsedWire.filter(entry =>
+      entry.direction === 'outbound' && typeof entry.packet.method === 'string' &&
+      (entry.packet.method.startsWith('Security.') ||
+        entry.packet.method === 'Network.getCertificate'));
+    assert.deepEqual(securityCommands.map(entry => entry.packet.method), [],
+      'passive HTTP capture must neither change certificate handling nor ' +
+      'request a TLS chain from a non-HTTPS origin');
     const sent = new Set(parsedWire.filter(entry => entry.direction === 'outbound')
       .map(entry => entry.packet.id));
     assert(parsedWire.some(entry => entry.direction === 'inbound' &&
