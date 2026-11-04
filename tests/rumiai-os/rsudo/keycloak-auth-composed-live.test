@@ -367,6 +367,57 @@ EOF_SSH_CONFIG
   [ "$status" -eq 72 ] && [ -z "$result" ] ||
     fail "Keycloak $version invalid user password not rejected ($status)"
 
+  # The new K04 revocation operation must cross the same real SSH/sudo
+  # boundary; the protected refresh token is read only on the remote host.
+  result=$(probe revoke --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-service \
+    --client-auth client-secret-post \
+    --client-secret-file /root/keycloak/secret \
+    --token-file "/root/keycloak/user-$version" \
+    --token-type-hint refresh_token \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version composed refresh revocation failed ($status)"
+
+  docker exec "$ssh_container" jq -jr '.refresh_token' \
+    "/root/keycloak/user-$version" > "$tmp/revoked-refresh" ||
+    error "Keycloak $version remote refresh-token fixture read failed"
+  [ -s "$tmp/revoked-refresh" ] ||
+    fail "Keycloak $version Direct Grant did not return refresh_token"
+  basic_auth=$(printf 'k04-service:k04-disposable-client-secret' | base64 | tr -d '\r\n') ||
+    error 'cannot construct synthetic client authentication for refresh check'
+  printf 'Authorization: Basic %s\n' "$basic_auth" > "$tmp/revoked-refresh-header"
+  unset basic_auth
+  refresh_http=$(host_https --output "$tmp/revoked-refresh-response" \
+    --write-out '%{http_code}' --header "@$tmp/revoked-refresh-header" \
+    --data-urlencode grant_type=refresh_token \
+    --data-urlencode "refresh_token@$tmp/revoked-refresh" \
+    --url "$host_base/realms/master/protocol/openid-connect/token") ||
+    error "Keycloak $version composed refresh-after-revoke HTTP failed"
+  [ "$refresh_http" = 400 ] &&
+    jq -e '.error == "invalid_grant"' "$tmp/revoked-refresh-response" >/dev/null ||
+    fail "Keycloak $version revoked remote refresh token remained refreshable ($refresh_http)"
+
+  result=$(probe revoke --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-service \
+    --client-auth client-secret-basic \
+    --client-secret-file /root/keycloak/secret \
+    --token-file "/root/keycloak/basic-$version" \
+    --token-type-hint access_token \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"access_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version composed access token revocation failed ($status)"
+
+  for marker in k04-disposable-client-secret k04-only-bootstrap '"access_token"' '"refresh_token"'
+  do
+    grep -F "$marker" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version revocation leaked protected data through SSH/sudo"
+  done
+
   printf '%s: Keycloak %s verified across composed SSH+sudo+HTTPS boundary\n' \
     "$TEST_ID" "$version"
   stop_containers
