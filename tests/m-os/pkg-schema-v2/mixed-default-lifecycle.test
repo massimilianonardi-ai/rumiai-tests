@@ -190,6 +190,9 @@ damaged_direct=1
 if context "pkg=$name@2" >/dev/null 2>&1
 then
   exit 102
+else
+  invalid_context_status=$?
+  [ "$invalid_context_status" -eq 18 ] || exit 110
 fi
 [ "$PATH" = "$before_context" ] || exit 103
 [ "$(command -v "$name")" = "$legacy/cmd/$name" ] || exit 104
