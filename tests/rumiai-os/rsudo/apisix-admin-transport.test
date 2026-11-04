@@ -1,0 +1,194 @@
+#!/bin/sh
+# Real m/product transport and actual curl against a local loopback HTTP server.
+# The replaced boundary is only remote rsudo/SSH/sudo, not HTTP or curl.
+# This does not validate a real APISIX gateway or remote sudo credentials.
+TEST_ID=rumiai-os/rsudo/apisix-admin-transport.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+pid=
+tmp=
+cleanup()
+{
+  if [ -n "$pid" ]; then
+    kill "$pid" 2>/dev/null || :
+    wait "$pid" 2>/dev/null || :
+  fi
+  [ -z "$tmp" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test path unresolved'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'product checkout resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+  0) : ;;
+  1) skip 'product checkout not found' ;;
+  2) fail 'explicit selected product checkout invalid' ;;
+  *) error 'product resolver failed' ;;
+esac
+
+command -v python3 >/dev/null 2>&1 || skip 'python3 loopback HTTP fixture unavailable'
+command -v curl >/dev/null 2>&1 || skip 'curl transport dependency unavailable'
+module=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
+[ -f "$module" ] && [ ! -x "$module" ] && [ -f "$manual" ] ||
+  fail 'current APISIX module/manual missing or executable'
+command -p sh -n "$module" || fail 'APISIX module invalid POSIX syntax'
+grep -F 'rsudo_mod_apisix_admin_read' "$manual" >/dev/null ||
+  fail 'new public transport missing from library manual'
+
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-admin-transport-$$
+umask 077
+mkdir -p -- "$tmp/bin" || error 'temporary fixture unavailable'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture absolute path unresolved'
+
+cat > "$tmp/server.py" <<'PY_SERVER'
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+import sys
+
+KEY = "test-secret-credential-never-in-process-argv"
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+    def do_GET(self):
+        if self.headers.get("X-API-KEY") != KEY:
+            code, body = 401, b'{"error":"unauthorized"}'
+        elif self.path == "/apisix/admin/routes":
+            code, body = 200, b'{"routes":[{"id":"test"}]}'
+        elif self.path == "/apisix/admin/services":
+            code, body = 200, b'{"services":[]}'
+        elif self.path == "/apisix/admin/upstreams":
+            code, body = 200, b'{"upstreams":[]}'
+        else:
+            code, body = 404, b'{"error":"missing"}'
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+httpd = HTTPServer(("127.0.0.1", 0), Handler)
+Path(sys.argv[1]).write_text(str(httpd.server_address[1]))
+httpd.serve_forever()
+PY_SERVER
+
+cat > "$tmp/bin/rsudo-apisix-transport-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  "$@"
+}
+rsudo_mod_apisix_admin_read "$@"
+PROBE
+
+# Make the real curl invocation's argv observable without logging the secret.
+curl_binary=$(command -v curl)
+cat > "$tmp/bin/curl" <<'CURL_WRAPPER'
+#!/bin/sh
+printf '%s\n' "$@" > "$APISIX_CURL_ARGV_LOG"
+exec "$APISIX_CURL_BINARY" "$@"
+CURL_WRAPPER
+chmod 700 -- "$tmp/bin/rsudo-apisix-transport-probe" "$tmp/bin/curl" ||
+  error 'probe/wrapper not executable'
+
+printf 'X-API-KEY: %s\n' 'test-secret-credential-never-in-process-argv' > "$tmp/admin-header"
+chmod 600 -- "$tmp/admin-header" || error 'protected remote header fixture unavailable'
+
+python3 -u "$tmp/server.py" "$tmp/port" > "$tmp/server.out" 2>"$tmp/server.err" &
+pid=$!
+count=0
+while [ ! -s "$tmp/port" ] && [ "$count" -lt 60 ]
+do
+  sleep 0.1
+  count=$((count + 1))
+done
+[ -s "$tmp/port" ] || {
+  cat "$tmp/server.err" >&2
+  error 'HTTP fixture did not start'
+}
+port=$(cat "$tmp/port") || error 'cannot read fixture port'
+
+probe()
+{
+  APISIX_CURL_ARGV_LOG="$tmp/argv" APISIX_CURL_BINARY="$curl_binary" \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-transport-probe "$@"
+}
+
+result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"routes":[{"id":"test"}]}' ] ||
+  fail "legitimate route GET failed (status $status)"
+grep -F 'test-secret-credential-never-in-process-argv' "$tmp/argv" >/dev/null &&
+  fail 'secret was placed in curl argv'
+grep -F '@' "$tmp/argv" >/dev/null ||
+  fail 'credential header not loaded from remote file'
+grep -F 'test-secret-credential-never-in-process-argv' "$tmp/stderr" >/dev/null &&
+  fail 'secret was leaked to diagnostics'
+
+result=$(probe services "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"services":[]}' ] ||
+  fail 'service GET failed'
+result=$(probe upstreams "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"upstreams":[]}' ] ||
+  fail 'upstream GET failed'
+
+printf 'X-API-KEY: %s\n' incorrect-secret > "$tmp/admin-header"
+result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 22 ] && [ -z "$result" ] ||
+  fail 'HTTP 401 did not propagate curl failure without response-body leak'
+
+chmod 644 -- "$tmp/admin-header"
+result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 48 ] && [ -z "$result" ] ||
+  fail 'group/world readable key file was not rejected'
+
+chmod 600 -- "$tmp/admin-header"
+printf '%s\n' 'Authorization: Bearer bad' > "$tmp/admin-header"
+result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 49 ] && [ -z "$result" ] ||
+  fail 'wrong header type was not rejected'
+
+result=$(probe unknown "$tmp/admin-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 45 ] && [ -z "$result" ] ||
+  fail 'unknown resource was not rejected'
+result=$(probe routes "$tmp/admin-header" not-a-port 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 50 ] && [ -z "$result" ] ||
+  fail 'invalid port was not rejected'
+result=$(probe routes relative-header "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 46 ] && [ -z "$result" ] ||
+  fail 'relative credential file was not rejected'
+
+printf 'X-API-KEY: %s\n' restored > "$tmp/admin-header"
+ln -s -- "$tmp/admin-header" "$tmp/symlink-header" ||
+  error 'symlink case cannot be constructed'
+result=$(probe routes "$tmp/symlink-header" "$port" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 47 ] && [ -z "$result" ] ||
+  fail 'credential symlink was not rejected'
+
+printf '%s\n' "$TEST_ID: PASS (real curl and m; remote rsudo boundary substituted)"
