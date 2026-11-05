@@ -246,6 +246,65 @@ do
   grep -F 'k04-protected-client-secret' "$tmp/auth.err" >/dev/null &&
     fail "Keycloak $version HS256 secret leaked to diagnostics"
 
+  # The selected algorithm must match each client's Keycloak signing policy.
+  # This is a genuine Keycloak-client configuration test, not just an
+  # independently generated JWT syntax test.
+  for algorithm in HS384 HS512
+  do
+    case "$algorithm" in
+      HS384) signed_id=k04-signed-hs384 ;;
+      HS512) signed_id=k04-signed-hs512 ;;
+    esac
+    jq --arg cid "$signed_id" --arg alg "$algorithm" \
+      '.clientId = $cid | .attributes["token.endpoint.auth.signing.alg"] = $alg' \
+      "$tmp/client-jwt.json" > "$tmp/client-$algorithm.json" ||
+      error "Keycloak $version cannot prepare $algorithm client fixture"
+    http=$(transport --output "$tmp/create-$algorithm-response" \
+      --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/client-$algorithm.json" \
+      --url "$base/admin/realms/master/clients") ||
+      error "Keycloak $version $algorithm client provision transport failed"
+    [ "$http" = 201 ] ||
+      fail "Keycloak $version $algorithm client provision rejected ($http)"
+
+    result=$(probe acquire --server "$base" --issuer-realm master \
+      --auth-mode client-credentials --client-id "$signed_id" \
+      --client-auth client-secret-jwt --client-jwt-alg "$algorithm" \
+      --client-secret-file "$tmp/secret" \
+      --token-store "$tmp/token-$algorithm-$version" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+      jq -e '.access_token | type == "string" and length > 0' \
+        "$tmp/token-$algorithm-$version" >/dev/null ||
+      fail "Keycloak $version $algorithm token acquire failed ($status)"
+
+    result=$(probe status --token-file "$tmp/token-$algorithm-$version" \
+      --server "$base" --issuer-realm master --client-id "$signed_id" \
+      --client-auth client-secret-jwt --client-jwt-alg "$algorithm" \
+      --client-secret-file "$tmp/secret" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      printf '%s\n' "$result" |
+        jq -e '.stored == true and .server_validated == true and
+          (.active | type == "boolean")' >/dev/null ||
+      fail "Keycloak $version $algorithm introspection failed ($status)"
+
+    result=$(probe acquire --server "$base" --issuer-realm master \
+      --auth-mode client-credentials --client-id "$signed_id" \
+      --client-auth client-secret-jwt --client-jwt-alg HS256 \
+      --client-secret-file "$tmp/secret" \
+      --token-store "$tmp/mismatch-$algorithm-$version" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 71 ] && [ -z "$result" ] &&
+      [ ! -e "$tmp/mismatch-$algorithm-$version" ] ||
+      fail "Keycloak $version wrong $algorithm signing mode was accepted ($status)"
+  done
+
   # The same HS256 authenticator must also handle a user Direct Grant,
   # protected refresh rotation and explicit refresh-token revocation.
   printf 'k04-bootstrap-only\n' > "$tmp/jwt-user-password"
