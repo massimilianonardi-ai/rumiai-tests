@@ -1,0 +1,114 @@
+#!/bin/sh
+# Live published v2 mk/jsc package consumers, using the real public m entrypoint.
+TEST_ID=m-os/pkg-v2-first-party/mk-jsc-public.test
+error()
+{
+  printf '%s: ERROR: %s\n' "$TEST_ID" "$1" >&2
+  exit 3
+}
+fail()
+{
+  printf '%s: FAIL: %s\n' "$TEST_ID" "$1" >&2
+  exit 1
+}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || error 'test location'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/m-os-target.lib" || error 'autonomous target helper'
+target=$(rumiai_test_target_m_os_find)
+status=$?
+case "$status" in
+  0) : ;;
+  1)
+    [ -z "${RUMIAI_TEST_M_OS_ROOT-}" ] && exit 2
+    error 'configured m-os checkout unavailable'
+    ;;
+  *) error 'configured m-os checkout invalid' ;;
+esac
+[ -n "${RUMIAI_TEST_PKG_CATALOG_ROOT-}" ] || error 'catalog checkout must be supplied'
+catalog=$(CDPATH= cd -- "$RUMIAI_TEST_PKG_CATALOG_ROOT" && pwd -P) || error 'invalid catalog checkout'
+[ -d "$catalog/v2/pkg/mk" ] && [ -d "$catalog/v2/pkg/jsc" ] &&
+  [ -d "$catalog/v2/pkg/nodejs" ] || error 'v2 first-party definitions missing'
+[ -f "$target/lib/sys/sh/pkg/pkg-install.lib.sh" ] || error 'real pkg installation unavailable'
+[ -r "$("$target/m" state-path system sys pkg conf)/catalog" ] || error 'catalog selection not prepared'
+# Never run this installation scenario over pre-existing identities.
+for item in "$target/pkg"/nodejs@* "$target/pkg"/mk@* "$target/pkg"/jsc@*
+do
+  [ ! -e "$item" ] && [ ! -L "$item" ] || error 'existing package installation would be modified'
+done
+work=$(mktemp -d "${TMPDIR:-/tmp}/m-v2-mk-jsc.XXXXXXXX") || error 'temporary workspace'
+cleanup()
+{
+  "$target/m" pkg uninstall jsc >/dev/null 2>&1 || :
+  "$target/m" pkg uninstall mk >/dev/null 2>&1 || :
+  "$target/m" pkg uninstall nodejs >/dev/null 2>&1 || :
+  command -p -- rm -rf -- "$work"
+}
+trap cleanup 0
+trap 'exit 3' HUP INT TERM
+
+# Use actual released archives and public catalog resolution, not built fixtures.
+"$target/m" pkg install nodejs || error 'real managed Node installation not observed'
+node_concrete=$("$target/m" pkg default nodejs) || fail 'Node default missing'
+[ -d "$target/pkg/$node_concrete/root" ] || fail 'Node concrete root missing'
+node_version=$("$target/m" node --version) || fail 'managed Node failed to execute'
+case "$node_version" in v26.*) : ;; *) fail 'unexpected managed Node major' ;; esac
+
+"$target/m" pkg install mk@v0.1.0 || error 'real mk release installation not observed'
+"$target/m" pkg install jsc@v0.1.0 || error 'real jsc release installation not observed'
+mk_concrete=$("$target/m" pkg default mk) || fail 'mk default missing'
+jsc_concrete=$("$target/m" pkg default jsc) || fail 'jsc default missing'
+[ "$mk_concrete" = mk@v0.1.0 ] && [ "$jsc_concrete" = jsc@v0.1.0 ] ||
+  fail 'unexpected first-party concrete versions'
+for spec in 'mk:mk' 'jsc:jsc'
+do
+  pkg=${spec%%:*}
+  command_name=${spec#*:}
+  concrete="$pkg@v0.1.0"
+  [ "$(cat "$target/pkg/$concrete/schema")" = v2 ] || fail 'v2 schema identity absent'
+  [ "$(readlink "$target/pkg/$concrete/link/bin/$command_name")" = "../../cmd/$command_name" ] ||
+    fail 'public v2 wrapper entrypoint incorrect'
+  [ -x "$target/pkg/$concrete/root/bin/$command_name" ] || fail 'real package binary missing'
+done
+[ -f "$target/pkg/$mk_concrete/root/lib/mk.lib.js" ] || fail 'package-local mk engine absent'
+[ -f "$target/pkg/$jsc_concrete/root/lib/jsc.lib.js" ] || fail 'package-local jsc engine absent'
+
+command -p -- mkdir -p -- "$work/mk" "$work/jsc" || error 'test workspace preparation'
+cat > "$work/mk/mk.json" <<'EOF_MK'
+{
+  "version": 1,
+  "goals": {"check": ["identity"]},
+  "operations": {
+    "identity": {
+      "action": {
+        "type": "process",
+        "command": "node",
+        "args": ["-e", "const fs=require('node:fs'),path=require('node:path');const actual=fs.realpathSync(process.execPath),expected=fs.realpathSync(process.env.EXPECTED_NODE_ROOT);if(!actual.startsWith(expected+path.sep))process.exit(51);"]
+      }
+    }
+  }
+}
+EOF_MK
+[ "$("$target/m" mk --project "$work/mk" --goals)" = check ] || fail 'mk public goals failed'
+EXPECTED_NODE_ROOT="$target/pkg/$node_concrete/root" \
+  "$target/m" mk --project "$work/mk" check || fail 'mk action did not use managed Node'
+
+printf 'const answer = 42;\n' > "$work/jsc/value.js"
+cat > "$work/jsc/modules.json" <<'EOF_JS'
+{"modules":[{"name":"demo","modules":[{"file":"value.js","exports":"answer"}]}]}
+EOF_JS
+"$target/m" jsc "$work/jsc/modules.json" "$work/jsc/result.js" || fail 'real jsc JavaScript compilation failed'
+[ -s "$work/jsc/result.js" ] || fail 'compiled JavaScript missing'
+"$target/m" node -e 'const value=require(process.argv[1]);if(value.answer!==42)process.exit(52)' \
+  "$work/jsc/result.js" || fail 'compiled JavaScript real managed Node consumer failed'
+printf '.demo { color: red; }\n' > "$work/jsc/style.css"
+printf '%s\n' '{"modules":[{"file":"style.css"}]}' > "$work/jsc/styles.json"
+"$target/m" jsc "$work/jsc/styles.json" "$work/jsc/result.css" || fail 'real jsc CSS compilation failed'
+[ -s "$work/jsc/result.css" ] || fail 'compiled CSS missing'
+printf '%s\n' '{"modules":[{"file":"../escape.js"}]}' > "$work/jsc/invalid.json"
+if "$target/m" jsc "$work/jsc/invalid.json" > "$work/invalid.out" 2> "$work/invalid.err"
+then
+  fail 'jsc accepted traversal outside descriptor source root'
+fi
+[ -s "$work/invalid.err" ] || fail 'jsc rejection lacks diagnostics'
+
+printf '%s\n' 'PASS: genuine published v2 mk/jsc, managed Node, and JS/CSS consumers'
