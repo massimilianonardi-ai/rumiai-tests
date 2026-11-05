@@ -69,6 +69,18 @@ openssl req -x509 -newkey rsa:2048 -nodes -config "$tmp/openssl.cnf" \
   >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
   error 'test-only TLS issuer preparation failed'
 
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-private-jwt \
+  -keyout "$tmp/private-client.key" -out "$tmp/private-client.pem" \
+  >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
+  error 'RSA private JWT keypair preparation failed'
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-wrong-jwt \
+  -keyout "$tmp/wrong-client.key" -out "$tmp/wrong-client.pem" \
+  >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
+  error 'RSA wrong client keypair preparation failed'
+chmod 600 "$tmp/private-client.key" "$tmp/private-client.pem" \
+  "$tmp/wrong-client.key" "$tmp/wrong-client.pem" ||
+  error 'private client keypair permissions unavailable'
+
 # Test credentials are synthetic; bootstrap password is passed through a
 # Docker env-file and curl form-file, never through its command argument value.
 printf 'KC_BOOTSTRAP_ADMIN_USERNAME=k04admin\nKC_BOOTSTRAP_ADMIN_PASSWORD=k04-bootstrap-only\n' \
@@ -109,6 +121,27 @@ cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
   }
 }
 CLIENT_JWT_JSON
+cat > "$tmp/client-rsa-base.json" <<'CLIENT_RSA_JSON'
+{
+  "clientId": "k04-rs256",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "clientAuthenticatorType": "client-jwt",
+  "attributes": {"token.endpoint.auth.signing.alg": "RS256"}
+}
+CLIENT_RSA_JSON
+cert_body=$(sed '/-----BEGIN CERTIFICATE-----/d; /-----END CERTIFICATE-----/d' \
+  "$tmp/private-client.pem" | tr -d '\r\n') ||
+  error 'RSA public certificate encoding unavailable'
+[ -n "$cert_body" ] || error 'RSA public certificate empty'
+jq --arg cert "$cert_body" \
+  '.attributes["jwt.credential.certificate"] = $cert' \
+  "$tmp/client-rsa-base.json" > "$tmp/client-rsa.json" ||
+  error 'RSA client configuration preparation failed'
+unset cert_body
 
 cat > "$tmp/bin/k04-keycloak-live-probe" <<'PROBE'
 #!/bin/sh
@@ -209,6 +242,57 @@ do
     error "Keycloak $version Admin REST bootstrap client request failed"
   [ "$create_code" = 201 ] ||
     fail "Keycloak $version rejected service account provisioning ($create_code)"
+
+  # Keycloak's Signed JWT client authenticator independently trusts the
+  # public X509 cert configured for this one client. The signing key remains
+  # a private file available only to the selected sudo test identity.
+  rsa_client_http=$(transport --output "$tmp/rsa-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-rsa.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version private-key-jwt client provisioning failed"
+  [ "$rsa_client_http" = 201 ] ||
+    fail "Keycloak $version private-key-jwt client create HTTP $rsa_client_http"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-rs256 \
+    --client-auth private-key-jwt --client-jwt-alg RS256 \
+    --private-key-file "$tmp/private-client.key" \
+    --certificate-file "$tmp/private-client.pem" \
+    --token-store "$tmp/token-rsa-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version RS256 private-key acquire failed ($status)"
+  jq -e '.access_token | type == "string" and length > 0' \
+    "$tmp/token-rsa-$version" >/dev/null ||
+    fail "Keycloak $version RS256 access token missing"
+  result=$(probe status --token-file "$tmp/token-rsa-$version" \
+    --server "$base" --issuer-realm master --client-id k04-rs256 \
+    --client-auth private-key-jwt \
+    --private-key-file "$tmp/private-client.key" \
+    --certificate-file "$tmp/private-client.pem" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version RS256 introspection failed ($status)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-rs256 \
+    --client-auth private-key-jwt \
+    --private-key-file "$tmp/wrong-client.key" \
+    --certificate-file "$tmp/wrong-client.pem" \
+    --token-store "$tmp/token-rsa-rejected-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-rsa-rejected-$version" ] ||
+    fail "Keycloak $version unregistered RSA key was accepted ($status)"
+  grep -F 'eyJhbGciOiJSUzI1Ni' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version RS256 client assertion exposed in diagnostics"
 
   # Signed JWT with confidential client secret is an independently selected
   # Keycloak authenticator, not a fallback from Basic or POST.
