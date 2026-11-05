@@ -136,7 +136,9 @@ status=$?
 sudo -n systemctl stop "$unit" ||
   error 'cannot stop first disposable systemd unit'
 sudo -n systemctl reset-failed "$unit" >/dev/null 2>&1 || :
-unit="rsudo-apisix-supervised-$.service"
+sudo -n rm -f "$tmp/logs/nginx.pid" ||
+  error 'cannot clear the previous service PID before starting supervisor'
+unit="rsudo-apisix-supervised-"$".service"
 sudo -n systemd-run --unit="${unit%.service}" \
   --property=Type=simple \
   -- /bin/sh -c '
