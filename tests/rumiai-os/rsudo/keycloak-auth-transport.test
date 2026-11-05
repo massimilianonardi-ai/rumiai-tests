@@ -803,7 +803,26 @@ status=$?
 [ "$status" -eq 0 ] &&
   [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
   [ "$(jq -r '.access_token' "$tmp/mtls-token")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
-  fail "X509 mTLS client acquisition failed ($status)"
+  {
+    # A failed client-certificate request must remain diagnosable without
+    # publishing token, private-key material or the HTTP response body.
+    curl_version=$("$real_curl" --version | sed -n '1p')
+    printf '%s: X509 diagnostic: curl version/backend: %s\n' \
+      "$TEST_ID" "$curl_version" >&2
+    tls_probe_status=0
+    "$real_curl" -q --silent --noproxy '*' --proxy '' \
+      --proto '=https' --proto-redir '=https' --max-redirs 0 \
+      --connect-timeout 5 --max-time 25 \
+      --cert "$tmp/mtls-good.pem" --key "$tmp/mtls-good.key" \
+      --cacert "$tmp/server.pem" \
+      --output "$tmp/mtls-probe-body" \
+      --url "$mtls_base/realms/master/.well-known/openid-configuration" \
+      >"$tmp/mtls-probe.out" 2>"$tmp/mtls-probe.err" ||
+      tls_probe_status=$?
+    printf '%s: X509 diagnostic: direct client-TLS curl exit status: %s\n' \
+      "$TEST_ID" "$tls_probe_status" >&2
+    fail "X509 mTLS client acquisition failed ($status)"
+  }
 result=$(probe status --server "$mtls_base" --issuer-realm master \
   --client-id service-mtls --client-auth tls-client-auth \
   --private-key-file "$tmp/mtls-good.key" \
