@@ -78,6 +78,14 @@ jobs:
         run: |
           git -C rumiai-tests config user.name "github-actions[bot]"
           git -C rumiai-tests config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Prepare PEM-capable curl on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install curl
+          curl_bin="$(brew --prefix curl)/bin"
+          "$curl_bin/curl" --version | grep -q 'OpenSSL/'
+          printf '%s\n' "$curl_bin" >> "$GITHUB_PATH"
       - name: Run scoped Keycloak module verification
         shell: bash
         run: |
