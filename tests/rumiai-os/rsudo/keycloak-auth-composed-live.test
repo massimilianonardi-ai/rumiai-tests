@@ -699,6 +699,54 @@ EOF_SSH_CONFIG
     [ "$result" = '{"stored":true,"server_validated":false}' ] ||
     fail "Keycloak $version composed federated offline status failed ($status)"
 
+  # Each online lifecycle action obtains a separate externally signed JWT,
+  # staging only the compact assertion on the real SSH/sudo target.
+  docker exec "$ssh_container" cp "/root/keycloak/federated-$version" \
+    "/root/keycloak/federated-before-lifecycle-$version" ||
+    error "Keycloak $version composed federated token snapshot failed"
+  for lifecycle in status revoke
+  do
+    python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+      k04-external https://127.0.0.1:8443/realms/master \
+      "$tmp/federated-issuer.key" "$tmp/federated-$lifecycle-$version" ||
+      error "Keycloak $version composed $lifecycle assertion signing failed"
+    docker cp "$tmp/federated-$lifecycle-$version" \
+      "$ssh_container:/root/keycloak/federated-$lifecycle-assertion" ||
+      error "Keycloak $version composed $lifecycle assertion copy failed"
+    docker exec "$ssh_container" sh -c \
+      "chown 0:0 /root/keycloak/federated-$lifecycle-assertion &&
+       chmod 600 /root/keycloak/federated-$lifecycle-assertion" ||
+      error "Keycloak $version composed $lifecycle assertion protection failed"
+  done
+  result=$(probe status --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-federated \
+    --client-auth federated-jwt \
+    --assertion-file /root/keycloak/federated-status-assertion \
+    --token-file "/root/keycloak/federated-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version composed federated online status failed ($status)"
+  result=$(probe revoke --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-federated \
+    --client-auth federated-jwt \
+    --assertion-file /root/keycloak/federated-revoke-assertion \
+    --token-file "/root/keycloak/federated-$version" \
+    --token-type-hint access_token \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"access_token","invalidity_verified":false}' ] &&
+    docker exec "$ssh_container" cmp -s \
+      "/root/keycloak/federated-$version" \
+      "/root/keycloak/federated-before-lifecycle-$version" ||
+    fail "Keycloak $version composed federated revoke failed or changed store ($status)"
+  printf '%s: Keycloak %s federated introspection/revocation through composed SSH/sudo with distinct assertions verified\n' \
+    "$TEST_ID" "$version"
+
   printf 'not-a-jwt\n' > "$tmp/federated-malformed-$version"
   docker cp "$tmp/federated-malformed-$version" \
     "$ssh_container:/root/keycloak/federated-malformed" ||
