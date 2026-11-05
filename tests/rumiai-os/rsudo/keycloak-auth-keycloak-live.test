@@ -95,6 +95,23 @@ do
   chmod 600 "$tmp/private-$algorithm.key" "$tmp/private-$algorithm.pem" ||
     error "$algorithm EC client certificate permissions unavailable"
 done
+# Keycloak Signed JWT also supports the EdDSA JOSE algorithm. The initial
+# product subset selects Ed25519, not the separate Ed448 key type.
+openssl genpkey -algorithm ED25519 -out "$tmp/private-eddsa.key" ||
+  error 'Ed25519 private client key preparation failed'
+openssl req -new -x509 -key "$tmp/private-eddsa.key" \
+  -days 1 -subj /CN=k04-eddsa -out "$tmp/private-eddsa.pem" ||
+  error 'Ed25519 public client certificate preparation failed'
+chmod 600 "$tmp/private-eddsa.key" "$tmp/private-eddsa.pem" ||
+  error 'Ed25519 client credential permissions unavailable'
+openssl genpkey -algorithm ED448 -out "$tmp/private-ed448.key" ||
+  error 'Ed448 negative client key preparation failed'
+openssl req -new -x509 -key "$tmp/private-ed448.key" \
+  -days 1 -subj /CN=k04-ed448 -out "$tmp/private-ed448.pem" ||
+  error 'Ed448 negative client certificate preparation failed'
+chmod 600 "$tmp/private-ed448.key" "$tmp/private-ed448.pem" ||
+  error 'Ed448 negative client permissions unavailable'
+
 # Independent, unregistered P-256 key tests Keycloak's public certificate trust.
 openssl ecparam -name prime256v1 -genkey -noout \
   -out "$tmp/wrong-ES256.key" ||
@@ -179,6 +196,17 @@ do
     "$tmp/client-rsa-base.json" > "$tmp/client-$algorithm.json" ||
     error "$algorithm Keycloak client configuration preparation failed"
 done
+unset cert_body
+cert_body=$(sed '/-----BEGIN CERTIFICATE-----/d; /-----END CERTIFICATE-----/d' \
+  "$tmp/private-eddsa.pem" | tr -d '\r\n') ||
+  error 'Ed25519 public client certificate encoding failed'
+[ -n "$cert_body" ] || error 'Ed25519 client certificate empty'
+jq --arg cert "$cert_body" \
+  '.clientId = "k04-eddsa" |
+   .attributes["token.endpoint.auth.signing.alg"] = "EdDSA" |
+   .attributes["jwt.credential.certificate"] = $cert' \
+  "$tmp/client-rsa-base.json" > "$tmp/client-eddsa.json" ||
+  error 'EdDSA client configuration preparation failed'
 unset cert_body
 
 cat > "$tmp/bin/k04-keycloak-live-probe" <<'PROBE'
@@ -535,6 +563,64 @@ do
         fail "Keycloak $version accepted unregistered ECDSA certificate ($status)"
     fi
   done
+
+  # Register and authenticate the Ed25519 Signed JWT client using Keycloak's
+  # actual EdDSA verifier, with no RSA/EC or secret-authenticator fallback.
+  eddsa_code=$(transport --output "$tmp/eddsa-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-eddsa.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version EdDSA client registration transport failed"
+  [ "$eddsa_code" = 201 ] ||
+    fail "Keycloak $version EdDSA client registration rejected ($eddsa_code)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-eddsa \
+    --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/private-eddsa.key" \
+    --certificate-file "$tmp/private-eddsa.pem" \
+    --token-store "$tmp/token-eddsa-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+    jq -e '.access_token | type == "string" and length > 0' \
+      "$tmp/token-eddsa-$version" >/dev/null ||
+    fail "Keycloak $version Ed25519 client acquisition failed ($status)"
+  result=$(probe status --server "$base" --issuer-realm master \
+    --client-id k04-eddsa --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/private-eddsa.key" \
+    --certificate-file "$tmp/private-eddsa.pem" \
+    --token-file "$tmp/token-eddsa-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version Ed25519 introspection failed ($status)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-eddsa \
+    --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/private-ed448.key" \
+    --certificate-file "$tmp/private-ed448.pem" \
+    --token-store "$tmp/token-ed448-rejected-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 73 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-ed448-rejected-$version" ] ||
+    fail "Keycloak $version EdDSA selected an Ed448 key ($status)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-eddsa \
+    --client-auth private-key-jwt --client-jwt-alg RS256 \
+    --private-key-file "$tmp/private-eddsa.key" \
+    --certificate-file "$tmp/private-eddsa.pem" \
+    --token-store "$tmp/token-eddsa-rsa-rejected-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 73 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-eddsa-rsa-rejected-$version" ] ||
+    fail "Keycloak $version Ed25519 accepted RSA JOSE algorithm ($status)"
 
   # Signed JWT with confidential client secret is an independently selected
   # Keycloak authenticator, not a fallback from Basic or POST.
