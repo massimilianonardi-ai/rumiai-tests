@@ -74,6 +74,39 @@ openssl req -x509 -newkey rsa:2048 -nodes -config "$tmp/openssl.cnf" \
   error 'disposable TLS certificate generation failed'
 cp "$tmp/keycloak/server.pem" "$tmp/ssh/ca.pem" ||
   error 'disposable remote CA copy failed'
+# Independently trusted mTLS CA; all TLS client credentials stay on the
+# disposable sudo target once the composed SSH path is initialized.
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -subj /CN=k04-mtls-ca -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+  -keyout "$tmp/mtls-ca.key" -out "$tmp/keycloak/mtls-ca.pem" \
+  >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'composed mTLS CA generation failed'
+cat > "$tmp/mtls-client.ext" <<'MTLS_EXT'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+MTLS_EXT
+for identity in good wrong
+do
+  case "$identity" in
+    good) subject=/CN=k04-mtls-client ;;
+    wrong) subject=/CN=k04-mtls-other ;;
+  esac
+  openssl req -new -newkey rsa:2048 -nodes -subj "$subject" \
+    -keyout "$tmp/mtls-$identity.key" -out "$tmp/mtls-$identity.csr" \
+    >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+    error "composed mTLS $identity client key preparation failed"
+  openssl x509 -req -in "$tmp/mtls-$identity.csr" \
+    -CA "$tmp/keycloak/mtls-ca.pem" -CAkey "$tmp/mtls-ca.key" \
+    -CAcreateserial -days 1 -extfile "$tmp/mtls-client.ext" \
+    -out "$tmp/mtls-$identity.pem" \
+    >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+    error "composed mTLS $identity certificate generation failed"
+  chmod 600 "$tmp/mtls-$identity.key" "$tmp/mtls-$identity.pem" ||
+    error "composed mTLS $identity credential permissions unavailable"
+done
+
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-composed-rsa \
   -keyout "$tmp/client-rsa.key" -out "$tmp/client-rsa.pem" \
   > "$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
@@ -120,6 +153,21 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "secret": "k04-disposable-client-secret"
 }
 CLIENT_JSON
+cat > "$tmp/client-mtls.json" <<'CLIENT_MTLS_JSON'
+{
+  "clientId": "k04-mtls",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "clientAuthenticatorType": "client-x509",
+  "attributes": {
+    "x509.subjectdn": "CN=k04-mtls-client",
+    "x509.casubjectdn": "CN=k04-mtls-ca"
+  }
+}
+CLIENT_MTLS_JSON
 cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
 {
   "clientId": "k04-signed",
@@ -184,6 +232,7 @@ ARG KC_VERSION
 FROM quay.io/keycloak/keycloak:${KC_VERSION}
 COPY --chown=1000:0 --chmod=600 server.key /opt/keycloak/conf/k04-server.key
 COPY --chown=1000:0 --chmod=644 server.pem /opt/keycloak/conf/k04-server.pem
+COPY --chown=1000:0 --chmod=644 mtls-ca.pem /opt/keycloak/conf/k04-mtls-ca.pem
 KC_DOCKERFILE
 
 cat > "$tmp/ssh/Dockerfile" <<'SSH_DOCKERFILE'
@@ -278,7 +327,9 @@ do
     --env-file "$tmp/bootstrap.env" "$keycloak_image" \
     start-dev --http-enabled=false --hostname=https://127.0.0.1:8443 \
     --https-certificate-file=/opt/keycloak/conf/k04-server.pem \
-    --https-certificate-key-file=/opt/keycloak/conf/k04-server.key) ||
+    --https-certificate-key-file=/opt/keycloak/conf/k04-server.key \
+    --https-client-auth=request \
+    --https-trust-store-file=/opt/keycloak/conf/k04-mtls-ca.pem) ||
     error "official Keycloak $version did not launch"
   [ -n "$keycloak_container" ] || error 'Keycloak container identity missing'
   mapping=$(docker port "$keycloak_container" 8443/tcp) ||
@@ -339,6 +390,15 @@ do
     error "Keycloak $version client provisioning HTTP failed"
   [ "$create_http" = 201 ] ||
     fail "Keycloak $version service-client provisioning rejected ($create_http)"
+
+  mtls_client_http=$(host_https --output "$tmp/mtls-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-mtls.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version composed X509 client registration failed"
+  [ "$mtls_client_http" = 201 ] ||
+    fail "Keycloak $version composed X509 client create rejected ($mtls_client_http)"
 
   jwt_client_http=$(host_https --output "$tmp/jwt-client-response" \
     --write-out '%{http_code}' --header "@$tmp/admin-header" \
@@ -496,6 +556,20 @@ EOF_SSH_CONFIG
     'chown 0:0 /root/keycloak/client-eddsa.key /root/keycloak/client-eddsa.pem &&
      chmod 600 /root/keycloak/client-eddsa.key /root/keycloak/client-eddsa.pem' ||
     error "Keycloak $version Ed25519 remote credential permissions unavailable"
+
+  for identity in good wrong
+  do
+    docker cp "$tmp/mtls-$identity.key" \
+      "$ssh_container:/root/keycloak/mtls-$identity.key" ||
+      error "Keycloak $version remote mTLS $identity key staging failed"
+    docker cp "$tmp/mtls-$identity.pem" \
+      "$ssh_container:/root/keycloak/mtls-$identity.pem" ||
+      error "Keycloak $version remote mTLS $identity cert staging failed"
+    docker exec "$ssh_container" sh -c \
+      "chown 0:0 /root/keycloak/mtls-$identity.key /root/keycloak/mtls-$identity.pem &&
+       chmod 600 /root/keycloak/mtls-$identity.key /root/keycloak/mtls-$identity.pem" ||
+      error "Keycloak $version remote mTLS $identity credentials insecure"
+  done
 
   result=$(probe acquire --server https://127.0.0.1:8443 \
     --issuer-realm master --auth-mode client-credentials \
@@ -657,6 +731,48 @@ EOF_SSH_CONFIG
   [ "$status" -eq 73 ] && [ -z "$result" ] &&
     ! docker exec "$ssh_container" test -e "/root/keycloak/eddsa-rsa-rejected-$version" ||
     fail "Keycloak $version composed Ed25519 key accepted RS256 ($status)"
+
+  # The same client certificate is presented by remote curl for discovery,
+  # token and introspection. Keycloak independently validates the chain and
+  # exact registered client/CA distinguished names.
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file /root/keycloak/mtls-good.key \
+    --certificate-file /root/keycloak/mtls-good.pem \
+    --token-store "/root/keycloak/mtls-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version composed mTLS acquisition rejected ($status)"
+  docker exec "$ssh_container" jq -e \
+    '.access_token | type == "string" and length > 0' \
+    "/root/keycloak/mtls-$version" >/dev/null ||
+    fail "Keycloak $version composed mTLS remote protected token missing"
+  result=$(probe status --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file /root/keycloak/mtls-good.key \
+    --certificate-file /root/keycloak/mtls-good.pem \
+    --token-file "/root/keycloak/mtls-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version composed mTLS introspection failed ($status)"
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file /root/keycloak/mtls-wrong.key \
+    --certificate-file /root/keycloak/mtls-wrong.pem \
+    --token-store "/root/keycloak/mtls-denied-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    ! docker exec "$ssh_container" test -e "/root/keycloak/mtls-denied-$version" ||
+    fail "Keycloak $version composed X509 accepted wrong subject DN ($status)"
 
   # Signed assertion is created and sent on the real remote sudo target.
   # SSH shell arguments contain selectors and protected file paths only.
