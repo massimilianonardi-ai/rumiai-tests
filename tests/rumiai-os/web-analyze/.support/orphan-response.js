@@ -71,7 +71,15 @@ async function main()
   finally {
     if(session)await session.stop();
     server.closeAllConnections();server.close();
-    fs.rmSync(work,{recursive:true,force:true,maxRetries:10,retryDelay:250});
+    // Chromium can flush the disposable profile after its CDP connection closes.
+    await sleep(800);
+    try {fs.rmSync(work,{recursive:true,force:true,maxRetries:40,retryDelay:250});}
+    catch (error) {
+      // Keep the original assertion error visible; the hosted runner discards
+      // its temporary workspace even if Chromium closes unusually slowly.
+      console.error('Fixture cleanup incomplete: '+(error.code||'unknown'));
+      process.exitCode=1;
+    }
   }
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1;});
