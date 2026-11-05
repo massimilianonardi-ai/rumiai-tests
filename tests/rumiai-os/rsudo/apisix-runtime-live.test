@@ -462,6 +462,23 @@ do
     fail 'non-PID1 Docker OpenResty master was not discovered and revalidated'
   }
 
+  # The exact same installed master, in the container's host-like namespace
+  # without Docker discovery, must resolve its nonconventional installation
+  # directly through the real Linux process identity and installed pidfile.
+  host_background_expected=$(printf '%s\n' \
+    'discovery_evidence=unique-process-prefix-candidate' \
+    'discovered_scope=host' \
+    'installation_root=/tmp/rsudo-apisix-background' \
+    'runtime_evidence=pidfile-and-master-args' "process_pid=$background_pid" \
+    'runtime_identity=process-consistent-config-unverified' \
+    'mutation_readiness=not-established')
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = "$host_background_expected" ] || {
+    cat "$tmp/stderr" >&2
+    fail 'nonconventional host-namespace master was not discovered'
+  }
+
   # The generated source must still be present; a running background master
   # cannot make a missing generated config into an accepted candidate.
   docker exec "$cid" sh -c '
@@ -510,6 +527,12 @@ do
     fail 'multiple real OpenResty masters in one container were selected'
   grep -Fx 'apisix.runtime.docker-multiple-masters' "$tmp/stderr" >/dev/null ||
     fail 'missing distinct multiple-masters diagnostic'
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 64 ] && [ -z "$result" ] ||
+    fail 'host-namespace discovery accepted two independent OpenResty masters'
+  grep -Fx 'apisix.runtime.host-multiple-masters' "$tmp/stderr" >/dev/null ||
+    fail 'missing distinct host multiple-masters diagnostic'
 
   # Remove only the extra master and prove that the original APISIX
   # candidate becomes uniquely selectable again.
@@ -531,6 +554,12 @@ do
   [ "$tries" -lt 20 ] || {
     cat "$tmp/stderr" >&2
     fail 'single APISIX master not restored after second master stopped'
+  }
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$result" = "$host_background_expected" ] || {
+    cat "$tmp/stderr" >&2
+    fail 'host-namespace discovery not restored after second master stopped'
   }
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove background APISIX container'
