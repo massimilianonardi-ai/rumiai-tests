@@ -403,6 +403,47 @@ do
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version mTLS client introspection failed ($status)"
+  # Same explicitly selected X509 client runs a user password grant,
+  # refresh and explicit refresh-token revocation. No JWT/secret fallback.
+  printf 'k04-bootstrap-only\n' > "$tmp/mtls-user-password"
+  chmod 600 "$tmp/mtls-user-password" ||
+    error 'mTLS user password fixture is insecure'
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin \
+    --password-file "$tmp/mtls-user-password" \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-good.pem" \
+    --token-store "$tmp/token-mtls-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] &&
+    jq -e '.refresh_token | type == "string" and length > 0' \
+      "$tmp/token-mtls-user-$version" >/dev/null ||
+    fail "Keycloak $version mTLS user direct grant failed ($status)"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-good.pem" \
+    --token-file "$tmp/token-mtls-user-$version" \
+    --token-store "$tmp/token-mtls-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version mTLS protected refresh failed ($status)"
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-good.pem" \
+    --token-file "$tmp/token-mtls-user-$version" \
+    --token-type-hint refresh_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version mTLS protected revocation failed ($status)"
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-mtls \
     --client-auth tls-client-auth \
