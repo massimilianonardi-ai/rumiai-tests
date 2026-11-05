@@ -257,6 +257,35 @@ status=$?
   # Only structured public evidence fields (no environment contents or key).
   printf 'observed-runtime-status=%s\n%s\nexpected-runtime:\n%s\n' \
     "$status" "$result" "$expected" >&2
+  # Diagnose only non-secret verification stages: never dump Environment.
+  docker exec "$cid" sh -s -- "$pid" "$unit" <<'APISIX_PROFILE_DIAGNOSTICS' >&2
+pid=$1
+unit=$2
+unit_environment=$(LC_ALL=C systemctl --no-pager show \
+  --property=Environment --value -- "$unit" 2>/dev/null)
+printf 'profile-manager-query-status=%s\n' "$?"
+profile=$(printf '%s\n' "$unit_environment" | LC_ALL=C awk '{
+  for (i=1; i<=NF; i++)
+    if ($i ~ /^APISIX_PROFILE=[a-zA-Z0-9_-]+$/) {
+      count++
+      profile=substr($i, 16)
+    }
+  }
+  END { if (count==1) print profile }
+')
+printf 'profile-unit-token-present=%s\n' "$([ "$profile" = prod ] && printf yes || printf no)"
+if [ -r "/proc/$pid/environ" ]
+then
+  match=$(LC_ALL=C tr '\000' '\n' < "/proc/$pid/environ" |
+    LC_ALL=C awk -v expected="APISIX_PROFILE=$profile" '
+      $0==expected { count++ }
+      END { if (count==1) print "matched" }
+    ')
+  printf 'profile-proc-token-matched=%s\n' "$([ "$match" = matched ] && printf yes || printf no)"
+else
+  printf 'profile-proc-readable=no\n'
+fi
+APISIX_PROFILE_DIAGNOSTICS
   docker exec "$cid" systemctl show \
     --property=Id,MainPID,ControlGroup,ActiveState "$unit" >&2 || :
   docker exec "$cid" cat "/proc/$pid/cgroup" >&2 || :
