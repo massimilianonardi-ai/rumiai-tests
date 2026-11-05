@@ -493,6 +493,45 @@ do
     rm /tmp/rsudo-apisix-background/conf/nginx.conf
     mv /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
   ' || error 'cannot restore safe background-master generated config'
+  # One real APISIX master and a second independent real OpenResty master
+  # in the same Docker namespace must not be collapsed into one candidate.
+  docker exec "$cid" sh -c '
+    set -eu
+    mkdir -p /tmp/rsudo-apisix-second/conf /tmp/rsudo-apisix-second/logs
+    printf "events { worker_connections 16; }\nhttp { }\n" \
+      > /tmp/rsudo-apisix-second/conf/nginx.conf
+    /usr/local/openresty/bin/openresty -p /tmp/rsudo-apisix-second \
+      -c /tmp/rsudo-apisix-second/conf/nginx.conf
+    test -s /tmp/rsudo-apisix-second/logs/nginx.pid
+  ' || error 'cannot start second real OpenResty master'
+  result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 59 ] && [ -z "$result" ] ||
+    fail 'multiple real OpenResty masters in one container were selected'
+  grep -Fx 'apisix.runtime.docker-multiple-masters' "$tmp/stderr" >/dev/null ||
+    fail 'missing distinct multiple-masters diagnostic'
+
+  # Remove only the extra master and prove that the original APISIX
+  # candidate becomes uniquely selectable again.
+  docker exec "$cid" sh -c '
+    kill -QUIT "$(cat /tmp/rsudo-apisix-second/logs/nginx.pid)"
+  ' || error 'cannot stop second OpenResty master'
+  tries=0
+  while [ "$tries" -lt 20 ]
+  do
+    result=$(APISIX_TEST_HOST_CONTEXT=1 probe 2>"$tmp/stderr")
+    status=$?
+    if [ "$status" -eq 0 ] && [ "$result" = "$background_expected" ]
+    then
+      break
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 20 ] || {
+    cat "$tmp/stderr" >&2
+    fail 'single APISIX master not restored after second master stopped'
+  }
   docker rm -f "$cid" >/dev/null 2>&1 ||
     error 'cannot remove background APISIX container'
   cid=
