@@ -57,7 +57,26 @@ deployment:
   role_data_plane:
     config_provider: yaml
 APISIX_STANDALONE
-chmod 644 "$tmp/config.yaml" || error 'cannot make test config readable'
+# Deliberately retain a default file-driven source, but start the actual
+# service through an independent named API-driven profile. The two modes
+# disagree, so a successful PID/systemd observation cannot select a source.
+cat > "$tmp/config-prod.yaml" <<'APISIX_API_PROFILE'
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: yaml
+  admin:
+    admin_key_required: true
+    admin_key:
+      - name: test-viewer
+        key: rsudo-test-only-never-production
+        role: viewer
+    admin_listen:
+      ip: 127.0.0.1
+      port: 9180
+APISIX_API_PROFILE
+chmod 644 "$tmp/config.yaml" "$tmp/config-prod.yaml" ||
+  error 'cannot make test configurations readable'
 
 cat > "$tmp/Dockerfile" <<'DOCKERFILE'
 FROM apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141
@@ -80,6 +99,7 @@ docker build --pull=false -q -t "$image_tag" -f "$tmp/Dockerfile" "$tmp" ||
 cid=$(docker run -d --privileged --cgroupns=private --network none \
   --tmpfs /run --tmpfs /run/lock \
   --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+  --mount "type=bind,src=$tmp/config-prod.yaml,dst=/usr/local/apisix/conf/config-prod.yaml,readonly" \
   -e APISIX_STAND_ALONE=true "$image_tag") ||
   error 'cannot start isolated real systemd manager'
 [ -n "$cid" ] || error 'Docker returned no systemd container ID'
@@ -108,8 +128,9 @@ done
 
 # Initialize the actual pinned APISIX CLI's generated nginx.conf, then
 # launch the actual installed APISIX daemon from a transient systemd service.
-docker exec "$cid" /usr/bin/apisix init ||
-  error 'official APISIX CLI could not generate its runtime configuration'
+docker exec -e APISIX_PROFILE=prod -e APISIX_STAND_ALONE=true \
+  "$cid" /usr/bin/apisix init ||
+  error 'official APISIX CLI could not initialize the selected named profile'
 # The official container image connects its log files to Docker stdout/stderr.
 # Reopening those stream descriptors from a daemonized systemd unit fails with
 # ENXIO. Supply ordinary log files only inside this disposable test container.
@@ -124,6 +145,7 @@ docker exec "$cid" sh -c '
 ' || error 'cannot prepare real APISIX service log files'
 unit="rsudo-apisix-$(printf '%s' "$$" | tr -cd '0-9').service"
 docker exec "$cid" systemd-run --unit="${unit%.service}" \
+  --setenv=APISIX_PROFILE=prod --setenv=APISIX_STAND_ALONE=true \
   --property=Type=forking \
   --property=PIDFile=/usr/local/apisix/logs/nginx.pid \
   -- /usr/bin/apisix start || {
@@ -182,7 +204,11 @@ rsudo()
 {
   docker exec -i "$APISIX_TEST_CONTAINER" "$@"
 }
-rsudo_mod_apisix_runtime "$@"
+case "${APISIX_TEST_OPERATION:-runtime}" in
+  runtime) rsudo_mod_apisix_runtime "$@" ;;
+  mode) rsudo_mod_apisix_mode "$@" ;;
+  *) exit 83 ;;
+esac
 PROBE
 chmod 700 "$tmp/bin/rsudo-apisix-systemd-apisix-probe" ||
   error 'cannot execute product entrypoint probe'
@@ -220,4 +246,70 @@ status=$?
   fail 'automatic APISIX process discovery lost real systemd evidence'
 }
 
-printf '%s\n' "$TEST_ID: PASS (official APISIX 3.19 managed by real container-local systemd)"
+# Mode inspection is intentionally an independent on-disk observation,
+# not evidence that the active systemd service loaded that YAML snapshot.
+disk_default=$(APISIX_TEST_OPERATION=mode probe /usr/local/apisix \
+  /usr/local/apisix/conf/config.yaml 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$disk_default" = standalone-file-yaml ] || {
+  cat "$tmp/stderr" >&2
+  fail 'default source was not independently classified as file-driven'
+}
+disk_profile=$(APISIX_TEST_OPERATION=mode probe /usr/local/apisix \
+  /usr/local/apisix/conf/config-prod.yaml 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$disk_profile" = standalone-api ] || {
+  cat "$tmp/stderr" >&2
+  fail 'named source was not independently classified as API-driven'
+}
+ambiguous=$(APISIX_TEST_OPERATION=mode probe /usr/local/apisix 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 10 ] && [ -z "$ambiguous" ] || {
+  cat "$tmp/stderr" >&2
+  fail 'implicit mode silently selected one of two conflicting profiles'
+}
+
+# Independent runtime capability observation: the selected service should
+# respond with an authorized read-only APISIX Admin API /configs document.
+# Fixed ephemeral test-only credential, no Admin API write or host port.
+http_status=$(docker exec -i "$cid" /bin/bash -s <<'APISIX_TEST_HTTP'
+exec 3<>/dev/tcp/127.0.0.1/9180 || exit 70
+printf 'GET /apisix/admin/configs HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nX-API-KEY: rsudo-test-only-never-production\r\nConnection: close\r\n\r\n' >&3
+IFS= read -r first <&3 || exit 71
+set -- $first
+[ "$1" = HTTP/1.1 ] || [ "$1" = HTTP/1.0 ] || exit 72
+printf '%s\n' "$2"
+APISIX_TEST_HTTP
+)
+status=$?
+[ "$status" -eq 0 ] && [ "$http_status" = 200 ] || 
+  fail "real APISIX Admin GET did not succeed (status $status, HTTP ${http_status:-none})"
+
+# Linux kernel evidence independently relates the selected namespace's
+# listening TCP socket inode to the *observed* nginx/OpenResty master PID.
+# This is socket ownership, not by itself a generic proof of Admin provenance.
+docker exec "$cid" sh -s -- "$pid" <<'APISIX_TEST_SOCKET'
+pid=$1
+[ -r /proc/net/tcp ] || exit 73
+command -v awk >/dev/null 2>&1 || exit 74
+command -v readlink >/dev/null 2>&1 || exit 75
+socket_inode=$(awk '$2=="0100007F:23DC" && $4=="0A" {print $10}' /proc/net/tcp) || exit 76
+case "$socket_inode" in
+  ''|*[!0-9]*) exit 77 ;;
+esac
+found=0
+for fd in "/proc/$pid/fd/"*
+do
+  target=$(readlink "$fd" 2>/dev/null) || continue
+  if [ "$target" = "socket:[$socket_inode]" ]
+  then
+    found=1
+    break
+  fi
+done
+[ "$found" -eq 1 ] || exit 78
+APISIX_TEST_SOCKET
+status=$?
+[ "$status" -eq 0 ] || fail "APISIX master lacks independently observed Admin TCP listener inode (status $status)"
+
+printf '%s\n' "$TEST_ID: PASS (real APISIX/systemd PID, named profile drift, Admin read and kernel socket attribution)"
