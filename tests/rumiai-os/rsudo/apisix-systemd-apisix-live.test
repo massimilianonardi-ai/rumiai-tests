@@ -185,6 +185,27 @@ main_pid=$(docker exec "$cid" systemctl show --property=MainPID --value "$unit")
   error 'cannot read systemd MainPID'
 [ "$pid" = "$main_pid" ] && [ "$pid" -ge 1 ] 2>/dev/null ||
   fail 'real systemd unit MainPID does not equal official APISIX master PID'
+
+# Two genuinely distinct read-only sources of STARTUP profile evidence:
+# systemd's environment declared for the verified unit and the Linux kernel
+# initial executable environment of that same master. Neither observation
+# proves the loaded YAML snapshot, effective provider or Admin authorization.
+manager_environment=$(docker exec "$cid" systemctl show --property=Environment --value "$unit") ||
+  error 'real systemd environment declaration unavailable'
+case " $manager_environment " in
+  *' APISIX_PROFILE=prod '*) : ;;
+  *) fail 'service manager did not declare the selected APISIX profile' ;;
+esac
+docker exec "$cid" sh -s -- "$pid" <<'APISIX_MASTER_STARTUP_ENV'
+pid=$1
+[ -r "/proc/$pid/environ" ] || exit 70
+command -v tr >/dev/null 2>&1 || exit 71
+LC_ALL=C tr '\000' '\n' < "/proc/$pid/environ" |
+  grep -Fx 'APISIX_PROFILE=prod' >/dev/null || exit 72
+APISIX_MASTER_STARTUP_ENV
+status=$?
+[ "$status" -eq 0 ] ||
+  fail "master kernel startup environment did not independently retain APISIX_PROFILE (status $status)"
 docker exec "$cid" sh -c '
   test -r "/proc/$1/cmdline" || exit 1
   title=$(LC_ALL=C tr "\\000" " " < "/proc/$1/cmdline") || exit 1
