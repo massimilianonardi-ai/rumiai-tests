@@ -148,8 +148,12 @@ class Handler(BaseHTTPRequestHandler):
             (args.get("client_id") == ["service"] and
              args.get("client_secret") == ["protected-k04-secret"])
         )
-        if (not client_valid and
-                args.get("client_id") == ["service"] and
+        jwt_clients = {"service": ("HS256", hashlib.sha256),
+                       "service384": ("HS384", hashlib.sha384),
+                       "service512": ("HS512", hashlib.sha512)}
+        jwt_client_id = args.get("client_id", [None])[0]
+        jwt_expected = jwt_clients.get(jwt_client_id)
+        if (not client_valid and jwt_expected is not None and
                 args.get("client_assertion_type") ==
                 ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"] and
                 len(args.get("client_assertion", [])) == 1):
@@ -162,15 +166,15 @@ class Handler(BaseHTTPRequestHandler):
                 expected_signature = base64.urlsafe_b64encode(
                     hmac.new(b"protected-k04-secret",
                              (head + "." + payload).encode("ascii"),
-                             hashlib.sha256).digest()
+                             jwt_expected[1]).digest()
                 ).rstrip(b"=").decode("ascii")
                 now = int(time.time())
                 client_valid = (
-                    header.get("alg") == "HS256" and
+                    header.get("alg") == jwt_expected[0] and
                     header.get("typ") == "JWT" and
                     hmac.compare_digest(signature, expected_signature) and
-                    body_claims.get("iss") == "service" and
-                    body_claims.get("sub") == "service" and
+                    body_claims.get("iss") == jwt_client_id and
+                    body_claims.get("sub") == jwt_client_id and
                     body_claims.get("aud") ==
                     "https://127.0.0.1:" + str(self.server.server_port) + "/realms/master" and
                     isinstance(body_claims.get("jti"), str) and
@@ -340,6 +344,63 @@ status=$?
   fail "HS256 wrong client assertion secret was accepted ($status)"
 grep -F 'wrong-hmac-secret' "$tmp/argv" "$tmp/err" >/dev/null &&
   fail 'negative HS256 client JWT secret escaped in argv or diagnostics'
+
+# HS384 and HS512 are explicitly selected for clients configured for them.
+for algorithm in HS384 HS512
+do
+  case "$algorithm" in
+    HS384) client_id=service384 ;;
+    HS512) client_id=service512 ;;
+  esac
+  jwt_path="$tmp/jwt-$algorithm-store"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id "$client_id" \
+    --client-auth client-secret-jwt --client-jwt-alg "$algorithm" \
+    --client-secret-file "$tmp/secret" --token-store "$jwt_path" \
+    --ca-file "$tmp/server.pem" 2>"$tmp/err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+    [ "$(jq -r '.access_token' "$jwt_path")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+    fail "$algorithm client assertion acquisition failed ($status)"
+  [ "$(LC_ALL=C ls -ld "$jwt_path" | cut -c 1-10)" = '-rw-------' ] ||
+    fail "$algorithm signed token store is not private"
+
+  # An HS256 assertion to an HS384/HS512-configured client must not work.
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id "$client_id" \
+    --client-auth client-secret-jwt --client-jwt-alg HS256 \
+    --client-secret-file "$tmp/secret" \
+    --token-store "$tmp/jwt-mismatch-$algorithm" \
+    --ca-file "$tmp/server.pem" 2>"$tmp/err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/jwt-mismatch-$algorithm" ] ||
+    fail "$algorithm mismatch was not rejected ($status)"
+done
+# Unknown and inapplicable algorithm selectors are rejected before HTTP.
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service384 \
+  --client-auth client-secret-jwt --client-jwt-alg HS1024 \
+  --client-secret-file "$tmp/secret" --token-store "$tmp/jwt-unsupported" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 73 ] && [ -z "$result" ] &&
+  [ ! -e "$tmp/jwt-unsupported" ] ||
+  fail "unsupported signed-client algorithm did not fail closed ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service \
+  --client-auth client-secret-basic --client-jwt-alg HS512 \
+  --client-secret-file "$tmp/secret" --token-store "$tmp/jwt-inapplicable" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ -z "$result" ] &&
+  [ ! -e "$tmp/jwt-inapplicable" ] ||
+  fail "algorithm selector accepted with Basic authentication ($status)"
+grep -F 'client_assertion=eyJ' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail "signed assertion leaked through argv or diagnostics"
+grep -F 'protected-k04-secret' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail "client secret leaked through argv or diagnostics"
 
 result=$(acquire client-secret-basic "$tmp/secret" "$tmp/basic-store" 2>"$tmp/err")
 status=$?
