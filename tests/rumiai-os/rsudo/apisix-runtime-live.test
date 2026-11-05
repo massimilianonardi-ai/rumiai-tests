@@ -490,6 +490,12 @@ do
     fail 'missing background-master generated config was silently ignored'
   grep -Fx 'apisix.runtime.docker-master-generated-config-missing' "$tmp/stderr" >/dev/null ||
     fail 'missing specific background-master generated-config diagnostic'
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 62 ] && [ -z "$result" ] ||
+    fail 'host-namespace master with missing generated config was accepted'
+  grep -Fx 'apisix.runtime.host-master-generated-config-missing' "$tmp/stderr" >/dev/null ||
+    fail 'missing host generated-config absence diagnostic'
   docker exec "$cid" sh -c '
     mv /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
   ' || error 'cannot restore background-master generated config'
@@ -506,6 +512,12 @@ do
     fail 'symlinked background-master generated config was accepted'
   grep -Fx 'apisix.runtime.docker-generated-config-unsafe' "$tmp/stderr" >/dev/null ||
     fail 'missing specific symlinked background-master config diagnostic'
+  result=$(probe 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 63 ] && [ -z "$result" ] ||
+    fail 'host-namespace master with symlinked generated config was accepted'
+  grep -Fx 'apisix.runtime.host-master-generated-config-unsafe' "$tmp/stderr" >/dev/null ||
+    fail 'missing host generated-config unsafe diagnostic'
   docker exec "$cid" sh -c '
     rm /tmp/rsudo-apisix-background/conf/nginx.conf
     mv /tmp/rsudo-apisix-background/conf/nginx.conf.rsudo-held /tmp/rsudo-apisix-background/conf/nginx.conf
