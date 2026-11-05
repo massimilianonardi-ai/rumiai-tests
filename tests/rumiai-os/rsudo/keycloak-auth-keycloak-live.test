@@ -830,6 +830,72 @@ do
     [ "$result" = '{"stored":true,"server_validated":false}' ] ||
     fail "Keycloak $version federated protected-store offline status failed ($status)"
 
+  # Online lifecycle requires a distinct current assertion per request; the
+  # module must neither reuse the acquisition assertion nor replace the store.
+  cp "$tmp/token-federated-rsudo-$version" \
+    "$tmp/federated-store-before-lifecycle-$version" ||
+    error "Keycloak $version federated token store snapshot failed"
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-status-assertion-$version" ||
+    error "Keycloak $version K04 federated status assertion creation failed"
+  result=$(probe status --server "$base" --issuer-realm master \
+    --client-id k04-federated --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-status-assertion-$version" \
+    --token-file "$tmp/token-federated-rsudo-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" | jq -e \
+      '.stored == true and .server_validated == true and (.active | type == "boolean")' \
+      >/dev/null &&
+    cmp -s "$tmp/token-federated-rsudo-$version" \
+      "$tmp/federated-store-before-lifecycle-$version" ||
+    fail "Keycloak $version K04 federated online status failed or changed store ($status)"
+
+  # Explicit re-use is subject to Keycloak's default one-use server policy;
+  # denial must not touch the existing protected token record.
+  result=$(probe status --server "$base" --issuer-realm master \
+    --client-id k04-federated --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-status-assertion-$version" \
+    --token-file "$tmp/token-federated-rsudo-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    cmp -s "$tmp/token-federated-rsudo-$version" \
+      "$tmp/federated-store-before-lifecycle-$version" ||
+    fail "Keycloak $version K04 federated status assertion replay accepted ($status)"
+
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-revoke-rsudo-$version" ||
+    error "Keycloak $version K04 federated revocation assertion creation failed"
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-federated --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-revoke-rsudo-$version" \
+    --token-file "$tmp/token-federated-rsudo-$version" \
+    --token-type-hint access_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"access_token","invalidity_verified":false}' ] &&
+    cmp -s "$tmp/token-federated-rsudo-$version" \
+      "$tmp/federated-store-before-lifecycle-$version" ||
+    fail "Keycloak $version K04 federated revoke failed or changed store ($status)"
+
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-federated --client-auth federated-jwt \
+    --token-file "$tmp/token-federated-rsudo-$version" \
+    --token-type-hint access_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] &&
+    cmp -s "$tmp/token-federated-rsudo-$version" \
+      "$tmp/federated-store-before-lifecycle-$version" ||
+    fail "Keycloak $version K04 federated revoke lacked mandatory fresh assertion ($status)"
+  printf '%s: Keycloak %s K04 federated online introspection and explicit revocation with fresh assertion verified\n' \
+    "$TEST_ID" "$version"
+
   printf 'not.a.valid.jwt\n' > "$tmp/federated-malformed-$version"
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-federated \
