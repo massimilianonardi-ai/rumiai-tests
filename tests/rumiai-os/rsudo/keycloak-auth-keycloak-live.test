@@ -336,6 +336,63 @@ do
   grep -F 'eyJhbGciOiJSUzI1Ni' "$tmp/auth.err" >/dev/null &&
     fail "Keycloak $version RS256 client assertion exposed in diagnostics"
 
+  # Keep the registered RSA certificate, but require the exact selected
+  # signature algorithm. The two release targets independently verify the
+  # signed assertions rather than trusting the local signature check alone.
+  for algorithm in RS384 RS512
+  do
+    case "$algorithm" in
+      RS384) rsa_id=k04-rs384 ;;
+      RS512) rsa_id=k04-rs512 ;;
+    esac
+    jq --arg id "$rsa_id" --arg alg "$algorithm" \
+      '.clientId = $id | .attributes["token.endpoint.auth.signing.alg"] = $alg' \
+      "$tmp/client-rsa.json" > "$tmp/client-$algorithm.json" ||
+      error "Keycloak $version cannot prepare $algorithm client"
+    rsa_client_http=$(transport --output "$tmp/rsa-$algorithm-response" \
+      --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/client-$algorithm.json" \
+      --url "$base/admin/realms/master/clients") ||
+      error "Keycloak $version $algorithm client provisioning transport failed"
+    [ "$rsa_client_http" = 201 ] ||
+      fail "Keycloak $version $algorithm client create HTTP $rsa_client_http"
+    result=$(probe acquire --server "$base" --issuer-realm master \
+      --auth-mode client-credentials --client-id "$rsa_id" \
+      --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+      --private-key-file "$tmp/private-client.key" \
+      --certificate-file "$tmp/private-client.pem" \
+      --token-store "$tmp/token-$algorithm-$version" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+      jq -e '.access_token | type == "string" and length > 0' \
+        "$tmp/token-$algorithm-$version" >/dev/null ||
+      fail "Keycloak $version $algorithm private-key acquire failed ($status)"
+    result=$(probe status --token-file "$tmp/token-$algorithm-$version" \
+      --server "$base" --issuer-realm master --client-id "$rsa_id" \
+      --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+      --private-key-file "$tmp/private-client.key" \
+      --certificate-file "$tmp/private-client.pem" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+      fail "Keycloak $version $algorithm introspection failed ($status)"
+    result=$(probe acquire --server "$base" --issuer-realm master \
+      --auth-mode client-credentials --client-id "$rsa_id" \
+      --client-auth private-key-jwt --client-jwt-alg RS256 \
+      --private-key-file "$tmp/private-client.key" \
+      --certificate-file "$tmp/private-client.pem" \
+      --token-store "$tmp/token-wrong-$algorithm-$version" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 71 ] && [ -z "$result" ] &&
+      [ ! -e "$tmp/token-wrong-$algorithm-$version" ] ||
+      fail "Keycloak $version $algorithm policy accepted wrong signature ($status)"
+  done
+
   # Signed JWT with confidential client secret is an independently selected
   # Keycloak authenticator, not a fallback from Basic or POST.
   jwt_client_http=$(transport --output "$tmp/jwt-client-response" \
