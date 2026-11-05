@@ -1,0 +1,33 @@
+#!/bin/sh
+TEST_ID=rumiai-os/web-analyze/physical-response-only.test
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+case "$self" in */*) : ;; *) self=$(command -v "$self") || error 'cannot resolve test' ;; esac
+test_dir=$(CDPATH= cd -- "${self%/*}" && pwd -P) || error 'cannot resolve test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'cannot resolve suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target helper'
+
+[ "${RUMIAI_TEST_WEB_ANALYZE_LIVE:-}" = 1 ] ||
+    skip 'external-site capture requires explicit opt-in'
+[ -n "${RUMIAI_TEST_WEB_ANALYZE_URL:-}" ] ||
+    skip 'no authorized target URL supplied'
+[ -n "${RUMIAI_TEST_WEB_ANALYZE_OUTPUT_ROOT:-}" ] ||
+    error 'private output root is required'
+
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in
+    0) : ;;
+    1) skip 'rumiai-os checkout unavailable' ;;
+    2) error 'specified target checkout is invalid' ;;
+    *) error 'target discovery failed' ;;
+esac
+[ -x "$root/m" ] || error 'm runtime unavailable'
+[ -f "$root/bin/sys/web-analyze" ] || error 'web-analyze command unavailable'
+command -v git >/dev/null 2>&1 || error 'Git unavailable'
+command -v node >/dev/null 2>&1 || error 'Node.js unavailable'
+
+node "$test_dir/.support/physical-response-only.js" "$root" "$suite_root"
+exit $?
