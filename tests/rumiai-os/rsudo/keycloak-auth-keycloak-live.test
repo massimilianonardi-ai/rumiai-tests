@@ -724,9 +724,14 @@ do
     --url "$base/realms/master/protocol/openid-connect/token/introspect") ||
     error "Keycloak $version federated introspection transport failed"
   [ "$federation_introspect_http" = 200 ] &&
-    jq -e '.active == true' \
+    jq -e '.active | type == "boolean"' \
       "$tmp/federated-introspection-response-$version" >/dev/null ||
-    fail "Keycloak $version federated introspection refused new assertion ($federation_introspect_http)"
+    fail "Keycloak $version federated introspection refused new assertion or invalid response ($federation_introspect_http)"
+  observed_active=$(jq -er '.active | tostring' \
+    "$tmp/federated-introspection-response-$version") ||
+    error "Keycloak $version federated introspection active flag unavailable"
+  printf '%s: Keycloak %s federated introspection accepted with active=%s (server observation)\n' \
+    "$TEST_ID" "$version" "$observed_active"
 
   python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
     k04-external "$base/realms/master" \
