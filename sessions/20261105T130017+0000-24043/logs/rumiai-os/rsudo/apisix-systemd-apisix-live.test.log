@@ -1,0 +1,30 @@
+sha256:10fd322ebe5ec505947228bef74902356fddfc3443638285557aa4f6d821ad30
+/usr/local/openresty//luajit/bin/luajit ./apisix/cli/apisix.lua init
+Job for rsudo-apisix-24113.service failed because the service did not take the steps required by its unit configuration.
+See "systemctl status rsudo-apisix-24113.service" and "journalctl -xeu rsudo-apisix-24113.service" for details.
+× rsudo-apisix-24113.service - /usr/bin/apisix start
+     Loaded: loaded (/run/systemd/transient/rsudo-apisix-24113.service; transient)
+  Transient: yes
+     Active: failed (Result: protocol) since Thu 2026-11-05 13:00:25 UTC; 46ms ago
+    Process: 94 ExecStart=/usr/bin/apisix start (code=exited, status=0/SUCCESS)
+        CPU: 70ms
+
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: Starting rsudo-apisix-24113.service - /usr/bin/apisix start...
+Nov 05 13:00:25 1c1df5b58c25 apisix[94]: /usr/local/openresty//luajit/bin/luajit /usr/local/apisix/apisix/cli/apisix.lua start
+Nov 05 13:00:25 1c1df5b58c25 apisix[94]: Warning! Current maximum number of open file descriptors [1024] is not greater than 1024, please increase user limits by execute 'ulimit -n <new user limits>' , otherwise the performance is low.
+Nov 05 13:00:25 1c1df5b58c25 apisix[117]: nginx: [alert] could not open error log file: open() "/usr/local/apisix/logs/error.log" failed (6: No such device or address)
+Nov 05 13:00:25 1c1df5b58c25 apisix[117]: 2026/11/05 13:00:25 [emerg] 117#117: open() "/usr/local/apisix/logs/error.log" failed (6: No such device or address)
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: rsudo-apisix-24113.service: Can't open PID file /usr/local/apisix/logs/nginx.pid (yet?) after start: No such file or directory
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: rsudo-apisix-24113.service: Failed with result 'protocol'.
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: Failed to start rsudo-apisix-24113.service - /usr/bin/apisix start.
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: Starting rsudo-apisix-24113.service - /usr/bin/apisix start...
+Nov 05 13:00:25 1c1df5b58c25 apisix[94]: /usr/local/openresty//luajit/bin/luajit /usr/local/apisix/apisix/cli/apisix.lua start
+Nov 05 13:00:25 1c1df5b58c25 apisix[94]: Warning! Current maximum number of open file descriptors [1024] is not greater than 1024, please increase user limits by execute 'ulimit -n <new user limits>' , otherwise the performance is low.
+Nov 05 13:00:25 1c1df5b58c25 apisix[117]: nginx: [alert] could not open error log file: open() "/usr/local/apisix/logs/error.log" failed (6: No such device or address)
+Nov 05 13:00:25 1c1df5b58c25 apisix[117]: 2026/11/05 13:00:25 [emerg] 117#117: open() "/usr/local/apisix/logs/error.log" failed (6: No such device or address)
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: rsudo-apisix-24113.service: Can't open PID file /usr/local/apisix/logs/nginx.pid (yet?) after start: No such file or directory
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: rsudo-apisix-24113.service: Failed with result 'protocol'.
+Nov 05 13:00:25 1c1df5b58c25 systemd[1]: Failed to start rsudo-apisix-24113.service - /usr/bin/apisix start.
+ls: cannot access '/usr/local/apisix/logs/nginx.pid': No such file or directory
+lrwxrwxrwx 1 apisix apisix 11 Sep 29 10:08 /usr/local/apisix/logs/error.log -> /dev/stderr
+rumiai-os/rsudo/apisix-systemd-apisix-live.test: ERROR: cannot start official APISIX through real systemd service
