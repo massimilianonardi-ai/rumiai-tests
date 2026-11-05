@@ -1,0 +1,73 @@
+#!/bin/sh
+# Authentic published packages through m pkg and a selected shell context.
+TEST_ID=m-os/pkg-real-source-composition/installed-term-rsudo.test
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$1" >&2; exit 3; }
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$1" >&2; exit 1; }
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || error 'test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/m-os-target.lib" || error 'target helper'
+target=$(rumiai_test_target_m_os_find)
+status=$?
+case "$status" in
+  0) : ;;
+  1) printf '%s: SKIP: no m-os target\n' "$TEST_ID"; exit 2 ;;
+  *) error 'invalid target checkout' ;;
+esac
+if [ "${RUMIAI_TEST_M_OS_CHILD-}" != 1 ]
+then
+  [ -n "${RUMIAI_TEST_PKG_CATALOG_ROOT-}" ] || error 'catalog checkout required'
+  catalog=$(CDPATH= cd -- "$RUMIAI_TEST_PKG_CATALOG_ROOT" && pwd -P) || error 'invalid catalog checkout'
+  for name in m-core m-term m-rsudo
+  do
+    [ -d "$catalog/v2/pkg/$name" ] || error "no v2 package definition for $name"
+  done
+  conf=$("$target/m" state-path system sys pkg conf) || error 'catalog configuration unavailable'
+  [ -f "$conf/catalog" ] && [ "$(cat "$conf/catalog")" = "$catalog" ] ||
+    error 'local catalog must be selected by caller'
+  "$target/m" pkg install 'm-core@v0.1.0' 'm-term@v0.1.0' 'm-rsudo@v0.1.0' ||
+    error 'real upstream package installation failed (inspect pkg logs)'
+  RUMIAI_TEST_M_OS_CHILD=1
+  export RUMIAI_TEST_M_OS_CHILD
+  if "$target/m" sh "$0"; then exit 0
+  else
+    status=$?
+    [ "$status" -eq 1 ] && exit 1
+    error "m shell failed (status $status)"
+  fi
+fi
+set -eu
+[ -n "${m_ROOT-}" ] && [ -n "${m_LIB_DIR-}" ] || error 'm bootstrap unavailable'
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || error 'm core library unavailable'
+baseline=$PATH
+context 'pkg=m-core@v0.1.0' 'pkg=m-term@v0.1.0' 'pkg=m-rsudo@v0.1.0' ||
+  fail 'real installed packages cannot be selected by context'
+for name in array menu rsudo
+do
+  case "$name" in
+    array) pkg=m-core ;;
+    menu) pkg=m-term ;;
+    rsudo) pkg=m-rsudo ;;
+  esac
+  [ -L "$m_PKG_DIR/$pkg@v0.1.0/link/lib/sh/$name.lib.sh" ] ||
+    fail "$name shell-library link was not published by real pkg"
+done
+. array.lib.sh || fail 'cannot source exported array.lib.sh'
+array ci_values || fail 'array creation failed'
+array ci_values set one two || fail 'array operation failed'
+array ci_values size ci_count || fail 'array size failed'
+[ "$ci_count" -eq 2 ] || fail 'exported array returned wrong contents'
+status=0
+menu -Z >/dev/null 2>&1 || status=$?
+[ "$status" -eq 2 ] || fail "real menu command status $status instead of 2"
+status=0
+read-key unexpected >/dev/null 2>&1 || status=$?
+[ "$status" -eq 2 ] || fail "real read-key command status $status instead of 2"
+status=0
+rsudo --unrecognized >/dev/null 2>&1 || status=$?
+[ "$status" -eq 8 ] || fail "real rsudo command status $status instead of 8"
+status=0
+RSUDO_HOST=localhost RSUDO_USER=ci RSUDO_PASSWORD=ci rsudo fs nonexistent-operation >/dev/null 2>&1 || status=$?
+[ "$status" -eq 16 ] || fail "real rsudo fs module dispatch returned $status instead of 16"
+context || fail 'context reset failed'
+[ "$PATH" = "$baseline" ] || fail 'context did not restore PATH'
+printf '%s\n' 'PASS: real released m-core/m-term/m-rsudo installation, context shell libraries, menu and rsudo module dispatch'
