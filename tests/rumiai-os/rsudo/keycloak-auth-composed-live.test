@@ -274,6 +274,26 @@ do
   [ "$jwt_client_http" = 201 ] ||
     fail "Keycloak $version SSH test JWT client provisioning rejected ($jwt_client_http)"
 
+  for algorithm in HS384 HS512
+  do
+    case "$algorithm" in
+      HS384) signed_id=k04-signed-hs384 ;;
+      HS512) signed_id=k04-signed-hs512 ;;
+    esac
+    jq --arg cid "$signed_id" --arg alg "$algorithm" \
+      '.clientId = $cid | .attributes["token.endpoint.auth.signing.alg"] = $alg' \
+      "$tmp/client-jwt.json" > "$tmp/client-$algorithm.json" ||
+      error "Keycloak $version cannot build SSH $algorithm fixture"
+    jwt_http=$(host_https --output "$tmp/create-$algorithm" \
+      --write-out '%{http_code}' --header "@$tmp/admin-header" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/client-$algorithm.json" \
+      --url "$host_base/admin/realms/master/clients") ||
+      error "Keycloak $version SSH $algorithm client create transport failed"
+    [ "$jwt_http" = 201 ] ||
+      fail "Keycloak $version SSH $algorithm client create failed ($jwt_http)"
+  done
+
   # Shared Docker network namespace makes the actual Keycloak listener
   # reachable as HTTPS 127.0.0.1:8443 from the real SSH/sudo target.
   ssh_container=$(docker run -d \
@@ -345,6 +365,45 @@ EOF_SSH_CONFIG
   do
     grep -F "$sensitive" "$tmp/auth.err" >/dev/null &&
       fail "Keycloak $version composed JWT assertions/secrets leaked to diagnostics"
+  done
+
+  # Both stronger HMAC algorithms must be selected explicitly and signed
+  # on the actual remote sudo host, never in the local m caller.
+  for algorithm in HS384 HS512
+  do
+    case "$algorithm" in
+      HS384) signed_id=k04-signed-hs384 ;;
+      HS512) signed_id=k04-signed-hs512 ;;
+    esac
+    result=$(probe acquire --server https://127.0.0.1:8443 \
+      --issuer-realm master --auth-mode client-credentials \
+      --client-id "$signed_id" --client-auth client-secret-jwt \
+      --client-jwt-alg "$algorithm" \
+      --client-secret-file /root/keycloak/secret \
+      --token-store "/root/keycloak/signed-$algorithm-$version" \
+      --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+      fail "Keycloak $version composed SSH $algorithm acquisition failed ($status)"
+    docker exec "$ssh_container" jq -e \
+      '.access_token | type == "string" and length > 0' \
+      "/root/keycloak/signed-$algorithm-$version" >/dev/null ||
+      fail "Keycloak $version SSH $algorithm private token missing"
+    result=$(probe status --server https://127.0.0.1:8443 \
+      --issuer-realm master --client-id "$signed_id" \
+      --client-auth client-secret-jwt --client-jwt-alg "$algorithm" \
+      --client-secret-file /root/keycloak/secret \
+      --token-file "/root/keycloak/signed-$algorithm-$version" \
+      --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      printf '%s\n' "$result" |
+        jq -e '.stored == true and .server_validated == true and
+          (.active | type == "boolean")' >/dev/null ||
+      fail "Keycloak $version composed SSH $algorithm introspection failed ($status)"
+    grep -F 'k04-disposable-client-secret' "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version $algorithm signing leaked secret to diagnostics"
   done
 
   result=$(acquire client-secret-basic "basic-$version" 2>"$tmp/auth.err")
