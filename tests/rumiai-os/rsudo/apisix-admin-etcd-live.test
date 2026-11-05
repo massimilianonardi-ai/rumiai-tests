@@ -238,9 +238,21 @@ do
       'HTTP/1.1 200 '*|'HTTP/1.0 200 '*) : ;;
       *) fail "$resource list returned unexpected status: $first" ;;
     esac
-    case "$response" in
-      *'"list"'*'"total"'*|*'"total"'*'"list"'*) : ;;
-      *) fail "$resource list lacked expected collection envelope" ;;
+    # The v2 envelope preserves etcd's node/nodes directory response.
+    # The v3 adapter converts it to a resource list plus filtered total.
+    case "$api_version" in
+      v2)
+        case "$response" in
+          *'"node"'*'"nodes"'*|*'"nodes"'*'"node"'*) : ;;
+          *) fail "$resource v2 list lacked its node/nodes envelope" ;;
+        esac
+      ;;
+      v3)
+        case "$response" in
+          *'"list"'*'"total"'*|*'"total"'*'"list"'*) : ;;
+          *) fail "$resource v3 list lacked its list/total envelope" ;;
+        esac
+      ;;
     esac
   done
 
