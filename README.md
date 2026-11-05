@@ -120,20 +120,11 @@ Un `.test` che termina con uno status diverso da `0..3`, o che viene terminato d
 
 I test devono essere unici e universali rispetto agli host sui quali sono applicabili. La suite descrive la proprietà da verificare; la sessione registra l'ambiente nel quale la proprietà è stata verificata.
 
-Gli host stabili di riferimento correnti sono:
-
-```text
-macOS
-Ubuntu 26.04 ARM64
-```
-
-Host aggiuntivi usati periodicamente includono:
-
-```text
-Ubuntu 26.04 x64
-Windows 10 x64
-Windows 11 x64
-```
+L'ordine corrente delle piattaforme di riferimento e il significato della
+validazione reale (che comprende le VM designate dall'operatore) sono
+definiti esclusivamente in `rumiai-dev/TESTING.md` e
+`rumiai-dev/PHYSICAL-TESTING.md`. Questo README non mantiene una seconda
+lista di host o priorità, che potrebbe divergere dal contratto canonico.
 
 Una validation session registra almeno sistema operativo, versione, architettura e altre caratteristiche dell'ambiente materialmente rilevanti.
 
