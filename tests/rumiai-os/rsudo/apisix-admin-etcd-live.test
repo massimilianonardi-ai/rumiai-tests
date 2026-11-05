@@ -190,14 +190,16 @@ for image in $images
 do
   for api_version in v2 v3
   do
-    if [ "$api_version" = v3 ]
+    # These pinned releases ship Admin API v3 by default; select v2 only
+    # through an explicit on-disk override, without guessing the default.
+    if [ "$api_version" = v2 ]
     then
       sed '/^  admin:$/a\
-    admin_api_version: v3' "$tmp/config-default.yaml" > "$tmp/config.yaml" ||
-        error 'cannot create v3 test profile'
+    admin_api_version: v2' "$tmp/config-default.yaml" > "$tmp/config.yaml" ||
+        error 'cannot create explicit v2 test profile'
     else
       cp "$tmp/config-default.yaml" "$tmp/config.yaml" ||
-        error 'cannot restore default Admin API profile'
+        error 'cannot restore default v3 Admin API profile'
     fi
   apisix_container=$(docker run -d --network "$network" \
     --cap-drop ALL --security-opt no-new-privileges=true \
