@@ -69,6 +69,94 @@ function key(item)
   return String(item.session)+':'+String(item.requestId);
 }
 
+function _crossTargetCandidates(runDir)
+{
+  const events=readJsonl(path.join(runDir,'network.jsonl'));
+  const requests=new Map();
+  const finished=new Set();
+  for(const item of events)
+  {
+    if(item.type==='request')
+    {
+      if(!requests.has(item.requestId))requests.set(item.requestId,[]);
+      requests.get(item.requestId).push(item);
+    }
+    if(item.type==='finished')
+      finished.add(key({session:item.targetId,requestId:item.requestId}));
+  }
+  const orphanFinishes=events.filter(item=>
+    item.type==='finished' && !(requests.get(item.requestId)||[])
+      .some(request=>request.targetId===item.targetId));
+  const matched=orphanFinishes.map(item=>(requests.get(item.requestId)||[])
+    .filter(request=>request.targetId!==item.targetId &&
+      request.elapsedMs<=item.elapsedMs &&
+      item.elapsedMs-request.elapsedMs<=120000));
+  const unique=matched.filter(items=>items.length===1).map(items=>items[0]);
+  const sourceWithoutOwnFinish=unique.filter(item=>
+    !finished.has(key({session:item.targetId,requestId:item.requestId})));
+  return {
+    finishedWithoutSameTargetRequest:orphanFinishes.length,
+    uniqueCrossTargetIdAndTimeCandidates:unique.length,
+    candidateSourcesWithoutSameTargetFinish:sourceWithoutOwnFinish.length,
+    ambiguousCandidates:matched.filter(items=>items.length>1).length,
+    withoutCandidate:matched.filter(items=>!items.length).length,
+    candidateDocument:unique.filter(item=>item.resourceType==='Document').length,
+    candidateScript:unique.filter(item=>item.resourceType==='Script').length,
+    confidence:'candidate-only-no-automatic-cross-session-merge'
+  };
+}
+
+function _cdpBodyFailures(runDir,resources)
+{
+  // Match outbound getResponseBody with its native numeric CDP reply code.
+  // Raw packet bodies, headers, URL values and error messages remain local.
+  const ids=new Set(resources.filter(item=>
+    item.requestProvenance==='response-only' && item.status==='body-unavailable')
+    .map(key));
+  const commands=new Map();
+  const replies=new Map();
+  const wire=readJsonl(path.join(runDir,'cdp-wire.jsonl'));
+  for(const row of wire)
+  {
+    if(row.direction!=='outbound' && row.direction!=='inbound')continue;
+    let packet;try{packet=JSON.parse(row.raw);}catch(_){continue;}
+    if(row.direction==='outbound' &&
+       packet.method==='Network.getResponseBody' &&
+       ids.has(key({session:packet.sessionId,requestId:packet.params?.requestId})))
+      commands.set(packet.id,key({session:packet.sessionId,
+        requestId:packet.params.requestId}));
+    else if(row.direction==='inbound' && packet.id!==undefined &&
+      (packet.error || packet.result) && commands.has(packet.id))
+    {
+      const type=packet.error && Number.isInteger(packet.error.code)?
+        'cdp-'+String(packet.error.code):
+        packet.error?'cdp-other-error':'cdp-success';
+      replies.set(commands.get(packet.id),type);
+    }
+  }
+  const buckets={};
+  for(const id of ids)
+  {
+    const kind=replies.get(id)||'no-matched-cdp-reply';
+    buckets[kind]=(buckets[kind]||0)+1;
+  }
+  return {responseOnlyBodiesUnavailable:ids.size,cdpOutcomeCounts:buckets};
+}
+
+function _amazonPageClass(runDir,label)
+{
+  if(label!=='amazon')return 'not-applicable';
+  const file=path.join(runDir,'states/dom-rest-final.html');
+  const html=fs.readFileSync(file,'utf8');
+  if(/(?:id=["']item_[^"']+["']|data-itemid=["'][^"']+["'])/i.test(html))
+    return 'wishlist-items-observed';
+  if(/(?:id=["']captchacharacters["']|name=["']captcha["']|validateCaptcha)/i.test(html))
+    return 'captcha-challenge-observed';
+  if(/(?:\/ap\/signin|id=["']ap_email["'])/i.test(html))
+    return 'signin-indicators-without-items';
+  return 'no-wishlist-items-unclassified';
+}
+
 async function capture(url,outputRoot,stderrFile)
 {
   let out='';
@@ -237,6 +325,11 @@ async function main()
   try{runDir=await capture(url,outputRoot,stderrFile);}
   finally{fs.closeSync(stderrFile);}
   const result=summarize(runDir,host,productCommit,testCommit,label);
+  result.diagnostics={
+    crossTarget:_crossTargetCandidates(runDir),
+    bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
+    pageClassification:_amazonPageClass(runDir,label)
+  };
   const reportName='response-only-'+label+'-'+runToken+'.json';
   fs.writeFileSync(path.join(outputRoot,reportName),
     JSON.stringify(result,null,2)+'\n',{flag:'wx',mode:0o600});
