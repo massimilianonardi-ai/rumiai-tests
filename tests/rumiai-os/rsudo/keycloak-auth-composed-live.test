@@ -329,6 +329,27 @@ do
   [ "$rsa_client_http" = 201 ] ||
     fail "Keycloak $version SSH RSA JWT client create rejected ($rsa_client_http)"
 
+  # Register separate clients with explicit RSA signature policies.
+  for algorithm in RS384 RS512
+  do
+    case "$algorithm" in
+      RS384) rsa_id=k04-rs384 ;;
+      RS512) rsa_id=k04-rs512 ;;
+    esac
+    jq --arg id "$rsa_id" --arg alg "$algorithm" \
+      '.clientId = $id | .attributes["token.endpoint.auth.signing.alg"] = $alg' \
+      "$tmp/client-rsa.json" > "$tmp/rsa-$algorithm.json" ||
+      error "Keycloak $version cannot build SSH $algorithm client"
+    rsa_client_http=$(host_https --output "$tmp/rsa-$algorithm-response" \
+      --write-out '%{http_code}' --header "@$tmp/admin-header" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/rsa-$algorithm.json" \
+      --url "$host_base/admin/realms/master/clients") ||
+      error "Keycloak $version SSH $algorithm client provisioning failed"
+    [ "$rsa_client_http" = 201 ] ||
+      fail "Keycloak $version SSH $algorithm client create rejected ($rsa_client_http)"
+  done
+
   # Shared Docker network namespace makes the actual Keycloak listener
   # reachable as HTTPS 127.0.0.1:8443 from the real SSH/sudo target.
   ssh_container=$(docker run -d \
@@ -407,7 +428,43 @@ EOF_SSH_CONFIG
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version composed RSA signed introspection failed ($status)"
-  grep -F 'eyJhbGciOiJSUzI1Ni' "$tmp/auth.err" >/dev/null &&
+  # Exercise each new algorithm through the real SSH/sudo target and
+  # the same protected certificate/key already staged for RS256.
+  for algorithm in RS384 RS512
+  do
+    case "$algorithm" in
+      RS384) rsa_id=k04-rs384 ;;
+      RS512) rsa_id=k04-rs512 ;;
+    esac
+    result=$(probe acquire --server https://127.0.0.1:8443 \
+      --issuer-realm master --auth-mode client-credentials \
+      --client-id "$rsa_id" --client-auth private-key-jwt \
+      --client-jwt-alg "$algorithm" \
+      --private-key-file /root/keycloak/client-rsa.key \
+      --certificate-file /root/keycloak/client-rsa.pem \
+      --token-store "/root/keycloak/$algorithm-$version" \
+      --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+      fail "Keycloak $version composed $algorithm grant failed ($status)"
+    docker exec "$ssh_container" jq -e \
+      '.access_token | type == "string" and length > 0' \
+      "/root/keycloak/$algorithm-$version" >/dev/null ||
+      fail "Keycloak $version composed $algorithm token not private on target"
+    result=$(probe status --server https://127.0.0.1:8443 \
+      --issuer-realm master --client-id "$rsa_id" \
+      --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+      --private-key-file /root/keycloak/client-rsa.key \
+      --certificate-file /root/keycloak/client-rsa.pem \
+      --token-file "/root/keycloak/$algorithm-$version" \
+      --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+      fail "Keycloak $version composed $algorithm introspection failed ($status)"
+  done
+  grep -F 'eyJhbGciOiJSUz' "$tmp/auth.err" >/dev/null &&
     fail "Keycloak $version RSA assertion leaked to diagnostics"
 
   # Signed assertion is created and sent on the real remote sudo target.
