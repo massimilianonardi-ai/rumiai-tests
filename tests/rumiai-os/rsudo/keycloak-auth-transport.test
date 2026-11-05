@@ -254,7 +254,6 @@ class Handler(BaseHTTPRequestHandler):
                     c["nbf"] <= now and now < c["exp"] <= now + 60)
                 if claims_valid:
                     with tempfile.TemporaryDirectory() as d:
-                        from pathlib import Path
                         msg = Path(d, "message")
                         sig = Path(d, "signature")
                         msg.write_bytes((head + "." + payload).encode("ascii"))
