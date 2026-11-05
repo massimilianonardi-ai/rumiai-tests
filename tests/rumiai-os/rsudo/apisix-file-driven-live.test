@@ -135,9 +135,10 @@ product_probe()
 # selected route; an absent route returns 404.
 http_status()
 {
-  response=$(docker exec -i "$container" /bin/bash -s -- "$1" <<'HTTP'
+  response=$(docker exec -i "$container" /bin/bash -s -- "$1" "${2:-9080}" <<'HTTP'
 path=$1
-exec 3<>/dev/tcp/127.0.0.1/9080 || exit 70
+port=$2
+exec 3<>/dev/tcp/127.0.0.1/"$port" || exit 70
 printf 'GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' "$path" >&3
 cat <&3
 HTTP
@@ -156,6 +157,9 @@ do
     cat > "$tmp/config.yaml" <<CONFIG
 apisix:
   enable_admin: false
+status:
+  ip: 127.0.0.1
+  port: 7085
 deployment:
   role: data_plane
   role_data_plane:
@@ -208,6 +212,14 @@ CONFIG
     done
     if [ "$tries" -ge 30 ]
     then
+      # A separate APISIX-owned readiness endpoint is useful diagnostic
+      # evidence, never proof that the selected route or source was loaded.
+      # This probe is intentionally non-gating (JSON readiness can differ).
+      readiness=$(http_status /status/ready 7085)
+      readiness_status=$?
+      printf 'fixture readiness: transport=%s http=%s\n' \
+        "$readiness_status" "$readiness" >&2
+      docker exec "$container" cat "/usr/local/apisix/conf/apisix.$provider" >&2 || :
       docker logs "$container" >&2 || :
       fail "$provider gateway did not apply its selected file route (last HTTP $code)"
     fi
