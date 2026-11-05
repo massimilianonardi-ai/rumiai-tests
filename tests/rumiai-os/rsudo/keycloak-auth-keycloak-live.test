@@ -508,6 +508,41 @@ do
     error "Keycloak $version wrong certificate Admin REST HTTP transport failed"
   printf '%s: Keycloak %s certificate-bound Admin REST observations: matching=%s absent=%s wrong=%s\n' \
     "$TEST_ID" "$version" "$matched_http" "$absent_http" "$wrong_http"
+  case "$absent_http/$wrong_http" in
+    200/200|200/401|200/403|401/200|403/200|401/401|401/403|403/401|403/403) : ;;
+    *) fail "Keycloak $version unexpected Admin REST replay outcomes ($absent_http/$wrong_http)" ;;
+  esac
+  if [ "$absent_http" = 200 ] || [ "$wrong_http" = 200 ]
+  then
+    printf '%s: Keycloak %s Admin REST did not enforce the certificate-bound token on the observed request\n' \
+      "$TEST_ID" "$version"
+  fi
+
+  # Keycloak documents mTLS holder-of-key checks for UserInfo. Verify the
+  # same user token on its OIDC protected resource as an independent
+  # positive control before interpreting any Admin REST behavior.
+  userinfo_url=$base/realms/master/protocol/openid-connect/userinfo
+  userinfo_matched=$(transport --cert "$tmp/mtls-good.pem" \
+    --key "$tmp/mtls-good.key" --header "@$tmp/mtls-admin-header" \
+    --output "$tmp/mtls-matched-userinfo" --write-out '%{http_code}' \
+    --url "$userinfo_url") ||
+    error "Keycloak $version matching-certificate UserInfo transport failed"
+  userinfo_absent=$(transport --header "@$tmp/mtls-admin-header" \
+    --output "$tmp/mtls-absent-userinfo" --write-out '%{http_code}' \
+    --url "$userinfo_url") ||
+    error "Keycloak $version missing-certificate UserInfo transport failed"
+  userinfo_wrong=$(transport --cert "$tmp/mtls-wrong.pem" \
+    --key "$tmp/mtls-wrong.key" --header "@$tmp/mtls-admin-header" \
+    --output "$tmp/mtls-wrong-userinfo" --write-out '%{http_code}' \
+    --url "$userinfo_url") ||
+    error "Keycloak $version wrong-certificate UserInfo transport failed"
+  printf '%s: Keycloak %s certificate-bound UserInfo observations: matching=%s absent=%s wrong=%s\n' \
+    "$TEST_ID" "$version" "$userinfo_matched" "$userinfo_absent" "$userinfo_wrong"
+  [ "$userinfo_matched" = 200 ] &&
+    { [ "$userinfo_absent" = 401 ] || [ "$userinfo_absent" = 403 ]; } &&
+    { [ "$userinfo_wrong" = 401 ] || [ "$userinfo_wrong" = 403 ]; } ||
+    fail "Keycloak $version UserInfo holder-of-key enforcement absent or unexpected"
+
   result=$(probe refresh --server "$base" --issuer-realm master \
     --client-id k04-mtls --client-auth tls-client-auth \
     --private-key-file "$tmp/mtls-good.key" \
