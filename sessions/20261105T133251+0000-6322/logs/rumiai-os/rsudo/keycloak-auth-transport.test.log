@@ -1,0 +1,24 @@
+rumiai-os/rsudo/keycloak-auth-transport.test: FAIL: ES256 ECDSA acquisition or JWS signature verification failed (76)
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 59672)
+Traceback (most recent call last):
+  File "/usr/lib/python3.14/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/socketserver.py", line 766, in __init__
+    self.handle()
+    ~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/http/server.py", line 496, in handle
+    self.handle_one_request()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/http/server.py", line 484, in handle_one_request
+    method()
+    ~~~~~~^^
+  File "/tmp/rumiai-validate-env-1/tmp/keycloak-auth-test-235312/server.py", line 214, in do_POST
+    msg = Path(d, "message")
+          ^^^^
+UnboundLocalError: cannot access local variable 'Path' where it is not associated with a value
+----------------------------------------
