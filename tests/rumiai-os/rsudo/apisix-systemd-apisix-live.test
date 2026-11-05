@@ -110,6 +110,18 @@ done
 # launch the actual installed APISIX daemon from a transient systemd service.
 docker exec "$cid" /usr/bin/apisix init ||
   error 'official APISIX CLI could not generate its runtime configuration'
+# The official container image connects its log files to Docker stdout/stderr.
+# Reopening those stream descriptors from a daemonized systemd unit fails with
+# ENXIO. Supply ordinary log files only inside this disposable test container.
+docker exec "$cid" sh -c '
+  set -eu
+  for name in error.log access.log
+  do
+    file=/usr/local/apisix/logs/$name
+    [ ! -L "$file" ] || rm "$file"
+    : > "$file"
+  done
+' || error 'cannot prepare real APISIX service log files'
 unit="rsudo-apisix-$(printf '%s' "$$" | tr -cd '0-9').service"
 docker exec "$cid" systemd-run --unit="${unit%.service}" \
   --property=Type=forking \
