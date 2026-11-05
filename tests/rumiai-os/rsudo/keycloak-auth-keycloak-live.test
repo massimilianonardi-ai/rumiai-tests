@@ -403,6 +403,27 @@ do
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version mTLS client introspection failed ($status)"
+  # The private K04 fixed Admin GET uses the actual Keycloak TLS listener and
+  # presents the same client certificate while preserving resource permission
+  # separation. This service account has no Admin realm role: expect 403.
+  result=$(probe admin-probe --server "$base" --issuer-realm master \
+    --target-realm master --token-file "$tmp/token-mtls-$version" \
+    --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-good.pem" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 80 ] && [ -z "$result" ] ||
+    fail "Keycloak $version fixed Admin mTLS GET did not preserve 403 ($status)"
+  result=$(probe admin-probe --server "$base" --issuer-realm master \
+    --target-realm master --token-file "$tmp/token-mtls-$version" \
+    --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-wrong.pem" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] ||
+    fail "Keycloak $version fixed Admin mTLS GET accepted mismatched key ($status)"
   # Same explicitly selected X509 client runs a user password grant,
   # refresh and explicit refresh-token revocation. No JWT/secret fallback.
   printf 'k04-bootstrap-only\n' > "$tmp/mtls-user-password"
