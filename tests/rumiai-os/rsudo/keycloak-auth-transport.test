@@ -212,7 +212,8 @@ class Handler(BaseHTTPRequestHandler):
                 c = json.loads(decode(payload))
                 now = int(time.time())
                 claims_valid = (
-                    h.get("alg") in ("RS256", "RS384", "RS512") and
+                    h.get("alg") in ("RS256", "RS384", "RS512",
+                                     "PS256", "PS384", "PS512") and
                     h.get("typ") == "JWT" and
                     c.get("iss") == "service-rs256" and
                     c.get("sub") == "service-rs256" and
@@ -231,13 +232,21 @@ class Handler(BaseHTTPRequestHandler):
                         sig = Path(d, "signature")
                         msg.write_bytes((head + "." + payload).encode("ascii"))
                         sig.write_bytes(decode(signature))
+                        signature_algorithm = h["alg"]
+                        openssl_args = ["openssl", "dgst", {
+                            "RS256": "-sha256", "PS256": "-sha256",
+                            "RS384": "-sha384", "PS384": "-sha384",
+                            "RS512": "-sha512", "PS512": "-sha512",
+                        }[signature_algorithm], "-verify", sys.argv[4]]
+                        if signature_algorithm.startswith("PS"):
+                            # JWS RSA-PSS specifies a digest-sized salt.
+                            openssl_args.extend([
+                                "-sigopt", "rsa_padding_mode:pss",
+                                "-sigopt", "rsa_pss_saltlen:-1"])
+                        openssl_args.extend([
+                            "-signature", str(sig), str(msg)])
                         checked = subprocess.run(
-                            ["openssl", "dgst", {
-                                "RS256": "-sha256",
-                                "RS384": "-sha384",
-                                "RS512": "-sha512"}[h["alg"]], "-verify",
-                             sys.argv[4], "-signature", str(sig), str(msg)],
-                            stdout=subprocess.DEVNULL,
+                            openssl_args, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
                         client_valid = checked.returncode == 0
             except (ValueError, TypeError, KeyError, UnicodeError):
@@ -377,7 +386,7 @@ acquire()
     --token-store "$3" --ca-file "$tmp/server.pem"
 }
 
-# Private-key JWT: explicit RSA RS256/RS384/RS512, no client secret. Client certificate
+# Private-key JWT: explicitly selected RSA and RSA-PSS, no client secret. Certificate
 # independently matches the trusted key registered on this HTTPS fixture.
 result=$(probe acquire --server "$base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-rs256 \
@@ -402,7 +411,7 @@ status=$?
 [ "$status" -eq 0 ] &&
   [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
   fail "RS256 signed-client introspection failed ($status)"
-for algorithm in RS384 RS512
+for algorithm in RS384 RS512 PS256 PS384 PS512
 do
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id service-rs256 \
@@ -457,8 +466,8 @@ result=$(probe acquire --server "$base" --issuer-realm master \
 status=$?
 [ "$status" -eq 64 ] && [ ! -e "$tmp/private-rsa-secret" ] ||
   fail "private-key auth accepted conflicting shared secret ($status)"
-grep -F 'eyJhbGciOiJSUz' "$tmp/argv" "$tmp/err" >/dev/null &&
-  fail "RSA client assertion leaked into curl arguments or diagnostics"
+grep -E 'eyJhbGciOiJ(SUz|QUz)' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail "RSA/PS client assertion leaked into curl arguments or diagnostics"
 
 # K04 signed client assertion uses protected HS256 client-secret-jwt. The
 # server independently verifies signature, iss/sub/aud, time and jti.
