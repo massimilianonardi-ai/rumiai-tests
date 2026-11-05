@@ -229,14 +229,15 @@ async function main()
       config.RUMIAI_TEST_WEB_ANALYZE_EXPECTED_PRODUCT_COMMIT,
       'product-revision-mismatch');
 
+  const runToken=new Date().toISOString().replace(/[:.]/g,'-')+'-'+process.pid;
   const logfile=path.join(outputRoot,
-    'capture-'+label+'-'+process.pid+'-stderr.log');
+    'capture-'+label+'-'+runToken+'-stderr.log');
   const stderrFile=fs.openSync(logfile,'wx',0o600);
   let runDir;
   try{runDir=await capture(url,outputRoot,stderrFile);}
   finally{fs.closeSync(stderrFile);}
   const result=summarize(runDir,host,productCommit,testCommit,label);
-  const reportName='response-only-'+label+'-'+process.pid+'.json';
+  const reportName='response-only-'+label+'-'+runToken+'.json';
   fs.writeFileSync(path.join(outputRoot,reportName),
     JSON.stringify(result,null,2)+'\n',{flag:'wx',mode:0o600});
   process.stdout.write(JSON.stringify({...result,localReportFile:reportName},null,2)+'\n');
