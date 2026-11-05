@@ -130,6 +130,18 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
     navigator.serviceWorker.register('/service-worker.js')
       .then(() => {document.body.dataset.serviceWorkerRegistered = 'yes';})
       .catch(() => {document.body.dataset.serviceWorkerRegistered = 'no';});
+    // The fixture, not the analyzer, registers an independently scoped
+    // short-lived worker that terminates itself after activation. Its
+    // registration must remain discoverable without a running worker.
+    navigator.serviceWorker.register('/inactive-service-worker.js', {scope:'/inactive/'})
+      .then(async registration => {
+        for (let i=0; i<25 && registration.active?.state !== 'activated'; i++)
+          await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 700));
+        const persisted = await navigator.serviceWorker.getRegistration('/inactive/');
+        document.body.dataset.inactiveServiceWorkerPersisted =
+          persisted?.active?.scriptURL.endsWith('/inactive-service-worker.js') ? 'yes' : 'no';
+      }).catch(() => {document.body.dataset.inactiveServiceWorkerPersisted = 'no';});
   }
   const sameFrame = document.createElement('iframe');
   sameFrame.id = 'same-origin-frame';
@@ -388,6 +400,13 @@ async function main()
         'text/javascript'],
       '/service-worker.js': [
         'self.addEventListener("install",()=>{});self.addEventListener("activate",()=>{});',
+        'text/javascript'],
+      '/inactive-service-worker.js': [
+        'self.addEventListener("install",e=>e.waitUntil(self.skipWaiting()));' +
+          'self.addEventListener("activate",e=>{' +
+          'e.waitUntil(self.clients.claim());' +
+          'setTimeout(()=>self.close(),250)' +
+          '});',
         'text/javascript'],
       '/frame.html': [
         '<!doctype html><title>Frame child</title><body><p>Same-origin iframe</p>' +
@@ -1083,6 +1102,23 @@ async function main()
         item.scriptURL?.endsWith('/service-worker.js') &&
         item.registrationObserved && item.versionId),
         'real worker version was not correlated with its observed registration');
+      const inactive = workerProvenance.browserRegistrations.find(item =>
+        item.scopeURL?.endsWith('/inactive/'));
+      assert(inactive, 'persistent inactive registration absent from browser snapshot');
+      assert(inactive.activeScriptURL?.endsWith('/inactive-service-worker.js'),
+        'browser registration lost its activated script after worker stopped');
+      assert.equal(inactive.status, 'registered-worker-stopped',
+        'stopped ServiceWorker version must be correlated to persisted browser state');
+      assert.equal(inactive.workerTargetLiveAtRest,false,
+        'stopped ServiceWorker must not require an attached worker target');
+      assert(workerProvenance.browserRegistrationSources.some(item =>
+        item.targetId === mainCoverageTarget.targetId && item.status === 'saved'),
+        'main-frame browser registration snapshot must have provenance');
+      assert(parsedWire.filter(item => item.direction === 'outbound' &&
+        item.packet.method?.startsWith('ServiceWorker.')).every(item =>
+        item.packet.method === 'ServiceWorker.enable'),
+        'analyzer must not issue ServiceWorker lifecycle mutations');
+      console.log('Inactive ServiceWorker registration, stopped version and browser snapshot verified');
     }
     else assert(workerProvenance.limitations.some(message =>
       message.includes('observer not enabled')),
