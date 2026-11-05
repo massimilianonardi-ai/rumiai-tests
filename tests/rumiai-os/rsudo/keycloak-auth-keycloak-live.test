@@ -375,6 +375,18 @@ do
     "$tmp/ready" >/dev/null ||
     fail "Keycloak $version returned unexpected issuer identity"
 
+  # Discovery is provider metadata, not an execution test. In particular,
+  # self_signed_tls_client_auth is distinct from the configured PKI client-x509.
+  if jq -e '(.token_endpoint_auth_methods_supported // []) |
+    index("self_signed_tls_client_auth") != null' "$tmp/ready" >/dev/null
+  then
+    self_signed_advertised=yes
+  else
+    self_signed_advertised=no
+  fi
+  printf '%s: Keycloak %s OIDC advertises self_signed_tls_client_auth=%s (not runtime validation)\n' \
+    "$TEST_ID" "$version" "$self_signed_advertised"
+
   admin_code=$(transport --output "$tmp/admin-token" \
     --write-out '%{http_code}' \
     --data-urlencode grant_type=password \
@@ -561,6 +573,44 @@ do
     { [ "$userinfo_absent" = 401 ] || [ "$userinfo_absent" = 403 ]; } &&
     { [ "$userinfo_wrong" = 401 ] || [ "$userinfo_wrong" = 403 ]; } ||
     fail "Keycloak $version UserInfo holder-of-key enforcement absent or unexpected"
+
+  # An incorrect but internally consistent client certificate must not
+  # refresh the protected X509 session or replace its token store.
+  cp "$tmp/token-mtls-user-$version" "$tmp/mtls-before-rejected-refresh-$version" ||
+    error "Keycloak $version cannot snapshot X509 refresh store"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-wrong.key" \
+    --certificate-file "$tmp/mtls-wrong.pem" \
+    --token-file "$tmp/token-mtls-user-$version" \
+    --token-store "$tmp/token-mtls-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    cmp -s "$tmp/token-mtls-user-$version" "$tmp/mtls-before-rejected-refresh-$version" &&
+    [ ! -e "$tmp/token-mtls-user-$version.keycloak-refresh-lock" ] ||
+    fail "Keycloak $version rejected X509 refresh changed store or status ($status)"
+
+  # Independently verify that an uncredentialed direct token-endpoint
+  # refresh cannot use this protected refresh token. Keep bytes off argv.
+  jq -jr '.refresh_token' "$tmp/token-mtls-user-$version" \
+    > "$tmp/mtls-refresh-value-$version" ||
+    error "Keycloak $version protected refresh token unavailable"
+  absent_refresh_http=$(transport \
+    --data-urlencode grant_type=refresh_token \
+    --data-urlencode client_id=k04-mtls \
+    --data-urlencode "refresh_token@$tmp/mtls-refresh-value-$version" \
+    --output "$tmp/mtls-absent-refresh-response-$version" \
+    --write-out '%{http_code}' \
+    --url "$base/realms/master/protocol/openid-connect/token") ||
+    error "Keycloak $version direct missing-certificate refresh transport failed"
+  case "$absent_refresh_http" in
+    400|401) : ;;
+    *) fail "Keycloak $version accepted unauthenticated bound-token refresh ($absent_refresh_http)" ;;
+  esac
+  jq -e '.error == "invalid_client"' \
+    "$tmp/mtls-absent-refresh-response-$version" >/dev/null ||
+    fail "Keycloak $version missing-certificate refresh did not reject client"
 
   result=$(probe refresh --server "$base" --issuer-realm master \
     --client-id k04-mtls --client-auth tls-client-auth \
