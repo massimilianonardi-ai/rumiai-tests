@@ -29,7 +29,7 @@ case "$status" in
 esac
 
 [ "$(uname -s)" = Linux ] || skip 'systemd test requires Linux'
-for tool in systemd-run systemctl nginx sudo
+for tool in systemd-run systemctl nginx sudo python3 awk
 do
   command -v "$tool" >/dev/null 2>&1 || skip "missing prerequisite: $tool"
 done
@@ -38,8 +38,14 @@ sudo -n true >/dev/null 2>&1 || skip 'passwordless sudo unavailable'
 
 tmp=
 unit=
+foreign_unit=
 cleanup()
 {
+  if [ -n "$foreign_unit" ]
+  then
+    sudo -n systemctl stop "$foreign_unit" >/dev/null 2>&1 || :
+    sudo -n systemctl reset-failed "$foreign_unit" >/dev/null 2>&1 || :
+  fi
   if [ -n "$unit" ]
   then
     sudo -n systemctl stop "$unit" >/dev/null 2>&1 || :
@@ -96,6 +102,30 @@ done
 [ "$tries" -lt 20 ] || {
   sudo -n systemctl status --no-pager "$unit" >&2 || :
   fail 'real systemd service did not reach active state'
+}
+
+# A second, independent real process listens on the conventional Admin
+# port. The nginx master must NOT gain socket evidence merely because this
+# network namespace contains a TCP LISTEN socket on that port.
+foreign_unit="rsudo-apisix-foreign-$$.service"
+python_bin=$(command -v python3) || error 'python3 path unavailable'
+sudo -n systemd-run --unit="${foreign_unit%.service}" \
+  --property=Type=simple \
+  -- "$python_bin" -m http.server 9180 --bind 127.0.0.1 ||
+  error 'cannot launch isolated unrelated loopback server'
+tries=0
+while [ "$tries" -lt 20 ]
+do
+  if awk '$2=="0100007F:23DC" && $4=="0A" {found=1} END {exit !found}' /proc/net/tcp
+  then
+    break
+  fi
+  tries=$((tries + 1))
+  sleep 1
+done
+[ "$tries" -lt 20 ] || {
+  sudo -n systemctl status --no-pager "$foreign_unit" >&2 || :
+  fail 'unrelated live loopback listener was not observed'
 }
 
 pid=$(sudo -n cat "$tmp/logs/nginx.pid") ||
