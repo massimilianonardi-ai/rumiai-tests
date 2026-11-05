@@ -164,7 +164,9 @@ main_pid=$(docker exec "$cid" systemctl show --property=MainPID --value "$unit")
 [ "$pid" = "$main_pid" ] && [ "$pid" -ge 1 ] 2>/dev/null ||
   fail 'real systemd unit MainPID does not equal official APISIX master PID'
 docker exec "$cid" sh -c '
-  case "$(ps -p "$1" -o args= 2>/dev/null)" in
+  test -r "/proc/$1/cmdline" || exit 1
+  title=$(LC_ALL=C tr "\\000" " " < "/proc/$1/cmdline") || exit 1
+  case "$title" in
     "nginx: master process "*|"openresty: master process "*) : ;;
     *) exit 1 ;;
   esac
