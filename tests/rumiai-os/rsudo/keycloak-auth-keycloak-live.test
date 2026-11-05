@@ -81,6 +81,30 @@ chmod 600 "$tmp/private-client.key" "$tmp/private-client.pem" \
   "$tmp/wrong-client.key" "$tmp/wrong-client.pem" ||
   error 'private client keypair permissions unavailable'
 
+for curve_spec in ES256:prime256v1 ES384:secp384r1 ES512:secp521r1
+do
+  algorithm=${curve_spec%%:*}
+  curve=${curve_spec#*:}
+  openssl ecparam -name "$curve" -genkey -noout \
+    -out "$tmp/private-$algorithm.key" ||
+    error "$algorithm EC client key generation failed"
+  openssl req -new -x509 -key "$tmp/private-$algorithm.key" \
+    -days 1 -subj "/CN=k04-$algorithm" \
+    -out "$tmp/private-$algorithm.pem" ||
+    error "$algorithm EC client certificate generation failed"
+  chmod 600 "$tmp/private-$algorithm.key" "$tmp/private-$algorithm.pem" ||
+    error "$algorithm EC client certificate permissions unavailable"
+done
+# Independent, unregistered P-256 key tests Keycloak's public certificate trust.
+openssl ecparam -name prime256v1 -genkey -noout \
+  -out "$tmp/wrong-ES256.key" ||
+  error 'unregistered ECDSA key generation failed'
+openssl req -new -x509 -key "$tmp/wrong-ES256.key" -days 1 \
+  -subj /CN=k04-wrong-ES256 -out "$tmp/wrong-ES256.pem" ||
+  error 'unregistered ECDSA certificate generation failed'
+chmod 600 "$tmp/wrong-ES256.key" "$tmp/wrong-ES256.pem" ||
+  error 'unregistered ECDSA key permission setup failed'
+
 # Test credentials are synthetic; bootstrap password is passed through a
 # Docker env-file and curl form-file, never through its command argument value.
 printf 'KC_BOOTSTRAP_ADMIN_USERNAME=k04admin\nKC_BOOTSTRAP_ADMIN_PASSWORD=k04-bootstrap-only\n' \
@@ -141,6 +165,20 @@ jq --arg cert "$cert_body" \
   '.attributes["jwt.credential.certificate"] = $cert' \
   "$tmp/client-rsa-base.json" > "$tmp/client-rsa.json" ||
   error 'RSA client configuration preparation failed'
+unset cert_body
+for algorithm in ES256 ES384 ES512
+do
+  cert_body=$(sed '/-----BEGIN CERTIFICATE-----/d; /-----END CERTIFICATE-----/d' \
+    "$tmp/private-$algorithm.pem" | tr -d '\r\n') ||
+    error "$algorithm certificate base64 extraction failed"
+  [ -n "$cert_body" ] || error "$algorithm client certificate empty"
+  jq --arg id "k04-$(printf '%s' "$algorithm" | tr '[:upper:]' '[:lower:]')" \
+    --arg alg "$algorithm" --arg cert "$cert_body" \
+    '.clientId = $id | .attributes["token.endpoint.auth.signing.alg"] = $alg |
+     .attributes["jwt.credential.certificate"] = $cert' \
+    "$tmp/client-rsa-base.json" > "$tmp/client-$algorithm.json" ||
+    error "$algorithm Keycloak client configuration preparation failed"
+done
 unset cert_body
 
 cat > "$tmp/bin/k04-keycloak-live-probe" <<'PROBE'
@@ -439,6 +477,62 @@ do
       [ "$status" -eq 0 ] &&
         [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
         fail "Keycloak $version $algorithm revocation failed ($status)"
+    fi
+  done
+
+  # Keycloak verifies actual ECDSA JWS assertions and each registered
+  # per-client certificate, independently of the local OpenSSL check.
+  for algorithm in ES256 ES384 ES512
+  do
+    ec_id=k04-$(printf '%s' "$algorithm" | tr '[:upper:]' '[:lower:]')
+    ec_client_http=$(transport --output "$tmp/ec-$algorithm-response" \
+      --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/client-$algorithm.json" \
+      --url "$base/admin/realms/master/clients") ||
+      error "Keycloak $version $algorithm EC client registration transport failed"
+    [ "$ec_client_http" = 201 ] ||
+      fail "Keycloak $version $algorithm EC client registration rejected ($ec_client_http)"
+    result=$(probe acquire --server "$base" --issuer-realm master \
+      --auth-mode client-credentials --client-id "$ec_id" \
+      --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+      --private-key-file "$tmp/private-$algorithm.key" \
+      --certificate-file "$tmp/private-$algorithm.pem" \
+      --token-store "$tmp/token-$algorithm-$version" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+      jq -e '.access_token | type == "string" and length > 0' \
+        "$tmp/token-$algorithm-$version" >/dev/null ||
+      fail "Keycloak $version $algorithm ECDSA acquire failed ($status)"
+    result=$(probe status --server "$base" --issuer-realm master \
+      --client-id "$ec_id" --client-auth private-key-jwt \
+      --client-jwt-alg "$algorithm" \
+      --private-key-file "$tmp/private-$algorithm.key" \
+      --certificate-file "$tmp/private-$algorithm.pem" \
+      --token-file "$tmp/token-$algorithm-$version" \
+      --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+    status=$?
+    [ "$status" -eq 0 ] &&
+      printf '%s\n' "$result" |
+        jq -e '.stored == true and .server_validated == true and
+          (.active | type == "boolean")' >/dev/null ||
+      fail "Keycloak $version $algorithm ECDSA introspection failed ($status)"
+
+    if [ "$algorithm" = ES256 ]
+    then
+      result=$(probe acquire --server "$base" --issuer-realm master \
+        --auth-mode client-credentials --client-id "$ec_id" \
+        --client-auth private-key-jwt --client-jwt-alg ES256 \
+        --private-key-file "$tmp/wrong-ES256.key" \
+        --certificate-file "$tmp/wrong-ES256.pem" \
+        --token-store "$tmp/token-wrong-ec-$version" \
+        --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+      status=$?
+      [ "$status" -eq 71 ] && [ -z "$result" ] &&
+        [ ! -e "$tmp/token-wrong-ec-$version" ] ||
+        fail "Keycloak $version accepted unregistered ECDSA certificate ($status)"
     fi
   done
 
