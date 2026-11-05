@@ -312,11 +312,11 @@ class Handler(BaseHTTPRequestHandler):
                             n = int.from_bytes(fixed, "big")
                             data = n.to_bytes((n.bit_length() + 7) // 8 or 1, "big")
                             if data[0] & 0x80:
-                                data = b"\\x00" + data
-                            return b"\\x02" + length_bytes(len(data)) + data
+                                data = b"\x00" + data
+                            return b"\x02" + length_bytes(len(data)) + data
 
                         encoded = der_integer(raw[:size]) + der_integer(raw[size:])
-                        der = b"\\x30" + length_bytes(len(encoded)) + encoded
+                        der = b"\x30" + length_bytes(len(encoded)) + encoded
                         with tempfile.TemporaryDirectory() as d:
                             msg = Path(d, "message")
                             sig = Path(d, "signature")
