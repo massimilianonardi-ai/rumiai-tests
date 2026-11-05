@@ -44,6 +44,7 @@ async function main()
     }
     assert(ready,'Chromium never loaded all fixture stylesheets');
     await sleep(600);
+    await session.sendPage('DOM.enable');
     await session.sendPage('CSS.enable');
     await sleep(900);
     await session.stop();
