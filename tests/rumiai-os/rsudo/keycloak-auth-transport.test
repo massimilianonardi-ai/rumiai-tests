@@ -4,7 +4,17 @@
 # Only external SSH/sudo is substituted; curl/TLS and OAuth fixture are real.
 # This is NOT an actual Keycloak/remote SSH authentication test.
 TEST_ID=rumiai-os/rsudo/keycloak-auth-transport.test
-fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+fail()
+{
+  printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2
+  # The fixture is disposable and logs no live credentials. Preserve the
+  # server-side exception that caused an opaque curl connection failure.
+  if [ -n "${tmp-}" ] && [ -s "$tmp/server.err" ]
+  then
+    sed -n '1,60p' "$tmp/server.err" >&2
+  fi
+  exit 1
+}
 error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
 skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
 
