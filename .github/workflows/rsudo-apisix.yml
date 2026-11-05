@@ -100,6 +100,9 @@ jobs:
           test -d /run/systemd/system
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends nginx
+          # The package may automatically start nginx.service. Keep the host
+          # namespace free of unrelated masters during Docker discovery tests.
+          sudo systemctl stop nginx.service
           command -v systemd-run
           command -v nginx
 
