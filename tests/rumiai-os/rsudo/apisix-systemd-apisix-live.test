@@ -186,10 +186,10 @@ main_pid=$(docker exec "$cid" systemctl show --property=MainPID --value "$unit")
 [ "$pid" = "$main_pid" ] && [ "$pid" -ge 1 ] 2>/dev/null ||
   fail 'real systemd unit MainPID does not equal official APISIX master PID'
 
-# Two genuinely distinct read-only sources of STARTUP profile evidence:
-# systemd's environment declared for the verified unit and the Linux kernel
-# initial executable environment of that same master. Neither observation
-# proves the loaded YAML snapshot, effective provider or Admin authorization.
+# Real APISIX 3.19 startup-source counterexample: systemd retains an
+# APISIX_PROFILE declaration, but the final OpenResty master does not retain
+# that token in its initial kernel environment. An operator MUST NOT infer
+# the loaded profile from the unit declaration or the nginx master PID.
 manager_environment=$(docker exec "$cid" systemctl show --property=Environment --value "$unit") ||
   error 'real systemd environment declaration unavailable'
 case " $manager_environment " in
@@ -201,11 +201,12 @@ pid=$1
 [ -r "/proc/$pid/environ" ] || exit 70
 command -v tr >/dev/null 2>&1 || exit 71
 LC_ALL=C tr '\000' '\n' < "/proc/$pid/environ" |
-  grep -Fx 'APISIX_PROFILE=prod' >/dev/null || exit 72
+  grep -Fx 'APISIX_PROFILE=prod' >/dev/null && exit 72
+exit 0
 APISIX_MASTER_STARTUP_ENV
 status=$?
 [ "$status" -eq 0 ] ||
-  fail "master kernel startup environment did not independently retain APISIX_PROFILE (status $status)"
+  fail "real master unexpectedly retained service-declared APISIX_PROFILE or procfs failed (status $status)"
 docker exec "$cid" sh -c '
   test -r "/proc/$1/cmdline" || exit 1
   title=$(LC_ALL=C tr "\\000" " " < "/proc/$1/cmdline") || exit 1
@@ -244,8 +245,6 @@ expected=$(printf '%s\n' \
   "process_pid=$pid" \
   'service_manager_evidence=systemd-mainpid-and-cgroup' \
   "service_unit=$unit" \
-  'startup_profile_evidence=systemd-and-master-exec-environ' \
-  'startup_profile=prod' \
   'listener_socket_evidence=master-fd-loopback-tcp' \
   'listener_socket=127.0.0.1:9180' \
   'runtime_identity=process-consistent-config-unverified' \
@@ -257,35 +256,6 @@ status=$?
   # Only structured public evidence fields (no environment contents or key).
   printf 'observed-runtime-status=%s\n%s\nexpected-runtime:\n%s\n' \
     "$status" "$result" "$expected" >&2
-  # Diagnose only non-secret verification stages: never dump Environment.
-  docker exec -i "$cid" sh -s -- "$pid" "$unit" <<'APISIX_PROFILE_DIAGNOSTICS' >&2
-pid=$1
-unit=$2
-unit_environment=$(LC_ALL=C systemctl --no-pager show \
-  --property=Environment --value -- "$unit" 2>/dev/null)
-printf 'profile-manager-query-status=%s\n' "$?"
-profile=$(printf '%s\n' "$unit_environment" | LC_ALL=C awk '{
-  for (i=1; i<=NF; i++)
-    if ($i ~ /^APISIX_PROFILE=[a-zA-Z0-9_-]+$/) {
-      count++
-      profile=substr($i, 16)
-    }
-  }
-  END { if (count==1) print profile }
-')
-printf 'profile-unit-token-present=%s\n' "$([ "$profile" = prod ] && printf yes || printf no)"
-if [ -r "/proc/$pid/environ" ]
-then
-  match=$(LC_ALL=C tr '\000' '\n' < "/proc/$pid/environ" |
-    LC_ALL=C awk -v expected="APISIX_PROFILE=$profile" '
-      $0==expected { count++ }
-      END { if (count==1) print "matched" }
-    ')
-  printf 'profile-proc-token-matched=%s\n' "$([ "$match" = matched ] && printf yes || printf no)"
-else
-  printf 'profile-proc-readable=no\n'
-fi
-APISIX_PROFILE_DIAGNOSTICS
   docker exec "$cid" systemctl show \
     --property=Id,MainPID,ControlGroup,ActiveState "$unit" >&2 || :
   docker exec "$cid" cat "/proc/$pid/cgroup" >&2 || :
