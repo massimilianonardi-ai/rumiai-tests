@@ -518,21 +518,40 @@ do
       "$TEST_ID" "$version"
   fi
 
-  # Keycloak documents mTLS holder-of-key checks for UserInfo. Verify the
-  # same user token on its OIDC protected resource as an independent
-  # positive control before interpreting any Admin REST behavior.
+  # Keycloak documents mTLS holder-of-key checks for UserInfo. An OIDC
+  # positive control needs an explicitly requested openid scope; K04 does
+  # not yet provide the public scope selector. Make a separate, private
+  # provider-level grant, preserving the prior identical-token Admin probe.
+  userinfo_grant_code=$(transport --cert "$tmp/mtls-good.pem" \
+    --key "$tmp/mtls-good.key" \
+    --data-urlencode grant_type=password \
+    --data-urlencode client_id=k04-mtls \
+    --data-urlencode username=k04admin \
+    --data-urlencode "password@$tmp/mtls-user-password" \
+    --data-urlencode scope=openid \
+    --output "$tmp/userinfo-grant-$version" --write-out '%{http_code}' \
+    --url "$base/realms/master/protocol/openid-connect/token") ||
+    error "Keycloak $version OIDC userinfo-control grant transport failed"
+  [ "$userinfo_grant_code" = 200 ] ||
+    fail "Keycloak $version OIDC userinfo-control grant denied ($userinfo_grant_code)"
+  python3 "$tmp/verify-mtls-token.py" "$tmp/userinfo-grant-$version" \
+    "$tmp/mtls-good.pem" ||
+    fail "Keycloak $version OIDC UserInfo control token lacks matched cnf"
+  jq -er '"Authorization: Bearer " + .access_token' \
+    "$tmp/userinfo-grant-$version" > "$tmp/mtls-userinfo-header" ||
+    error "Keycloak $version cannot prepare protected UserInfo header"
   userinfo_url=$base/realms/master/protocol/openid-connect/userinfo
   userinfo_matched=$(transport --cert "$tmp/mtls-good.pem" \
-    --key "$tmp/mtls-good.key" --header "@$tmp/mtls-admin-header" \
+    --key "$tmp/mtls-good.key" --header "@$tmp/mtls-userinfo-header" \
     --output "$tmp/mtls-matched-userinfo" --write-out '%{http_code}' \
     --url "$userinfo_url") ||
     error "Keycloak $version matching-certificate UserInfo transport failed"
-  userinfo_absent=$(transport --header "@$tmp/mtls-admin-header" \
+  userinfo_absent=$(transport --header "@$tmp/mtls-userinfo-header" \
     --output "$tmp/mtls-absent-userinfo" --write-out '%{http_code}' \
     --url "$userinfo_url") ||
     error "Keycloak $version missing-certificate UserInfo transport failed"
   userinfo_wrong=$(transport --cert "$tmp/mtls-wrong.pem" \
-    --key "$tmp/mtls-wrong.key" --header "@$tmp/mtls-admin-header" \
+    --key "$tmp/mtls-wrong.key" --header "@$tmp/mtls-userinfo-header" \
     --output "$tmp/mtls-wrong-userinfo" --write-out '%{http_code}' \
     --url "$userinfo_url") ||
     error "Keycloak $version wrong-certificate UserInfo transport failed"
