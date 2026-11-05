@@ -104,6 +104,13 @@ openssl req -new -x509 -key "$tmp/private-eddsa.key" \
   error 'Ed25519 public client certificate preparation failed'
 chmod 600 "$tmp/private-eddsa.key" "$tmp/private-eddsa.pem" ||
   error 'Ed25519 client credential permissions unavailable'
+openssl genpkey -algorithm ED25519 -out "$tmp/wrong-eddsa.key" ||
+  error 'unregistered Ed25519 key preparation failed'
+openssl req -new -x509 -key "$tmp/wrong-eddsa.key" \
+  -days 1 -subj /CN=k04-unregistered-eddsa -out "$tmp/wrong-eddsa.pem" ||
+  error 'unregistered Ed25519 public certificate preparation failed'
+chmod 600 "$tmp/wrong-eddsa.key" "$tmp/wrong-eddsa.pem" ||
+  error 'unregistered Ed25519 credential permissions unavailable'
 openssl genpkey -algorithm ED448 -out "$tmp/private-ed448.key" ||
   error 'Ed448 negative client key preparation failed'
 openssl req -new -x509 -key "$tmp/private-ed448.key" \
@@ -599,6 +606,54 @@ do
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version Ed25519 introspection failed ($status)"
+  # Ed25519 is also used for an explicitly selected confidential user
+  # grant and protected refresh/revocation lifecycle, not just acquisition.
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin --password-file "$tmp/rsa-password" \
+    --client-id k04-eddsa --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/private-eddsa.key" \
+    --certificate-file "$tmp/private-eddsa.pem" \
+    --token-store "$tmp/password-eddsa-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] &&
+    jq -e '.refresh_token | type == "string" and length > 0' \
+      "$tmp/password-eddsa-$version" >/dev/null ||
+    fail "Keycloak $version Ed25519 direct user grant failed ($status)"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-eddsa --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/private-eddsa.key" \
+    --certificate-file "$tmp/private-eddsa.pem" \
+    --token-file "$tmp/password-eddsa-$version" \
+    --token-store "$tmp/password-eddsa-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version Ed25519 protected refresh failed ($status)"
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-eddsa --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/private-eddsa.key" \
+    --certificate-file "$tmp/private-eddsa.pem" \
+    --token-file "$tmp/password-eddsa-$version" \
+    --token-type-hint refresh_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version Ed25519 token revocation failed ($status)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-eddsa \
+    --client-auth private-key-jwt --client-jwt-alg EdDSA \
+    --private-key-file "$tmp/wrong-eddsa.key" \
+    --certificate-file "$tmp/wrong-eddsa.pem" \
+    --token-store "$tmp/token-unregistered-eddsa-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-unregistered-eddsa-$version" ] ||
+    fail "Keycloak $version accepted unregistered Ed25519 certificate ($status)"
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-eddsa \
     --client-auth private-key-jwt --client-jwt-alg EdDSA \
