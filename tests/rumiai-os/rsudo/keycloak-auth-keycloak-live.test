@@ -280,6 +280,48 @@ do
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version RS256 introspection failed ($status)"
+  # The RSA signing context is also used for explicit Direct Grant,
+  # protected refresh and requested refresh-token revocation.
+  printf 'k04-bootstrap-only\n' > "$tmp/rsa-password"
+  chmod 600 "$tmp/rsa-password"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin \
+    --password-file "$tmp/rsa-password" --client-id k04-rs256 \
+    --client-auth private-key-jwt \
+    --private-key-file "$tmp/private-client.key" \
+    --certificate-file "$tmp/private-client.pem" \
+    --token-store "$tmp/rsa-password-store-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] ||
+    fail "Keycloak $version private-key-jwt Direct Grant failed ($status)"
+  jq -e '.refresh_token | type == "string" and length > 0' \
+    "$tmp/rsa-password-store-$version" >/dev/null ||
+    fail "Keycloak $version RSA direct token lacks refresh credentials"
+  result=$(probe refresh --server "$base" --issuer-realm master \
+    --client-id k04-rs256 --client-auth private-key-jwt \
+    --private-key-file "$tmp/private-client.key" \
+    --certificate-file "$tmp/private-client.pem" \
+    --token-file "$tmp/rsa-password-store-$version" \
+    --token-store "$tmp/rsa-password-store-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+    fail "Keycloak $version RSA signed refresh failed ($status)"
+  result=$(probe revoke --server "$base" --issuer-realm master \
+    --client-id k04-rs256 --client-auth private-key-jwt \
+    --private-key-file "$tmp/private-client.key" \
+    --certificate-file "$tmp/private-client.pem" \
+    --token-file "$tmp/rsa-password-store-$version" \
+    --token-type-hint refresh_token \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+    fail "Keycloak $version RSA signed revocation failed ($status)"
+
   result=$(probe acquire --server "$base" --issuer-realm master \
     --auth-mode client-credentials --client-id k04-rs256 \
     --client-auth private-key-jwt \
