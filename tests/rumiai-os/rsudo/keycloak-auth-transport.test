@@ -76,6 +76,16 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   error 'TLS test certificate preparation failed'
 chmod 600 "$tmp/server.key" "$tmp/server.pem" ||
   error 'TLS fixture permissions unavailable'
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-client-rsa \
+  -keyout "$tmp/client-rsa.key" -out "$tmp/client-rsa.pem" \
+  >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
+  error 'RSA client fixture keypair generation failed'
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-wrong-rsa \
+  -keyout "$tmp/client-wrong.key" -out "$tmp/client-wrong.pem" \
+  >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
+  error 'wrong RSA client fixture keypair generation failed'
+chmod 600 "$tmp"/client-*.key "$tmp"/client-*.pem ||
+  error 'private RSA client fixture permissions unavailable'
 
 cat > "$tmp/server.py" <<'PYTHON'
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -83,6 +93,8 @@ from pathlib import Path
 from urllib.parse import parse_qs
 import base64
 import json
+import subprocess
+import tempfile
 import hashlib
 import hmac
 import ssl
@@ -188,6 +200,44 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except (ValueError, TypeError, KeyError, UnicodeError):
                 client_valid = False
+        if (not client_valid and
+                args.get("client_id") == ["service-rs256"] and
+                args.get("client_assertion_type") ==
+                ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"] and
+                len(args.get("client_assertion", [])) == 1):
+            try:
+                head, payload, signature = args["client_assertion"][0].split(".")
+                decode = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+                h = json.loads(decode(head))
+                c = json.loads(decode(payload))
+                now = int(time.time())
+                claims_valid = (
+                    h.get("alg") == "RS256" and h.get("typ") == "JWT" and
+                    c.get("iss") == "service-rs256" and
+                    c.get("sub") == "service-rs256" and
+                    c.get("aud") ==
+                    "https://127.0.0.1:" + str(self.server.server_port) + "/realms/master" and
+                    isinstance(c.get("jti"), str) and len(c["jti"]) >= 16 and
+                    isinstance(c.get("iat"), int) and
+                    isinstance(c.get("nbf"), int) and
+                    isinstance(c.get("exp"), int) and
+                    now - 5 <= c["iat"] <= now + 5 and
+                    c["nbf"] <= now and now < c["exp"] <= now + 60)
+                if claims_valid:
+                    with tempfile.TemporaryDirectory() as d:
+                        from pathlib import Path
+                        msg = Path(d, "message")
+                        sig = Path(d, "signature")
+                        msg.write_bytes((head + "." + payload).encode("ascii"))
+                        sig.write_bytes(decode(signature))
+                        checked = subprocess.run(
+                            ["openssl", "dgst", "-sha256", "-verify",
+                             sys.argv[4], "-signature", str(sig), str(msg)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+                        client_valid = checked.returncode == 0
+            except (ValueError, TypeError, KeyError, UnicodeError):
+                client_valid = False
         if not client_valid:
             # Exercise both Keycloak-observed 401 unauthorized_client (Basic)
             # and conventional invalid_client (form-client authentication).
@@ -289,7 +339,10 @@ WRAPPER
 chmod 700 "$tmp/bin/keycloak-auth-probe" "$tmp/bin/curl" ||
   error 'probe setup failed'
 
-python3 -u "$tmp/server.py" "$tmp/port" "$tmp/server.pem" "$tmp/server.key" \
+openssl x509 -in "$tmp/client-rsa.pem" -pubkey -noout \
+  > "$tmp/client-rsa.public" ||
+  error 'RSA client public-key extraction failed'
+python3 -u "$tmp/server.py" "$tmp/port" "$tmp/server.pem" "$tmp/server.key" "$tmp/client-rsa.public" \
   >"$tmp/server.out" 2>"$tmp/server.err" &
 pid=$!
 tries=0
@@ -319,6 +372,63 @@ acquire()
     --client-auth "$1" --client-secret-file "$2" \
     --token-store "$3" --ca-file "$tmp/server.pem"
 }
+
+# Private-key JWT: RSA/RS256 only, no client secret. Client certificate
+# independently matches the trusted key registered on this HTTPS fixture.
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-rs256 \
+  --client-auth private-key-jwt --client-jwt-alg RS256 \
+  --private-key-file "$tmp/client-rsa.key" \
+  --certificate-file "$tmp/client-rsa.pem" \
+  --token-store "$tmp/private-rsa-store" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+  [ "$(jq -r '.access_token' "$tmp/private-rsa-store")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+  fail "RS256 private-key-jwt client authentication failed ($status)"
+[ "$(LC_ALL=C ls -ld "$tmp/private-rsa-store" | cut -c 1-10)" = '-rw-------' ] ||
+  fail 'RS256 token store lost private permissions'
+result=$(probe status --server "$base" --issuer-realm master \
+  --client-id service-rs256 --client-auth private-key-jwt \
+  --private-key-file "$tmp/client-rsa.key" \
+  --certificate-file "$tmp/client-rsa.pem" \
+  --token-file "$tmp/private-rsa-store" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+  fail "RS256 signed-client introspection failed ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-rs256 \
+  --client-auth private-key-jwt \
+  --private-key-file "$tmp/client-rsa.key" \
+  --certificate-file "$tmp/client-wrong.pem" \
+  --token-store "$tmp/private-rsa-mismatch" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] &&
+  [ ! -e "$tmp/private-rsa-mismatch" ] ||
+  fail "mismatched client RSA key and certificate not rejected ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-rs256 \
+  --client-auth private-key-jwt --client-jwt-alg HS256 \
+  --private-key-file "$tmp/client-rsa.key" \
+  --certificate-file "$tmp/client-rsa.pem" \
+  --token-store "$tmp/private-rsa-alg" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 73 ] && [ ! -e "$tmp/private-rsa-alg" ] ||
+  fail "incompatible HMAC algorithm used with RSA client ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-rs256 \
+  --client-auth private-key-jwt --client-secret-file "$tmp/secret" \
+  --private-key-file "$tmp/client-rsa.key" \
+  --certificate-file "$tmp/client-rsa.pem" \
+  --token-store "$tmp/private-rsa-secret" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ ! -e "$tmp/private-rsa-secret" ] ||
+  fail "private-key auth accepted conflicting shared secret ($status)"
+grep -F 'eyJhbGciOiJSUzI1Ni' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail "RSA client assertion leaked into curl arguments or diagnostics"
 
 # K04 signed client assertion uses protected HS256 client-secret-jwt. The
 # server independently verifies signature, iss/sub/aud, time and jti.
