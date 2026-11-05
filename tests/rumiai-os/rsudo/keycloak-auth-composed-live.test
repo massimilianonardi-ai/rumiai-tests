@@ -263,7 +263,18 @@ cat > "$tmp/federated-client.json" <<'FEDERATED_CLIENT'
   "attributes":{
     "jwt.credential.issuer":"k04-external-idp",
     "jwt.credential.sub":"k04-external"
-  }
+  },
+  "protocolMappers":[{
+    "name":"k04-federated-self-audience",
+    "protocol":"openid-connect",
+    "protocolMapper":"oidc-audience-mapper",
+    "consentRequired":false,
+    "config":{
+      "included.custom.audience":"k04-federated",
+      "access.token.claim":"true",
+      "id.token.claim":"false"
+    }
+  }]
 }
 FEDERATED_CLIENT
 cat > "$tmp/sign-federated-jwt.py" <<'FEDERATED_SIGNER'
@@ -725,11 +736,13 @@ EOF_SSH_CONFIG
     --token-file "/root/keycloak/federated-$version" \
     --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
   status=$?
+  # Introspection audience enforcement remains enabled: this client
+  # is an explicit access-token audience in the test's OIDC protocol mapper.
   [ "$status" -eq 0 ] &&
     printf '%s\n' "$result" |
       jq -e '.stored == true and .server_validated == true and
-        (.active | type == "boolean")' >/dev/null ||
-    fail "Keycloak $version composed federated online status failed ($status)"
+        .active == true' >/dev/null ||
+    fail "Keycloak $version composed federated audience-qualified status failed ($status)"
   result=$(probe revoke --server https://127.0.0.1:8443 \
     --issuer-realm master --client-id k04-federated \
     --client-auth federated-jwt \
