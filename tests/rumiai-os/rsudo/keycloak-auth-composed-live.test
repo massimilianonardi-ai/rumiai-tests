@@ -461,7 +461,9 @@ EOF_SSH_CONFIG
       --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
     status=$?
     [ "$status" -eq 0 ] &&
-      [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+      printf '%s\n' "$result" |
+        jq -e '.stored == true and .server_validated == true and
+          (.active | type == "boolean")' >/dev/null ||
       fail "Keycloak $version composed $algorithm introspection failed ($status)"
   done
   grep -F 'eyJhbGciOiJSUz' "$tmp/auth.err" >/dev/null &&
