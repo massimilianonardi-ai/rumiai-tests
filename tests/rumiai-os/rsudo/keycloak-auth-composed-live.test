@@ -96,6 +96,15 @@ do
     error "$algorithm EC client permissions unavailable"
 done
 
+openssl genpkey -algorithm ED25519 -out "$tmp/client-eddsa.key" ||
+  error 'composed Ed25519 key preparation failed'
+openssl req -new -x509 -key "$tmp/client-eddsa.key" \
+  -days 1 -subj /CN=k04-composed-eddsa \
+  -out "$tmp/client-eddsa.pem" ||
+  error 'composed Ed25519 public certificate preparation failed'
+chmod 600 "$tmp/client-eddsa.key" "$tmp/client-eddsa.pem" ||
+  error 'composed Ed25519 key/certificate permissions unavailable'
+
 printf 'KC_BOOTSTRAP_ADMIN_USERNAME=k04admin\nKC_BOOTSTRAP_ADMIN_PASSWORD=k04-only-bootstrap\n' \
   > "$tmp/bootstrap.env"
 printf 'k04-only-bootstrap' > "$tmp/admin-password"
@@ -157,6 +166,17 @@ do
     "$tmp/client-rsa-base.json" > "$tmp/client-$algorithm.json" ||
     error "$algorithm EC client config failed"
 done
+unset cert_body
+cert_body=$(sed '/-----BEGIN CERTIFICATE-----/d; /-----END CERTIFICATE-----/d' \
+  "$tmp/client-eddsa.pem" | tr -d '\r\n') ||
+  error 'composed Ed25519 certificate extraction failed'
+[ -n "$cert_body" ] || error 'composed Ed25519 certificate empty'
+jq --arg cert "$cert_body" \
+  '.clientId = "k04-eddsa" |
+   .attributes["token.endpoint.auth.signing.alg"] = "EdDSA" |
+   .attributes["jwt.credential.certificate"] = $cert' \
+  "$tmp/client-rsa-base.json" > "$tmp/client-eddsa.json" ||
+  error 'composed EdDSA Keycloak client configuration failed'
 unset cert_body
 
 cat > "$tmp/keycloak/Dockerfile" <<'KC_DOCKERFILE'
@@ -396,6 +416,15 @@ do
       fail "Keycloak $version $algorithm EC registration rejected ($ec_http)"
   done
 
+  eddsa_http=$(host_https --output "$tmp/eddsa-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-eddsa.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version EdDSA client registration transport failed"
+  [ "$eddsa_http" = 201 ] ||
+    fail "Keycloak $version EdDSA client registration rejected ($eddsa_http)"
+
   # Shared Docker network namespace makes the actual Keycloak listener
   # reachable as HTTPS 127.0.0.1:8443 from the real SSH/sudo target.
   ssh_container=$(docker run -d \
@@ -459,6 +488,15 @@ EOF_SSH_CONFIG
        chmod 600 /root/keycloak/client-$algorithm.key /root/keycloak/client-$algorithm.pem" ||
       error "Keycloak $version $algorithm remote EC permissions failed"
   done
+  docker cp "$tmp/client-eddsa.key" "$ssh_container:/root/keycloak/client-eddsa.key" ||
+    error "Keycloak $version Ed25519 remote key staging failed"
+  docker cp "$tmp/client-eddsa.pem" "$ssh_container:/root/keycloak/client-eddsa.pem" ||
+    error "Keycloak $version Ed25519 remote certificate staging failed"
+  docker exec "$ssh_container" sh -c \
+    'chown 0:0 /root/keycloak/client-eddsa.key /root/keycloak/client-eddsa.pem &&
+     chmod 600 /root/keycloak/client-eddsa.key /root/keycloak/client-eddsa.pem' ||
+    error "Keycloak $version Ed25519 remote credential permissions unavailable"
+
   result=$(probe acquire --server https://127.0.0.1:8443 \
     --issuer-realm master --auth-mode client-credentials \
     --client-id k04-rs256 --client-auth private-key-jwt \
@@ -577,6 +615,48 @@ EOF_SSH_CONFIG
     fail "Keycloak $version composed ES256 accepted P-384 key ($status)"
   grep -F 'eyJhbGciOiJFUz' "$tmp/auth.err" >/dev/null &&
     fail "Keycloak $version EC JWT assertion leaked into diagnostics"
+
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-eddsa --client-auth private-key-jwt \
+    --client-jwt-alg EdDSA \
+    --private-key-file /root/keycloak/client-eddsa.key \
+    --certificate-file /root/keycloak/client-eddsa.pem \
+    --token-store "/root/keycloak/eddsa-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version composed Ed25519 signed client acquisition failed ($status)"
+  docker exec "$ssh_container" jq -e \
+    '.access_token | type == "string" and length > 0' \
+    "/root/keycloak/eddsa-$version" >/dev/null ||
+    fail "Keycloak $version Ed25519 private token store missing on sudo target"
+  result=$(probe status --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-eddsa --client-auth private-key-jwt \
+    --client-jwt-alg EdDSA \
+    --private-key-file /root/keycloak/client-eddsa.key \
+    --certificate-file /root/keycloak/client-eddsa.pem \
+    --token-file "/root/keycloak/eddsa-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version composed Ed25519 introspection failed ($status)"
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-eddsa --client-auth private-key-jwt \
+    --client-jwt-alg RS256 \
+    --private-key-file /root/keycloak/client-eddsa.key \
+    --certificate-file /root/keycloak/client-eddsa.pem \
+    --token-store "/root/keycloak/eddsa-rsa-rejected-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 73 ] && [ -z "$result" ] &&
+    ! docker exec "$ssh_container" test -e "/root/keycloak/eddsa-rsa-rejected-$version" ||
+    fail "Keycloak $version composed Ed25519 key accepted RS256 ($status)"
 
   # Signed assertion is created and sent on the real remote sudo target.
   # SSH shell arguments contain selectors and protected file paths only.
