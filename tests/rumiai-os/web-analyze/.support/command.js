@@ -154,6 +154,15 @@ const app = `document.addEventListener('DOMContentLoaded', () => {
   caches.open('rest-cache')
     .then(cache => cache.put('/cached-fixture', new Response('cached-payload')))
     .then(() => {document.body.dataset.cacheReady = 'yes';});
+  if (typeof navigator.storage?.getDirectory === 'function') {
+    navigator.storage.getDirectory().then(async root => {
+      const file = await root.getFileHandle('default-opfs-file', {create:true});
+      const writable = await file.createWritable();
+      await writable.write(new Uint8Array([0,7,255,42,0,128]));
+      await writable.close();
+      document.body.dataset.defaultOpfsReady = 'yes';
+    }).catch(() => {document.body.dataset.defaultOpfsReady = 'no';});
+  }
   if (typeof navigator.storageBuckets?.open === 'function') {
     navigator.storageBuckets.open('analyze-fixture-bucket').then(async bucket => {
       if (bucket.caches?.open) {
@@ -1129,6 +1138,34 @@ async function main()
       else assert.equal(opfs.status, 'unsupported');
       const restDom = fs.readFileSync(path.join(capture,
         'states/dom-rest-initial.html'), 'utf8');
+      if (hasMethod('FileSystem','getDirectory') &&
+        restDom.includes('data-default-opfs-ready="yes"'))
+      {
+        const body = opfs.contents?.files?.find(row =>
+          row.pathComponents.at(-1) === 'default-opfs-file');
+        assert(body && body.status === 'saved',
+          'default OPFS bytes missing despite observed file and supported CDP');
+        const bodyPath = path.join(capture,selectionRoot,body.file);
+        assert.deepEqual(fs.readFileSync(bodyPath),
+          Buffer.from([0,7,255,42,0,128]),
+          'OPFS byte archive differs from the browser-written binary file');
+        assert.equal(fs.statSync(bodyPath).mode & 0o777,0o600,
+          'private OPFS byte archive must have mode 0600');
+        const {auditWebAnalyzeEvidence} = require(path.join(root,
+          'lib/sys/js/web-analyze-rest.lib.js'));
+        const original = fs.readFileSync(bodyPath);
+        const corrupted = Buffer.from(original);
+        corrupted[2] ^= 1;
+        fs.writeFileSync(bodyPath,corrupted);
+        const validation = auditWebAnalyzeEvidence(capture);
+        assert.equal(validation.status,'failed',
+          'same-size OPFS file corruption must invalidate the archive');
+        assert(validation.artifacts.some(item =>
+          item.file === path.relative(capture,bodyPath) &&
+          item.errorCode === 'evidence-sha256-mismatch'),
+          'OPFS byte audit did not attribute the tampered body');
+        fs.writeFileSync(bodyPath,original);
+      }
       if (restDom.includes('data-named-bucket-ready="yes"') &&
         frameContext.bucketNames.status === 'saved' &&
         frameContext.bucketNames.names.includes('analyze-fixture-bucket'))
