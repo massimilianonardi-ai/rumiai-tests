@@ -78,6 +78,7 @@ upstreams:
       "127.0.0.1:19877": 1
 #END
 YAML
+cp "$tmp/apisix.yaml" "$tmp/initial.yaml" || error 'cannot preserve initial diagnostic source'
 cat > "$tmp/apisix.json" <<'JSON'
 {"routes":[{"id":"rsudo-file-json-route","uri":"/rsudo-file-json",
 "plugins":{"uri-blocker":{"block_rules":["/rsudo-file-json"]}},
@@ -171,6 +172,8 @@ CONFIG
       fi
       chmod 644 "$tmp/config.yaml" ||
         error 'cannot make selected config readable'
+      cp "$tmp/initial.yaml" "$tmp/apisix.yaml" ||
+        error 'cannot reset selected YAML source before gateway start'
 
       cid=$(docker run -d --network none \
         --cap-drop ALL --security-opt no-new-privileges=true \
@@ -228,6 +231,69 @@ CONFIG
         [ "$ready" = 200 ] ||
           fail "$release $status_mode $repetition readiness HTTP $ready after route loaded"
       fi
+      if [ "$status_mode" = enabled ] && [ "$repetition" = 1 ]
+      then
+        # Only the disposable host-side file is edited. The container's
+        # read-only bind mount retains the same inode; this models a
+        # non-atomic external writer, never an authorized product writer.
+        sed 's|/rsudo-file-yaml|/rsudo-file-yaml-reloaded|g' \
+          "$tmp/initial.yaml" > "$tmp/repaired.yaml" ||
+          error 'cannot prepare changed full-document fixture'
+        sed '/^#END$/d' "$tmp/repaired.yaml" > "$tmp/incomplete.yaml" ||
+          error 'cannot prepare incomplete YAML fixture'
+
+        # Release APISIX 3.16/3.19 polls file mtime, usually at one-second
+        # granularity. Keep writes on distinct filesystem timestamps.
+        sleep 2
+        cat "$tmp/incomplete.yaml" > "$tmp/apisix.yaml" ||
+          error "$release cannot publish incomplete test document"
+        docker exec "$cid" cat /usr/local/apisix/conf/apisix.yaml \
+          > "$tmp/visible.yaml" ||
+          error "$release cannot read incomplete file across mount"
+        cmp -s "$tmp/visible.yaml" "$tmp/incomplete.yaml" ||
+          fail "$release incomplete source is not visible in gateway namespace"
+        sleep 3
+        old=$(http_status /rsudo-file-yaml 9080) ||
+          fail "$release old route request failed after invalid file"
+        new=$(http_status /rsudo-file-yaml-reloaded 9080) ||
+          fail "$release new route request failed after invalid file"
+        if [ "$old" != 403 ] || [ "$new" != 404 ]
+        then
+          diagnostics "$release invalid YAML rejected: expected old=403 new=404, observed old=$old new=$new"
+          fail "$release invalid YAML replaced or disrupted last applied route"
+        fi
+
+        sleep 2
+        cat "$tmp/repaired.yaml" > "$tmp/apisix.yaml" ||
+          error "$release cannot restore valid changed document"
+        docker exec "$cid" cat /usr/local/apisix/conf/apisix.yaml \
+          > "$tmp/visible.yaml" ||
+          error "$release cannot read repaired file across mount"
+        cmp -s "$tmp/visible.yaml" "$tmp/repaired.yaml" ||
+          fail "$release repaired source differs across mount"
+        tries=0
+        while [ "$tries" -lt 30 ]
+        do
+          new=$(http_status /rsudo-file-yaml-reloaded 9080)
+          new_status=$?
+          old=$(http_status /rsudo-file-yaml 9080)
+          old_status=$?
+          if [ "$new_status" -eq 0 ] && [ "$old_status" -eq 0 ] &&
+             [ "$new" = 403 ] && [ "$old" = 404 ]
+          then
+            break
+          fi
+          tries=$((tries + 1))
+          sleep 1
+        done
+        if [ "$tries" -ge 30 ]
+        then
+          diagnostics "$release repaired YAML not applied: old=$old new=$new"
+          fail "$release repaired document did not replace last applied route"
+        fi
+        printf '%s\n' "$TEST_ID: reload $release invalid=old-403,new-404 repaired=old-404,new-403"
+      fi
+
       printf '%s\n' "$TEST_ID: observed $release $status_mode repetition=$repetition selected=403 unselected=404"
       docker rm -f "$cid" >/dev/null 2>&1 ||
         error "cannot clean $release $status_mode gateway"
