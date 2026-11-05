@@ -1138,9 +1138,10 @@ async function main()
       else assert.equal(opfs.status, 'unsupported');
       const restDom = fs.readFileSync(path.join(capture,
         'states/dom-rest-initial.html'), 'utf8');
-      if (hasMethod('FileSystem','getDirectory') &&
-        restDom.includes('data-default-opfs-ready="yes"'))
+      if (hasMethod('FileSystem','getDirectory'))
       {
+        assert(restDom.includes('data-default-opfs-ready="yes"'),
+          'real Chromium default OPFS fixture did not finish before rest capture');
         const body = opfs.contents?.files?.find(row =>
           row.pathComponents.at(-1) === 'default-opfs-file');
         assert(body && body.status === 'saved',
@@ -1165,6 +1166,7 @@ async function main()
           item.errorCode === 'evidence-sha256-mismatch'),
           'OPFS byte audit did not attribute the tampered body');
         fs.writeFileSync(bodyPath,original);
+        console.log('OPFS default binary bytes and tamper audit exercised');
       }
       if (restDom.includes('data-named-bucket-ready="yes"') &&
         frameContext.bucketNames.status === 'saved' &&
