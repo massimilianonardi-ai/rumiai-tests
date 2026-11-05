@@ -102,6 +102,19 @@ do
     error "mTLS $identity protected client credentials failed"
 done
 
+# RFC 8705 self-signed X509 client (never the PKI client-x509 trust
+# anchor). Its registration material contains public JWK parameters only.
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj /CN=k04-self-signed-client \
+  -addext 'basicConstraints=critical,CA:FALSE' \
+  -addext 'keyUsage=critical,digitalSignature' \
+  -addext 'extendedKeyUsage=clientAuth' \
+  -keyout "$tmp/self-signed.key" -out "$tmp/self-signed.pem" \
+  >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'self-signed RFC 8705 client certificate unavailable'
+chmod 600 "$tmp/self-signed.key" "$tmp/self-signed.pem" ||
+  error 'self-signed client files not protected'
+
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-private-jwt \
   -keyout "$tmp/private-client.key" -out "$tmp/private-client.pem" \
   >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
@@ -204,6 +217,63 @@ cat > "$tmp/client-mtls.json" <<'CLIENT_MTLS_JSON'
   }
 }
 CLIENT_MTLS_JSON
+cat > "$tmp/client-oidc-registration-control.json" <<'OIDC_CONTROL'
+{
+  "client_name": "k04-standard-oidc-registration-control",
+  "grant_types": ["client_credentials"],
+  "token_endpoint_auth_method": "client_secret_basic"
+}
+OIDC_CONTROL
+cat > "$tmp/self-signed-jwk.py" <<'PYJWK'
+import base64
+import json
+import re
+import subprocess
+import sys
+
+# Derive the public RSA JWK n/e from the actual certificate, not from
+# private-key bytes. x5c holds the same certificate in DER-base64 form.
+with open(sys.argv[1], encoding="ascii") as cert_file:
+    pem = cert_file.read()
+certificate = "".join(
+    line.strip() for line in pem.splitlines() if not line.startswith("-----")
+)
+public_key = subprocess.run(
+    ["openssl", "x509", "-in", sys.argv[1], "-pubkey", "-noout"],
+    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True
+).stdout
+details = subprocess.run(
+    ["openssl", "rsa", "-pubin", "-modulus", "-text", "-noout"],
+    input=public_key, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    check=True
+).stdout.decode("ascii")
+modulus = re.search(r"Modulus=([0-9A-Fa-f]+)", details)
+exponent = re.search(r"Exponent:\s*(\d+)", details)
+if modulus is None or exponent is None:
+    raise ValueError("RSA public certificate parameters unavailable")
+
+def enc(number):
+    length = max(1, (number.bit_length() + 7) // 8)
+    return base64.urlsafe_b64encode(number.to_bytes(length, "big")).rstrip(
+        b"="
+    ).decode("ascii")
+
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    json.dump({
+        "client_name": "k04-self-signed-registration-probe",
+        "grant_types": ["client_credentials"],
+        "token_endpoint_auth_method": "self_signed_tls_client_auth",
+        "jwks": {"keys": [{
+            "kty": "RSA", "use": "sig", "kid": "k04-self-signed",
+            "n": enc(int(modulus.group(1), 16)),
+            "e": enc(int(exponent.group(1))),
+            "x5c": [certificate]
+        }]}
+    }, output)
+PYJWK
+python3 "$tmp/self-signed-jwk.py" "$tmp/self-signed.pem" \
+  "$tmp/client-self-signed-oidc.json" ||
+  error 'self-signed public JWK client registration unavailable'
 cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
 {
   "clientId": "k04-signed",
@@ -411,6 +481,59 @@ do
     error "Keycloak $version Admin REST bootstrap client request failed"
   [ "$create_code" = 201 ] ||
     fail "Keycloak $version rejected service account provisioning ($create_code)"
+
+  # Cross-check the actual loaded client authenticator factories, rather
+  # than infer the separate self-signed RFC 8705 mechanism from the PKI
+  # authenticator or OIDC discovery alone.
+  providers_http=$(transport --output "$tmp/auth-providers-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/authentication/client-authenticator-providers") ||
+    error "Keycloak $version client authenticator provider inspection transport failed"
+  [ "$providers_http" = 200 ] &&
+    jq -e 'type == "array" and any(.[]; .id == "client-x509")' \
+      "$tmp/auth-providers-$version" >/dev/null ||
+    fail "Keycloak $version client authenticator registry unavailable ($providers_http)"
+  if jq -e 'any(.[]; .id == "self_signed_tls_client_auth")' \
+    "$tmp/auth-providers-$version" >/dev/null
+  then
+    self_signed_provider=present
+  else
+    self_signed_provider=absent
+  fi
+  printf '%s: Keycloak %s RFC 8705 self-signed client authenticator provider=%s\n' \
+    "$TEST_ID" "$version" "$self_signed_provider"
+
+  # Positive control for the same OIDC dynamic registration interface,
+  # using an established client-secret method. Responses stay protected.
+  register_base=$base/realms/master/clients-registrations/openid-connect
+  register_control_http=$(transport --output "$tmp/registration-control-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-oidc-registration-control.json" \
+    --url "$register_base") ||
+    error "Keycloak $version OIDC registration positive-control transport failed"
+  [ "$register_control_http" = 201 ] &&
+    jq -e '.client_id | type == "string" and length > 0' \
+      "$tmp/registration-control-$version" >/dev/null ||
+    fail "Keycloak $version OIDC registration positive-control rejected ($register_control_http)"
+
+  register_self_http=$(transport --output "$tmp/registration-self-signed-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-self-signed-oidc.json" \
+    --url "$register_base") ||
+    error "Keycloak $version RFC 8705 self-signed registration transport failed"
+  printf '%s: Keycloak %s self-signed RFC 8705 OIDC registration HTTP=%s\n' \
+    "$TEST_ID" "$version" "$register_self_http"
+  # No self-signed provider is expected in the frozen target releases.
+  # A newly loaded provider or accepted registration needs a separate
+  # positive authentication test before claiming supported behavior.
+  [ "$self_signed_provider" = absent ] &&
+    [ "$register_self_http" = 400 ] ||
+    fail "Keycloak $version self-signed mechanism changed; re-evaluate actual client authentication"
+  jq -e '.error | type == "string" and length > 0' \
+    "$tmp/registration-self-signed-$version" >/dev/null ||
+    fail "Keycloak $version self-signed registration rejection lacks OAuth error"
 
   # The actual TLS handshake validates the certificate against Keycloak's
   # dedicated CA. The client-x509 authenticator then verifies the exact
