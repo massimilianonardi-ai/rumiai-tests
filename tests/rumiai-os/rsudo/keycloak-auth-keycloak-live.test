@@ -458,6 +458,7 @@ federated_token_request()
 {
   transport --output "$2" --write-out '%{http_code}' \
     --data-urlencode grant_type=client_credentials \
+    --data-urlencode "client_id=$4" \
     --data-urlencode \
       client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
     --data-urlencode "client_assertion@$1" \
@@ -662,12 +663,29 @@ do
     "$tmp/federated-issuer.key" "$tmp/federated-assertion-$version" ||
     error "Keycloak $version federated client assertion signing failed"
   federated_http=$(federated_token_request \
-    "$tmp/federated-assertion-$version" "$tmp/federated-token-$version" "$base") ||
+    "$tmp/federated-assertion-$version" "$tmp/federated-token-$version" "$base" k04-federated) ||
     error "Keycloak $version federated token request transport failed"
   [ "$federated_http" = 200 ] &&
     jq -e '.access_token | type == "string" and length > 0' \
       "$tmp/federated-token-$version" >/dev/null ||
     fail "Keycloak $version real federated client grant rejected ($federated_http)"
+
+  # A different selected OAuth client must not inherit the authority
+  # of the correctly signed assertion for the registered federated client.
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-mismatched-client-$version" ||
+    error "Keycloak $version wrong-client assertion creation failed"
+  mismatched_client_http=$(federated_token_request \
+    "$tmp/federated-mismatched-client-$version" \
+    "$tmp/federated-mismatched-client-response-$version" "$base" k04-service) ||
+    error "Keycloak $version wrong-client assertion transport failed"
+  case "$mismatched_client_http" in 400|401) : ;; *)
+    fail "Keycloak $version accepted mismatched federated client identity ($mismatched_client_http)" ;;
+  esac
+  jq -e '.error == "invalid_client"' \
+    "$tmp/federated-mismatched-client-response-$version" >/dev/null ||
+    fail "Keycloak $version mismatched federated client lacked invalid_client"
 
   # Independently signed but untrusted assertions and wrong audiences
   # must fail; never expose JWTs or tokens to the test result stream.
@@ -677,7 +695,7 @@ do
     error "Keycloak $version untrusted assertion creation failed"
   untrusted_http=$(federated_token_request \
     "$tmp/federated-untrusted-$version" \
-    "$tmp/federated-untrusted-response-$version" "$base") ||
+    "$tmp/federated-untrusted-response-$version" "$base" k04-federated) ||
     error "Keycloak $version untrusted assertion transport failed"
   case "$untrusted_http" in 400|401) : ;; *)
     fail "Keycloak $version accepted untrusted federated signature ($untrusted_http)" ;;
@@ -692,7 +710,7 @@ do
     error "Keycloak $version wrong-audience assertion creation failed"
   wrong_audience_http=$(federated_token_request \
     "$tmp/federated-wrong-audience-$version" \
-    "$tmp/federated-wrong-audience-response-$version" "$base") ||
+    "$tmp/federated-wrong-audience-response-$version" "$base" k04-federated) ||
     error "Keycloak $version wrong-audience assertion transport failed"
   case "$wrong_audience_http" in 400|401) : ;; *)
     fail "Keycloak $version accepted wrong federated audience ($wrong_audience_http)" ;;
