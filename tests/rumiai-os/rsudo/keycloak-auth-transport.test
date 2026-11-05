@@ -86,6 +86,38 @@ openssl req -x509 -newkey rsa:2048 -nodes \
   error 'TLS test certificate preparation failed'
 chmod 600 "$tmp/server.key" "$tmp/server.pem" ||
   error 'TLS fixture permissions unavailable'
+# Separate CA for TLS client authentication, distinct from server TLS.
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -subj /CN=k04-mtls-ca -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+  -keyout "$tmp/mtls-ca.key" -out "$tmp/mtls-ca.pem" \
+  >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'independent mTLS test trust CA unavailable'
+cat > "$tmp/mtls.ext" <<'MTLS_EXT'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+MTLS_EXT
+for identity in good wrong
+do
+  case "$identity" in
+    good) subject=/CN=k04-mtls-client ;;
+    wrong) subject=/CN=k04-mtls-other ;;
+  esac
+  openssl req -new -newkey rsa:2048 -nodes -subj "$subject" \
+    -keyout "$tmp/mtls-$identity.key" -out "$tmp/mtls-$identity.csr" \
+    >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+    error "mTLS $identity key/csr generation failed"
+  openssl x509 -req -in "$tmp/mtls-$identity.csr" \
+    -CA "$tmp/mtls-ca.pem" -CAkey "$tmp/mtls-ca.key" \
+    -CAcreateserial -days 1 -extfile "$tmp/mtls.ext" \
+    -out "$tmp/mtls-$identity.pem" \
+    >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+    error "mTLS $identity certificate signing failed"
+  chmod 600 "$tmp/mtls-$identity.key" "$tmp/mtls-$identity.pem" ||
+    error "mTLS $identity credentials not private"
+done
+
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-client-rsa \
   -keyout "$tmp/client-rsa.key" -out "$tmp/client-rsa.pem" \
   >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
@@ -397,6 +429,17 @@ class Handler(BaseHTTPRequestHandler):
                         client_valid = checked.returncode == 0
             except (ValueError, TypeError, KeyError, UnicodeError, IndexError):
                 client_valid = False
+        if (not client_valid and args.get("client_id") == ["service-mtls"]):
+            # Python's TLS stack verifies the chain against the *client*
+            # trust anchor before passing a peer certificate to this handler.
+            # The application additionally selects the exact registered
+            # certificate Subject DN, rather than merely the same CA.
+            certificate = self.connection.getpeercert()
+            if certificate:
+                parts = certificate.get("subject", ())
+                common_names = [value for item in parts for key, value in item
+                                if key == "commonName"]
+                client_valid = (common_names == ["k04-mtls-client"])
         if not client_valid:
             # Exercise both Keycloak-observed 401 unauthorized_client (Basic)
             # and conventional invalid_client (form-client authentication).
@@ -465,6 +508,8 @@ class Handler(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[2], sys.argv[3])
+context.load_verify_locations(cafile=sys.argv[9])
+context.verify_mode = ssl.CERT_OPTIONAL
 server.socket = context.wrap_socket(server.socket, server_side=True)
 Path(sys.argv[1]).write_text(str(server.server_port))
 server.serve_forever()
@@ -504,7 +549,7 @@ openssl x509 -in "$tmp/client-rsa.pem" -pubkey -noout \
 python3 -u "$tmp/server.py" "$tmp/port" "$tmp/server.pem" "$tmp/server.key" \
   "$tmp/client-rsa.public" "$tmp/client-ES256.public" \
   "$tmp/client-ES384.public" "$tmp/client-ES512.public" \
-  "$tmp/client-eddsa.public" \
+  "$tmp/client-eddsa.public" "$tmp/mtls-ca.pem" \
   >"$tmp/server.out" 2>"$tmp/server.err" &
 pid=$!
 tries=0
@@ -716,6 +761,70 @@ else
   printf '%s: Ed25519 OpenSSL backend unavailable; EdDSA subset unobserved on this host\n' \
     "$TEST_ID" >&2
 fi
+
+# Real optional TLS client-certificate verification with application-level
+# Subject DN binding, no secret/JWT client fallback, and private file checks.
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-mtls \
+  --client-auth tls-client-auth --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-good.pem" \
+  --token-store "$tmp/mtls-token" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+  [ "$(jq -r '.access_token' "$tmp/mtls-token")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+  fail "X509 mTLS client acquisition failed ($status)"
+result=$(probe status --server "$base" --issuer-realm master \
+  --client-id service-mtls --client-auth tls-client-auth \
+  --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-good.pem" \
+  --token-file "$tmp/mtls-token" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+  fail "X509 mTLS introspection failed ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-mtls \
+  --client-auth tls-client-auth --private-key-file "$tmp/mtls-wrong.key" \
+  --certificate-file "$tmp/mtls-wrong.pem" \
+  --token-store "$tmp/mtls-other-identity" --ca-file "$tmp/server.pem" \
+  2>"$tmp/err")
+status=$?
+[ "$status" -eq 71 ] && [ -z "$result" ] &&
+  [ ! -e "$tmp/mtls-other-identity" ] ||
+  fail "mTLS wrong client identity accepted ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-mtls \
+  --client-auth tls-client-auth --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-wrong.pem" \
+  --token-store "$tmp/mtls-mismatched-keys" --ca-file "$tmp/server.pem" \
+  2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] &&
+  [ ! -e "$tmp/mtls-mismatched-keys" ] ||
+  fail "mTLS mismatched certificate/private key accepted ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-mtls \
+  --client-auth tls-client-auth --client-secret-file "$tmp/secret" \
+  --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-good.pem" \
+  --token-store "$tmp/mtls-secret-conflict" --ca-file "$tmp/server.pem" \
+  2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ ! -e "$tmp/mtls-secret-conflict" ] ||
+  fail "mTLS incorrectly accepted client-secret input ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-mtls \
+  --client-auth tls-client-auth --client-jwt-alg RS256 \
+  --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-good.pem" \
+  --token-store "$tmp/mtls-alg-conflict" --ca-file "$tmp/server.pem" \
+  2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ ! -e "$tmp/mtls-alg-conflict" ] ||
+  fail "mTLS incorrectly accepted JWT algorithm ($status)"
+grep -F 'BEGIN PRIVATE KEY' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'mTLS private key leaked through curl arguments or diagnostics'
 
 # K04 signed client assertion uses protected HS256 client-secret-jwt. The
 # server independently verifies signature, iss/sub/aud, time and jti.
