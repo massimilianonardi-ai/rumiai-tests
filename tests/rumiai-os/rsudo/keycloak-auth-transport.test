@@ -173,6 +173,7 @@ import base64
 import json
 import subprocess
 import tempfile
+import threading
 import hashlib
 import hmac
 import ssl
@@ -429,7 +430,9 @@ class Handler(BaseHTTPRequestHandler):
                         client_valid = checked.returncode == 0
             except (ValueError, TypeError, KeyError, UnicodeError, IndexError):
                 client_valid = False
-        if (not client_valid and args.get("client_id") == ["service-mtls"]):
+        if (not client_valid and
+                getattr(self.server, "mtls_only", False) and
+                args.get("client_id") == ["service-mtls"]):
             # Python's TLS stack verifies the chain against the *client*
             # trust anchor before passing a peer certificate to this handler.
             # The application additionally selects the exact registered
@@ -505,14 +508,24 @@ class Handler(BaseHTTPRequestHandler):
             "expires_in": 60
         })
 
+# Keep the pre-existing JWT/secret transport listener unchanged. An mTLS
+# listener must not inject certificate-request behavior into independent
+# token/JWT regressions (particularly macOS TLS clients).
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(sys.argv[2], sys.argv[3])
-context.load_verify_locations(cafile=sys.argv[9])
-context.verify_mode = ssl.CERT_OPTIONAL
 server.socket = context.wrap_socket(server.socket, server_side=True)
+mtls_server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+mtls_server.mtls_only = True
+mtls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+mtls_context.load_cert_chain(sys.argv[2], sys.argv[3])
+mtls_context.load_verify_locations(cafile=sys.argv[9])
+mtls_context.verify_mode = ssl.CERT_OPTIONAL
+mtls_server.socket = mtls_context.wrap_socket(mtls_server.socket, server_side=True)
 Path(sys.argv[1]).write_text(str(server.server_port))
-server.serve_forever()
+Path(sys.argv[10]).write_text(str(mtls_server.server_port))
+threading.Thread(target=server.serve_forever, daemon=True).start()
+mtls_server.serve_forever()
 PYTHON
 
 cat > "$tmp/bin/keycloak-auth-probe" <<'PROBE'
@@ -549,21 +562,24 @@ openssl x509 -in "$tmp/client-rsa.pem" -pubkey -noout \
 python3 -u "$tmp/server.py" "$tmp/port" "$tmp/server.pem" "$tmp/server.key" \
   "$tmp/client-rsa.public" "$tmp/client-ES256.public" \
   "$tmp/client-ES384.public" "$tmp/client-ES512.public" \
-  "$tmp/client-eddsa.public" "$tmp/mtls-ca.pem" \
+  "$tmp/client-eddsa.public" "$tmp/mtls-ca.pem" "$tmp/mtls-port" \
   >"$tmp/server.out" 2>"$tmp/server.err" &
 pid=$!
 tries=0
-while [ ! -s "$tmp/port" ] && [ "$tries" -lt 60 ]
+while { [ ! -s "$tmp/port" ] || [ ! -s "$tmp/mtls-port" ]; } &&
+  [ "$tries" -lt 60 ]
 do
   sleep 0.1
   tries=$((tries + 1))
 done
-[ -s "$tmp/port" ] || {
+[ -s "$tmp/port" ] && [ -s "$tmp/mtls-port" ] || {
   cat "$tmp/server.err" >&2
-  error 'HTTPS fixture failed to start'
+  error 'HTTPS fixture listeners failed to start'
 }
 port=$(cat "$tmp/port") || error 'HTTPS port unavailable'
+mtls_port=$(cat "$tmp/mtls-port") || error 'mTLS HTTPS port unavailable'
 base=https://127.0.0.1:$port
+mtls_base=https://127.0.0.1:$mtls_port
 printf 'protected-k04-secret\n' > "$tmp/secret"
 chmod 600 "$tmp/secret"
 
@@ -764,7 +780,7 @@ fi
 
 # Real optional TLS client-certificate verification with application-level
 # Subject DN binding, no secret/JWT client fallback, and private file checks.
-result=$(probe acquire --server "$base" --issuer-realm master \
+result=$(probe acquire --server "$mtls_base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-mtls \
   --client-auth tls-client-auth --private-key-file "$tmp/mtls-good.key" \
   --certificate-file "$tmp/mtls-good.pem" \
@@ -774,7 +790,7 @@ status=$?
   [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
   [ "$(jq -r '.access_token' "$tmp/mtls-token")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
   fail "X509 mTLS client acquisition failed ($status)"
-result=$(probe status --server "$base" --issuer-realm master \
+result=$(probe status --server "$mtls_base" --issuer-realm master \
   --client-id service-mtls --client-auth tls-client-auth \
   --private-key-file "$tmp/mtls-good.key" \
   --certificate-file "$tmp/mtls-good.pem" \
@@ -783,7 +799,7 @@ status=$?
 [ "$status" -eq 0 ] &&
   [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
   fail "X509 mTLS introspection failed ($status)"
-result=$(probe acquire --server "$base" --issuer-realm master \
+result=$(probe acquire --server "$mtls_base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-mtls \
   --client-auth tls-client-auth --private-key-file "$tmp/mtls-wrong.key" \
   --certificate-file "$tmp/mtls-wrong.pem" \
@@ -793,7 +809,7 @@ status=$?
 [ "$status" -eq 71 ] && [ -z "$result" ] &&
   [ ! -e "$tmp/mtls-other-identity" ] ||
   fail "mTLS wrong client identity accepted ($status)"
-result=$(probe acquire --server "$base" --issuer-realm master \
+result=$(probe acquire --server "$mtls_base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-mtls \
   --client-auth tls-client-auth --private-key-file "$tmp/mtls-good.key" \
   --certificate-file "$tmp/mtls-wrong.pem" \
@@ -803,7 +819,7 @@ status=$?
 [ "$status" -eq 70 ] && [ -z "$result" ] &&
   [ ! -e "$tmp/mtls-mismatched-keys" ] ||
   fail "mTLS mismatched certificate/private key accepted ($status)"
-result=$(probe acquire --server "$base" --issuer-realm master \
+result=$(probe acquire --server "$mtls_base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-mtls \
   --client-auth tls-client-auth --client-secret-file "$tmp/secret" \
   --private-key-file "$tmp/mtls-good.key" \
@@ -813,7 +829,7 @@ result=$(probe acquire --server "$base" --issuer-realm master \
 status=$?
 [ "$status" -eq 64 ] && [ ! -e "$tmp/mtls-secret-conflict" ] ||
   fail "mTLS incorrectly accepted client-secret input ($status)"
-result=$(probe acquire --server "$base" --issuer-realm master \
+result=$(probe acquire --server "$mtls_base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-mtls \
   --client-auth tls-client-auth --client-jwt-alg RS256 \
   --private-key-file "$tmp/mtls-good.key" \
