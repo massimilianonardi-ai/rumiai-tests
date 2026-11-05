@@ -2,6 +2,7 @@
 # Real APISIX traditional/etcd Admin API read-only capability test.
 # Uses isolated official APISIX 3.16/3.19 and etcd 3.5.21 containers.
 # No host ports, external gateway changes, or Admin API writes.
+# Fixture resource keys are seeded directly into disposable etcd only.
 # The rsudo SSH/sudo boundary alone is replaced by Docker exec.
 TEST_ID=rumiai-os/rsudo/apisix-admin-etcd-live.test
 fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
@@ -81,6 +82,7 @@ CONFIG
 # APISIX's container worker needs to read this otherwise private test-only
 # configuration; no host ports or live secrets exist in the fixture.
 chmod 644 "$tmp/config.yaml" || error 'cannot set fixture permissions'
+cp "$tmp/config.yaml" "$tmp/config-default.yaml" || error 'cannot save fixture default'
 
 cat > "$tmp/bin/rsudo-apisix-etcd-mode-probe" <<'PROBE'
 #!/bin/sh
@@ -160,8 +162,43 @@ do
 done
 [ "$tries" -lt 30 ] || error 'isolated etcd did not become healthy'
 
+# Insert only ordinary test route/service/upstream records directly into the
+# throwaway etcd cluster. Admin API operations below remain GET-only, and the
+# fixture records are never exposed to or taken from production resources.
+etcd_put()
+{
+  docker exec "$etcd_container" /usr/local/bin/etcdctl \
+    --endpoints=http://127.0.0.1:2379 put "/apisix/$1/$2" "$3" >/dev/null ||
+    error "cannot seed test-only $1/$2 in isolated etcd"
+}
+
+n=1
+while [ "$n" -le 11 ]
+do
+  suffix=$(printf '%02d' "$n") || error 'cannot format test route ID'
+  id=rsudo-route-$suffix
+  data=$(printf '{"id":"%s","uri":"/rsudo-%s","upstream":{"type":"roundrobin","nodes":{"127.0.0.1:8080":1}}}' "$id" "$suffix") ||
+    error 'cannot compose disposable route'
+  etcd_put routes "$id" "$data"
+  n=$((n + 1))
+done
+etcd_put services rsudo-service '{"id":"rsudo-service","name":"fixture-service","upstream":{"type":"roundrobin","nodes":{"127.0.0.1:8080":1}}}'
+etcd_put upstreams rsudo-upstream '{"id":"rsudo-upstream","type":"roundrobin","nodes":{"127.0.0.1:8080":1}}'
+unset id data suffix n
+
 for image in $images
 do
+  for api_version in v2 v3
+  do
+    if [ "$api_version" = v3 ]
+    then
+      sed '/^  admin:$/a\
+    admin_api_version: v3' "$tmp/config-default.yaml" > "$tmp/config.yaml" ||
+        error 'cannot create v3 test profile'
+    else
+      cp "$tmp/config-default.yaml" "$tmp/config.yaml" ||
+        error 'cannot restore default Admin API profile'
+    fi
   apisix_container=$(docker run -d --network "$network" \
     --cap-drop ALL --security-opt no-new-privileges=true \
     --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
@@ -205,6 +242,67 @@ do
     esac
   done
 
+  # The two releases must actually return keyed resources from their etcd
+  # backend; a successful list response alone does not establish ID reads.
+  for spec in 'routes rsudo-route-01' 'services rsudo-service' 'upstreams rsudo-upstream'
+  do
+    set -- $spec
+    resource=$1
+    id=$2
+    response=$(http_read "/apisix/admin/$resource/$id" correct 2>"$tmp/http-stderr") ||
+      fail "$resource/$id GET failed before response"
+    first=$(printf '%s\n' "$response" | sed -n '1p') ||
+      error 'cannot parse keyed GET status line'
+    case "$first" in
+      'HTTP/1.1 200 '*|'HTTP/1.0 200 '*) : ;;
+      *) fail "$resource/$id returned unexpected status: $first" ;;
+    esac
+    case "$response" in
+      *"\"id\":\"$id\""*) : ;;
+      *) fail "$resource/$id response did not contain the selected record" ;;
+    esac
+    printf '%s\n' "$response" | tr -d '\r' | grep -i -Fx "X-API-VERSION: $api_version" >/dev/null ||
+      fail "$resource/$id did not identify Admin API $api_version"
+  done
+  unset resource id spec
+
+  # APISIX's v3 adapter implements pagination; the default v2 envelope does
+  # not promise the same query-param semantics. The 11 keys were inserted in
+  # numerical order so pages 1/2 must contain 10/1 distinct records.
+  if [ "$api_version" = v3 ]
+  then
+    first_page=$(http_read '/apisix/admin/routes?page=1&page_size=10' correct 2>"$tmp/http-stderr") ||
+      fail 'v3 first page request failed'
+    second_page=$(http_read '/apisix/admin/routes?page=2&page_size=10' correct 2>"$tmp/http-stderr") ||
+      fail 'v3 second page request failed'
+    for page in "$first_page" "$second_page"
+    do
+      case "$page" in
+        'HTTP/1.1 200 '*|'HTTP/1.0 200 '*) : ;;
+        *) fail 'v3 pagination request returned non-200 status' ;;
+      esac
+      printf '%s\n' "$page" | grep -E '"total"[[:space:]]*:[[:space:]]*11' >/dev/null ||
+        fail 'v3 pagination did not preserve full filtered total'
+    done
+    case "$first_page" in
+      *rsudo-route-01*rsudo-route-10*) : ;;
+      *) fail 'v3 first page omitted ordered first/last expected route' ;;
+    esac
+    case "$first_page" in
+      *rsudo-route-11*) fail 'v3 first page included route from next page' ;;
+    esac
+    case "$second_page" in
+      *rsudo-route-11*) : ;;
+      *) fail 'v3 second page did not return the eleventh route' ;;
+    esac
+    case "$second_page" in
+      *rsudo-route-01*) fail 'v3 second page repeated first route' ;;
+    esac
+    code=$(http_request_status '/apisix/admin/routes?page=1&page_size=9' correct) ||
+      fail 'v3 invalid pagination request failed before HTTP response'
+    [ "$code" = 400 ] || fail "v3 accepted invalid page_size 9: HTTP $code"
+  fi
+
   code=$(http_request_status /apisix/admin/routes/rsudo-never-created correct) ||
     fail 'missing-route read failed before response'
   [ "$code" = 404 ] || fail "missing route returned HTTP $code (expected 404)"
@@ -227,6 +325,7 @@ do
   docker rm -f "$apisix_container" >/dev/null 2>&1 ||
     error 'cannot remove isolated traditional APISIX'
   apisix_container=
+  done
 done
 
-printf '%s\n' "$TEST_ID: PASS (two real traditional/etcd gateways, resource GET and auth denial)"
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16/3.19, v2/v3, per-ID GET, pagination and authorization)"
