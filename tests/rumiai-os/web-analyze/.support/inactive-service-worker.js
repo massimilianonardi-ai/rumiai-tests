@@ -100,10 +100,13 @@ async function arrangeStoppedWorker(url) {
     }
     if(!active) {
       const pageRegistration=await send('Runtime.evaluate',
-        {expression:'document.body.dataset.registered || "unknown"',
+        {expression:'({url:location.href,ready:document.readyState,' +
+          'title:document.title,hasServiceWorker:!!navigator.serviceWorker,' +
+          'registered:document.body?.dataset.registered || "unknown",' +
+          'htmlLength:document.documentElement?.outerHTML.length || 0})',
           returnByValue:true},sessionId);
-      console.log('Fixture page registration status:',
-        pageRegistration.result?.value || 'unavailable');
+      console.log('Fixture page state:',JSON.stringify(
+        pageRegistration.result?.value || {unavailable:true}));
     }
     assert(active,'fixture did not observe activated ServiceWorker: ' +
       JSON.stringify([...versions.values()].map(v=>({
@@ -188,7 +191,11 @@ async function main() {
     console.log('Real Chromium inactive ServiceWorker registration persisted; analyzer only observed');
   }finally {
     server.closeAllConnections();server.close();
-    fs.rmSync(work,{recursive:true,force:true,maxRetries:10,retryDelay:250});
+    try {fs.rmSync(work,{recursive:true,force:true,maxRetries:20,retryDelay:350});}
+    catch(error) {
+      if(!['ENOTEMPTY','EBUSY'].includes(error.code))throw error;
+      console.warn('Fixture Chromium profile cleanup not complete:',error.code);
+    }
   }
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});
