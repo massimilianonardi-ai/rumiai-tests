@@ -130,4 +130,69 @@ status=$?
   fail 'zero-operand APISIX runtime did not discover systemd-managed master'
 }
 
-printf '%s\n' "$TEST_ID: PASS (real systemd-managed nginx process; APISIX source not claimed)"
+# An nginx master may share a systemd unit's cgroup and active state while
+# a long-lived shell supervisor, not nginx, is the manager's MainPID.
+# In that situation the observer must not claim systemd unit identity.
+sudo -n systemctl stop "$unit" ||
+  error 'cannot stop first disposable systemd unit'
+sudo -n systemctl reset-failed "$unit" >/dev/null 2>&1 || :
+unit="rsudo-apisix-supervised-$.service"
+sudo -n systemd-run --unit="${unit%.service}" \
+  --property=Type=simple \
+  -- /bin/sh -c '
+    /usr/sbin/nginx -p "$1" -c "$1/conf/nginx.conf" -g "daemon off;" &
+    wait
+  ' sh "$tmp" ||
+  error 'cannot launch supervised nginx under real systemd'
+
+tries=0
+while [ "$tries" -lt 20 ]
+do
+  if sudo -n test -s "$tmp/logs/nginx.pid" &&
+     [ "$(sudo -n systemctl show --property=ActiveState --value "$unit")" = active ]
+  then
+    break
+  fi
+  tries=$((tries + 1))
+  sleep 1
+done
+[ "$tries" -lt 20 ] || {
+  sudo -n systemctl status --no-pager "$unit" >&2 || :
+  fail 'supervised real nginx master did not become observable'
+}
+pid=$(sudo -n cat "$tmp/logs/nginx.pid") ||
+  error 'cannot read supervised nginx PID'
+manager_pid=$(sudo -n systemctl show --property=MainPID --value "$unit") ||
+  error 'cannot read real systemd manager PID'
+[ "$pid" != "$manager_pid" ] && [ "$manager_pid" -gt 1 ] 2>/dev/null ||
+  fail 'supervisor and nginx master unexpectedly share one PID'
+sudo -n cat "/proc/$pid/cgroup" |
+  grep -F "$unit" >/dev/null ||
+  error 'real nginx master is not in the supervised systemd unit cgroup'
+
+process_only=$(printf '%s\n' \
+  'runtime_evidence=pidfile-and-master-args' \
+  "process_pid=$pid" \
+  'runtime_identity=process-consistent-config-unverified' \
+  'mutation_readiness=not-established')
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-systemd-probe "$tmp" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = "$process_only" ] || {
+  cat "$tmp/stderr" >&2
+  fail 'supervised master was incorrectly attributed to systemd MainPID'
+}
+
+# The normal zero-operand discovery must also avoid false unit attribution.
+normal_process_only=$(printf '%s\n' \
+  'discovery_evidence=unique-process-prefix-candidate' \
+  'discovered_scope=host' \
+  "installation_root=$tmp" \
+  "$process_only")
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-systemd-probe 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = "$normal_process_only" ] || {
+  cat "$tmp/stderr" >&2
+  fail 'automatic discovery incorrectly attributed supervised nginx master'
+}
+
+printf '%s\n' "$TEST_ID: PASS (real systemd MainPID match and mismatch; APISIX source not claimed)"
