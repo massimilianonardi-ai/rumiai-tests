@@ -20,6 +20,83 @@ function jsonl(file)
   return fs.readFileSync(file,'utf8').split('\n').filter(Boolean).map(JSON.parse);
 }
 
+function _requestKey(session, requestId)
+{
+  return String(session)+':'+String(requestId);
+}
+
+function _responseOnlyEvidence(dir, summary, audit, resources)
+{
+  const details=jsonl(path.join(dir,'network-details.jsonl'));
+  const seenRequests=new Set();
+  const cacheResponses=new Map();
+  for(const row of details)
+  {
+    const event=row.event||{};
+    if(!event.requestId)continue;
+    const id=_requestKey(row.session,event.requestId);
+    if(row.method==='Network.requestWillBeSent')
+      seenRequests.add(id);
+    if(row.method==='Network.responseReceived' &&
+       event.type==='Stylesheet' &&
+       event.response?.fromDiskCache===true)
+      cacheResponses.set(id,{
+        url:event.response.url,
+        status:event.response.status,
+        mimeType:event.response.mimeType,
+        frameId:event.frameId
+      });
+  }
+  const orphaned=[...cacheResponses].filter(([id])=>!seenRequests.has(id));
+  const index=new Map();
+  for(const item of resources)
+  {
+    const id=_requestKey(item.session,item.requestId);
+    if(!index.has(id))index.set(id,[]);
+    index.get(id).push(item);
+  }
+  for(const [id,response] of orphaned)
+  {
+    assert((index.get(id)||[]).some(item=>
+      item.requestProvenance==='response-only' &&
+      item.url===response.url &&
+      item.mimeType===response.mimeType &&
+      item.frameId===response.frameId &&
+      item.httpStatus===response.status &&
+      item.resourceType==='Stylesheet' &&
+      item.fromDiskCache===true &&
+      ['saved','body-unavailable','unfinished-at-shutdown',
+        'body-read-pending-at-shutdown'].includes(item.status)),
+      'Cached response without request was not faithfully indexed');
+  }
+  const responseOnly=resources.filter(item=>
+    item.requestProvenance==='response-only');
+  assert.equal(responseOnly.length,summary.resourceCapture?.responseOnly||0,
+    'Response-only summary counter disagrees with saved resource outcomes');
+  assert(responseOnly.every(item=>
+    item.url && item.resourceType &&
+    Number.isFinite(item.httpStatus) &&
+    item.requestTimestamp===null && item.method===null),
+    'Response-only evidence has invented request fields or missing response metadata');
+  if(responseOnly.length)
+  {
+    assert(audit.domains?.some(item=>item.domain==='network' &&
+      item.status!=='saved'),
+      'Incomplete request provenance was incorrectly audited as complete');
+  }
+  return {
+    branch:orphaned.length?'EXERCISED_PASS':'NOT_EXERCISED',
+    responseOnlyCount:responseOnly.length,
+    orphanedCachedCssCount:orphaned.length,
+    bodySaved:responseOnly.filter(x=>x.status==='saved').length,
+    bodyUnavailable:responseOnly.filter(x=>x.status==='body-unavailable').length,
+    otherOutcomes:responseOnly.filter(x=>!['saved','body-unavailable'].includes(x.status)).length,
+    withoutMetadata:resources.filter(x=>x.status==='finished-without-metadata').length,
+    unfinished:resources.filter(x=>x.status==='unfinished-at-shutdown').length,
+    networkDrained:summary.resourceCapture?.networkDrained??null
+  };
+}
+
 async function capture(site,base)
 {
   const child=spawn(command,[site.url,base],{
@@ -84,10 +161,41 @@ function verify(site,dir)
     site.label+' deep-rest browser environment missing');
   assert.equal(fs.statSync(dir).mode&0o777,0o700,
     site.label+' capture directory is not private');
+  const responseOnly=_responseOnlyEvidence(dir,summary,audit,resources);
+  const report={
+    site:site.label,
+    host:{platform:process.platform,architecture:process.arch},
+    productRevision:process.env.GITHUB_SHA||null,
+    testRevision:process.env.RUMIAI_PUBLIC_SITES_TEST_REVISION||null,
+    capture:{
+      savedResponses:saved.length,
+      ownHostResponses:own.length,
+      savedScriptRecords:scripts.filter(item=>item.status==='saved').length,
+      auditStatus:audit.status,
+      verifiedFiles:audit.counts?.verifiedFiles??null,
+      missingOrCorrupt:audit.counts?.missingOrCorrupt??null,
+      discrepancies:audit.counts?.discrepancies??null,
+      limitations:manifest.limitations?.length||0
+    },
+    responseOnly
+  };
+  const reportDir=process.env.RUMIAI_PUBLIC_SITE_REPORT_DIR;
+  if(reportDir)
+  {
+    fs.mkdirSync(reportDir,{recursive:true,mode:0o700});
+    fs.writeFileSync(path.join(reportDir,
+      site.label==='MDN'?'mdn.json':'web-dev.json'),
+      JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});
+  }
   console.log(site.label+' real HTTPS PASS: savedResponses='+saved.length+
     ' ownHostResponses='+own.length+' savedScriptRecords='+
     scripts.filter(item=>item.status==='saved').length+
-    ' audit='+audit.status+' limitations='+(manifest.limitations?.length||0));
+    ' audit='+audit.status+' limitations='+(manifest.limitations?.length||0)+
+    ' responseOnly='+responseOnly.responseOnlyCount+
+    ' orphanedCachedCSS='+responseOnly.orphanedCachedCssCount+
+    ' branch='+responseOnly.branch+
+    ' bodySaved='+responseOnly.bodySaved+
+    ' bodyUnavailable='+responseOnly.bodyUnavailable);
 }
 
 async function main()
