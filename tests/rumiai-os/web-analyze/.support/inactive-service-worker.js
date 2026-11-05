@@ -90,14 +90,26 @@ async function arrangeStoppedWorker(url) {
     await send('ServiceWorker.enable',{},sessionId);
     let active;
     for(let i=0;i<95;i++) {
-      active=[...versions.values()].find(v=>v.scriptURL?.endsWith('/idle-worker.js') &&
-        v.status==='activated');
+      active=[...versions.values()].find(v=>{
+        if(v.status!=='activated' || !v.scriptURL)return false;
+        try{return new URL(v.scriptURL).pathname==='/idle-worker.js';}
+        catch(_){return false;}
+      });
       if(active)break;
       await sleep(100);
     }
+    if(!active) {
+      const pageRegistration=await send('Runtime.evaluate',
+        {expression:'document.body.dataset.registered || "unknown"',
+          returnByValue:true},sessionId);
+      console.log('Fixture page registration status:',
+        pageRegistration.result?.value || 'unavailable');
+    }
     assert(active,'fixture did not observe activated ServiceWorker: ' +
       JSON.stringify([...versions.values()].map(v=>({
-        status:v.status,runningStatus:v.runningStatus,hasTarget:!!v.targetId
+        status:v.status,runningStatus:v.runningStatus,hasTarget:!!v.targetId,
+        scriptPath:(()=>{try{return new URL(v.scriptURL).pathname;}
+          catch(_){return 'unknown';}})()
       }))));
     if(active.runningStatus!=='stopped')
       await send('ServiceWorker.stopWorker',{versionId:active.versionId},sessionId);
@@ -108,7 +120,9 @@ async function arrangeStoppedWorker(url) {
     }
     assert(stopped,'fixture did not observe stopped Chromium worker: ' +
       JSON.stringify([...versions.values()].map(v=>({
-        status:v.status,runningStatus:v.runningStatus,hasTarget:!!v.targetId
+        status:v.status,runningStatus:v.runningStatus,hasTarget:!!v.targetId,
+        scriptPath:(()=>{try{return new URL(v.scriptURL).pathname;}
+          catch(_){return 'unknown';}})()
       }))));
     return active.versionId;
   } finally {
