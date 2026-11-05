@@ -74,6 +74,12 @@ openssl req -x509 -newkey rsa:2048 -nodes -config "$tmp/openssl.cnf" \
   error 'disposable TLS certificate generation failed'
 cp "$tmp/keycloak/server.pem" "$tmp/ssh/ca.pem" ||
   error 'disposable remote CA copy failed'
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-composed-rsa \
+  -keyout "$tmp/client-rsa.key" -out "$tmp/client-rsa.pem" \
+  > "$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
+  error 'disposable RSA client keypair unavailable'
+chmod 600 "$tmp/client-rsa.key" "$tmp/client-rsa.pem" ||
+  error 'disposable RSA client keypair permissions unavailable'
 
 printf 'KC_BOOTSTRAP_ADMIN_USERNAME=k04admin\nKC_BOOTSTRAP_ADMIN_PASSWORD=k04-only-bootstrap\n' \
   > "$tmp/bootstrap.env"
@@ -103,6 +109,26 @@ cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
   "attributes": {"token.endpoint.auth.signing.alg": "HS256"}
 }
 CLIENT_JWT_JSON
+cat > "$tmp/client-rsa-base.json" <<'CLIENT_RSA_JSON'
+{
+  "clientId": "k04-rs256",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "clientAuthenticatorType": "client-jwt",
+  "attributes": {"token.endpoint.auth.signing.alg":"RS256"}
+}
+CLIENT_RSA_JSON
+cert_body=$(sed '/-----BEGIN CERTIFICATE-----/d; /-----END CERTIFICATE-----/d' \
+  "$tmp/client-rsa.pem" | tr -d '\r\n') ||
+  error 'RSA public certificate encoding failed'
+[ -n "$cert_body" ] || error 'RSA client certificate empty'
+jq --arg cert "$cert_body" \
+  '.attributes["jwt.credential.certificate"] = $cert' \
+  "$tmp/client-rsa-base.json" > "$tmp/client-rsa.json" ||
+  error 'Keycloak RSA client fixture JSON failed'
+unset cert_body
 
 cat > "$tmp/keycloak/Dockerfile" <<'KC_DOCKERFILE'
 ARG KC_VERSION
@@ -115,7 +141,7 @@ cat > "$tmp/ssh/Dockerfile" <<'SSH_DOCKERFILE'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-server sudo curl jq python3 ca-certificates \
+    openssh-server sudo curl jq python3 openssl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -m -s /bin/sh k04operator \
     && echo 'k04operator:k04-only-ssh-password' | chpasswd \
@@ -294,6 +320,15 @@ do
       fail "Keycloak $version SSH $algorithm client create failed ($jwt_http)"
   done
 
+  rsa_client_http=$(host_https --output "$tmp/rsa-client-response" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-rsa.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version SSH test RSA JWT provisioning HTTP failed"
+  [ "$rsa_client_http" = 201 ] ||
+    fail "Keycloak $version SSH RSA JWT client create rejected ($rsa_client_http)"
+
   # Shared Docker network namespace makes the actual Keycloak listener
   # reachable as HTTPS 127.0.0.1:8443 from the real SSH/sudo target.
   ssh_container=$(docker run -d \
@@ -332,6 +367,48 @@ EOF_SSH_CONFIG
     [ "$tries" -lt 60 ] || error "Keycloak $version SSH daemon not ready"
     sleep 0.1
   done
+
+  # Private key and public X509 certificate are disposable and are staged
+  # as protected files owned by the remote sudo identity; no private bytes
+  # traverse the m/rsudo argument vector or the host shell script.
+  docker cp "$tmp/client-rsa.key" "$ssh_container:/root/keycloak/client-rsa.key" ||
+    error "Keycloak $version remote RSA private key fixture copy failed"
+  docker cp "$tmp/client-rsa.pem" "$ssh_container:/root/keycloak/client-rsa.pem" ||
+    error "Keycloak $version remote RSA certificate fixture copy failed"
+  docker exec "$ssh_container" sh -c \
+    'chown 0:0 /root/keycloak/client-rsa.key /root/keycloak/client-rsa.pem &&
+     chmod 600 /root/keycloak/client-rsa.key /root/keycloak/client-rsa.pem' ||
+    error "Keycloak $version remote RSA key/cert permissions unavailable"
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-rs256 --client-auth private-key-jwt \
+    --private-key-file /root/keycloak/client-rsa.key \
+    --certificate-file /root/keycloak/client-rsa.pem \
+    --token-store "/root/keycloak/rsa-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version composed RSA signed client grant failed ($status)"
+  docker exec "$ssh_container" jq -e \
+    '.access_token | type == "string" and length > 0' \
+    "/root/keycloak/rsa-$version" >/dev/null ||
+    fail "Keycloak $version RSA token not stored on sudo target"
+  result=$(probe status --server https://127.0.0.1:8443 \
+    --issuer-realm master --client-id k04-rs256 \
+    --client-auth private-key-jwt \
+    --private-key-file /root/keycloak/client-rsa.key \
+    --certificate-file /root/keycloak/client-rsa.pem \
+    --token-file "/root/keycloak/rsa-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version composed RSA signed introspection failed ($status)"
+  grep -F 'eyJhbGciOiJSUzI1Ni' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version RSA assertion leaked to diagnostics"
 
   # Signed assertion is created and sent on the real remote sudo target.
   # SSH shell arguments contain selectors and protected file paths only.
