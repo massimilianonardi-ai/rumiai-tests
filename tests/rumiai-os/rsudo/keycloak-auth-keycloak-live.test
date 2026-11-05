@@ -337,13 +337,16 @@ do
     fail "Keycloak $version RS256 client assertion exposed in diagnostics"
 
   # Keep the registered RSA certificate, but require the exact selected
-  # signature algorithm. The two release targets independently verify the
+  # RSA/PS signature algorithm. The two release targets independently verify the
   # signed assertions rather than trusting the local signature check alone.
-  for algorithm in RS384 RS512
+  for algorithm in RS384 RS512 PS256 PS384 PS512
   do
     case "$algorithm" in
       RS384) rsa_id=k04-rs384 ;;
       RS512) rsa_id=k04-rs512 ;;
+      PS256) rsa_id=k04-ps256 ;;
+      PS384) rsa_id=k04-ps384 ;;
+      PS512) rsa_id=k04-ps512 ;;
     esac
     jq --arg id "$rsa_id" --arg alg "$algorithm" \
       '.clientId = $id | .attributes["token.endpoint.auth.signing.alg"] = $alg' \
@@ -393,6 +396,50 @@ do
     [ "$status" -eq 71 ] && [ -z "$result" ] &&
       [ ! -e "$tmp/token-wrong-$algorithm-$version" ] ||
       fail "Keycloak $version $algorithm policy accepted wrong signature ($status)"
+
+    if [ "$algorithm" = PS256 ]
+    then
+      # A PS-signed client must also work for authenticated direct grants,
+      # protected refresh and explicit refresh-token revocation.
+      result=$(probe acquire --server "$base" --issuer-realm master \
+        --auth-mode password --username k04admin \
+        --password-file "$tmp/rsa-password" --client-id "$rsa_id" \
+        --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+        --private-key-file "$tmp/private-client.key" \
+        --certificate-file "$tmp/private-client.pem" \
+        --token-store "$tmp/password-$algorithm-$version" \
+        --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+      status=$?
+      [ "$status" -eq 0 ] &&
+        [ "$result" = '{"stored":true,"grant":"password","server_validated":false}' ] &&
+        jq -e '.refresh_token | type == "string" and length > 0' \
+          "$tmp/password-$algorithm-$version" >/dev/null ||
+        fail "Keycloak $version $algorithm direct grant failed ($status)"
+      result=$(probe refresh --server "$base" --issuer-realm master \
+        --client-id "$rsa_id" --client-auth private-key-jwt \
+        --client-jwt-alg "$algorithm" \
+        --private-key-file "$tmp/private-client.key" \
+        --certificate-file "$tmp/private-client.pem" \
+        --token-file "$tmp/password-$algorithm-$version" \
+        --token-store "$tmp/password-$algorithm-$version" \
+        --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+      status=$?
+      [ "$status" -eq 0 ] &&
+        [ "$result" = '{"stored":true,"refreshed":true,"server_validated":false}' ] ||
+        fail "Keycloak $version $algorithm refresh failed ($status)"
+      result=$(probe revoke --server "$base" --issuer-realm master \
+        --client-id "$rsa_id" --client-auth private-key-jwt \
+        --client-jwt-alg "$algorithm" \
+        --private-key-file "$tmp/private-client.key" \
+        --certificate-file "$tmp/private-client.pem" \
+        --token-file "$tmp/password-$algorithm-$version" \
+        --token-type-hint refresh_token \
+        --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+      status=$?
+      [ "$status" -eq 0 ] &&
+        [ "$result" = '{"revocation_requested":true,"token_type_hint":"refresh_token","invalidity_verified":false}' ] ||
+        fail "Keycloak $version $algorithm revocation failed ($status)"
+    fi
   done
 
   # Signed JWT with confidential client secret is an independently selected
