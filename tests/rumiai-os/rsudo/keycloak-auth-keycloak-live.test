@@ -262,7 +262,18 @@ cat > "$tmp/client-federated.json" <<'CLIENT_FEDERATED'
   "attributes": {
     "jwt.credential.issuer": "k04-external-idp",
     "jwt.credential.sub": "k04-external"
-  }
+  },
+  "protocolMappers": [{
+    "name": "k04-federated-self-audience",
+    "protocol": "openid-connect",
+    "protocolMapper": "oidc-audience-mapper",
+    "consentRequired": false,
+    "config": {
+      "included.custom.audience": "k04-federated",
+      "access.token.claim": "true",
+      "id.token.claim": "false"
+    }
+  }]
 }
 CLIENT_FEDERATED
 cat > "$tmp/sign-federated-jwt.py" <<'PYFEDERATED'
@@ -723,10 +734,13 @@ do
     --data-urlencode 'token_type_hint=access_token' \
     --url "$base/realms/master/protocol/openid-connect/token/introspect") ||
     error "Keycloak $version federated introspection transport failed"
+  # Keycloak 26.6+ audience validation requires the introspecting client
+  # to be explicitly included in the token's audience. The fixture mapper
+  # establishes this separate permission without disabling audience checks.
   [ "$federation_introspect_http" = 200 ] &&
-    jq -e '.active | type == "boolean"' \
+    jq -e '.active == true' \
       "$tmp/federated-introspection-response-$version" >/dev/null ||
-    fail "Keycloak $version federated introspection refused new assertion or invalid response ($federation_introspect_http)"
+    fail "Keycloak $version audience-authorized federated introspection did not report active ($federation_introspect_http)"
   observed_active=$(jq -er '.active | tostring' \
     "$tmp/federated-introspection-response-$version") ||
     error "Keycloak $version federated introspection active flag unavailable"
@@ -847,7 +861,7 @@ do
   status=$?
   [ "$status" -eq 0 ] &&
     printf '%s\n' "$result" | jq -e \
-      '.stored == true and .server_validated == true and (.active | type == "boolean")' \
+      '.stored == true and .server_validated == true and .active == true' \
       >/dev/null &&
     cmp -s "$tmp/token-federated-rsudo-$version" \
       "$tmp/federated-store-before-lifecycle-$version" ||
