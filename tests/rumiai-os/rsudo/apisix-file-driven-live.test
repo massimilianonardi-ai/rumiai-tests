@@ -1,0 +1,237 @@
+#!/bin/sh
+# Isolated real APISIX standalone file-driven read proof on pinned releases.
+# The two different full documents coexist; the configured provider must use
+# only its corresponding source. No Admin writes, host ports, or site access.
+# Only the external rsudo SSH/sudo boundary is replaced with Docker exec.
+TEST_ID=rumiai-os/rsudo/apisix-file-driven-live.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+tmp=
+container=
+cleanup()
+{
+  [ -z "$container" ] || docker rm -f "$container" >/dev/null 2>&1 || :
+  [ -z "$tmp" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test pathname unavailable'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'product target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'product checkout unavailable' ;;
+  2) fail 'explicit product checkout invalid' ;;
+  *) error 'product target resolution failed' ;;
+esac
+
+[ "$(uname -s)" = Linux ] || skip 'isolated Linux Docker gateway scenario only'
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
+for image in $images
+do
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    skip "official pinned APISIX image not provisioned: $image"
+done
+
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-file-read-$$
+umask 077
+mkdir -p -- "$tmp/bin" || error 'cannot create fixture directory'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture path unavailable'
+
+# Both documents are mounted into every gateway. Each declares one different
+# route, so live HTTP behavior distinguishes the source selected by APISIX.
+cat > "$tmp/apisix.yaml" <<'YAML'
+routes:
+  - id: rsudo-file-yaml-route
+    uri: /rsudo-file-yaml
+    plugins:
+      uri-blocker:
+        block_rules:
+          - /rsudo-file-yaml
+    upstream:
+      type: roundrobin
+      nodes:
+        "127.0.0.1:19877": 1
+services:
+  - id: rsudo-file-yaml-service
+    upstream:
+      type: roundrobin
+      nodes:
+        "127.0.0.1:19877": 1
+upstreams:
+  - id: rsudo-file-yaml-upstream
+    type: roundrobin
+    nodes:
+      "127.0.0.1:19877": 1
+#END
+YAML
+cat > "$tmp/apisix.json" <<'JSON'
+{
+  "routes": [{
+    "id": "rsudo-file-json-route",
+    "uri": "/rsudo-file-json",
+    "plugins": {"uri-blocker": {"block_rules": ["/rsudo-file-json"]}},
+    "upstream": {"type": "roundrobin", "nodes": {"127.0.0.1:19877": 1}}
+  }],
+  "services": [{
+    "id": "rsudo-file-json-service",
+    "upstream": {"type": "roundrobin", "nodes": {"127.0.0.1:19877": 1}}
+  }],
+  "upstreams": [{
+    "id": "rsudo-file-json-upstream",
+    "type": "roundrobin",
+    "nodes": {"127.0.0.1:19877": 1}
+  }]
+}
+JSON
+chmod 644 "$tmp/apisix.yaml" "$tmp/apisix.json" ||
+  error 'cannot make disposable configuration documents readable'
+
+cat > "$tmp/bin/rsudo-apisix-file-read-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  docker exec -i "$APISIX_FILE_TEST_CONTAINER" "$@"
+}
+case "$APISIX_FILE_TEST_OPERATION" in
+  mode) rsudo_mod_apisix_mode "$@" ;;
+  inspect) rsudo_mod_apisix_inspect "$@" ;;
+  runtime) rsudo_mod_apisix_runtime "$@" ;;
+  *) exit 83 ;;
+esac
+PROBE
+chmod 700 "$tmp/bin/rsudo-apisix-file-read-probe" ||
+  error 'cannot enable real product probe'
+
+product_probe()
+{
+  operation=$1
+  shift
+  APISIX_FILE_TEST_CONTAINER="$container" \
+    APISIX_FILE_TEST_OPERATION="$operation" PATH="$tmp/bin:$PATH" \
+    "$root/m" rsudo-apisix-file-read-probe "$@"
+}
+
+# The installed gateway, not a fake server, answers HTTP over its own
+# loopback namespace. A real uri-blocker plugin returns 403 for a loaded
+# selected route; an absent route returns 404.
+http_status()
+{
+  response=$(docker exec -i "$container" /bin/bash -s -- "$1" <<'HTTP'
+path=$1
+exec 3<>/dev/tcp/127.0.0.1/9080 || exit 70
+printf 'GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' "$path" >&3
+cat <&3
+HTTP
+  ) || return $?
+  first=$(printf '%s\n' "$response" | sed -n '1p') || return 71
+  case "$first" in
+    HTTP/1.*) set -- $first; printf '%s\n' "$2" ;;
+    *) return 72 ;;
+  esac
+}
+
+for image in $images
+do
+  for provider in yaml json
+  do
+    cat > "$tmp/config.yaml" <<CONFIG
+apisix:
+  enable_admin: false
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: $provider
+CONFIG
+    chmod 644 "$tmp/config.yaml" || error 'cannot make selected deployment readable'
+
+    container=$(docker run -d --network none \
+      --cap-drop ALL --security-opt no-new-privileges=true \
+      --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+      --mount "type=bind,src=$tmp/apisix.yaml,dst=/usr/local/apisix/conf/apisix.yaml,readonly" \
+      --mount "type=bind,src=$tmp/apisix.json,dst=/usr/local/apisix/conf/apisix.json,readonly" \
+      "$image") || error "cannot start isolated APISIX file-driven $provider"
+    [ -n "$container" ] || error 'Docker returned no gateway container ID'
+
+    observed=$(product_probe mode /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/probe-stderr")
+    status=$?
+    [ "$status" -eq 0 ] && [ "$observed" = "standalone-file-$provider" ] ||
+      fail "$provider on-disk backend was not classified by real m/APISIX module"
+
+    observed=$(product_probe inspect /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/probe-stderr") ||
+      fail "$provider selected configuration was not inspectable"
+    expected=$(printf '%s\n' "configured_mode=standalone-file-$provider" \
+      'configuration_evidence=on-disk' 'runtime_identity=unverified' \
+      'mutation_readiness=not-established')
+    [ "$observed" = "$expected" ] ||
+      fail "$provider on-disk inspect claimed more than supported evidence"
+
+    # The exact selected full document is readable in the gateway namespace;
+    # that file content is not itself proof of the running worker's snapshot.
+    docker exec "$container" cat "/usr/local/apisix/conf/apisix.$provider" \
+      > "$tmp/selected-read" || error "$provider selected document could not be read"
+    cmp -s "$tmp/selected-read" "$tmp/apisix.$provider" ||
+      fail "$provider selected full document differs across Docker boundary"
+
+    route=/rsudo-file-$provider
+    tries=0
+    while [ "$tries" -lt 30 ]
+    do
+      code=$(http_status "$route")
+      status=$?
+      if [ "$status" -eq 0 ] && [ "$code" = 403 ]; then break; fi
+      if [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" != true ]
+      then
+        docker logs "$container" >&2 || :
+        fail "$provider gateway exited before loading selected document"
+      fi
+      tries=$((tries + 1))
+      sleep 1
+    done
+    if [ "$tries" -ge 30 ]
+    then
+      docker logs "$container" >&2 || :
+      fail "$provider gateway did not apply its selected file route (last HTTP $code)"
+    fi
+
+    case "$provider" in
+      yaml) other=/rsudo-file-json ;;
+      json) other=/rsudo-file-yaml ;;
+    esac
+    code=$(http_status "$other") ||
+      fail "$provider nonselected document route request failed"
+    [ "$code" = 404 ] ||
+      fail "$provider applied a route from the nonselected document (HTTP $code)"
+
+    observed=$(product_probe runtime /usr/local/apisix 2>"$tmp/probe-stderr") ||
+      fail "$provider live OpenResty master was not observable"
+    case "$observed" in
+      *'runtime_identity=process-consistent-config-unverified'*'mutation_readiness=not-established') : ;;
+      *) fail "$provider runtime observation incorrectly attested loaded source" ;;
+    esac
+
+    docker rm -f "$container" >/dev/null 2>&1 ||
+      error 'cannot remove isolated file-driven gateway'
+    container=
+  done
+done
+
+printf '%s\n' "$TEST_ID: PASS (two live APISIX releases, YAML/JSON selected full-document reads and distinct routes)"
