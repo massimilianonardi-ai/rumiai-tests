@@ -69,6 +69,39 @@ openssl req -x509 -newkey rsa:2048 -nodes -config "$tmp/openssl.cnf" \
   >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
   error 'test-only TLS issuer preparation failed'
 
+# Independent mTLS CA and two distinct client identities. Server TLS CA
+# and OAuth client authentication trust are intentionally separate.
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -subj /CN=k04-mtls-ca -addext 'basicConstraints=critical,CA:TRUE' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+  -keyout "$tmp/mtls-ca.key" -out "$tmp/image/mtls-ca.pem" \
+  >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'mTLS trust anchor preparation failed'
+cat > "$tmp/mtls-client.ext" <<'MTLS_EXT'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth
+MTLS_EXT
+for identity in good wrong
+do
+  case "$identity" in
+    good) subject=/CN=k04-mtls-client ;;
+    wrong) subject=/CN=k04-mtls-other ;;
+  esac
+  openssl req -new -newkey rsa:2048 -nodes -subj "$subject" \
+    -keyout "$tmp/mtls-$identity.key" -out "$tmp/mtls-$identity.csr" \
+    >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+    error "mTLS $identity client key/CSR preparation failed"
+  openssl x509 -req -in "$tmp/mtls-$identity.csr" \
+    -CA "$tmp/image/mtls-ca.pem" -CAkey "$tmp/mtls-ca.key" \
+    -CAcreateserial -days 1 -extfile "$tmp/mtls-client.ext" \
+    -out "$tmp/mtls-$identity.pem" \
+    >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+    error "mTLS $identity client certificate issuance failed"
+  chmod 600 "$tmp/mtls-$identity.key" "$tmp/mtls-$identity.pem" ||
+    error "mTLS $identity protected client credentials failed"
+done
+
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-private-jwt \
   -keyout "$tmp/private-client.key" -out "$tmp/private-client.pem" \
   >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
@@ -141,6 +174,7 @@ ARG KC_VERSION
 FROM quay.io/keycloak/keycloak:${KC_VERSION}
 COPY --chown=1000:0 --chmod=600 server.key /opt/keycloak/conf/k04-server.key
 COPY --chown=1000:0 --chmod=644 server.pem /opt/keycloak/conf/k04-server.pem
+COPY --chown=1000:0 --chmod=644 mtls-ca.pem /opt/keycloak/conf/k04-mtls-ca.pem
 DOCKERFILE
 cat > "$tmp/client.json" <<'CLIENT_JSON'
 {
@@ -154,6 +188,21 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "secret": "k04-protected-client-secret"
 }
 CLIENT_JSON
+cat > "$tmp/client-mtls.json" <<'CLIENT_MTLS_JSON'
+{
+  "clientId": "k04-mtls",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "clientAuthenticatorType": "client-x509",
+  "attributes": {
+    "x509.subjectdn": "CN=k04-mtls-client",
+    "x509.casubjectdn": "CN=k04-mtls-ca"
+  }
+}
+CLIENT_MTLS_JSON
 cat > "$tmp/client-jwt.json" <<'CLIENT_JWT_JSON'
 {
   "clientId": "k04-signed",
@@ -260,7 +309,9 @@ do
     --env-file "$tmp/bootstrap.env" "$image_tag" \
     start-dev --http-enabled=false --hostname-strict=false \
     --https-certificate-file=/opt/keycloak/conf/k04-server.pem \
-    --https-certificate-key-file=/opt/keycloak/conf/k04-server.key) ||
+    --https-certificate-key-file=/opt/keycloak/conf/k04-server.key \
+    --https-client-auth=request \
+    --https-trust-store-file=/opt/keycloak/conf/k04-mtls-ca.pem) ||
     error "Keycloak $version container could not start"
   [ -n "$cid" ] || error 'Keycloak container identity is empty'
   mapping=$(docker port "$cid" 8443/tcp) || error 'Keycloak HTTPS port missing'
@@ -315,6 +366,65 @@ do
     error "Keycloak $version Admin REST bootstrap client request failed"
   [ "$create_code" = 201 ] ||
     fail "Keycloak $version rejected service account provisioning ($create_code)"
+
+  # The actual TLS handshake validates the certificate against Keycloak's
+  # dedicated CA. The client-x509 authenticator then verifies the exact
+  # client subject DN and configured trust-anchor CA subject DN.
+  mtls_create_http=$(transport --output "$tmp/mtls-create-response" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-mtls.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version client-x509 registration transport failed"
+  [ "$mtls_create_http" = 201 ] ||
+    fail "Keycloak $version client-x509 registration failed ($mtls_create_http)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-mtls \
+    --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-good.pem" \
+    --token-store "$tmp/token-mtls-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+    jq -e '.access_token | type == "string" and length > 0' \
+      "$tmp/token-mtls-$version" >/dev/null ||
+    fail "Keycloak $version certificate-authenticated grant failed ($status)"
+  result=$(probe status --server "$base" --issuer-realm master \
+    --client-id k04-mtls --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-good.pem" \
+    --token-file "$tmp/token-mtls-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    printf '%s\n' "$result" |
+      jq -e '.stored == true and .server_validated == true and
+        (.active | type == "boolean")' >/dev/null ||
+    fail "Keycloak $version mTLS client introspection failed ($status)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-mtls \
+    --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-wrong.key" \
+    --certificate-file "$tmp/mtls-wrong.pem" \
+    --token-store "$tmp/token-mtls-wrong-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-mtls-wrong-$version" ] ||
+    fail "Keycloak $version accepted wrong mTLS client DN ($status)"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-mtls \
+    --client-auth tls-client-auth \
+    --private-key-file "$tmp/mtls-good.key" \
+    --certificate-file "$tmp/mtls-wrong.pem" \
+    --token-store "$tmp/token-mtls-key-mismatch-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-mtls-key-mismatch-$version" ] ||
+    fail "Keycloak $version accepted mismatched mTLS certificate/key ($status)"
 
   # Keycloak's Signed JWT client authenticator independently trusts the
   # public X509 cert configured for this one client. The signing key remains
