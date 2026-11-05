@@ -82,10 +82,17 @@ chmod 700 "$tmp/bin/rsudo-apisix-systemd-probe" ||
   error 'probe cannot be executed'
 
 # Type=forking + PIDFile let systemd track the real nginx master process.
+# Deliberately declare APISIX_PROFILE in systemd but REMOVE it before exec
+# of the real master. A unit declaration alone must not be reported as the
+# selected master's startup profile (and cannot prove APISIX configuration).
 sudo -n systemd-run --unit="${unit%.service}" \
+  --setenv=APISIX_PROFILE=prod \
   --property=Type=forking \
   --property="PIDFile=$tmp/logs/nginx.pid" \
-  -- /usr/sbin/nginx -p "$tmp" -c "$tmp/conf/nginx.conf" ||
+  -- /bin/sh -c '
+    unset APISIX_PROFILE
+    exec /usr/sbin/nginx -p "$1" -c "$1/conf/nginx.conf"
+  ' sh "$tmp" ||
   error 'cannot start isolated real systemd/nginx service'
 
 tries=0
