@@ -274,6 +274,7 @@ import time
 import uuid
 
 issuer, subject, audience, key_path, output_path = sys.argv[1:6]
+expire_after = int(sys.argv[6]) if len(sys.argv) > 6 else 180
 issued_at = int(time.time())
 
 
@@ -289,7 +290,7 @@ payload = urlsafe(json.dumps({
     "sub": subject,
     "aud": audience,
     "iat": issued_at,
-    "exp": issued_at + 180,
+    "exp": issued_at + expire_after,
     "jti": str(uuid.uuid4()),
 }, separators=(",", ":")).encode("utf-8"))
 message = (header + "." + payload).encode("ascii")
@@ -668,6 +669,84 @@ do
     jq -e '.access_token | type == "string" and length > 0' \
       "$tmp/federated-token-$version" >/dev/null ||
     fail "Keycloak $version real federated client grant rejected ($federated_http)"
+
+  # Replay of the same already used assertion must not authenticate a new
+  # request under the identity provider's default one-use assertion policy.
+  replay_http=$(federated_token_request \
+    "$tmp/federated-assertion-$version" \
+    "$tmp/federated-replay-response-$version" "$base" k04-federated) ||
+    error "Keycloak $version federated assertion replay transport failed"
+  case "$replay_http" in 400|401) : ;; *)
+    fail "Keycloak $version accepted repeated federated assertion ($replay_http)" ;;
+  esac
+  jq -e '.error | type == "string" and length > 0' \
+    "$tmp/federated-replay-response-$version" >/dev/null ||
+    fail "Keycloak $version federated replay rejection lacked OAuth error"
+
+  # An otherwise correctly signed assertion from the registered external
+  # issuer must not authenticate after its expiration.
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-expired-$version" -30 ||
+    error "Keycloak $version expired federated assertion construction failed"
+  expired_http=$(federated_token_request \
+    "$tmp/federated-expired-$version" \
+    "$tmp/federated-expired-response-$version" "$base" k04-federated) ||
+    error "Keycloak $version expired federated assertion transport failed"
+  case "$expired_http" in 400|401) : ;; *)
+    fail "Keycloak $version accepted expired federated assertion ($expired_http)" ;;
+  esac
+  jq -e '.error | type == "string" and length > 0' \
+    "$tmp/federated-expired-response-$version" >/dev/null ||
+    fail "Keycloak $version expired federated assertion rejection lacked OAuth error"
+
+  # Check Keycloak's actual introspection and revocation client auth with
+  # fresh external assertions; each JWT is unique and never appears in
+  # request arguments, diagnostics or test stdout.
+  jq -jr '.access_token' "$tmp/federated-token-$version" \
+    > "$tmp/federated-access-$version" ||
+    error "Keycloak $version protected federated access-token extraction failed"
+  [ -s "$tmp/federated-access-$version" ] ||
+    error "Keycloak $version extracted federated access-token empty"
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-introspection-assertion-$version" ||
+    error "Keycloak $version federated introspection assertion creation failed"
+  federation_introspect_http=$(transport \
+    --output "$tmp/federated-introspection-response-$version" \
+    --write-out '%{http_code}' \
+    --data-urlencode 'client_id=k04-federated' \
+    --data-urlencode \
+      'client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer' \
+    --data-urlencode "client_assertion@$tmp/federated-introspection-assertion-$version" \
+    --data-urlencode "token@$tmp/federated-access-$version" \
+    --data-urlencode 'token_type_hint=access_token' \
+    --url "$base/realms/master/protocol/openid-connect/token/introspect") ||
+    error "Keycloak $version federated introspection transport failed"
+  [ "$federation_introspect_http" = 200 ] &&
+    jq -e '.active == true' \
+      "$tmp/federated-introspection-response-$version" >/dev/null ||
+    fail "Keycloak $version federated introspection refused new assertion ($federation_introspect_http)"
+
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-revoke-assertion-$version" ||
+    error "Keycloak $version federated revocation assertion creation failed"
+  federation_revoke_http=$(transport \
+    --output "$tmp/federated-revoke-response-$version" \
+    --write-out '%{http_code}' \
+    --data-urlencode 'client_id=k04-federated' \
+    --data-urlencode \
+      'client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer' \
+    --data-urlencode "client_assertion@$tmp/federated-revoke-assertion-$version" \
+    --data-urlencode "token@$tmp/federated-access-$version" \
+    --data-urlencode 'token_type_hint=access_token' \
+    --url "$base/realms/master/protocol/openid-connect/revoke") ||
+    error "Keycloak $version federated revocation transport failed"
+  [ "$federation_revoke_http" = 200 ] ||
+    fail "Keycloak $version federated revocation refused new assertion ($federation_revoke_http)"
+  printf '%s: Keycloak %s fresh federated client assertions support introspection/revocation; replay and expiry denied\n' \
+    "$TEST_ID" "$version"
 
   # A different selected OAuth client must not inherit the authority
   # of the correctly signed assertion for the registered federated client.
