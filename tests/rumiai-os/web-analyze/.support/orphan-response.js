@@ -22,6 +22,7 @@ async function main()
     }
     res.setHeader('Content-Type','text/html');
     res.end('<!doctype html><html><head><title>CSS cache response provenance</title>'+
+      '<script>window.name=String((Number(window.name)||0)+1)</script>'+
       Array.from({length:count},(_,i)=>'<link rel="stylesheet" href="/style-'+i+'.css">').join('')+
       '</head><body><h1>Cache response evidence</h1></body></html>');
   });
@@ -43,6 +44,18 @@ async function main()
       await sleep(150);
     }
     assert(ready,'Chromium never loaded all fixture stylesheets');
+    // First full load fills the browser cache; the second navigation must
+    // actually occur before CSS.enable can observe cached stylesheet state.
+    await session.sendPage('Page.reload',{ignoreCache:false});
+    let reloaded=false;
+    for(let i=0;i<80;i++) {
+      const result=await session.sendPage('Runtime.evaluate',{
+        expression:'Number(window.name)>=2 && document.readyState === "complete" && document.styleSheets.length === '+count,
+        returnByValue:true},4000);
+      if(result.result?.value===true){reloaded=true;break;}
+      await sleep(150);
+    }
+    assert(reloaded,'Chromium did not reload the stylesheet document');
     await sleep(600);
     await session.sendPage('DOM.enable');
     await session.sendPage('CSS.enable');
@@ -56,7 +69,9 @@ async function main()
       item.resourceType==='Stylesheet' && item.fromDiskCache &&
       !requests.has(item.targetId+':'+item.requestId));
     assert(orphans.length>0,
-      'Chromium did not emit a response-only cached stylesheet; fixture cannot exercise regression');
+      'Chromium did not emit a response-only cached stylesheet; fixture cannot exercise regression'+
+      ' (cachedStyles='+events.filter(item=>item.type==='response' &&
+        item.resourceType==='Stylesheet' && item.fromDiskCache).length+')');
     const resources=readLines(path.join(destination,'resources.jsonl'));
     const recovered=orphans.filter(response=>resources.some(item=>
       item.requestId===response.requestId &&
