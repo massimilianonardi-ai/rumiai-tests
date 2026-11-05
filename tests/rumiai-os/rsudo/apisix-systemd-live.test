@@ -116,4 +116,18 @@ status=$?
   fail 'public rsudo APISIX runtime did not match real systemd unit'
 }
 
+# The ordinary zero-operand path must discover the same service without
+# requiring the operator to know the transient unit name or root prefix.
+normal_expected=$(printf '%s\n' \
+  'discovery_evidence=unique-process-prefix-candidate' \
+  'discovered_scope=host' \
+  "installation_root=$tmp" \
+  "$expected")
+result=$(PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-systemd-probe 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = "$normal_expected" ] || {
+  cat "$tmp/stderr" >&2
+  fail 'zero-operand APISIX runtime did not discover systemd-managed master'
+}
+
 printf '%s\n' "$TEST_ID: PASS (real systemd-managed nginx process; APISIX source not claimed)"
