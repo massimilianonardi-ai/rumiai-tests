@@ -1,0 +1,232 @@
+#!/bin/sh
+# Real APISIX traditional/etcd Admin API read-only capability test.
+# Uses isolated official APISIX 3.16/3.19 and etcd 3.5.21 containers.
+# No host ports, external gateway changes, or Admin API writes.
+# The rsudo SSH/sudo boundary alone is replaced by Docker exec.
+TEST_ID=rumiai-os/rsudo/apisix-admin-etcd-live.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self" 2>/dev/null) || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+tmp=
+network=
+etcd_container=
+apisix_container=
+cleanup()
+{
+  [ -z "$apisix_container" ] || docker rm -f "$apisix_container" >/dev/null 2>&1 || :
+  [ -z "$etcd_container" ] || docker rm -f "$etcd_container" >/dev/null 2>&1 || :
+  [ -z "$network" ] || docker network rm "$network" >/dev/null 2>&1 || :
+  [ -z "$tmp" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test pathname unavailable'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'product checkout unavailable' ;;
+  2) fail 'explicit product checkout invalid' ;;
+  *) error 'target resolution failed' ;;
+esac
+
+[ "$(uname -s)" = Linux ] || skip 'Linux Docker scenario only'
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
+etcd_image=gcr.io/etcd-development/etcd:v3.5.21
+for image in $images "$etcd_image"
+do
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    skip "required pinned image not provisioned: $image"
+done
+
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-admin-etcd-$$
+umask 077
+mkdir -p -- "$tmp/bin" || error 'cannot prepare fixture directory'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture path unavailable'
+
+cat > "$tmp/config.yaml" <<'CONFIG'
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: etcd
+  etcd:
+    host:
+      - http://etcd:2379
+  admin:
+    admin_key_required: true
+    allow_admin:
+      - 127.0.0.0/8
+    admin_listen:
+      ip: 127.0.0.1
+      port: 9180
+    admin_key:
+      - name: test-viewer
+        key: rsudo-etcd-test-only-never-production
+        role: viewer
+CONFIG
+# APISIX's container worker needs to read this otherwise private test-only
+# configuration; no host ports or live secrets exist in the fixture.
+chmod 644 "$tmp/config.yaml" || error 'cannot set fixture permissions'
+
+cat > "$tmp/bin/rsudo-apisix-etcd-mode-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  docker exec -i "$APISIX_ETCD_TEST_CONTAINER" "$@"
+}
+rsudo_mod_apisix_mode /usr/local/apisix /usr/local/apisix/conf/config.yaml
+PROBE
+chmod 700 "$tmp/bin/rsudo-apisix-etcd-mode-probe" ||
+  error 'cannot enable product probe'
+
+# Raw loopback HTTP through the actual gateway namespace. The fixed test-only
+# key is written to the request on stdin and never passed as a process option.
+http_read()
+{
+  docker exec -i "$apisix_container" /bin/bash -s -- "$1" "$2" <<'HTTP'
+path=$1
+credential_case=$2
+exec 3<>/dev/tcp/127.0.0.1/9180 || exit 70
+printf 'GET %s HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\nConnection: close\r\n' "$path" >&3
+case "$credential_case" in
+  correct) printf 'X-API-KEY: rsudo-etcd-test-only-never-production\r\n' >&3 ;;
+  incorrect) printf 'X-API-KEY: incorrect-test-only-key\r\n' >&3 ;;
+  absent) : ;;
+  *) exit 71 ;;
+esac
+printf '\r\n' >&3
+cat <&3
+HTTP
+}
+
+http_request_status()
+{
+  response=$(http_read "$1" "$2" 2>"$tmp/http-stderr")
+  status=$?
+  [ "$status" -eq 0 ] || return "$status"
+  first=$(printf '%s\n' "$response" | sed -n '1p') || return 72
+  case "$first" in
+    HTTP/1.*) set -- $first; printf '%s\n' "$2" ;;
+    *) return 73 ;;
+  esac
+}
+
+network=rsudo-apisix-etcd-$$
+docker network create --internal "$network" >/dev/null ||
+  error 'cannot create isolated Docker network'
+etcd_container=$(docker run -d --network "$network" --network-alias etcd \
+  --cap-drop ALL --security-opt no-new-privileges=true \
+  --tmpfs /etcd-data:rw,mode=0700 "$etcd_image" \
+  /usr/local/bin/etcd --name node1 --data-dir /etcd-data \
+  --listen-client-urls http://0.0.0.0:2379 \
+  --advertise-client-urls http://etcd:2379 \
+  --listen-peer-urls http://0.0.0.0:2380 \
+  --initial-advertise-peer-urls http://etcd:2380 \
+  --initial-cluster node1=http://etcd:2380 \
+  --initial-cluster-state new) || error 'cannot start isolated etcd'
+[ -n "$etcd_container" ] || error 'Docker returned no etcd container'
+
+tries=0
+while [ "$tries" -lt 30 ]
+do
+  if docker exec "$etcd_container" /usr/local/bin/etcdctl \
+    --endpoints=http://127.0.0.1:2379 endpoint health >/dev/null 2>&1
+  then
+    break
+  fi
+  if [ "$(docker inspect -f '{{.State.Running}}' "$etcd_container" 2>/dev/null)" != true ]
+  then
+    error 'isolated etcd exited before becoming healthy'
+  fi
+  tries=$((tries + 1))
+  sleep 1
+done
+[ "$tries" -lt 30 ] || error 'isolated etcd did not become healthy'
+
+for image in $images
+do
+  apisix_container=$(docker run -d --network "$network" \
+    --cap-drop ALL --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    "$image") || error 'cannot start traditional APISIX'
+  [ -n "$apisix_container" ] || error 'Docker returned no APISIX container'
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    code=$(http_request_status /apisix/admin/routes correct)
+    status=$?
+    if [ "$status" -eq 0 ] && [ "$code" = 200 ]; then break; fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$apisix_container" 2>/dev/null)" != true ]
+    then
+      error 'traditional APISIX exited before Admin API readiness'
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  [ "$tries" -lt 30 ] || fail 'traditional Admin API routes GET not ready'
+
+  observed=$(APISIX_ETCD_TEST_CONTAINER="$apisix_container" \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-etcd-mode-probe 2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed" = traditional-admin ] ||
+    fail 'actual traditional/etcd source was not classified traditional-admin'
+
+  for resource in routes services upstreams
+  do
+    response=$(http_read "/apisix/admin/$resource" correct 2>"$tmp/http-stderr") ||
+      fail "$resource GET failed before response"
+    first=$(printf '%s\n' "$response" | sed -n '1p') ||
+      error 'cannot parse HTTP status line'
+    case "$first" in
+      'HTTP/1.1 200 '*|'HTTP/1.0 200 '*) : ;;
+      *) fail "$resource list returned unexpected status: $first" ;;
+    esac
+    case "$response" in
+      *'"list"'*'"total"'*|*'"total"'*'"list"'*) : ;;
+      *) fail "$resource list lacked expected collection envelope" ;;
+    esac
+  done
+
+  code=$(http_request_status /apisix/admin/routes/rsudo-never-created correct) ||
+    fail 'missing-route read failed before response'
+  [ "$code" = 404 ] || fail "missing route returned HTTP $code (expected 404)"
+
+  code=$(http_request_status /apisix/admin/configs correct) ||
+    fail 'traditional /configs read failed before response'
+  [ "$code" = 404 ] ||
+    fail "traditional mode exposed standalone /configs: HTTP $code"
+
+  for credential in incorrect absent
+  do
+    code=$(http_request_status /apisix/admin/routes "$credential") ||
+      fail "$credential credential request failed before response"
+    case "$code" in
+      401|403) : ;;
+      *) fail "$credential key unexpectedly authorized: HTTP $code" ;;
+    esac
+  done
+
+  docker rm -f "$apisix_container" >/dev/null 2>&1 ||
+    error 'cannot remove isolated traditional APISIX'
+  apisix_container=
+done
+
+printf '%s\n' "$TEST_ID: PASS (two real traditional/etcd gateways, resource GET and auth denial)"
