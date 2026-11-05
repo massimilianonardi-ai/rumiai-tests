@@ -10,6 +10,7 @@ on:
       - tests/rumiai-os/rsudo/apisix-mode.test
       - tests/rumiai-os/rsudo/apisix-parser-live.test
       - tests/rumiai-os/rsudo/apisix-runtime-live.test
+      - tests/rumiai-os/rsudo/apisix-systemd-live.test
       - tests/rumiai-os/rsudo/apisix-admin-read-live.test
       - tests/rumiai-os/rsudo/apisix-admin-transport.test
       - tests/rumiai-os/rsudo/apisix-admin-rsudo-ssh-live.test
@@ -91,6 +92,16 @@ jobs:
           docker pull apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141
           docker image inspect --format '{{.Id}}' apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
           docker image inspect --format '{{.Id}}' apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141
+
+      - name: Provision real systemd/nginx service scenario (Linux only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -d /run/systemd/system
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends nginx
+          command -v systemd-run
+          command -v nginx
 
       - name: Run scoped APISIX module verification
         shell: bash
