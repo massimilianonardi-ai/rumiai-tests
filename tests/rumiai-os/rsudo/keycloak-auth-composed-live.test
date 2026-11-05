@@ -762,6 +762,29 @@ EOF_SSH_CONFIG
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version composed mTLS introspection failed ($status)"
+  # The fixed K04 protected Admin GET reuses the same certificate at the
+  # actual remote sudo target. A valid service-account token without a realm
+  # admin role must still be denied by the real Keycloak Admin REST API.
+  result=$(probe admin-probe --server https://127.0.0.1:8443 \
+    --issuer-realm master --target-realm master \
+    --token-file "/root/keycloak/mtls-$version" \
+    --client-auth tls-client-auth \
+    --private-key-file /root/keycloak/mtls-good.key \
+    --certificate-file /root/keycloak/mtls-good.pem \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 80 ] && [ -z "$result" ] ||
+    fail "Keycloak $version composed Admin mTLS GET did not preserve 403 ($status)"
+  result=$(probe admin-probe --server https://127.0.0.1:8443 \
+    --issuer-realm master --target-realm master \
+    --token-file "/root/keycloak/mtls-$version" \
+    --client-auth tls-client-auth \
+    --private-key-file /root/keycloak/mtls-good.key \
+    --certificate-file /root/keycloak/mtls-wrong.pem \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] ||
+    fail "Keycloak $version composed Admin mTLS GET accepted mismatched key ($status)"
   result=$(probe acquire --server https://127.0.0.1:8443 \
     --issuer-realm master --auth-mode client-credentials \
     --client-id k04-mtls --client-auth tls-client-auth \
