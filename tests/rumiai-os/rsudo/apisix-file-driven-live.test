@@ -221,6 +221,81 @@ CONFIG
     [ "$code" = 404 ] ||
       fail "$provider applied a route from the nonselected document (HTTP $code)"
 
+    # Exercise only disposable host-file updates. The container has a
+    # read-only bind mount, and its real APISIX workers poll the same inode.
+    # The wrong-provider document remains untouched in every scenario.
+    selected_file=$tmp/apisix.$provider
+    updated_file=$tmp/updated-$provider
+    invalid_file=$tmp/invalid-$provider
+    updated_route=/rsudo-file-$provider-reloaded
+    sed "s|/rsudo-file-$provider|$updated_route|g" "$selected_file" > "$updated_file" ||
+      error "$provider cannot construct updated fixture"
+    case "$provider" in
+      yaml)
+        # An otherwise valid new route without terminal #END must be ignored.
+        sed '/^#END$/d' "$updated_file" > "$invalid_file" ||
+          error 'cannot prepare incomplete YAML source'
+        ;;
+      json)
+        # Truncated JSON must not replace the previously applied snapshot.
+        printf '%s\n' '{"routes": [' > "$invalid_file" ||
+          error 'cannot prepare truncated JSON source'
+        ;;
+    esac
+
+    # APISIX uses a filesystem modification timestamp. Keep successive
+    # updates apart even on filesystems with one-second mtime precision.
+    sleep 2
+    cat "$invalid_file" > "$selected_file" ||
+      error "$provider cannot publish deliberately invalid fixture"
+    docker exec "$container" cat "/usr/local/apisix/conf/apisix.$provider" \
+      > "$tmp/selected-read" || error "$provider invalid source not readable"
+    cmp -s "$tmp/selected-read" "$invalid_file" ||
+      fail "$provider invalid source bytes were not visible in gateway namespace"
+    sleep 3
+    code=$(http_status "$route") || fail "$provider existing route failed during invalid source"
+    [ "$code" = 403 ] ||
+      fail "$provider rejected source erased last applied route (HTTP $code)"
+    code=$(http_status "$updated_route") ||
+      fail "$provider new route probe failed during invalid source"
+    [ "$code" = 404 ] ||
+      fail "$provider accepted route from invalid source (HTTP $code)"
+
+    # Restore an ordinary valid full document. Prove that the real gateway
+    # eventually applies it and removes the old route, not just that the
+    # changed bytes can be read in its namespace.
+    sleep 2
+    cat "$updated_file" > "$selected_file" ||
+      error "$provider cannot restore valid file-driven fixture"
+    docker exec "$container" cat "/usr/local/apisix/conf/apisix.$provider" \
+      > "$tmp/selected-read" || error "$provider repaired source not readable"
+    cmp -s "$tmp/selected-read" "$updated_file" ||
+      fail "$provider repaired source bytes differ across gateway boundary"
+    tries=0
+    while [ "$tries" -lt 30 ]
+    do
+      new_code=$(http_status "$updated_route")
+      new_status=$?
+      old_code=$(http_status "$route")
+      old_status=$?
+      if [ "$new_status" -eq 0 ] && [ "$old_status" -eq 0 ] &&
+         [ "$new_code" = 403 ] && [ "$old_code" = 404 ]
+      then
+        break
+      fi
+      if [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" != true ]
+      then
+        docker logs "$container" >&2 || :
+        fail "$provider gateway exited before applying repaired source"
+      fi
+      tries=$((tries + 1))
+      sleep 1
+    done
+    [ "$tries" -lt 30 ] || {
+      docker logs "$container" >&2 || :
+      fail "$provider repaired document did not replace old live route"
+    }
+
     observed=$(product_probe runtime /usr/local/apisix 2>"$tmp/probe-stderr") ||
       fail "$provider live OpenResty master was not observable"
     case "$observed" in
@@ -234,4 +309,4 @@ CONFIG
   done
 done
 
-printf '%s\n' "$TEST_ID: PASS (two live APISIX releases, YAML/JSON selected full-document reads and distinct routes)"
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16/3.19, YAML/JSON invalid-source retention and valid reload)"
