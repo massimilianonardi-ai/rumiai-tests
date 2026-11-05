@@ -45,7 +45,7 @@ case "$?" in
   *) error 'product checkout lookup failed' ;;
 esac
 [ "$(uname -s)" = Linux ] || skip 'composed Docker/SSH test is Linux only'
-for cmd in docker ssh curl jq openssl
+for cmd in docker ssh curl jq openssl python3
 do
   command -v "$cmd" >/dev/null 2>&1 || skip "$cmd unavailable"
 done
@@ -227,6 +227,78 @@ jq --arg cert "$cert_body" \
   error 'composed EdDSA Keycloak client configuration failed'
 unset cert_body
 
+# Disposable external identity provider signs independently of Keycloak.
+# Only its public key is registered with the actual receiving Keycloak.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out "$tmp/federated-issuer.key" >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'composed external issuer signing key generation failed'
+openssl pkey -in "$tmp/federated-issuer.key" -pubout \
+  -out "$tmp/federated-issuer-public.pem" 2>"$tmp/openssl.err" ||
+  error 'composed external issuer public key generation failed'
+chmod 600 "$tmp/federated-issuer.key" "$tmp/federated-issuer-public.pem" ||
+  error 'composed external issuer key permissions failed'
+federated_issuer=https://k04-external-issuer.invalid
+jq -n --rawfile verifier "$tmp/federated-issuer-public.pem" \
+  --arg issuer "$federated_issuer" '{
+    alias:"k04-external-idp", providerId:"oidc", enabled:true,
+    config:{
+      issuer:$issuer, clientId:"k04-external",
+      authorizationUrl:($issuer + "/authorize"),
+      tokenUrl:($issuer + "/token"),
+      supportsClientAssertions:"true",
+      validateSignature:"true",
+      useJwksUrl:"false",
+      publicKeySignatureVerifier:$verifier
+    }
+  }' > "$tmp/federated-idp.json" ||
+  error 'composed external issuer registration fixture failed'
+cat > "$tmp/federated-client.json" <<'FEDERATED_CLIENT'
+{
+  "clientId":"k04-federated",
+  "enabled":true,
+  "protocol":"openid-connect",
+  "publicClient":false,
+  "serviceAccountsEnabled":true,
+  "clientAuthenticatorType":"federated-jwt",
+  "attributes":{
+    "jwt.credential.issuer":"k04-external-idp",
+    "jwt.credential.sub":"k04-external"
+  }
+}
+FEDERATED_CLIENT
+cat > "$tmp/sign-federated-jwt.py" <<'FEDERATED_SIGNER'
+import base64
+import json
+import subprocess
+import sys
+import time
+import uuid
+
+issuer, subject, audience, key_path, output_path = sys.argv[1:6]
+issued_at = int(time.time())
+
+
+def urlsafe(value):
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+header = urlsafe(json.dumps(
+    {"alg": "RS256", "typ": "JWT"}, separators=(",", ":")
+).encode("utf-8"))
+payload = urlsafe(json.dumps({
+    "iss": issuer, "sub": subject, "aud": audience, "iat": issued_at,
+    "exp": issued_at + 180, "jti": str(uuid.uuid4()),
+}, separators=(",", ":")).encode("utf-8"))
+message = (header + "." + payload).encode("ascii")
+signature = subprocess.run(
+    ["openssl", "dgst", "-sha256", "-sign", key_path],
+    input=message, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    check=True,
+).stdout
+with open(output_path, "w", encoding="ascii") as output:
+    output.write(message.decode("ascii") + "." + urlsafe(signature))
+FEDERATED_SIGNER
+
 cat > "$tmp/keycloak/Dockerfile" <<'KC_DOCKERFILE'
 ARG KC_VERSION
 FROM quay.io/keycloak/keycloak:${KC_VERSION}
@@ -329,7 +401,8 @@ do
     --https-certificate-file=/opt/keycloak/conf/k04-server.pem \
     --https-certificate-key-file=/opt/keycloak/conf/k04-server.key \
     --https-client-auth=request \
-    --https-trust-store-file=/opt/keycloak/conf/k04-mtls-ca.pem) ||
+    --https-trust-store-file=/opt/keycloak/conf/k04-mtls-ca.pem \
+    --features=client-auth-federated) ||
     error "official Keycloak $version did not launch"
   [ -n "$keycloak_container" ] || error 'Keycloak container identity missing'
   mapping=$(docker port "$keycloak_container" 8443/tcp) ||
@@ -390,6 +463,27 @@ do
     error "Keycloak $version client provisioning HTTP failed"
   [ "$create_http" = 201 ] ||
     fail "Keycloak $version service-client provisioning rejected ($create_http)"
+
+  # The external verifier, client and feature gate are configured before
+  # crossing the real SSH/sudo boundary. Never transfer its signing key.
+  external_idp_http=$(host_https \
+    --output "$tmp/federated-idp-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/federated-idp.json" \
+    --url "$host_base/admin/realms/master/identity-provider/instances") ||
+    error "Keycloak $version composed federated IdP registration transport failed"
+  [ "$external_idp_http" = 201 ] ||
+    fail "Keycloak $version composed federated IdP registration rejected ($external_idp_http)"
+  federated_client_http=$(host_https \
+    --output "$tmp/federated-client-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/federated-client.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version composed federated client registration transport failed"
+  [ "$federated_client_http" = 201 ] ||
+    fail "Keycloak $version composed federated client registration rejected ($federated_client_http)"
 
   mtls_client_http=$(host_https --output "$tmp/mtls-client-response" \
     --write-out '%{http_code}' --header "@$tmp/admin-header" \
@@ -570,6 +664,66 @@ EOF_SSH_CONFIG
        chmod 600 /root/keycloak/mtls-$identity.key /root/keycloak/mtls-$identity.pem" ||
       error "Keycloak $version remote mTLS $identity credentials insecure"
   done
+
+  # Only the signed compact assertion is provisioned in the isolated
+  # SSH/sudo host. Its external issuer private key stays outside the target.
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external https://127.0.0.1:8443/realms/master \
+    "$tmp/federated-issuer.key" "$tmp/federated-assertion-$version" ||
+    error "Keycloak $version composed assertion signing failed"
+  docker cp "$tmp/federated-assertion-$version" \
+    "$ssh_container:/root/keycloak/federated-assertion" ||
+    error "Keycloak $version composed assertion staging failed"
+  docker exec "$ssh_container" sh -c \
+    'chown 0:0 /root/keycloak/federated-assertion &&
+     chmod 600 /root/keycloak/federated-assertion' ||
+    error "Keycloak $version composed assertion protection failed"
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-federated --client-auth federated-jwt \
+    --assertion-file /root/keycloak/federated-assertion \
+    --token-store "/root/keycloak/federated-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] ||
+    fail "Keycloak $version composed federated JWT acquisition failed ($status)"
+  docker exec "$ssh_container" jq -e \
+    '.access_token | type == "string" and length > 0' \
+    "/root/keycloak/federated-$version" >/dev/null ||
+    fail "Keycloak $version composed federated store unavailable"
+  result=$(probe status --token-file "/root/keycloak/federated-$version" \
+    2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"server_validated":false}' ] ||
+    fail "Keycloak $version composed federated offline status failed ($status)"
+
+  printf 'not-a-jwt\n' > "$tmp/federated-malformed-$version"
+  docker cp "$tmp/federated-malformed-$version" \
+    "$ssh_container:/root/keycloak/federated-malformed" ||
+    error "Keycloak $version composed malformed assertion staging failed"
+  docker exec "$ssh_container" sh -c \
+    'chown 0:0 /root/keycloak/federated-malformed &&
+     chmod 600 /root/keycloak/federated-malformed' ||
+    error "Keycloak $version composed malformed assertion protection failed"
+  result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode client-credentials \
+    --client-id k04-federated --client-auth federated-jwt \
+    --assertion-file /root/keycloak/federated-malformed \
+    --token-store "/root/keycloak/federated-rejected-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] &&
+    ! docker exec "$ssh_container" test -e "/root/keycloak/federated-rejected-$version" ||
+    fail "Keycloak $version composed malformed federated assertion accepted ($status)"
+  for marker in '"access_token"' '"refresh_token"' 'eyJhbGciOiJSUzI1Ni'
+  do
+    grep -F "$marker" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version composed federated assertion or token leaked"
+  done
+  printf '%s: Keycloak %s federated JWT acquired through real SSH/sudo with protected remote assertion\n' \
+    "$TEST_ID" "$version"
 
   result=$(probe acquire --server https://127.0.0.1:8443 \
     --issuer-realm master --auth-mode client-credentials \
