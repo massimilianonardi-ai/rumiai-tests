@@ -636,7 +636,6 @@ do
     "$tmp/registration-self-signed-$version" >/dev/null ||
     fail "Keycloak $version self-signed registration rejection lacks OAuth error"
 
-  # The actual TLS handshake validates the certificate against Keycloak's
   # Real provider test: establish external issuer trust and bind the local
   # confidential client to the issuer alias and external subject. This is a
   # Keycloak container with its actual verification/authorization flow.
@@ -721,6 +720,90 @@ do
   printf '%s: Keycloak %s real federated issuer JWT grant and signature/audience rejection verified\n' \
     "$TEST_ID" "$version"
 
+  # Exercise the actual public K04 module through the m/rsudo entrypoint
+  # with a new, short-lived externally signed assertion in a private file.
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-rsudo-$version" ||
+    error "Keycloak $version rsudo federated assertion creation failed"
+  printf '\n' >> "$tmp/federated-rsudo-$version"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-federated \
+    --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-rsudo-$version" \
+    --token-store "$tmp/token-federated-rsudo-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+    jq -e '.access_token | type == "string" and length > 0' \
+      "$tmp/token-federated-rsudo-$version" >/dev/null ||
+    fail "Keycloak $version public K04 federated acquisition failed ($status)"
+  result=$(probe status --token-file "$tmp/token-federated-rsudo-$version" \
+    2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"server_validated":false}' ] ||
+    fail "Keycloak $version federated protected-store offline status failed ($status)"
+
+  printf 'not.a.valid.jwt\n' > "$tmp/federated-malformed-$version"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-federated \
+    --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-malformed-$version" \
+    --token-store "$tmp/token-federated-malformed-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-federated-malformed-$version" ] ||
+    fail "Keycloak $version malformed federated assertion accepted ($status)"
+
+  cp "$tmp/federated-rsudo-$version" "$tmp/federated-insecure-$version" ||
+    error "Keycloak $version cannot prepare insecure assertion fixture"
+  chmod 644 "$tmp/federated-insecure-$version" ||
+    error "Keycloak $version cannot mark assertion fixture insecure"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-federated \
+    --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-insecure-$version" \
+    --token-store "$tmp/token-federated-insecure-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 70 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-federated-insecure-$version" ] ||
+    fail "Keycloak $version insecure federated assertion accepted ($status)"
+
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-untrusted.key" "$tmp/federated-rsudo-untrusted-$version" ||
+    error "Keycloak $version rsudo untrusted assertion creation failed"
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id k04-federated \
+    --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-rsudo-untrusted-$version" \
+    --token-store "$tmp/token-federated-untrusted-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 71 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-federated-untrusted-$version" ] ||
+    fail "Keycloak $version rsudo accepted untrusted federated issuer ($status)"
+
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode password --username k04admin \
+    --password-file "$tmp/bootstrap-password" \
+    --client-id k04-federated --client-auth federated-jwt \
+    --assertion-file "$tmp/federated-rsudo-$version" \
+    --token-store "$tmp/token-federated-password-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  status=$?
+  [ "$status" -eq 73 ] && [ -z "$result" ] &&
+    [ ! -e "$tmp/token-federated-password-$version" ] ||
+    fail "Keycloak $version unsupported federated password grant accepted ($status)"
+  printf '%s: Keycloak %s rsudo protected federated client acquisition and local rejection verified\n' \
+    "$TEST_ID" "$version"
+
+
+  # The actual TLS handshake validates the certificate against Keycloak's
   # dedicated CA. The client-x509 authenticator then verifies the exact
   # client subject DN and configured trust-anchor CA subject DN.
   mtls_create_http=$(transport --output "$tmp/mtls-create-response" \
