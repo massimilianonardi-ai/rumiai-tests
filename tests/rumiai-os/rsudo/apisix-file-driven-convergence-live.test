@@ -1,0 +1,239 @@
+#!/bin/sh
+# Isolated APISIX file-driven startup convergence diagnostic.
+# The established file-driven test stays untouched. This test repeats the
+# initial real gateway route observation and distinguishes /status/ready
+# from actual route application. No production ports or credentials.
+TEST_ID=rumiai-os/rsudo/apisix-file-driven-convergence-live.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+
+resolve_test_dir()
+{
+  self=$0
+  case "$self" in */*) : ;; *) self=$(command -v "$self") || return 1 ;; esac
+  dir=${self%/*}
+  [ "$dir" != "$self" ] || dir=.
+  CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
+}
+
+tmp=
+cid=
+cleanup()
+{
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  [ -z "$tmp" ] || rm -rf -- "$tmp"
+}
+trap cleanup 0
+
+dir=$(resolve_test_dir) || error 'test pathname unavailable'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'product target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case "$status" in
+  0) : ;;
+  1) skip 'product checkout unavailable' ;;
+  2) fail 'explicit product checkout invalid' ;;
+  *) error 'product target resolution failed' ;;
+esac
+
+[ "$(uname -s)" = Linux ] || skip 'isolated Linux gateway diagnostic only'
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
+for image in $images
+do
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    skip "official pinned APISIX image unavailable: $image"
+done
+
+umask 077
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-file-convergence-$$
+mkdir -p -- "$tmp/bin" || error 'cannot create disposable fixture'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture pathname unavailable'
+
+cat > "$tmp/apisix.yaml" <<'YAML'
+routes:
+  - id: rsudo-file-yaml-route
+    uri: /rsudo-file-yaml
+    plugins:
+      uri-blocker:
+        block_rules:
+          - /rsudo-file-yaml
+    upstream:
+      type: roundrobin
+      nodes:
+        "127.0.0.1:19877": 1
+services:
+  - id: rsudo-file-yaml-service
+    upstream:
+      type: roundrobin
+      nodes:
+        "127.0.0.1:19877": 1
+upstreams:
+  - id: rsudo-file-yaml-upstream
+    type: roundrobin
+    nodes:
+      "127.0.0.1:19877": 1
+#END
+YAML
+cat > "$tmp/apisix.json" <<'JSON'
+{"routes":[{"id":"rsudo-file-json-route","uri":"/rsudo-file-json",
+"plugins":{"uri-blocker":{"block_rules":["/rsudo-file-json"]}},
+"upstream":{"type":"roundrobin","nodes":{"127.0.0.1:19877":1}}}]}
+JSON
+chmod 644 "$tmp/apisix.yaml" "$tmp/apisix.json" ||
+  error 'cannot expose disposable documents to gateway workers'
+
+cat > "$tmp/bin/rsudo-apisix-file-convergence-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  docker exec -i "$APISIX_CONVERGENCE_TEST_CID" "$@"
+}
+rsudo_mod_apisix_mode "$@"
+PROBE
+chmod 700 "$tmp/bin/rsudo-apisix-file-convergence-probe" ||
+  error 'cannot enable real m probe'
+
+# Uses the official image's installed bash as a loopback HTTP client,
+# not a synthetic gateway or a network port on the Docker host.
+http_status()
+{
+  http_path=$1
+  http_port=$2
+  response=$(docker exec -i "$cid" /bin/bash -s -- "$http_path" "$http_port" <<'HTTP'
+path=$1
+port=$2
+exec 3<>/dev/tcp/127.0.0.1/"$port" || exit 70
+printf 'GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' "$path" >&3
+cat <&3
+HTTP
+  ) || return $?
+  first=$(printf '%s\n' "$response" | sed -n '1p') || return 71
+  case "$first" in
+    HTTP/1.*)
+      set -- $first
+      printf '%s\n' "$2"
+      ;;
+    *) return 72 ;;
+  esac
+}
+
+diagnostics()
+{
+  printf '%s\n' "$TEST_ID: diagnostic: $1" >&2
+  docker exec "$cid" cat /usr/local/apisix/conf/config.yaml >&2 || :
+  docker exec "$cid" cat /usr/local/apisix/conf/apisix.yaml >&2 || :
+  ready=$(http_status /status/ready 7085)
+  ready_status=$?
+  printf 'readiness transport=%s http=%s\n' "$ready_status" "$ready" >&2
+  docker logs "$cid" >&2 || :
+}
+
+for image in $images
+do
+  case "$image" in
+    *b921bdef*) release=3.16 ;;
+    *9a7e45dc*) release=3.19 ;;
+    *) error 'unknown pinned APISIX image in diagnostic fixture' ;;
+  esac
+  for status_mode in disabled enabled
+  do
+    for repetition in 1 2
+    do
+      if [ "$status_mode" = enabled ]
+      then
+        cat > "$tmp/config.yaml" <<'CONFIG'
+apisix:
+  enable_admin: false
+  status:
+    ip: 127.0.0.1
+    port: 7085
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+CONFIG
+      else
+        cat > "$tmp/config.yaml" <<'CONFIG'
+apisix:
+  enable_admin: false
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+CONFIG
+      fi
+      chmod 644 "$tmp/config.yaml" ||
+        error 'cannot make selected config readable'
+
+      cid=$(docker run -d --network none \
+        --cap-drop ALL --security-opt no-new-privileges=true \
+        --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+        --mount "type=bind,src=$tmp/apisix.yaml,dst=/usr/local/apisix/conf/apisix.yaml,readonly" \
+        --mount "type=bind,src=$tmp/apisix.json,dst=/usr/local/apisix/conf/apisix.json,readonly" \
+        "$image") || error "cannot start isolated $release $status_mode gateway"
+      [ -n "$cid" ] || error 'Docker returned an empty gateway ID'
+
+      observed=$(APISIX_CONVERGENCE_TEST_CID="$cid" PATH="$tmp/bin:$PATH" \
+        "$root/m" rsudo-apisix-file-convergence-probe \
+        /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/probe-stderr")
+      status=$?
+      [ "$status" -eq 0 ] && [ "$observed" = standalone-file-yaml ] || {
+        cat "$tmp/probe-stderr" >&2 || :
+        fail "$release $status_mode $repetition real m selected incorrect on-disk provider"
+      }
+
+      docker exec "$cid" cat /usr/local/apisix/conf/apisix.yaml \
+        > "$tmp/visible.yaml" ||
+        error "$release $status_mode $repetition cannot read mounted document"
+      cmp -s "$tmp/visible.yaml" "$tmp/apisix.yaml" ||
+        fail "$release $status_mode $repetition mounted bytes differed"
+
+      tries=0
+      last=
+      while [ "$tries" -lt 30 ]
+      do
+        last=$(http_status /rsudo-file-yaml 9080)
+        status=$?
+        if [ "$status" -eq 0 ] && [ "$last" = 403 ]; then break; fi
+        if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
+        then
+          diagnostics "$release $status_mode $repetition gateway exited"
+          fail "$release $status_mode $repetition gateway exited during initial route observation"
+        fi
+        tries=$((tries + 1))
+        sleep 1
+      done
+      if [ "$tries" -ge 30 ]
+      then
+        diagnostics "$release $status_mode $repetition no initial route (HTTP $last)"
+        fail "$release $status_mode $repetition initial route never applied (HTTP $last)"
+      fi
+
+      other=$(http_status /rsudo-file-json 9080) ||
+        fail "$release $status_mode $repetition unselected route probe unavailable"
+      [ "$other" = 404 ] ||
+        fail "$release $status_mode $repetition wrong provider route HTTP $other"
+
+      if [ "$status_mode" = enabled ]
+      then
+        ready=$(http_status /status/ready 7085) ||
+          fail "$release $status_mode $repetition readiness unavailable after route loaded"
+        [ "$ready" = 200 ] ||
+          fail "$release $status_mode $repetition readiness HTTP $ready after route loaded"
+      fi
+      printf '%s\n' "$TEST_ID: observed $release $status_mode repetition=$repetition selected=403 unselected=404"
+      docker rm -f "$cid" >/dev/null 2>&1 ||
+        error "cannot clean $release $status_mode gateway"
+      cid=
+    done
+  done
+done
+
+printf '%s\n' "$TEST_ID: PASS (two real APISIX releases, distinct readiness modes, two launches each)"
