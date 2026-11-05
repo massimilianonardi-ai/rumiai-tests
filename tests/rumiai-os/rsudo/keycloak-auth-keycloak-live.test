@@ -42,7 +42,7 @@ case "$status" in
   *) error 'product checkout discovery failed' ;;
 esac
 [ "$(uname -s)" = Linux ] || skip 'Linux/Docker real Keycloak boundary'
-for cmd in docker curl jq openssl
+for cmd in docker curl jq openssl python3
 do
   command -v "$cmd" >/dev/null 2>&1 || skip "$cmd required for live Keycloak test"
 done
@@ -199,7 +199,8 @@ cat > "$tmp/client-mtls.json" <<'CLIENT_MTLS_JSON'
   "clientAuthenticatorType": "client-x509",
   "attributes": {
     "x509.subjectdn": "CN=k04-mtls-client",
-    "x509.casubjectdn": "CN=k04-mtls-ca"
+    "x509.casubjectdn": "CN=k04-mtls-ca",
+    "tls.client.certificate.bound.access.tokens": "true"
   }
 }
 CLIENT_MTLS_JSON
@@ -298,6 +299,38 @@ transport()
     --max-redirs 0 --connect-timeout 3 --max-time 25 "$@"
 }
 
+# A certificate-bound token's public confirmation claim must equal SHA-256
+# over the DER client certificate (RFC 8705). The protected token is read
+# from its file, never passed as an argv value or included in diagnostics.
+cat > "$tmp/verify-mtls-token.py" <<'PYMTLS'
+import base64
+import hashlib
+import json
+import subprocess
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as source:
+        token = json.load(source)["access_token"]
+    segments = token.split(".")
+    if len(segments) != 3:
+        raise ValueError("JWT shape")
+    part = segments[1]
+    payload = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+    certificate = subprocess.run(
+        ["openssl", "x509", "-in", sys.argv[2], "-outform", "DER"],
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    ).stdout
+    expected = base64.urlsafe_b64encode(
+        hashlib.sha256(certificate).digest()
+    ).rstrip(b"=").decode("ascii")
+    matched = payload.get("cnf", {}).get("x5t#S256") == expected
+except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+    matched = False
+
+sys.exit(0 if matched else 1)
+PYMTLS
+
 for version in 26.7.3 26.8.1
 do
   image_tag=keycloak-k04-real-$version-$$
@@ -391,6 +424,9 @@ do
     jq -e '.access_token | type == "string" and length > 0' \
       "$tmp/token-mtls-$version" >/dev/null ||
     fail "Keycloak $version certificate-authenticated grant failed ($status)"
+  python3 "$tmp/verify-mtls-token.py" "$tmp/token-mtls-$version" \
+    "$tmp/mtls-good.pem" ||
+    fail "Keycloak $version service access token missing matching cnf.x5t#S256"
   result=$(probe status --server "$base" --issuer-realm master \
     --client-id k04-mtls --client-auth tls-client-auth \
     --private-key-file "$tmp/mtls-good.key" \
@@ -443,6 +479,35 @@ do
     jq -e '.refresh_token | type == "string" and length > 0' \
       "$tmp/token-mtls-user-$version" >/dev/null ||
     fail "Keycloak $version mTLS user direct grant failed ($status)"
+  python3 "$tmp/verify-mtls-token.py" "$tmp/token-mtls-user-$version" \
+    "$tmp/mtls-good.pem" ||
+    fail "Keycloak $version user access token missing matching cnf.x5t#S256"
+
+  # This authenticated admin user's token is deliberately held constant for
+  # all three requests; only the TLS client certificate changes. The results
+  # are release-specific provider observations, NOT a K04 Admin REST
+  # sender-constraint guarantee. Never print bearer headers or token bodies.
+  jq -er '"Authorization: Bearer " + .access_token' \
+    "$tmp/token-mtls-user-$version" > "$tmp/mtls-admin-header" ||
+    error "Keycloak $version cannot prepare private admin-token header"
+  matched_http=$(transport --cert "$tmp/mtls-good.pem" \
+    --key "$tmp/mtls-good.key" --header "@$tmp/mtls-admin-header" \
+    --output "$tmp/mtls-matched-admin-body" --write-out '%{http_code}' \
+    --url "$base/admin/realms/master") ||
+    error "Keycloak $version matched certificate Admin REST HTTP transport failed"
+  [ "$matched_http" = 200 ] ||
+    fail "Keycloak $version matched-certificate administrator GET denied ($matched_http)"
+  absent_http=$(transport --header "@$tmp/mtls-admin-header" \
+    --output "$tmp/mtls-absent-admin-body" --write-out '%{http_code}' \
+    --url "$base/admin/realms/master") ||
+    error "Keycloak $version absent certificate Admin REST HTTP transport failed"
+  wrong_http=$(transport --cert "$tmp/mtls-wrong.pem" \
+    --key "$tmp/mtls-wrong.key" --header "@$tmp/mtls-admin-header" \
+    --output "$tmp/mtls-wrong-admin-body" --write-out '%{http_code}' \
+    --url "$base/admin/realms/master") ||
+    error "Keycloak $version wrong certificate Admin REST HTTP transport failed"
+  printf '%s: Keycloak %s certificate-bound Admin REST observations: matching=%s absent=%s wrong=%s\n' \
+    "$TEST_ID" "$version" "$matched_http" "$absent_http" "$wrong_http"
   result=$(probe refresh --server "$base" --issuer-realm master \
     --client-id k04-mtls --client-auth tls-client-auth \
     --private-key-file "$tmp/mtls-good.key" \
