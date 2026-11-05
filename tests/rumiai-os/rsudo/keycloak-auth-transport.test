@@ -195,7 +195,21 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/admin/realms/"):
             bearer = self.headers.get("Authorization", "")
-            if bearer == "Bearer SENSITIVE-K04-ADMIN-TOKEN":
+            if bearer == "Bearer SENSITIVE-K04-MTLS-ADMIN-TOKEN":
+                # A certificate-bound fixture resource rejects bearer replay
+                # without a matching client identity on the dedicated TLS
+                # certificate-verifying listener.
+                certificate = (self.connection.getpeercert() if
+                               getattr(self.server, "mtls_only", False) else None)
+                common_names = ([value for item in
+                                 certificate.get("subject", ())
+                                 for key, value in item if key == "commonName"]
+                                if certificate else [])
+                if common_names != ["k04-mtls-client"]:
+                    self.response(401, {"error": "invalid_token"})
+                    return
+            if bearer in ("Bearer SENSITIVE-K04-ADMIN-TOKEN",
+                          "Bearer SENSITIVE-K04-MTLS-ADMIN-TOKEN"):
                 if self.path == "/admin/realms/master":
                     self.response(200, {
                         "realm": "master",
@@ -1369,6 +1383,58 @@ status=$?
 [ "$status" -eq 0 ] &&
   [ "$result" = '{"http_status":200,"authorized":true,"body_suppressed":true}' ] ||
   fail "admin bearer authorization or response suppression failed ($status)"
+
+# K04 fixed read-only Admin proof explicitly carries a protected client
+# certificate alongside the selected token, rather than replaying it on an
+# unrelated certificate-free TLS session. This is an external HTTPS fixture,
+# not yet an assertion of Keycloak Admin REST certificate-bound enforcement.
+printf '%s\n' '{"access_token":"SENSITIVE-K04-MTLS-ADMIN-TOKEN"}' \
+  > "$tmp/mtls-admin-token"
+chmod 600 "$tmp/mtls-admin-token" ||
+  error 'mTLS admin test token is not private'
+result=$(probe admin-probe --server "$mtls_base" --issuer-realm master \
+  --target-realm master --token-file "$tmp/mtls-admin-token" \
+  --client-auth tls-client-auth \
+  --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-good.pem" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 0 ] &&
+  [ "$result" = '{"http_status":200,"authorized":true,"body_suppressed":true}' ] ||
+  fail "mTLS-protected Admin fixed GET failed ($status)"
+result=$(probe admin-probe --server "$mtls_base" --issuer-realm master \
+  --target-realm master --token-file "$tmp/mtls-admin-token" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 79 ] && [ -z "$result" ] ||
+  fail "Admin fixture accepted mTLS token without client certificate ($status)"
+result=$(probe admin-probe --server "$mtls_base" --issuer-realm master \
+  --target-realm master --token-file "$tmp/mtls-admin-token" \
+  --client-auth tls-client-auth \
+  --private-key-file "$tmp/mtls-wrong.key" \
+  --certificate-file "$tmp/mtls-wrong.pem" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 79 ] && [ -z "$result" ] ||
+  fail "Admin fixture accepted mTLS token with wrong identity ($status)"
+result=$(probe admin-probe --server "$mtls_base" --issuer-realm master \
+  --target-realm master --token-file "$tmp/mtls-admin-token" \
+  --client-auth tls-client-auth \
+  --private-key-file "$tmp/mtls-good.key" \
+  --certificate-file "$tmp/mtls-wrong.pem" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 70 ] && [ -z "$result" ] ||
+  fail "Admin fixed GET accepted mismatched certificate and key ($status)"
+result=$(probe admin-probe --server "$mtls_base" --issuer-realm master \
+  --target-realm master --token-file "$tmp/mtls-admin-token" \
+  --certificate-file "$tmp/mtls-good.pem" \
+  --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 64 ] && [ -z "$result" ] ||
+  fail "Admin fixed GET silently selected mTLS authenticator ($status)"
+grep -F 'BEGIN PRIVATE KEY' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'Admin mTLS private key material leaked into argv or diagnostics'
 grep -F 'PRIVATE-REALM-CONFIG-NEVER-PRINT' "$tmp/err" "$tmp/argv" >/dev/null &&
   fail 'admin resource private fields exposed in diagnostics/process arguments'
 grep -F 'SENSITIVE-K04-ADMIN-TOKEN' "$tmp/err" "$tmp/argv" >/dev/null &&
