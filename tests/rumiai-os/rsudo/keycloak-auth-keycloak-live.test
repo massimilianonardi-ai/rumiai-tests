@@ -115,6 +115,21 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
 chmod 600 "$tmp/self-signed.key" "$tmp/self-signed.pem" ||
   error 'self-signed client files not protected'
 
+# Independent synthetic issuer for federated client JWT assertions. Keycloak
+# receives only the verifier public key through its own OIDC IdP registration.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out "$tmp/federated-issuer.key" >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'federated issuer signing key generation failed'
+openssl pkey -in "$tmp/federated-issuer.key" -pubout \
+  -out "$tmp/federated-issuer-public.pem" 2>"$tmp/openssl.err" ||
+  error 'federated issuer public key generation failed'
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+  -out "$tmp/federated-untrusted.key" >"$tmp/openssl.out" 2>"$tmp/openssl.err" ||
+  error 'untrusted federated signing key generation failed'
+chmod 600 "$tmp/federated-issuer.key" "$tmp/federated-issuer-public.pem" \
+  "$tmp/federated-untrusted.key" ||
+  error 'federated test key protection failed'
+
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-private-jwt \
   -keyout "$tmp/private-client.key" -out "$tmp/private-client.pem" \
   >"$tmp/client-openssl.out" 2>"$tmp/client-openssl.err" ||
@@ -217,6 +232,75 @@ cat > "$tmp/client-mtls.json" <<'CLIENT_MTLS_JSON'
   }
 }
 CLIENT_MTLS_JSON
+
+# Registered external issuer is a separate synthetic trust identity; no
+# remote network call is necessary when the public verifier is pinned.
+federated_issuer=https://k04-external-issuer.invalid
+jq -n --rawfile verification_key "$tmp/federated-issuer-public.pem" \
+  --arg issuer "$federated_issuer" '{
+    alias:"k04-external-idp", providerId:"oidc", enabled:true,
+    config: {
+      issuer:$issuer,
+      clientId:"k04-external",
+      authorizationUrl:($issuer + "/authorize"),
+      tokenUrl:($issuer + "/token"),
+      supportsClientAssertions:"true",
+      validateSignature:"true",
+      useJwksUrl:"false",
+      publicKeySignatureVerifier:$verification_key
+    }
+  }' > "$tmp/federated-idp.json" ||
+  error 'federated OIDC identity-provider registration data unavailable'
+cat > "$tmp/client-federated.json" <<'CLIENT_FEDERATED'
+{
+  "clientId": "k04-federated",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "serviceAccountsEnabled": true,
+  "clientAuthenticatorType": "federated-jwt",
+  "attributes": {
+    "jwt.credential.issuer": "k04-external-idp",
+    "jwt.credential.sub": "k04-external"
+  }
+}
+CLIENT_FEDERATED
+cat > "$tmp/sign-federated-jwt.py" <<'PYFEDERATED'
+import base64
+import json
+import subprocess
+import sys
+import time
+import uuid
+
+issuer, subject, audience, key_path, output_path = sys.argv[1:6]
+issued_at = int(time.time())
+
+
+def urlsafe(value):
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+header = urlsafe(json.dumps(
+    {"alg": "RS256", "typ": "JWT"}, separators=(",", ":")
+).encode("utf-8"))
+payload = urlsafe(json.dumps({
+    "iss": issuer,
+    "sub": subject,
+    "aud": audience,
+    "iat": issued_at,
+    "exp": issued_at + 180,
+    "jti": str(uuid.uuid4()),
+}, separators=(",", ":")).encode("utf-8"))
+message = (header + "." + payload).encode("ascii")
+signature = subprocess.run(
+    ["openssl", "dgst", "-sha256", "-sign", key_path],
+    input=message, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    check=True,
+).stdout
+with open(output_path, "w", encoding="ascii") as output:
+    output.write(message.decode("ascii") + "." + urlsafe(signature))
+PYFEDERATED
 cat > "$tmp/client-oidc-registration-control.json" <<'OIDC_CONTROL'
 {
   "client_name": "k04-standard-oidc-registration-control",
@@ -369,6 +453,17 @@ transport()
     --max-redirs 0 --connect-timeout 3 --max-time 25 "$@"
 }
 
+# Assertion bytes are only read by curl from a private file; never argv/logs.
+federated_token_request()
+{
+  transport --output "$2" --write-out '%{http_code}' \
+    --data-urlencode grant_type=client_credentials \
+    --data-urlencode \
+      client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
+    --data-urlencode "client_assertion@$1" \
+    --url "$3/realms/master/protocol/openid-connect/token"
+}
+
 # A certificate-bound token's public confirmation claim must equal SHA-256
 # over the DER client certificate (RFC 8705). The protected token is read
 # from its file, never passed as an argv value or included in diagnostics.
@@ -414,8 +509,10 @@ do
     --https-certificate-file=/opt/keycloak/conf/k04-server.pem \
     --https-certificate-key-file=/opt/keycloak/conf/k04-server.key \
     --https-client-auth=request \
-    --https-trust-store-file=/opt/keycloak/conf/k04-mtls-ca.pem) ||
+    --https-trust-store-file=/opt/keycloak/conf/k04-mtls-ca.pem \
+    --features=client-auth-federated) ||
     error "Keycloak $version container could not start"
+
   [ -n "$cid" ] || error 'Keycloak container identity is empty'
   mapping=$(docker port "$cid" 8443/tcp) || error 'Keycloak HTTPS port missing'
   port=${mapping##*:}
@@ -493,6 +590,9 @@ do
     jq -e 'type == "array" and any(.[]; .id == "client-x509")' \
       "$tmp/auth-providers-$version" >/dev/null ||
     fail "Keycloak $version client authenticator registry unavailable ($providers_http)"
+  jq -e 'any(.[]; .id == "federated-jwt")' \
+    "$tmp/auth-providers-$version" >/dev/null ||
+    fail "Keycloak $version feature-enabled federated client provider not loaded"
   if jq -e 'any(.[]; .id == "self_signed_tls_client_auth")' \
     "$tmp/auth-providers-$version" >/dev/null
   then
@@ -536,6 +636,73 @@ do
     fail "Keycloak $version self-signed registration rejection lacks OAuth error"
 
   # The actual TLS handshake validates the certificate against Keycloak's
+  # Real provider test: establish external issuer trust and bind the local
+  # confidential client to the issuer alias and external subject. This is a
+  # Keycloak container with its actual verification/authorization flow.
+  idp_http=$(transport --output "$tmp/federated-idp-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/federated-idp.json" \
+    --url "$base/admin/realms/master/identity-provider/instances") ||
+    error "Keycloak $version external OIDC assertion issuer registration failed"
+  [ "$idp_http" = 201 ] ||
+    fail "Keycloak $version external assertion issuer registration HTTP $idp_http"
+  federated_client_http=$(transport \
+    --output "$tmp/federated-client-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client-federated.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version federated client registration transport failed"
+  [ "$federated_client_http" = 201 ] ||
+    fail "Keycloak $version federated client registration HTTP $federated_client_http"
+
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/federated-assertion-$version" ||
+    error "Keycloak $version federated client assertion signing failed"
+  federated_http=$(federated_token_request \
+    "$tmp/federated-assertion-$version" "$tmp/federated-token-$version" "$base") ||
+    error "Keycloak $version federated token request transport failed"
+  [ "$federated_http" = 200 ] &&
+    jq -e '.access_token | type == "string" and length > 0' \
+      "$tmp/federated-token-$version" >/dev/null ||
+    fail "Keycloak $version real federated client grant rejected ($federated_http)"
+
+  # Independently signed but untrusted assertions and wrong audiences
+  # must fail; never expose JWTs or tokens to the test result stream.
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external "$base/realms/master" \
+    "$tmp/federated-untrusted.key" "$tmp/federated-untrusted-$version" ||
+    error "Keycloak $version untrusted assertion creation failed"
+  untrusted_http=$(federated_token_request \
+    "$tmp/federated-untrusted-$version" \
+    "$tmp/federated-untrusted-response-$version" "$base") ||
+    error "Keycloak $version untrusted assertion transport failed"
+  case "$untrusted_http" in 400|401) : ;; *)
+    fail "Keycloak $version accepted untrusted federated signature ($untrusted_http)" ;;
+  esac
+  jq -e '.error == "invalid_client"' \
+    "$tmp/federated-untrusted-response-$version" >/dev/null ||
+    fail "Keycloak $version untrusted federated assertion lacked invalid_client"
+
+  python3 "$tmp/sign-federated-jwt.py" "$federated_issuer" \
+    k04-external https://k04-wrong-audience.invalid \
+    "$tmp/federated-issuer.key" "$tmp/federated-wrong-audience-$version" ||
+    error "Keycloak $version wrong-audience assertion creation failed"
+  wrong_audience_http=$(federated_token_request \
+    "$tmp/federated-wrong-audience-$version" \
+    "$tmp/federated-wrong-audience-response-$version" "$base") ||
+    error "Keycloak $version wrong-audience assertion transport failed"
+  case "$wrong_audience_http" in 400|401) : ;; *)
+    fail "Keycloak $version accepted wrong federated audience ($wrong_audience_http)" ;;
+  esac
+  jq -e '.error == "invalid_client"' \
+    "$tmp/federated-wrong-audience-response-$version" >/dev/null ||
+    fail "Keycloak $version wrong federated audience lacked invalid_client"
+  printf '%s: Keycloak %s real federated issuer JWT grant and signature/audience rejection verified\n' \
+    "$TEST_ID" "$version"
+
   # dedicated CA. The client-x509 authenticator then verifies the exact
   # client subject DN and configured trust-anchor CA subject DN.
   mtls_create_http=$(transport --output "$tmp/mtls-create-response" \
