@@ -114,8 +114,13 @@ unit="rsudo-apisix-$(printf '%s' "$$" | tr -cd '0-9').service"
 docker exec "$cid" systemd-run --unit="${unit%.service}" \
   --property=Type=forking \
   --property=PIDFile=/usr/local/apisix/logs/nginx.pid \
-  -- /usr/bin/apisix start ||
+  -- /usr/bin/apisix start || {
+  docker exec "$cid" systemctl status --no-pager "$unit" >&2 || :
+  docker exec "$cid" journalctl --no-pager --unit "$unit" --lines 60 >&2 || :
+  docker exec "$cid" sh -c 'ls -l /usr/local/apisix/logs/nginx.pid /usr/local/apisix/logs/error.log 2>&1 || :' >&2 || :
+  docker logs "$cid" >&2 || :
   error 'cannot start official APISIX through real systemd service'
+}
 
 tries=0
 while [ "$tries" -lt 30 ]
