@@ -254,6 +254,9 @@ result=$(probe /usr/local/apisix 2>"$tmp/stderr")
 status=$?
 [ "$status" -eq 0 ] && [ "$result" = "$expected" ] || {
   cat "$tmp/stderr" >&2
+  # Only structured public evidence fields (no environment contents or key).
+  printf 'observed-runtime-status=%s\n%s\nexpected-runtime:\n%s\n' \
+    "$status" "$result" "$expected" >&2
   docker exec "$cid" systemctl show \
     --property=Id,MainPID,ControlGroup,ActiveState "$unit" >&2 || :
   docker exec "$cid" cat "/proc/$pid/cgroup" >&2 || :
