@@ -89,20 +89,27 @@ async function arrangeStoppedWorker(url) {
     const sessionId=attach.sessionId;
     await send('ServiceWorker.enable',{},sessionId);
     let active;
-    for(let i=0;i<75;i++) {
+    for(let i=0;i<95;i++) {
       active=[...versions.values()].find(v=>v.scriptURL?.endsWith('/idle-worker.js') &&
-        v.status==='activated' && v.runningStatus==='running');
+        v.status==='activated');
       if(active)break;
       await sleep(100);
     }
-    assert(active,'fixture did not observe activated running ServiceWorker');
-    await send('ServiceWorker.stopWorker',{versionId:active.versionId},sessionId);
-    let stopped=false;
-    for(let i=0;i<75;i++) {
-      if(versions.get(active.versionId)?.runningStatus==='stopped'){stopped=true;break;}
-      await sleep(100);
+    assert(active,'fixture did not observe activated ServiceWorker: ' +
+      JSON.stringify([...versions.values()].map(v=>({
+        status:v.status,runningStatus:v.runningStatus,hasTarget:!!v.targetId
+      }))));
+    if(active.runningStatus!=='stopped')
+      await send('ServiceWorker.stopWorker',{versionId:active.versionId},sessionId);
+    let stopped=active.runningStatus==='stopped';
+    for(let i=0;i<75 && !stopped;i++) {
+      stopped=versions.get(active.versionId)?.runningStatus==='stopped';
+      if(!stopped)await sleep(100);
     }
-    assert(stopped,'fixture did not observe Chromium worker stop');
+    assert(stopped,'fixture did not observe stopped Chromium worker: ' +
+      JSON.stringify([...versions.values()].map(v=>({
+        status:v.status,runningStatus:v.runningStatus,hasTarget:!!v.targetId
+      }))));
     return active.versionId;
   } finally {
     for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('fixture closed'));}
