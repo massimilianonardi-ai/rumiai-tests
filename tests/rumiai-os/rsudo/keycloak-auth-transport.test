@@ -212,7 +212,8 @@ class Handler(BaseHTTPRequestHandler):
                 c = json.loads(decode(payload))
                 now = int(time.time())
                 claims_valid = (
-                    h.get("alg") == "RS256" and h.get("typ") == "JWT" and
+                    h.get("alg") in ("RS256", "RS384", "RS512") and
+                    h.get("typ") == "JWT" and
                     c.get("iss") == "service-rs256" and
                     c.get("sub") == "service-rs256" and
                     c.get("aud") ==
@@ -231,7 +232,10 @@ class Handler(BaseHTTPRequestHandler):
                         msg.write_bytes((head + "." + payload).encode("ascii"))
                         sig.write_bytes(decode(signature))
                         checked = subprocess.run(
-                            ["openssl", "dgst", "-sha256", "-verify",
+                            ["openssl", "dgst", {
+                                "RS256": "-sha256",
+                                "RS384": "-sha384",
+                                "RS512": "-sha512"}[h["alg"]], "-verify",
                              sys.argv[4], "-signature", str(sig), str(msg)],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL)
@@ -373,7 +377,7 @@ acquire()
     --token-store "$3" --ca-file "$tmp/server.pem"
 }
 
-# Private-key JWT: RSA/RS256 only, no client secret. Client certificate
+# Private-key JWT: explicit RSA RS256/RS384/RS512, no client secret. Client certificate
 # independently matches the trusted key registered on this HTTPS fixture.
 result=$(probe acquire --server "$base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-rs256 \
@@ -398,6 +402,32 @@ status=$?
 [ "$status" -eq 0 ] &&
   [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
   fail "RS256 signed-client introspection failed ($status)"
+for algorithm in RS384 RS512
+do
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id service-rs256 \
+    --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+    --private-key-file "$tmp/client-rsa.key" \
+    --certificate-file "$tmp/client-rsa.pem" \
+    --token-store "$tmp/private-$algorithm" \
+    --ca-file "$tmp/server.pem" 2>"$tmp/err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+    [ "$(jq -r '.access_token' "$tmp/private-$algorithm")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+    fail "$algorithm private-key-jwt acquisition failed ($status)"
+  result=$(probe status --server "$base" --issuer-realm master \
+    --client-id service-rs256 --client-auth private-key-jwt \
+    --client-jwt-alg "$algorithm" \
+    --private-key-file "$tmp/client-rsa.key" \
+    --certificate-file "$tmp/client-rsa.pem" \
+    --token-file "$tmp/private-$algorithm" \
+    --ca-file "$tmp/server.pem" 2>"$tmp/err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+    fail "$algorithm signed-client introspection failed ($status)"
+done
 result=$(probe acquire --server "$base" --issuer-realm master \
   --auth-mode client-credentials --client-id service-rs256 \
   --client-auth private-key-jwt \
@@ -427,7 +457,7 @@ result=$(probe acquire --server "$base" --issuer-realm master \
 status=$?
 [ "$status" -eq 64 ] && [ ! -e "$tmp/private-rsa-secret" ] ||
   fail "private-key auth accepted conflicting shared secret ($status)"
-grep -F 'eyJhbGciOiJSUzI1Ni' "$tmp/argv" "$tmp/err" >/dev/null &&
+grep -F 'eyJhbGciOiJSUz' "$tmp/argv" "$tmp/err" >/dev/null &&
   fail "RSA client assertion leaked into curl arguments or diagnostics"
 
 # K04 signed client assertion uses protected HS256 client-secret-jwt. The
