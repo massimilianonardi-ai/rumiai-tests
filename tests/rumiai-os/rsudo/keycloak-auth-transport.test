@@ -86,6 +86,23 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=k04-wrong-rsa \
   error 'wrong RSA client fixture keypair generation failed'
 chmod 600 "$tmp"/client-*.key "$tmp"/client-*.pem ||
   error 'private RSA client fixture permissions unavailable'
+for curve_spec in ES256:prime256v1 ES384:secp384r1 ES512:secp521r1
+do
+  algorithm=${curve_spec%%:*}
+  curve=${curve_spec#*:}
+  openssl ecparam -name "$curve" -genkey -noout \
+    -out "$tmp/client-$algorithm.key" ||
+    error "$algorithm EC private key preparation failed"
+  openssl req -x509 -new -key "$tmp/client-$algorithm.key" \
+    -days 1 -subj "/CN=k04-client-$algorithm" \
+    -out "$tmp/client-$algorithm.pem" ||
+    error "$algorithm EC certificate preparation failed"
+  openssl x509 -in "$tmp/client-$algorithm.pem" -pubkey -noout \
+    > "$tmp/client-$algorithm.public" ||
+    error "$algorithm EC public key preparation failed"
+  chmod 600 "$tmp/client-$algorithm.key" "$tmp/client-$algorithm.pem" ||
+    error "$algorithm EC fixture permissions unavailable"
+done
 
 cat > "$tmp/server.py" <<'PYTHON'
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -251,6 +268,68 @@ class Handler(BaseHTTPRequestHandler):
                         client_valid = checked.returncode == 0
             except (ValueError, TypeError, KeyError, UnicodeError):
                 client_valid = False
+        if (not client_valid and
+                args.get("client_id") == ["service-ecdsa"] and
+                args.get("client_assertion_type") ==
+                ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"] and
+                len(args.get("client_assertion", [])) == 1):
+            try:
+                head, payload, signature = args["client_assertion"][0].split(".")
+                decode = lambda v: base64.urlsafe_b64decode(v + "=" * (-len(v) % 4))
+                h = json.loads(decode(head))
+                c = json.loads(decode(payload))
+                now = int(time.time())
+                ec_algorithms = {
+                    "ES256": (32, "-sha256", sys.argv[5]),
+                    "ES384": (48, "-sha384", sys.argv[6]),
+                    "ES512": (66, "-sha512", sys.argv[7])}
+                selected = ec_algorithms.get(h.get("alg"))
+                claims_valid = (
+                    selected is not None and h.get("typ") == "JWT" and
+                    c.get("iss") == "service-ecdsa" and
+                    c.get("sub") == "service-ecdsa" and
+                    c.get("aud") ==
+                    "https://127.0.0.1:" + str(self.server.server_port) + "/realms/master" and
+                    isinstance(c.get("jti"), str) and len(c["jti"]) >= 16 and
+                    isinstance(c.get("iat"), int) and
+                    isinstance(c.get("nbf"), int) and
+                    isinstance(c.get("exp"), int) and
+                    now - 5 <= c["iat"] <= now + 5 and
+                    c["nbf"] <= now and now < c["exp"] <= now + 60)
+                if claims_valid:
+                    size, digest, public_key = selected
+                    raw = decode(signature)
+                    if len(raw) == size * 2:
+                        # Independent JWS P1363-to-DER verification, not
+                        # reusing the target's DER-to-JWS conversion.
+                        def length_bytes(n):
+                            if n < 128:
+                                return bytes([n])
+                            data = n.to_bytes((n.bit_length() + 7) // 8, "big")
+                            return bytes([0x80 | len(data)]) + data
+
+                        def der_integer(fixed):
+                            n = int.from_bytes(fixed, "big")
+                            data = n.to_bytes((n.bit_length() + 7) // 8 or 1, "big")
+                            if data[0] & 0x80:
+                                data = b"\\x00" + data
+                            return b"\\x02" + length_bytes(len(data)) + data
+
+                        encoded = der_integer(raw[:size]) + der_integer(raw[size:])
+                        der = b"\\x30" + length_bytes(len(encoded)) + encoded
+                        with tempfile.TemporaryDirectory() as d:
+                            msg = Path(d, "message")
+                            sig = Path(d, "signature")
+                            msg.write_bytes((head + "." + payload).encode("ascii"))
+                            sig.write_bytes(der)
+                            checked = subprocess.run(
+                                ["openssl", "dgst", digest, "-verify",
+                                 public_key, "-signature", str(sig), str(msg)],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+                            client_valid = checked.returncode == 0
+            except (ValueError, TypeError, KeyError, UnicodeError, IndexError):
+                client_valid = False
         if not client_valid:
             # Exercise both Keycloak-observed 401 unauthorized_client (Basic)
             # and conventional invalid_client (form-client authentication).
@@ -355,7 +434,9 @@ chmod 700 "$tmp/bin/keycloak-auth-probe" "$tmp/bin/curl" ||
 openssl x509 -in "$tmp/client-rsa.pem" -pubkey -noout \
   > "$tmp/client-rsa.public" ||
   error 'RSA client public-key extraction failed'
-python3 -u "$tmp/server.py" "$tmp/port" "$tmp/server.pem" "$tmp/server.key" "$tmp/client-rsa.public" \
+python3 -u "$tmp/server.py" "$tmp/port" "$tmp/server.pem" "$tmp/server.key" \
+  "$tmp/client-rsa.public" "$tmp/client-ES256.public" \
+  "$tmp/client-ES384.public" "$tmp/client-ES512.public" \
   >"$tmp/server.out" 2>"$tmp/server.err" &
 pid=$!
 tries=0
@@ -468,6 +549,62 @@ status=$?
   fail "private-key auth accepted conflicting shared secret ($status)"
 grep -E 'eyJhbGciOiJ(SUz|QUz)' "$tmp/argv" "$tmp/err" >/dev/null &&
   fail "RSA/PS client assertion leaked into curl arguments or diagnostics"
+
+# ECDSA keys are curve-bound and JWS signatures must use raw fixed-width r||s.
+for algorithm in ES256 ES384 ES512
+do
+  result=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode client-credentials --client-id service-ecdsa \
+    --client-auth private-key-jwt --client-jwt-alg "$algorithm" \
+    --private-key-file "$tmp/client-$algorithm.key" \
+    --certificate-file "$tmp/client-$algorithm.pem" \
+    --token-store "$tmp/ec-$algorithm" --ca-file "$tmp/server.pem" \
+    2>"$tmp/err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"grant":"client_credentials","server_validated":false}' ] &&
+    [ "$(jq -r '.access_token' "$tmp/ec-$algorithm")" = SENSITIVE-K04-ACCESS-TOKEN ] ||
+    fail "$algorithm ECDSA acquisition or JWS signature verification failed ($status)"
+  result=$(probe status --server "$base" --issuer-realm master \
+    --client-id service-ecdsa --client-auth private-key-jwt \
+    --client-jwt-alg "$algorithm" \
+    --private-key-file "$tmp/client-$algorithm.key" \
+    --certificate-file "$tmp/client-$algorithm.pem" \
+    --token-file "$tmp/ec-$algorithm" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+  status=$?
+  [ "$status" -eq 0 ] &&
+    [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+    fail "$algorithm ECDSA introspection failed ($status)"
+done
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-ecdsa \
+  --client-auth private-key-jwt --client-jwt-alg ES256 \
+  --private-key-file "$tmp/client-ES384.key" \
+  --certificate-file "$tmp/client-ES384.pem" \
+  --token-store "$tmp/ec-wrong-curve" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 73 ] && [ ! -e "$tmp/ec-wrong-curve" ] ||
+  fail "ES256 accepted a P-384 key ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-ecdsa \
+  --client-auth private-key-jwt --client-jwt-alg RS256 \
+  --private-key-file "$tmp/client-ES256.key" \
+  --certificate-file "$tmp/client-ES256.pem" \
+  --token-store "$tmp/ec-mislabelled-rsa" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 73 ] && [ ! -e "$tmp/ec-mislabelled-rsa" ] ||
+  fail "EC key accepted with RSA algorithm ($status)"
+result=$(probe acquire --server "$base" --issuer-realm master \
+  --auth-mode client-credentials --client-id service-ecdsa \
+  --client-auth private-key-jwt --client-jwt-alg ES256 \
+  --private-key-file "$tmp/client-rsa.key" \
+  --certificate-file "$tmp/client-rsa.pem" \
+  --token-store "$tmp/rsa-mislabelled-ec" --ca-file "$tmp/server.pem" 2>"$tmp/err")
+status=$?
+[ "$status" -eq 73 ] && [ ! -e "$tmp/rsa-mislabelled-ec" ] ||
+  fail "RSA key accepted with ECDSA algorithm ($status)"
+grep -F 'eyJhbGciOiJFUz' "$tmp/argv" "$tmp/err" >/dev/null &&
+  fail 'ECDSA JWT assertion escaped to curl argv or diagnostics'
 
 # K04 signed client assertion uses protected HS256 client-secret-jwt. The
 # server independently verifies signature, iss/sub/aud, time and jti.
