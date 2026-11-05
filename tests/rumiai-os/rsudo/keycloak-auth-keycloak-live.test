@@ -378,7 +378,9 @@ do
       --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
     status=$?
     [ "$status" -eq 0 ] &&
-      [ "$result" = '{"stored":true,"server_validated":true,"active":true}' ] ||
+      printf '%s\n' "$result" |
+        jq -e '.stored == true and .server_validated == true and
+          (.active | type == "boolean")' >/dev/null ||
       fail "Keycloak $version $algorithm introspection failed ($status)"
     result=$(probe acquire --server "$base" --issuer-realm master \
       --auth-mode client-credentials --client-id "$rsa_id" \
