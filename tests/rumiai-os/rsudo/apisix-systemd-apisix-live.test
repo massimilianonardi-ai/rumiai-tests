@@ -196,7 +196,7 @@ case " $manager_environment " in
   *' APISIX_PROFILE=prod '*) : ;;
   *) fail 'service manager did not declare the selected APISIX profile' ;;
 esac
-docker exec "$cid" sh -s -- "$pid" <<'APISIX_MASTER_STARTUP_ENV'
+docker exec -i "$cid" sh -s -- "$pid" <<'APISIX_MASTER_STARTUP_ENV'
 pid=$1
 [ -r "/proc/$pid/environ" ] || exit 70
 command -v tr >/dev/null 2>&1 || exit 71
@@ -258,7 +258,7 @@ status=$?
   printf 'observed-runtime-status=%s\n%s\nexpected-runtime:\n%s\n' \
     "$status" "$result" "$expected" >&2
   # Diagnose only non-secret verification stages: never dump Environment.
-  docker exec "$cid" sh -s -- "$pid" "$unit" <<'APISIX_PROFILE_DIAGNOSTICS' >&2
+  docker exec -i "$cid" sh -s -- "$pid" "$unit" <<'APISIX_PROFILE_DIAGNOSTICS' >&2
 pid=$1
 unit=$2
 unit_environment=$(LC_ALL=C systemctl --no-pager show \
@@ -345,7 +345,7 @@ status=$?
 # Linux kernel evidence independently relates the selected namespace's
 # listening TCP socket inode to the *observed* nginx/OpenResty master PID.
 # This is socket ownership, not by itself a generic proof of Admin provenance.
-docker exec "$cid" sh -s -- "$pid" <<'APISIX_TEST_SOCKET'
+docker exec -i "$cid" sh -s -- "$pid" <<'APISIX_TEST_SOCKET'
 pid=$1
 [ -r /proc/net/tcp ] || exit 73
 command -v awk >/dev/null 2>&1 || exit 74
