@@ -329,12 +329,15 @@ do
   [ "$rsa_client_http" = 201 ] ||
     fail "Keycloak $version SSH RSA JWT client create rejected ($rsa_client_http)"
 
-  # Register separate clients with explicit RSA signature policies.
-  for algorithm in RS384 RS512
+  # Register separate clients with explicit RSA and RSA-PSS signing policies.
+  for algorithm in RS384 RS512 PS256 PS384 PS512
   do
     case "$algorithm" in
       RS384) rsa_id=k04-rs384 ;;
       RS512) rsa_id=k04-rs512 ;;
+      PS256) rsa_id=k04-ps256 ;;
+      PS384) rsa_id=k04-ps384 ;;
+      PS512) rsa_id=k04-ps512 ;;
     esac
     jq --arg id "$rsa_id" --arg alg "$algorithm" \
       '.clientId = $id | .attributes["token.endpoint.auth.signing.alg"] = $alg' \
@@ -428,13 +431,16 @@ EOF_SSH_CONFIG
       jq -e '.stored == true and .server_validated == true and
         (.active | type == "boolean")' >/dev/null ||
     fail "Keycloak $version composed RSA signed introspection failed ($status)"
-  # Exercise each new algorithm through the real SSH/sudo target and
+  # Exercise each selected RSA/PS algorithm through the real SSH/sudo target and
   # the same protected certificate/key already staged for RS256.
-  for algorithm in RS384 RS512
+  for algorithm in RS384 RS512 PS256 PS384 PS512
   do
     case "$algorithm" in
       RS384) rsa_id=k04-rs384 ;;
       RS512) rsa_id=k04-rs512 ;;
+      PS256) rsa_id=k04-ps256 ;;
+      PS384) rsa_id=k04-ps384 ;;
+      PS512) rsa_id=k04-ps512 ;;
     esac
     result=$(probe acquire --server https://127.0.0.1:8443 \
       --issuer-realm master --auth-mode client-credentials \
@@ -466,8 +472,8 @@ EOF_SSH_CONFIG
           (.active | type == "boolean")' >/dev/null ||
       fail "Keycloak $version composed $algorithm introspection failed ($status)"
   done
-  grep -F 'eyJhbGciOiJSUz' "$tmp/auth.err" >/dev/null &&
-    fail "Keycloak $version RSA assertion leaked to diagnostics"
+  grep -E 'eyJhbGciOiJ(SUz|QUz)' "$tmp/auth.err" >/dev/null &&
+    fail "Keycloak $version RSA/PS assertion leaked to diagnostics"
 
   # Signed assertion is created and sent on the real remote sudo target.
   # SSH shell arguments contain selectors and protected file paths only.
