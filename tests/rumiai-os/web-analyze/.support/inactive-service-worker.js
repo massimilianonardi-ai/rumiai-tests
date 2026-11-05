@@ -10,8 +10,10 @@ const root=process.argv[2];
 const command=path.join(root,'bin/sys/web-analyze');
 
 async function serve() {
+  let workerScriptRequests=0;
   const server=http.createServer((req,res)=>{
-    if (req.url==='/idle-worker.js') {
+    if (req.url?.startsWith('/idle-worker.js')) {
+      workerScriptRequests++;
       res.setHeader('Content-Type','text/javascript');
       return res.end('self.addEventListener("install",e=>e.waitUntil(self.skipWaiting()));'+
         'self.addEventListener("activate",e=>e.waitUntil(self.clients.claim()));');
@@ -27,6 +29,7 @@ async function serve() {
       '</script></body>');
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  server.workerScriptRequests=()=>workerScriptRequests;
   return server;
 }
 
@@ -163,7 +166,13 @@ async function main() {
   const work=fs.mkdtempSync(path.join(os.tmpdir(),'web-analyze-sw-idle-'));
   const server=await serve();
   try {
-    const {directory,versionId}=await run(server,path.join(work,'analysis'));
+    let captureResult;
+    try {captureResult=await run(server,path.join(work,'analysis'));}
+    catch(error) {
+      console.error('Fixture HTTP worker script fetch count:',server.workerScriptRequests());
+      throw error;
+    }
+    const {directory,versionId}=captureResult;
     const provenance=JSON.parse(fs.readFileSync(path.join(directory,
       'rest/worker-provenance/index.json'),'utf8'));
     const registration=provenance.browserRegistrations.find(r=>
