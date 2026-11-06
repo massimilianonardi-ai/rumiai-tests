@@ -567,13 +567,19 @@ printf %s "$redirect" > "$work/redirect"
 printf %s "$nonce" > "$work/nonce"
 printf %s "$subject" > "$work/subject"
 unset code verifier redirect nonce subject
+# The pre-existing protected remote client secret is line-terminated.
+# Extract its value to a protected no-newline form-file, never to argv.
+IFS= read -r client_secret < "$root/secret" || exit 70
+[ -n "$client_secret" ] || exit 70
+printf %s "$client_secret" > "$work/client-secret"
+unset client_secret
 http=$(curl -q --silent --show-error --noproxy '*' --proxy '' \
   --proto '=https' --max-redirs 0 --connect-timeout 4 --max-time 25 \
   --cacert "$root/ca.pem" --output "$work/response" \
   --write-out '%{http_code}' \
   --data-urlencode grant_type=authorization_code \
   --data-urlencode client_id=k04-code-joined \
-  --data-urlencode "client_secret@$root/secret" \
+  --data-urlencode "client_secret@$work/client-secret" \
   --data-urlencode "code@$work/code" \
   --data-urlencode "code_verifier@$work/verifier" \
   --data-urlencode "redirect_uri@$work/redirect" \
