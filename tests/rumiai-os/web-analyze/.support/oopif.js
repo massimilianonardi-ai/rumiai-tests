@@ -33,11 +33,11 @@ function jsonLines(file) {
 }
 function verifySameSessionLifecycleControl() {
   const {summarizeSessionLifecycle} = require('./physical-response-only.js');
-  const start = (targetId,requestId,elapsedMs,extra={}) => ({
-    type:'request',targetId,requestId,elapsedMs,...extra
+  const start = (sessionId,requestId,elapsedMs,extra={}) => ({
+    type:'request',sessionId,requestId,elapsedMs,...extra
   });
-  const finish = (targetId,requestId,elapsedMs) => ({
-    type:'finished',targetId,requestId,elapsedMs
+  const finish = (sessionId,requestId,elapsedMs) => ({
+    type:'finished',sessionId,requestId,elapsedMs
   });
   const events=[
     start('a','shared',1,{frameId:'frame',loaderId:'loader'}),
