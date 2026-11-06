@@ -1,0 +1,98 @@
+#!/bin/sh
+# Protects rsudo Keycloak discovery and official kcadm delegation at the
+# external SSH/sudo boundary. The rsudo function below simulates only remote
+# transport; the real module and generated remote POSIX shell run unchanged.
+TEST_ID=rumiai-os/rsudo/keycloak-kcadm.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+
+case "$0" in
+  */*) test_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P) || error 'test location' ;;
+  *) error 'test path unavailable' ;;
+esac
+suite_root=$(CDPATH= cd "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'product missing' ;; 2) fail 'invalid product' ;; *) error 'target resolution' ;; esac
+
+tmp=${TMPDIR:-/tmp}/rsudo-kcadm-test-$$
+umask 077
+mkdir "$tmp" "$tmp/remote-home" "$tmp/keycloak bin" || error 'fixture directory'
+trap 'rm -rf "$tmp"' 0
+trap 'exit 3' HUP INT TERM
+
+bin="$tmp/keycloak bin/kcadm.sh"
+cat > "$bin" <<'FAKE_KCADM'
+#!/bin/sh
+case "$1" in
+  failure) exit 37 ;;
+esac
+[ "${KC_CLI_PASSWORD-unset}" = "pw' ; echo forbidden \$(id) \\\\!" ] ||
+  { printf 'credential not available\n' >&2; exit 40; }
+printf 'argc=%s\n' "$#"
+for arg
+do
+  printf '<%s>\n' "$arg"
+done
+FAKE_KCADM
+chmod 700 "$bin" || error 'fake executable permission'
+
+probe="$tmp/kcadm-probe"
+cat > "$probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 90
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 91
+loadsyslib "rsudo/rsudo-mod-keycloak" || exit 92
+# This fixture is the SSH/sudo remote execution boundary, not replacement
+# Keycloak code or an alternative implementation of its CLI contract.
+rsudo()
+{
+  [ "$#" -eq 0 ] || return 93
+  [ "${RSUDO_INTERACTIVE-}" != true ] || return 94
+  HOME="$KC_TEST_REMOTE_HOME" sh -s
+}
+case "$1" in
+  discovery) shift; rsudo_mod_keycloak_discovery "$@" ;;
+  kcadm) shift; rsudo_mod_keycloak_kcadm "$@" ;;
+  *) exit 95 ;;
+esac
+PROBE
+chmod 700 "$probe" || error 'probe permission'
+KC_TEST_REMOTE_HOME="$tmp/remote-home"
+export KC_TEST_REMOTE_HOME
+unset KEYCLOAK_KCADM_PATH KC_CLI_PASSWORD
+
+"$root/m" "$probe" kcadm get realms >"$tmp/out" 2>"$tmp/err"
+[ "$?" -eq 31 ] || fail 'no-discovery invocation did not fail'
+grep -F 'no valid kcadm.sh' "$tmp/err" >/dev/null || fail 'missing discovery diagnostic'
+
+discovered=$("$root/m" "$probe" discovery --path "$bin" 2>"$tmp/err") ||
+  fail "explicit discovery: $(cat "$tmp/err")"
+[ "$discovered" = "$bin" ] || fail 'discovery returned wrong path'
+[ -r "$tmp/remote-home/.rsudo-keycloak-kcadm-path" ] ||
+  fail 'discovery did not persist a remote selection'
+
+# Malicious-looking punctuation must survive the quoted SSH stdin source as
+# data. It must not become shell commands, output or executable arguments.
+KC_CLI_PASSWORD='pw'"'"' ; echo forbidden $(id) \\!'
+export KC_CLI_PASSWORD
+"$root/m" "$probe" kcadm get "a b" "single'quote" >"$tmp/out" 2>"$tmp/err" ||
+  fail "kcadm proxy: $(cat "$tmp/err")"
+cat >"$tmp/expected" <<'EXPECTED'
+argc=3
+<get>
+<a b>
+<single'quote>
+EXPECTED
+cmp -s "$tmp/out" "$tmp/expected" || fail 'argv or environment not preserved'
+
+"$root/m" "$probe" kcadm failure >"$tmp/out" 2>"$tmp/err"
+[ "$?" -eq 37 ] || fail 'proxy did not preserve kcadm status'
+
+unset KC_CLI_PASSWORD
+rm -f "$bin"
+"$root/m" "$probe" kcadm get realms >"$tmp/out" 2>"$tmp/err"
+[ "$?" -eq 31 ] || fail 'removed discovered executable was not rejected'
+
+printf '%s: PASS\n' "$TEST_ID"
