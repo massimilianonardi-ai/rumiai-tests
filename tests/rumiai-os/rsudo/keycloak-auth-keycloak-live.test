@@ -673,6 +673,77 @@ jag_token_request()
     --url "$3/realms/master/protocol/openid-connect/token"
 }
 
+# Full real Keycloak authorization endpoint → login form → redirect.
+# All login sessions are independent; no callback listener, browser agent
+# library, or application server is invented by this HTTP-level test.
+code_authorize()
+{
+  code_label=$1
+  python3 "$tmp/code-browser.py" pkce \
+    "$tmp/code-verifier-$version-$code_label" \
+    "$tmp/code-challenge-$version-$code_label" ||
+    error "Keycloak $version PKCE preparation failed"
+  code_challenge=$(cat "$tmp/code-challenge-$version-$code_label") ||
+    error "Keycloak $version PKCE challenge unavailable"
+  code_state=k04-state-$version-$code_label
+  code_nonce=k04-nonce-$version-$code_label
+  code_http=$(transport --get \
+    --output "$tmp/code-page-$version-$code_label" \
+    --cookie-jar "$tmp/code-cookies-$version-$code_label" \
+    --write-out '%{http_code}' \
+    --data-urlencode 'response_type=code' \
+    --data-urlencode 'scope=openid' \
+    --data-urlencode 'client_id=k04-code-client' \
+    --data-urlencode 'redirect_uri=https://k04-client.example.invalid/oidc/callback' \
+    --data-urlencode "state=$code_state" \
+    --data-urlencode "nonce=$code_nonce" \
+    --data-urlencode "code_challenge=$code_challenge" \
+    --data-urlencode 'code_challenge_method=S256' \
+    --url "$base/realms/master/protocol/openid-connect/auth") ||
+    error "Keycloak $version authorization endpoint transport failed"
+  [ "$code_http" = 200 ] ||
+    fail "Keycloak $version authorization request did not open login ($code_http)"
+  python3 "$tmp/code-browser.py" form \
+    "$tmp/code-page-$version-$code_label" \
+    "$tmp/code-action-$version-$code_label.conf" "$base" ||
+    fail "Keycloak $version did not supply a same-origin login form"
+  code_login_http=$(transport \
+    --output "$tmp/code-login-page-$version-$code_label" \
+    --dump-header "$tmp/code-login-headers-$version-$code_label" \
+    --write-out '%{http_code}' \
+    --cookie "$tmp/code-cookies-$version-$code_label" \
+    --cookie-jar "$tmp/code-cookies-$version-$code_label" \
+    --data-urlencode 'username=k04-code-user' \
+    --data-urlencode "password@$tmp/code-user-password" \
+    --config "$tmp/code-action-$version-$code_label.conf") ||
+    error "Keycloak $version login form submission transport failed"
+  case "$code_login_http" in 302|303) : ;; *)
+    fail "Keycloak $version login form did not return authorization redirect ($code_login_http)" ;;
+  esac
+  python3 "$tmp/code-browser.py" redirect \
+    "$tmp/code-login-headers-$version-$code_label" \
+    https://k04-client.example.invalid/oidc/callback "$code_state" \
+    "$tmp/code-grant-$version-$code_label" ||
+    fail "Keycloak $version authorization callback code/state not verified"
+}
+
+# Client credential and code are independent private form-file inputs.
+code_exchange()
+{
+  code_label=$1
+  code_verifier_path=$2
+  code_redirect=$3
+  code_result_path=$4
+  transport --output "$code_result_path" --write-out '%{http_code}' \
+    --data-urlencode 'grant_type=authorization_code' \
+    --data-urlencode 'client_id=k04-code-client' \
+    --data-urlencode "client_secret@$tmp/code-client-secret" \
+    --data-urlencode "code@$tmp/code-grant-$version-$code_label" \
+    --data-urlencode "code_verifier@$code_verifier_path" \
+    --data-urlencode "redirect_uri=$code_redirect" \
+    --url "$base/realms/master/protocol/openid-connect/token"
+}
+
 # A certificate-bound token's public confirmation claim must equal SHA-256
 # over the DER client certificate (RFC 8705). The protected token is read
 # from its file, never passed as an argv value or included in diagnostics.
