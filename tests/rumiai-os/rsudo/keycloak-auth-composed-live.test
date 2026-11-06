@@ -277,6 +277,40 @@ cat > "$tmp/federated-client.json" <<'FEDERATED_CLIENT'
   }]
 }
 FEDERATED_CLIENT
+# A separate RFC 7523 authorization grant maps a signed external subject
+# onto an explicitly prelinked local Keycloak user.
+jag_issuer=https://k04-jag-issuer.invalid
+jq -n --rawfile verifier "$tmp/federated-issuer-public.pem" \
+  --arg issuer "$jag_issuer" '{
+    alias:"k04-jag-idp", providerId:"oidc", enabled:true,
+    config:{
+      issuer:$issuer, clientId:"k04-jag-external",
+      authorizationUrl:($issuer + "/authorize"),
+      tokenUrl:($issuer + "/token"),
+      jwtAuthorizationGrantEnabled:"true",
+      jwtAuthorizationGrantAssertionReuseAllowed:"false",
+      useJwksUrl:"false",
+      validateSignature:"true",
+      publicKeySignatureVerifier:$verifier
+    }
+  }' > "$tmp/jag-idp.json" ||
+  error 'composed JWT grant external IdP fixture unavailable'
+cat > "$tmp/jag-client.json" <<'JAG_CLIENT'
+{
+  "clientId":"k04-jag-client",
+  "enabled":true,
+  "protocol":"openid-connect",
+  "publicClient":false,
+  "secret":"k04-disposable-client-secret",
+  "attributes":{
+    "oauth2.jwt.authorization.grant.enabled":"true",
+    "oauth2.jwt.authorization.grant.idp":"k04-jag-idp"
+  }
+}
+JAG_CLIENT
+cat > "$tmp/jag-user.json" <<'JAG_USER'
+{"username":"k04-jag-local-user","enabled":true}
+JAG_USER
 cat > "$tmp/sign-federated-jwt.py" <<'FEDERATED_SIGNER'
 import base64
 import json
@@ -496,6 +530,51 @@ do
   [ "$federated_client_http" = 201 ] ||
     fail "Keycloak $version composed federated client registration rejected ($federated_client_http)"
 
+  jag_idp_http=$(host_https --output "$tmp/jag-idp-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-idp.json" \
+    --url "$host_base/admin/realms/master/identity-provider/instances") ||
+    error "Keycloak $version composed JWT authorization grant IdP transport failed"
+  [ "$jag_idp_http" = 201 ] ||
+    fail "Keycloak $version composed JWT grant IdP rejected ($jag_idp_http)"
+  jag_client_http=$(host_https --output "$tmp/jag-client-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-client.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version composed JWT authorization client transport failed"
+  [ "$jag_client_http" = 201 ] ||
+    fail "Keycloak $version composed JWT authorization client rejected ($jag_client_http)"
+  jag_user_http=$(host_https --output "$tmp/jag-user-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-user.json" \
+    --url "$host_base/admin/realms/master/users") ||
+    error "Keycloak $version composed JWT grant user creation transport failed"
+  [ "$jag_user_http" = 201 ] ||
+    fail "Keycloak $version composed JWT grant user creation rejected ($jag_user_http)"
+  jag_lookup_http=$(host_https --output "$tmp/jag-users-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --url "$host_base/admin/realms/master/users?username=k04-jag-local-user&exact=true") ||
+    error "Keycloak $version composed JWT user lookup transport failed"
+  [ "$jag_lookup_http" = 200 ] ||
+    fail "Keycloak $version composed JWT user lookup rejected ($jag_lookup_http)"
+  jag_user_uuid=$(jq -er '.[] | select(.username == "k04-jag-local-user") | .id' \
+    "$tmp/jag-users-$version") ||
+    fail "Keycloak $version composed JWT grant local user UUID missing"
+  jq -n '{identityProvider:"k04-jag-idp",userId:"k04-jag-external-user",userName:"k04-jag-external-user"}' \
+    > "$tmp/jag-link.json" ||
+    error "Keycloak $version composed JWT external-user link fixture failed"
+  jag_link_http=$(host_https --output "$tmp/jag-link-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-link.json" \
+    --url "$host_base/admin/realms/master/users/$jag_user_uuid/federated-identity/k04-jag-idp") ||
+    error "Keycloak $version composed JWT user link transport failed"
+  [ "$jag_link_http" = 204 ] ||
+    fail "Keycloak $version composed JWT user link rejected ($jag_link_http)"
+
   mtls_client_http=$(host_https --output "$tmp/mtls-client-response" \
     --write-out '%{http_code}' --header "@$tmp/admin-header" \
     --header 'Content-Type: application/json' \
@@ -675,6 +754,53 @@ EOF_SSH_CONFIG
        chmod 600 /root/keycloak/mtls-$identity.key /root/keycloak/mtls-$identity.pem" ||
       error "Keycloak $version remote mTLS $identity credentials insecure"
   done
+
+  # The grant JWT is signed outside the SSH target; only the compact
+  # assertion is staged as root-owned 0600 data. Distinct from client JWT.
+  python3 "$tmp/sign-federated-jwt.py" "$jag_issuer" \
+    k04-jag-external-user https://127.0.0.1:8443/realms/master \
+    "$tmp/federated-issuer.key" "$tmp/jag-assertion-$version" ||
+    error "Keycloak $version composed RFC7523 grant assertion signing failed"
+  docker cp "$tmp/jag-assertion-$version" \
+    "$ssh_container:/root/keycloak/jag-assertion" ||
+    error "Keycloak $version composed RFC7523 grant assertion staging failed"
+  docker exec "$ssh_container" sh -c \
+    'chown 0:0 /root/keycloak/jag-assertion &&
+     chmod 600 /root/keycloak/jag-assertion' ||
+    error "Keycloak $version composed RFC7523 assertion protection failed"
+  jag_result=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode jwt-bearer \
+    --client-id k04-jag-client --client-auth client-secret-post \
+    --client-secret-file /root/keycloak/secret \
+    --assertion-file /root/keycloak/jag-assertion \
+    --token-store "/root/keycloak/jag-token-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  jag_status=$?
+  [ "$jag_status" -eq 0 ] &&
+    printf '%s\n' "$jag_result" | jq -e \
+      '.stored == true and .grant == "urn:ietf:params:oauth:grant-type:jwt-bearer"' >/dev/null &&
+    docker exec "$ssh_container" jq -e \
+      '(.access_token | type == "string" and length > 0) and
+       (has("refresh_token") | not)' "/root/keycloak/jag-token-$version" >/dev/null ||
+    fail "Keycloak $version composed RFC7523 user grant failed ($jag_status)"
+  jag_repeat=$(probe acquire --server https://127.0.0.1:8443 \
+    --issuer-realm master --auth-mode jwt-bearer \
+    --client-id k04-jag-client --client-auth client-secret-post \
+    --client-secret-file /root/keycloak/secret \
+    --assertion-file /root/keycloak/jag-assertion \
+    --token-store "/root/keycloak/jag-replay-$version" \
+    --ca-file /root/keycloak/ca.pem 2>"$tmp/auth.err")
+  jag_repeat_status=$?
+  [ "$jag_repeat_status" -eq 72 ] && [ -z "$jag_repeat" ] &&
+    ! docker exec "$ssh_container" test -e "/root/keycloak/jag-replay-$version" ||
+    fail "Keycloak $version composed RFC7523 replay was accepted ($jag_repeat_status)"
+  for marker in '"access_token"' '"refresh_token"' 'eyJhbGciOiJSUzI1Ni'
+  do
+    grep -F "$marker" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version composed JWT grant leaked protected material"
+  done
+  printf '%s: Keycloak %s RFC7523 grant through composed SSH/sudo verified\n' \
+    "$TEST_ID" "$version"
 
   # Only the signed compact assertion is provisioned in the isolated
   # SSH/sudo host. Its external issuer private key stays outside the target.
