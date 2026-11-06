@@ -788,6 +788,7 @@ jag_token_request()
 code_authorize()
 {
   code_label=$1
+  code_redirect_uri=${2:-https://k04-client.example.invalid/oidc/callback}
   python3 "$tmp/code-browser.py" pkce \
     "$tmp/code-verifier-$version-$code_label" \
     "$tmp/code-challenge-$version-$code_label" ||
@@ -803,7 +804,7 @@ code_authorize()
     --data-urlencode 'response_type=code' \
     --data-urlencode 'scope=openid' \
     --data-urlencode 'client_id=k04-code-client' \
-    --data-urlencode 'redirect_uri=https://k04-client.example.invalid/oidc/callback' \
+    --data-urlencode "redirect_uri=$code_redirect_uri" \
     --data-urlencode "state=$code_state" \
     --data-urlencode "nonce=$code_nonce" \
     --data-urlencode "code_challenge=$code_challenge" \
@@ -829,11 +830,19 @@ code_authorize()
   case "$code_login_http" in 302|303) : ;; *)
     fail "Keycloak $version login form did not return authorization redirect ($code_login_http)" ;;
   esac
-  python3 "$tmp/code-browser.py" redirect \
-    "$tmp/code-login-headers-$version-$code_label" \
-    https://k04-client.example.invalid/oidc/callback "$code_state" \
-    "$tmp/code-grant-$version-$code_label" ||
-    fail "Keycloak $version authorization callback code/state not verified"
+  if [ "$code_label" = loopback ]
+  then
+    python3 "$tmp/code-browser.py" deliver \
+      "$tmp/code-login-headers-$version-$code_label" \
+      "$code_redirect_uri" ||
+      fail "Keycloak $version loopback callback navigation failed"
+  else
+    python3 "$tmp/code-browser.py" redirect \
+      "$tmp/code-login-headers-$version-$code_label" \
+      "$code_redirect_uri" "$code_state" \
+      "$tmp/code-grant-$version-$code_label" ||
+      fail "Keycloak $version authorization callback code/state not verified"
+  fi
 }
 
 # Client credential and code are independent private form-file inputs.
