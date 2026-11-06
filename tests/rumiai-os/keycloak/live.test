@@ -1,0 +1,138 @@
+#!/bin/sh
+# Official-Keycloak-only direct CLI test. No rsudo, SSH, browser or test-only client.
+TEST_ID=rumiai-os/keycloak/live.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+case "$0" in */*) test_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P) ;; *) error 'test path unavailable' ;; esac
+suite_root=$(CDPATH= cd "$test_dir/../../.." && pwd -P) || error 'suite path unavailable'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'product missing' ;; 2) fail 'invalid product' ;; *) error 'target resolver failed' ;; esac
+[ -x "$root/bin/sys/keycloak" ] || fail 'public command is not executable'
+[ "$(uname -s)" = Linux ] || skip 'Docker official Keycloak test requires Linux'
+for cmd in docker jq curl openssl; do command -v "$cmd" >/dev/null 2>&1 || skip "$cmd missing"; done
+tmp=/tmp/keycloak-cli-live-$$
+umask 077
+mkdir -p "$tmp/image" || error 'workdir unavailable'
+cid= image=
+cleanup() {
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  [ -z "$image" ] || docker image rm "$image" >/dev/null 2>&1 || :
+  rm -rf "$tmp"
+}
+trap cleanup 0
+trap 'exit 3' HUP INT TERM
+cat > "$tmp/openssl.cnf" <<'CERT'
+[req]
+distinguished_name=dn
+prompt=no
+x509_extensions=ext
+[dn]
+CN=127.0.0.1
+[ext]
+subjectAltName=IP:127.0.0.1
+basicConstraints=critical,CA:TRUE
+keyUsage=digitalSignature,keyCertSign
+CERT
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -config "$tmp/openssl.cnf" -extensions ext \
+  -keyout "$tmp/image/key.pem" -out "$tmp/image/cert.pem" \
+  >"$tmp/cert.out" 2>"$tmp/cert.err" || error 'TLS fixture preparation failed'
+cat > "$tmp/image/Dockerfile" <<'DOCKER'
+ARG KC_VERSION
+FROM quay.io/keycloak/keycloak:$KC_VERSION
+COPY --chown=1000:0 --chmod=600 key.pem /opt/keycloak/conf/cli-key.pem
+COPY --chown=1000:0 --chmod=644 cert.pem /opt/keycloak/conf/cli-cert.pem
+DOCKER
+printf 'KC_BOOTSTRAP_ADMIN_USERNAME=cliadmin\nKC_BOOTSTRAP_ADMIN_PASSWORD=cli-bootstrap-pass\n' > "$tmp/bootstrap.env"
+printf %s 'cli-bootstrap-pass' > "$tmp/bootstrap-pass"
+printf 'cli-service-secret\n' > "$tmp/secret"
+cat > "$tmp/client.json" <<'CLIENT'
+{"clientId":"cli-service","enabled":true,"protocol":"openid-connect","publicClient":false,
+ "serviceAccountsEnabled":true,"directAccessGrantsEnabled":false,
+ "clientAuthenticatorType":"client-secret","secret":"cli-service-secret"}
+CLIENT
+printf '{"realm":"cli-smoke","enabled":true}\n' > "$tmp/new-realm.json"
+for version in 26.7.3 26.8.1; do
+  image=keycloak-cli-live-$version-$$
+  docker build --quiet --build-arg "KC_VERSION=$version" \
+    --tag "$image" "$tmp/image" > "$tmp/image-id" ||
+    error "Keycloak $version image build failed"
+  cid=$(docker run -d --memory 2g --network bridge \
+    --publish 127.0.0.1::8443 --env-file "$tmp/bootstrap.env" "$image" \
+    start-dev --http-enabled=false --hostname-strict=false \
+    --https-certificate-file=/opt/keycloak/conf/cli-cert.pem \
+    --https-certificate-key-file=/opt/keycloak/conf/cli-key.pem) ||
+    error "Keycloak $version container failed"
+  port=$(docker port "$cid" 8443/tcp | awk -F: '{print $NF}') ||
+    error "Keycloak $version HTTPS port missing"
+  case "$port" in ''|*[!0-9]*) error 'invalid HTTPS port' ;; esac
+  base=https://127.0.0.1:$port
+  transport() {
+    curl -q --silent --show-error --noproxy '*' --proxy '' \
+      --cacert "$tmp/image/cert.pem" --proto '=https' \
+      --max-redirs 0 --connect-timeout 5 --max-time 25 "$@"
+  }
+  tries=0
+  until transport --fail --output "$tmp/ready" \
+    --url "$base/realms/master/.well-known/openid-configuration" \
+    >"$tmp/ready.out" 2>"$tmp/ready.err"; do
+    [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] ||
+      error "Keycloak $version stopped during readiness"
+    tries=$((tries+1))
+    [ "$tries" -lt 150 ] || error "Keycloak $version readiness timeout"
+    sleep 1
+  done
+  cli() {
+    "$root/m" keycloak --server "$base" --realm master \
+      --ca-file "$tmp/image/cert.pem" "$@"
+  }
+  cli discovery > "$tmp/discovery" 2>"$tmp/cli.err" ||
+    fail "Keycloak $version public discovery failed: $(cat "$tmp/cli.err")"
+  jq -e --arg iss "$base/realms/master" '.issuer == $iss' \
+    "$tmp/discovery" >/dev/null || fail "Keycloak $version issuer invalid"
+  status=$(transport --output "$tmp/bootstrap-token" --write-out '%{http_code}' \
+    --data-urlencode grant_type=password --data-urlencode client_id=admin-cli \
+    --data-urlencode username=cliadmin \
+    --data-urlencode "password@$tmp/bootstrap-pass" \
+    --url "$base/realms/master/protocol/openid-connect/token") ||
+    error "Keycloak $version test admin grant transport failed"
+  [ "$status" = 200 ] || fail "Keycloak $version fixture admin authentication denied"
+  jq -jr '.access_token' "$tmp/bootstrap-token" > "$tmp/admin-access" ||
+    error 'bootstrap bearer extraction failed'
+  chmod 600 "$tmp/admin-access"
+  admin() { cli --token-file "$tmp/admin-access" "$@"; }
+  admin get /admin/serverinfo > "$tmp/serverinfo" 2>"$tmp/cli.err" ||
+    fail "Keycloak $version direct GET failed: $(cat "$tmp/cli.err")"
+  jq -e --arg v "$version" '.systemInfo.version == $v' "$tmp/serverinfo" \
+    >/dev/null || fail "Keycloak $version returned unexpected version"
+  admin post /admin/realms --data-file "$tmp/new-realm.json" \
+    >"$tmp/output" 2>"$tmp/cli.err" ||
+    fail "Keycloak $version direct POST failed: $(cat "$tmp/cli.err")"
+  admin get /admin/realms/cli-smoke > "$tmp/realm" 2>"$tmp/cli.err" ||
+    fail "Keycloak $version direct read after POST failed: $(cat "$tmp/cli.err")"
+  jq -e '.realm == "cli-smoke" and .enabled == true' "$tmp/realm" \
+    >/dev/null || fail "Keycloak $version realm CRUD mismatch"
+  admin delete /admin/realms/cli-smoke >"$tmp/output" 2>"$tmp/cli.err" ||
+    fail "Keycloak $version direct DELETE failed: $(cat "$tmp/cli.err")"
+  printf 'Authorization: Bearer %s\n' "$(cat "$tmp/admin-access")" > "$tmp/admin-header"
+  status=$(transport --output "$tmp/new-client" --write-out '%{http_code}' \
+    --header "@$tmp/admin-header" --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/client.json" --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version test service client provisioning failed"
+  [ "$status" = 201 ] || fail "Keycloak $version service client rejected ($status)"
+  cli --client-id cli-service --client-secret-file "$tmp/secret" \
+    get /admin/serverinfo >"$tmp/output" 2>"$tmp/cli.err"
+  denied=$?
+  [ "$denied" -eq 8 ] && [ ! -s "$tmp/output" ] &&
+    grep -F 'HTTP 403' "$tmp/cli.err" >/dev/null ||
+    fail "Keycloak $version service account incorrectly authorized ($denied)"
+  printf '%s: Keycloak %s direct public discovery, admin CRUD and service-account denial verified\n' \
+    "$TEST_ID" "$version"
+  docker rm -f "$cid" >/dev/null 2>&1 || :
+  cid=
+  docker image rm "$image" >/dev/null 2>&1 || :
+  image=
+done
+printf '%s: PASS (official Keycloak 26.7.3 and 26.8.1)\n' "$TEST_ID"
