@@ -154,6 +154,10 @@ do
         cat > "$tmp/config.yaml" <<'CONFIG'
 apisix:
   enable_admin: false
+  enable_control: true
+  control:
+    ip: 127.0.0.1
+    port: 9090
   status:
     ip: 127.0.0.1
     port: 7085
@@ -235,10 +239,21 @@ CONFIG
       fi
       if [ "$status_mode" = enabled ] && [ "$repetition" = 1 ]
       then
+        # This is APISIX's built-in control router, not a test-side
+        # reconstruction of the document on disk. Keep it loopback-only in
+        # the isolated container: Control API responses can expose config.
+        control_old=$(http_status /v1/route/rsudo-file-yaml-route 9090) ||
+          error "$release cannot observe built-in worker route"
+        control_new=$(http_status /v1/route/rsudo-file-yaml-reloaded-route 9090) ||
+          error "$release cannot observe absent built-in worker route"
+        [ "$control_old" = 200 ] && [ "$control_new" = 404 ] ||
+          fail "$release initial control routes differ from active HTTP routes"
+
         # Only the disposable host-side file is edited. The container's
         # read-only bind mount retains the same inode; this models a
         # non-atomic external writer, never an authorized product writer.
-        sed 's|/rsudo-file-yaml|/rsudo-file-yaml-reloaded|g' \
+        sed -e 's|/rsudo-file-yaml|/rsudo-file-yaml-reloaded|g' \
+          -e 's|rsudo-file-yaml-route|rsudo-file-yaml-reloaded-route|g' \
           "$tmp/initial.yaml" > "$tmp/repaired.yaml" ||
           error 'cannot prepare changed full-document fixture'
         sed '/^#END$/d' "$tmp/repaired.yaml" > "$tmp/incomplete.yaml" ||
@@ -264,6 +279,12 @@ CONFIG
           diagnostics "$release invalid YAML rejected: expected old=403 new=404, observed old=$old new=$new"
           fail "$release invalid YAML replaced or disrupted last applied route"
         fi
+        control_old=$(http_status /v1/route/rsudo-file-yaml-route 9090) ||
+          error "$release worker control old route read failed after invalid source"
+        control_new=$(http_status /v1/route/rsudo-file-yaml-reloaded-route 9090) ||
+          error "$release worker control new route read failed after invalid source"
+        [ "$control_old" = 200 ] && [ "$control_new" = 404 ] ||
+          fail "$release worker control changed routes after invalid YAML"
 
         sleep 2
         cat "$tmp/repaired.yaml" > "$tmp/apisix.yaml" ||
@@ -280,8 +301,14 @@ CONFIG
           new_status=$?
           old=$(http_status /rsudo-file-yaml 9080)
           old_status=$?
+          control_new=$(http_status /v1/route/rsudo-file-yaml-reloaded-route 9090)
+          control_new_status=$?
+          control_old=$(http_status /v1/route/rsudo-file-yaml-route 9090)
+          control_old_status=$?
           if [ "$new_status" -eq 0 ] && [ "$old_status" -eq 0 ] &&
-             [ "$new" = 403 ] && [ "$old" = 404 ]
+             [ "$control_new_status" -eq 0 ] && [ "$control_old_status" -eq 0 ] &&
+             [ "$new" = 403 ] && [ "$old" = 404 ] &&
+             [ "$control_new" = 200 ] && [ "$control_old" = 404 ]
           then
             break
           fi
@@ -294,6 +321,39 @@ CONFIG
           fail "$release repaired document did not replace last applied route"
         fi
         printf '%s\n' "$TEST_ID: reload $release invalid=old-403,new-404 repaired=old-404,new-403"
+        printf '%s\n' "$TEST_ID: worker control $release initial=old-200,new-404 invalid=old-200,new-404 repaired=old-404,new-200"
+
+        # Change the selected *main* configuration on disk without
+        # triggering a restart. An on-disk provider classifier must now
+        # disagree with the already-applied worker control route.
+        cat > "$tmp/config.yaml" <<'DRIFTED_CONFIG'
+apisix:
+  enable_admin: false
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: json
+DRIFTED_CONFIG
+        docker exec "$cid" cat /usr/local/apisix/conf/config.yaml \
+          > "$tmp/visible-config.yaml" ||
+          error "$release cannot observe changed selected config in gateway"
+        cmp -s "$tmp/config.yaml" "$tmp/visible-config.yaml" ||
+          fail "$release changed selected configuration not visible inside gateway"
+        observed=$(APISIX_CONVERGENCE_TEST_CID="$cid" PATH="$tmp/bin:$PATH" \
+          "$root/m" rsudo-apisix-file-convergence-probe \
+          /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/probe-stderr")
+        status=$?
+        [ "$status" -eq 0 ] && [ "$observed" = standalone-file-json ] || {
+          cat "$tmp/probe-stderr" >&2 || :
+          fail "$release selected disk source drift was not independently classified"
+        }
+        control_new=$(http_status /v1/route/rsudo-file-yaml-reloaded-route 9090) ||
+          error "$release cannot observe worker route after main source drift"
+        still_loaded=$(http_status /rsudo-file-yaml-reloaded 9080) ||
+          error "$release cannot observe HTTP route after main source drift"
+        [ "$control_new" = 200 ] && [ "$still_loaded" = 403 ] ||
+          fail "$release disk-only provider drift incorrectly changed active worker route"
+        printf '%s\n' "$TEST_ID: worker source drift $release disk=standalone-file-json control-yaml=200 http-yaml=403"
       fi
 
       printf '%s\n' "$TEST_ID: observed $release $status_mode repetition=$repetition selected=403 unselected=404"
