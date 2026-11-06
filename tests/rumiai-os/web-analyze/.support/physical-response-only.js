@@ -69,6 +69,61 @@ function key(item)
   return String(item.session)+':'+String(item.requestId);
 }
 
+// A requestId is scoped to a CDP target/session. Multiple starts can also
+// represent redirects; do not manufacture a one-to-one lifecycle in that case.
+function summarizeSessionLifecycle(events)
+{
+  const starts=new Map();
+  const finishes=new Map();
+  for(const row of events)
+  {
+    if(row.type!=='request' && row.type!=='finished')continue;
+    if(typeof row.targetId!=='string' || !row.targetId ||
+       row.requestId===undefined || row.requestId===null)continue;
+    const id=key({session:row.targetId,requestId:row.requestId});
+    const bucket=row.type==='request'?starts:finishes;
+    if(!bucket.has(id))bucket.set(id,[]);
+    bucket.get(id).push(row);
+  }
+  let uniqueSameSessionCompletions=0;
+  let withFrameAndLoader=0;
+  let ambiguousRepeatedStarts=0;
+  let ambiguousRepeatedFinishes=0;
+  let finishWithoutStart=0;
+  let startWithoutFinish=0;
+  let invalidOrdering=0;
+  for(const [id,done] of finishes)
+  {
+    const began=starts.get(id)||[];
+    if(!began.length){finishWithoutStart+=done.length;continue;}
+    if(began.length!==1 || done.length!==1)
+    {
+      if(began.length>1)ambiguousRepeatedStarts++;
+      if(done.length>1)ambiguousRepeatedFinishes++;
+      continue;
+    }
+    if(!Number.isFinite(began[0].elapsedMs) ||
+       !Number.isFinite(done[0].elapsedMs) ||
+       began[0].elapsedMs>done[0].elapsedMs)
+    {
+      invalidOrdering++;
+      continue;
+    }
+    uniqueSameSessionCompletions++;
+    if(typeof began[0].frameId==='string' && began[0].frameId &&
+       typeof began[0].loaderId==='string' && began[0].loaderId)
+      withFrameAndLoader++;
+  }
+  for(const [id,began] of starts)
+    if(!finishes.has(id))startWithoutFinish+=began.length;
+  return {
+    uniqueSameSessionCompletions,withFrameAndLoader,
+    ambiguousRepeatedStarts,ambiguousRepeatedFinishes,
+    finishWithoutStart,startWithoutFinish,invalidOrdering,
+    confidence:'same-session-CDP-lifecycle-only-not-cross-session-HTTP-identity'
+  };
+}
+
 function _crossTargetCandidates(runDir)
 {
   return correlateCrossTargets(
@@ -402,6 +457,8 @@ async function main()
   finally{fs.closeSync(stderrFile);}
   const result=summarize(runDir,host,productCommit,testCommit,label);
   result.diagnostics={
+    sameSessionLifecycle:summarizeSessionLifecycle(
+      readJsonl(path.join(runDir,'network.jsonl'))),
     crossTarget:_crossTargetCandidates(runDir),
     bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
     independentCssSource:_stylesheetSourceEvidence(runDir),
@@ -423,4 +480,4 @@ if (require.main===module) main().catch(error=>{
   process.exitCode=3;
 });
 
-module.exports={correlateCrossTargets};
+module.exports={correlateCrossTargets,summarizeSessionLifecycle};
