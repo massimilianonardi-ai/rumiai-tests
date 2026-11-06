@@ -71,8 +71,15 @@ function key(item)
 
 function _crossTargetCandidates(runDir)
 {
-  const events=readJsonl(path.join(runDir,'network.jsonl'));
-  const graph=readJson(path.join(runDir,'rest/target-graph-final.json'));
+  return correlateCrossTargets(
+    readJsonl(path.join(runDir,'network.jsonl')),
+    readJson(path.join(runDir,'rest/target-graph-final.json')));
+}
+
+// Session-scoped request IDs are only candidates, never correlation keys.
+// This pure boundary also permits collision-negative fixture verification.
+function correlateCrossTargets(events,graph)
+{
   const targets=new Map((graph.targets||[]).map(item=>[item.targetId,item]));
   const requests=new Map();
   const finished=new Set();
@@ -407,7 +414,7 @@ async function main()
   process.exitCode=result.outcome==='PASS'?0:
     result.outcome==='NOT_EXERCISED'?2:1;
 }
-main().catch(error=>{
+if (require.main===module) main().catch(error=>{
   const reason=typeof error?.reason==='string'?
     error.reason:/^(capture-timeout|capture-launch-failed)$/.test(error?.message||'')?
       error.message:'validation-infrastructure-error';
@@ -415,3 +422,5 @@ main().catch(error=>{
     '; inspect the private local capture log if a run was started\n');
   process.exitCode=3;
 });
+
+module.exports={correlateCrossTargets};
