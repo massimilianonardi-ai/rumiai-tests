@@ -999,6 +999,25 @@ JAG_CLAIMS
   [ "$jag_malformed_status" -eq 70 ] && [ -z "$jag_malformed" ] &&
     [ ! -e "$tmp/token-jag-malformed-$version" ] ||
     fail "Keycloak $version malformed JWT grant assertion was accepted ($jag_malformed_status)"
+  jag_bad_user=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode jwt-bearer --client-id k04-jag-client \
+    --client-auth client-secret-post --client-secret-file "$tmp/secret" \
+    --username forbidden-user --assertion-file "$tmp/jag-rsudo-$version" \
+    --token-store "$tmp/token-jag-bad-user-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  jag_bad_user_status=$?
+  [ "$jag_bad_user_status" -eq 64 ] && [ -z "$jag_bad_user" ] &&
+    [ ! -e "$tmp/token-jag-bad-user-$version" ] ||
+    fail "Keycloak $version RFC7523 accepted a redundant local username ($jag_bad_user_status)"
+  jag_bad_method=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode jwt-bearer --client-id k04-jag-client \
+    --client-auth federated-jwt --assertion-file "$tmp/jag-rsudo-$version" \
+    --token-store "$tmp/token-jag-bad-method-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  jag_bad_method_status=$?
+  [ "$jag_bad_method_status" -eq 73 ] && [ -z "$jag_bad_method" ] &&
+    [ ! -e "$tmp/token-jag-bad-method-$version" ] ||
+    fail "Keycloak $version RFC7523 incorrectly reused the client assertion ($jag_bad_method_status)"
   for sensitive in k04-protected-client-secret k04-jag-external-user
   do
     grep -F "$sensitive" "$tmp/auth.err" >/dev/null &&
