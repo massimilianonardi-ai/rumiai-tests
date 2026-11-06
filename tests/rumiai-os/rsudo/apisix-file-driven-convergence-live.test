@@ -409,6 +409,26 @@ DRIFTED_CONFIG
         [ "$ready_after_drift" = 200 ] ||
           fail "$release readiness changed unexpectedly after disk-only drift (HTTP $ready_after_drift)"
         printf '%s\n' "$TEST_ID: worker source drift $release readiness=200-but-source-unverified"
+        # Recheck the selected installed process after the disk change. The
+        # unchanged live master/worker route and 200 readiness still do not
+        # attest which source file or provider the worker originally loaded.
+        observed_runtime_after_drift=$(APISIX_CONVERGENCE_TEST_CID="$cid" \
+          APISIX_CONVERGENCE_TEST_OPERATION=runtime PATH="$tmp/bin:$PATH" \
+          "$root/m" rsudo-apisix-file-convergence-probe \
+          /usr/local/apisix 2>"$tmp/probe-stderr")
+        drift_runtime_status=$?
+        if [ "$drift_runtime_status" -ne 0 ] ||
+           ! printf '%s\n' "$observed_runtime_after_drift" |
+             grep -Fx "process_pid=$master_pid" >/dev/null
+        then
+          cat "$tmp/probe-stderr" >&2 || :
+          fail "$release selected master identity changed on disk-only provider drift"
+        fi
+        case "$observed_runtime_after_drift" in
+          *'runtime_identity=process-consistent-config-unverified'*'mutation_readiness=not-established') : ;;
+          *) fail "$release drift check incorrectly upgraded process/source/write evidence" ;;
+        esac
+        printf '%s\n' "$TEST_ID: worker source drift $release runtime=unchanged-master-config-unverified"
         printf '%s\n' "$TEST_ID: worker source drift $release disk=standalone-file-json control-yaml=200 http-yaml=403"
       fi
 
