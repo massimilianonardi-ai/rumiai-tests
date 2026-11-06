@@ -831,6 +831,32 @@ do
   [ "$create_http" = 201 ] ||
     fail "Keycloak $version service-client provisioning rejected ($create_http)"
 
+  code_client_http=$(host_https \
+    --output "$tmp/code-client-response-$version" --write-out '%{http_code}' \
+    --header "@$tmp/admin-header" --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/code-client.json" \
+    --url "$host_base/admin/realms/master/clients") ||
+    error "Keycloak $version joined authorization client registration failed"
+  [ "$code_client_http" = 201 ] ||
+    fail "Keycloak $version joined authorization client refused ($code_client_http)"
+  code_user_http=$(host_https \
+    --output "$tmp/code-user-response-$version" --write-out '%{http_code}' \
+    --header "@$tmp/admin-header" --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/code-user.json" \
+    --url "$host_base/admin/realms/master/users") ||
+    error "Keycloak $version joined ordinary user registration failed"
+  [ "$code_user_http" = 201 ] ||
+    fail "Keycloak $version joined ordinary user refused ($code_user_http)"
+  code_lookup_http=$(host_https --output "$tmp/code-users-$version" \
+    --write-out '%{http_code}' --header "@$tmp/admin-header" \
+    --url "$host_base/admin/realms/master/users?username=k04-code-joined-user&exact=true") ||
+    error "Keycloak $version joined user lookup failed"
+  [ "$code_lookup_http" = 200 ] ||
+    fail "Keycloak $version joined user lookup refused ($code_lookup_http)"
+  code_user_uuid=$(jq -er '.[] | select(.username == "k04-code-joined-user") | .id' \
+    "$tmp/code-users-$version") ||
+    fail "Keycloak $version joined user subject unavailable"
+
   # The external verifier, client and feature gate are configured before
   # crossing the real SSH/sudo boundary. Never transfer its signing key.
   external_idp_http=$(host_https \
