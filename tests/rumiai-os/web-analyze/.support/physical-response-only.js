@@ -156,8 +156,8 @@ function _stylesheetSourceEvidence(runDir)
     if(item.sourceURL && item.status==='saved' &&
       Number.isFinite(item.bytes) && item.bytes>0 &&
       typeof item.file==='string' &&
-      item.file.startsWith('rest/stylesheets/') &&
-      fs.existsSync(path.join(runDir,item.file)))
+      /^stylesheets\/[0-9a-f]{64}\.css$/.test(item.file) &&
+      fs.existsSync(path.join(runDir,'rest',item.file)))
     {
       if(!sources.has(item.sourceURL))sources.set(item.sourceURL,[]);
       sources.get(item.sourceURL).push(item);
