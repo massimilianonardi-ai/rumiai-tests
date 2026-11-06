@@ -69,7 +69,32 @@ function key(item)
   return String(item.session)+':'+String(item.requestId);
 }
 
-// A requestId is scoped to a CDP target/session. Multiple starts can also
+// Read only Network lifecycle events from the private lossless CDP wire ledger.
+// The top-level sessionId, not targetId in diagnostic logs, owns the request ID.
+function cdpWireLifecycleEvents(rows)
+{
+  const events=[];
+  for(const row of rows)
+  {
+    if(row.direction!=='inbound')continue;
+    let packet;
+    try{packet=JSON.parse(row.raw);}catch(_){continue;}
+    if(packet.method!=='Network.requestWillBeSent' &&
+       packet.method!=='Network.loadingFinished')continue;
+    const params=packet.params||{};
+    if(params.requestId===undefined || params.requestId===null ||
+       !Number.isSafeInteger(row.sequence))continue;
+    events.push({
+      type:packet.method==='Network.requestWillBeSent'?'request':'finished',
+      targetId:packet.sessionId||'__root__',
+      requestId:params.requestId,elapsedMs:row.sequence,
+      frameId:params.frameId,loaderId:params.loaderId
+    });
+  }
+  return events;
+}
+
+// A requestId is scoped to a CDP session. Multiple starts can also
 // represent redirects; do not manufacture a one-to-one lifecycle in that case.
 function summarizeSessionLifecycle(events)
 {
@@ -457,8 +482,8 @@ async function main()
   finally{fs.closeSync(stderrFile);}
   const result=summarize(runDir,host,productCommit,testCommit,label);
   result.diagnostics={
-    sameSessionLifecycle:summarizeSessionLifecycle(
-      readJsonl(path.join(runDir,'network.jsonl'))),
+    sameSessionLifecycle:summarizeSessionLifecycle(cdpWireLifecycleEvents(
+      readJsonl(path.join(runDir,'cdp-wire.jsonl')))),
     crossTarget:_crossTargetCandidates(runDir),
     bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
     independentCssSource:_stylesheetSourceEvidence(runDir),
@@ -480,4 +505,4 @@ if (require.main===module) main().catch(error=>{
   process.exitCode=3;
 });
 
-module.exports={correlateCrossTargets,summarizeSessionLifecycle};
+module.exports={correlateCrossTargets,summarizeSessionLifecycle,cdpWireLifecycleEvents};
