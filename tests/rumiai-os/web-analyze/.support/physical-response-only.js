@@ -279,7 +279,7 @@ function correlateCrossTargets(events,graph)
     confidence:'lineage-evidence-candidates-only-no-automatic-cross-session-merge'
   };
 }
-function _stylesheetSourceEvidence(runDir)
+function _stylesheetSourceEvidence(runDir,resources)
 {
   const details=readJsonl(path.join(runDir,'network-details.jsonl'));
   const requests=new Set();
@@ -299,25 +299,73 @@ function _stylesheetSourceEvidence(runDir)
   const sources=new Map();
   for(const item of styles)
   {
-    if(item.sourceURL && item.status==='saved' &&
+    if(item.sourceURL && item.status==='saved' && item.origin==='regular' &&
+      item.isInline===false &&
       Number.isFinite(item.bytes) && item.bytes>0 &&
       typeof item.file==='string' &&
       /^stylesheets\/[0-9a-f]{64}\.css$/.test(item.file) &&
       fs.existsSync(path.join(runDir,'rest',item.file)))
     {
-      if(!sources.has(item.sourceURL))sources.set(item.sourceURL,[]);
-      sources.get(item.sourceURL).push(item);
+      const url=normalizedResourceUrl(item.sourceURL);
+      const identity=String(item.frameId)+'\0'+url;
+      if(!sources.has(identity))sources.set(identity,new Set());
+      sources.get(identity).add(item.sha256);
     }
   }
-  const covered=missing.filter(([,url])=>sources.has(url));
+  const normalBodies=new Map();
+  for(const row of resources)
+  {
+    if(row.status!=='saved' || row.resourceType!=='Stylesheet' ||
+      typeof row.session!=='string' || typeof row.frameId!=='string' ||
+      typeof row.requestId!=='string' || !Number.isFinite(row.responseTimestamp) ||
+      !/^[0-9a-f]{64}$/.test(row.sha256||''))continue;
+    const url=normalizedResourceUrl(row.url);
+    const identity=[row.session,row.frameId,url].join('\0');
+    if(!normalBodies.has(identity))normalBodies.set(identity,new Map());
+    const hashes=normalBodies.get(identity);
+    if(!hashes.has(row.sha256))hashes.set(row.sha256,new Map());
+    hashes.get(row.sha256).set(row.requestId,row.responseTimestamp);
+  }
+  const contentMatches=resources.filter(row=>
+  {
+    if(row.requestProvenance!=='response-only' ||
+      row.status!=='body-unavailable' || row.resourceType!=='Stylesheet' ||
+      row.fromDiskCache!==true || !String(row.mimeType||'').toLowerCase().startsWith('text/css'))
+      return false;
+    const url=normalizedResourceUrl(row.url);
+    if(!url || !Number.isFinite(row.responseTimestamp))return false;
+    const archived=normalBodies.get([row.session,row.frameId,url].join('\0'));
+    const source=sources.get(String(row.frameId)+'\0'+url);
+    if(!archived || archived.size!==1 || !source || source.size!==1)return false;
+    const [hash]=archived.keys();
+    const prior=[...archived.values()][0];
+    return hash=== [...source][0] && prior.size>0 &&
+      [...prior].some(([requestId,timestamp])=>
+        requestId!==row.requestId && timestamp<=row.responseTimestamp);
+  }).length;
+  const covered=missing.filter(([,url])=>
+    [...sources.keys()].some(identity=>identity.endsWith('\0'+normalizedResourceUrl(url))));
   return {
     cachedStylesheetResponsesWithoutRequest:missing.length,
     withSavedIndependentCssSource:covered.length,
     withoutSavedIndependentCssSource:missing.length-covered.length,
+    withMatchingArchivedCssContent:contentMatches,
     cssSourceIndexEntries:styles.length,
     cssSourceIndexSaved:styles.filter(item=>item.status==='saved').length,
     sourceMeaning:'CDP CSS.getStyleSheetText; NOT original HTTP response body'
   };
+}
+
+function normalizedResourceUrl(value)
+{
+  try
+  {
+    const url=new URL(value);
+    if(!['http:','https:'].includes(url.protocol))return null;
+    url.hash='';
+    return url.href;
+  }
+  catch(_){return null;}
 }
 
 
@@ -454,6 +502,10 @@ function summarize(runDir,host,productCommit,testCommit,label)
         'body-read-pending-at-shutdown'].includes(row.status))).length;
 
   const responseOnly=resources.filter(row=>row.requestProvenance==='response-only');
+  const cssReplayWarningCount=(audit.warnings||[]).filter(row=>
+    row.identity==='css-cache-replay-content-already-archived')
+    .reduce((sum,row)=>sum+(row.count||0),0);
+  const cssSourceEvidence=_stylesheetSourceEvidence(runDir,resources);
   const provenanceIncomplete=responseOnly.filter(row=>
     !row.url || !Number.isFinite(row.httpStatus) ||
     row.requestTimestamp!==null || row.method!==null ||
@@ -467,6 +519,8 @@ function summarize(runDir,host,productCommit,testCommit,label)
     responseOnlyBodyUnavailable:responseOnly.filter(row=>row.status==='body-unavailable').length,
     responseOnlyOtherOutcomes:responseOnly.filter(row=>!['saved','body-unavailable'].includes(row.status)).length,
     cachedStylesheetWithoutRequest:unmatched.length,
+    confirmedCssReplayWarnings:cssReplayWarningCount,
+    matchingArchivedCssContent:cssSourceEvidence.withMatchingArchivedCssContent,
     cachedStylesheetProvenanceInvalid:unmatchedInvalid,
     responseOnlyProvenanceInvalid:provenanceIncomplete,
     finishedWithoutMetadata:resources.filter(row=>row.status==='finished-without-metadata').length,
@@ -478,6 +532,7 @@ function summarize(runDir,host,productCommit,testCommit,label)
   };
   const invalid=unmatchedInvalid>0 || provenanceIncomplete>0 ||
     captureInfo.responseOnly!==responseOnly.length ||
+    cssReplayWarningCount!==cssSourceEvidence.withMatchingArchivedCssContent ||
     audit.counts?.missingOrCorrupt!==0 ||
     audit.counts?.discrepancies!==0 ||
     ['failed','interrupted'].includes(audit.status);
@@ -547,7 +602,7 @@ async function main()
       readJsonl(path.join(runDir,'cdp-wire.jsonl'))),
     crossTarget:_crossTargetCandidates(runDir),
     bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
-    independentCssSource:_stylesheetSourceEvidence(runDir),
+    independentCssSource:cssSourceEvidence,
     pageClassification:_amazonPageClass(runDir,label)
   };
   const reportName='response-only-'+label+'-'+runToken+'.json';
