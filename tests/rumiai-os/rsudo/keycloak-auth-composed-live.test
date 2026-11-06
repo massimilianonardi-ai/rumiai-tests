@@ -153,6 +153,36 @@ cat > "$tmp/client.json" <<'CLIENT_JSON'
   "secret": "k04-disposable-client-secret"
 }
 CLIENT_JSON
+# Separate ordinary user and confidential Authorization Code client. The
+# loopback callback is registered once, with Keycloak's ephemeral-port rule.
+cat > "$tmp/code-client.json" <<'CODE_CLIENT'
+{
+  "clientId":"k04-code-joined",
+  "enabled":true,
+  "protocol":"openid-connect",
+  "publicClient":false,
+  "standardFlowEnabled":true,
+  "directAccessGrantsEnabled":false,
+  "serviceAccountsEnabled":false,
+  "secret":"k04-disposable-client-secret",
+  "redirectUris":["http://127.0.0.1/oidc/callback"],
+  "attributes":{"pkce.code.challenge.method":"S256"}
+}
+CODE_CLIENT
+cat > "$tmp/code-user.json" <<'CODE_USER'
+{
+  "username":"k04-code-joined-user",
+  "firstName":"Test",
+  "lastName":"User",
+  "email":"k04-code-joined@example.invalid",
+  "emailVerified":true,
+  "enabled":true,
+  "requiredActions":[],
+  "credentials":[{"type":"password","value":"k04-code-only-user-password","temporary":false}]
+}
+CODE_USER
+printf '%s' 'k04-code-only-user-password' > "$tmp/code-user-password" ||
+  error 'disposable code-login user password unavailable'
 cat > "$tmp/client-mtls.json" <<'CLIENT_MTLS_JSON'
 {
   "clientId": "k04-mtls",
