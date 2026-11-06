@@ -97,7 +97,11 @@ rsudo()
 {
   docker exec -i "$APISIX_CONVERGENCE_TEST_CID" "$@"
 }
-rsudo_mod_apisix_mode "$@"
+case "${APISIX_CONVERGENCE_TEST_OPERATION:-mode}" in
+  mode) rsudo_mod_apisix_mode "$@" ;;
+  runtime) rsudo_mod_apisix_runtime "$@" ;;
+  *) exit 83 ;;
+esac
 PROBE
 chmod 700 "$tmp/bin/rsudo-apisix-file-convergence-probe" ||
   error 'cannot enable real m probe'
@@ -242,6 +246,50 @@ CONFIG
         # This is APISIX's built-in control router, not a test-side
         # reconstruction of the document on disk. Keep it loopback-only in
         # the isolated container: Control API responses can expose config.
+        # Match the selected real product runtime observer's master PID to
+        # the kernel-owned loopback TCP listener. The Control API itself is
+        # not an authenticated Admin interface and is never exposed publicly.
+        observed_runtime=$(APISIX_CONVERGENCE_TEST_CID="$cid" \
+          APISIX_CONVERGENCE_TEST_OPERATION=runtime PATH="$tmp/bin:$PATH" \
+          "$root/m" rsudo-apisix-file-convergence-probe \
+          /usr/local/apisix 2>"$tmp/probe-stderr")
+        runtime_status=$?
+        master_pid=$(docker exec "$cid" cat /usr/local/apisix/logs/nginx.pid) ||
+          error "$release cannot read master pidfile for Control API attribution"
+        if [ "$runtime_status" -ne 0 ] ||
+           ! printf '%s\n' "$observed_runtime" |
+             grep -Fx "process_pid=$master_pid" >/dev/null
+        then
+          cat "$tmp/probe-stderr" >&2 || :
+          fail "$release runtime observer and selected master do not match"
+        fi
+        case "$observed_runtime" in
+          *'runtime_identity=process-consistent-config-unverified'*'mutation_readiness=not-established') : ;;
+          *) fail "$release runtime incorrectly asserted loaded source or write readiness" ;;
+        esac
+        docker exec -i "$cid" sh -s -- "$master_pid" <<'CONTROL_SOCKET'
+pid=$1
+[ -r "/proc/$pid/net/tcp" ] || exit 71
+command -v awk >/dev/null 2>&1 || exit 72
+command -v readlink >/dev/null 2>&1 || exit 73
+# 127.0.0.1:9090 = 0100007F:2382 in Linux /proc/net/tcp
+inode=$(awk '$2=="0100007F:2382" && $4=="0A" {print $10}' \
+  "/proc/$pid/net/tcp") || exit 74
+case "$inode" in
+  ''|*[!0-9]*) exit 75 ;;
+esac
+for fd in "/proc/$pid/fd/"*
+do
+  target=$(readlink "$fd" 2>/dev/null) || continue
+  [ "$target" = "socket:[$inode]" ] && exit 0
+done
+exit 76
+CONTROL_SOCKET
+        socket_status=$?
+        [ "$socket_status" -eq 0 ] ||
+          fail "$release observed master does not own isolated Control API listener (status $socket_status)"
+        printf '%s\n' "$TEST_ID: worker control $release socket=master-owned-loopback-9090"
+
         control_old=$(http_status /v1/route/rsudo-file-yaml-route 9090) ||
           error "$release cannot observe built-in worker route"
         control_new=$(http_status /v1/route/rsudo-file-yaml-reloaded-route 9090) ||
