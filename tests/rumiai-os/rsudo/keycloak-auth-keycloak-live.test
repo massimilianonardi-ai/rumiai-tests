@@ -952,6 +952,59 @@ if claims.get("sub") != sys.argv[2]:
     raise SystemExit("JWT grant returned wrong local user")
 JAG_CLAIMS
 
+  # Exercise the public K04 acquisition path against the same real,
+  # independently enabled RFC 7523 grant. A newly signed assertion is used
+  # because the earlier direct request already consumed its own assertion.
+  python3 "$tmp/sign-federated-jwt.py" "$jag_issuer" \
+    k04-jag-external-user "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/jag-rsudo-$version" ||
+    error "Keycloak $version public JWT grant assertion signing failed"
+  jag_rsudo=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode jwt-bearer --client-id k04-jag-client \
+    --client-auth client-secret-post --client-secret-file "$tmp/secret" \
+    --assertion-file "$tmp/jag-rsudo-$version" \
+    --token-store "$tmp/token-jag-rsudo-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  jag_rsudo_status=$?
+  [ "$jag_rsudo_status" -eq 0 ] &&
+    printf '%s\n' "$jag_rsudo" | jq -e \
+      '.stored == true and .grant == "urn:ietf:params:oauth:grant-type:jwt-bearer"' >/dev/null &&
+    jq -e '(.access_token | type == "string" and length > 0) and
+      (has("refresh_token") | not)' "$tmp/token-jag-rsudo-$version" >/dev/null ||
+    fail "Keycloak $version public JWT authorization grant acquisition failed ($jag_rsudo_status)"
+  result=$(probe status --token-file "$tmp/token-jag-rsudo-$version" 2>"$tmp/auth.err")
+  [ "$?" -eq 0 ] && [ "$result" = '{"stored":true,"server_validated":false}' ] ||
+    fail "Keycloak $version RFC7523 protected store offline status failed"
+  cp "$tmp/token-jag-rsudo-$version" "$tmp/jag-rsudo-before-replay-$version" ||
+    error "Keycloak $version RFC7523 store snapshot failed"
+  jag_repeat=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode jwt-bearer --client-id k04-jag-client \
+    --client-auth client-secret-post --client-secret-file "$tmp/secret" \
+    --assertion-file "$tmp/jag-rsudo-$version" \
+    --token-store "$tmp/token-jag-replay-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  jag_repeat_status=$?
+  [ "$jag_repeat_status" -eq 72 ] && [ -z "$jag_repeat" ] &&
+    [ ! -e "$tmp/token-jag-replay-$version" ] &&
+    cmp -s "$tmp/token-jag-rsudo-$version" "$tmp/jag-rsudo-before-replay-$version" ||
+    fail "Keycloak $version public JWT grant replay was not rejected safely ($jag_repeat_status)"
+  printf 'not-a-compact-jwt\n' > "$tmp/jag-malformed-$version"
+  jag_malformed=$(probe acquire --server "$base" --issuer-realm master \
+    --auth-mode jwt-bearer --client-id k04-jag-client \
+    --client-auth client-secret-post --client-secret-file "$tmp/secret" \
+    --assertion-file "$tmp/jag-malformed-$version" \
+    --token-store "$tmp/token-jag-malformed-$version" \
+    --ca-file "$tmp/image/server.pem" 2>"$tmp/auth.err")
+  jag_malformed_status=$?
+  [ "$jag_malformed_status" -eq 70 ] && [ -z "$jag_malformed" ] &&
+    [ ! -e "$tmp/token-jag-malformed-$version" ] ||
+    fail "Keycloak $version malformed JWT grant assertion was accepted ($jag_malformed_status)"
+  for sensitive in k04-protected-client-secret k04-jag-external-user
+  do
+    grep -F "$sensitive" "$tmp/auth.err" >/dev/null &&
+      fail "Keycloak $version JWT grant diagnostics disclosed protected material"
+  done
+
   # A one-use assertion must not be accepted on replay.
   jag_replay_http=$(jag_token_request "$tmp/jag-valid-$version" \
     "$tmp/jag-replay-$version" "$base" k04-jag-client) ||
