@@ -15,7 +15,7 @@ resolve_test_dir()
   [ "$dir" != "$self" ] || dir=.
   CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
 }
-cid= image_tag= tmp=
+cid= image_tag= tmp= loopback_pid=
 stop_keycloak()
 {
   [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
@@ -25,6 +25,12 @@ stop_keycloak()
 }
 cleanup()
 {
+  if [ -n "$loopback_pid" ]
+  then
+    kill "$loopback_pid" 2>/dev/null || :
+    wait "$loopback_pid" 2>/dev/null || :
+    loopback_pid=
+  fi
   stop_keycloak
   [ -z "$tmp" ] || rm -rf "$tmp"
 }
@@ -448,6 +454,25 @@ elif mode == "redirect":
             not query["code"][0] or "error" in query):
         raise ValueError("authorization code/state not verified")
     write(code_path, query["code"][0])
+elif mode == "deliver":
+    # Navigate to a local callback without exposing the one-time code in argv.
+    from urllib.request import build_opener, ProxyHandler
+    headers_path, expected_url = sys.argv[2:]
+    with open(headers_path, encoding="iso-8859-1") as source:
+        locations = [
+            line.partition(":")[2].strip()
+            for line in source if line.lower().startswith("location:")
+        ]
+    if len(locations) != 1:
+        raise ValueError("missing or ambiguous authorization redirect")
+    uri, expected = urlsplit(locations[0]), urlsplit(expected_url)
+    if (uri.scheme, uri.netloc, uri.path, uri.fragment) != (
+        expected.scheme, expected.netloc, expected.path, ""
+    ) or uri.scheme != "http" or uri.hostname != "127.0.0.1":
+        raise ValueError("unexpected local callback origin or path")
+    with build_opener(ProxyHandler({})).open(locations[0], timeout=5) as response:
+        if response.status != 200:
+            raise ValueError("loopback callback rejected navigation")
 elif mode == "error-redirect":
     headers_path, expected_url, expected_state = sys.argv[2:]
     with open(headers_path, encoding="iso-8859-1") as source:
@@ -485,6 +510,65 @@ elif mode == "claims":
 else:
     raise ValueError("unknown auth-code test helper mode")
 CODE_BROWSER_PY
+# Disposable one-shot host callback. No publicly bound port or code log.
+# This remains a test fixture, not a new product service.
+cat > "$tmp/code-loopback.py" <<'CODE_LOOPBACK_PY'
+import json
+import os
+from http.server import BaseHTTPRequestHandler
+from socketserver import TCPServer
+import sys
+from urllib.parse import parse_qs, urlsplit
+
+config_path, port_path, code_path = sys.argv[1:]
+os.umask(0o077)
+with open(config_path, encoding="utf-8") as source:
+    expected = json.load(source)
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass  # Request URL contains authorization code.
+
+    def do_GET(self):
+        uri = urlsplit(self.path)
+        params = parse_qs(uri.query, keep_blank_values=True)
+        valid = (uri.path == "/oidc/callback" and not uri.fragment and
+                 params.get("state") == [expected["state"]] and
+                 len(params.get("code", [])) == 1 and
+                 bool(params["code"][0]) and "error" not in params and
+                 params.get("iss", [expected["issuer"]]) == [expected["issuer"]])
+        if not valid:
+            self.send_response(400)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        try:
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            fd = os.open(code_path, flags, 0o600)
+            try:
+                os.write(fd, params["code"][0].encode("ascii"))
+            finally:
+                os.close(fd)
+        except (OSError, UnicodeEncodeError):
+            self.send_response(400)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Authorization response received.")
+
+with TCPServer(("127.0.0.1", 0), Handler) as server:
+    with open(port_path, "x", encoding="ascii") as target:
+        target.write(str(server.server_address[1]))
+    server.timeout = 80
+    server.handle_request()
+CODE_LOOPBACK_PY
+
 cat > "$tmp/sign-federated-jwt.py" <<'PYFEDERATED'
 import base64
 import json
