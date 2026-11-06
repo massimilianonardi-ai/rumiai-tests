@@ -1089,6 +1089,126 @@ do
   printf '%s: Keycloak %s real federated issuer JWT grant and signature/audience rejection verified\n' \
     "$TEST_ID" "$version"
 
+  # K04 pending grant: first prove real Keycloak authorization-code with
+  # registered redirect, state and S256 through an actual login session.
+  # This is independent server evidence, not an rsudo public-mode claim.
+  jq -e '(.code_challenge_methods_supported // []) |
+    index("S256") != null' "$tmp/ready" >/dev/null ||
+    fail "Keycloak $version discovery does not advertise PKCE S256"
+  code_client_http=$(transport --output "$tmp/code-client-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/code-client.json" \
+    --url "$base/admin/realms/master/clients") ||
+    error "Keycloak $version authorization-code client provisioning transport failed"
+  [ "$code_client_http" = 201 ] ||
+    fail "Keycloak $version authorization-code client not accepted ($code_client_http)"
+  code_user_http=$(transport --output "$tmp/code-user-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/code-user.json" \
+    --url "$base/admin/realms/master/users") ||
+    error "Keycloak $version authorization-code user provisioning transport failed"
+  [ "$code_user_http" = 201 ] ||
+    fail "Keycloak $version authorization-code user not accepted ($code_user_http)"
+  code_user_lookup_http=$(transport \
+    --output "$tmp/code-users-$version" --write-out '%{http_code}' \
+    --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/users?username=k04-code-user&exact=true") ||
+    error "Keycloak $version authorization-code local user lookup failed"
+  [ "$code_user_lookup_http" = 200 ] ||
+    fail "Keycloak $version authorization-code user lookup HTTP $code_user_lookup_http"
+  code_user_uuid=$(jq -er \
+    '.[] | select(.username == "k04-code-user") | .id' \
+    "$tmp/code-users-$version") ||
+    fail "Keycloak $version authorization-code user UUID unavailable"
+
+  code_authorize positive
+  positive_http=$(code_exchange positive \
+    "$tmp/code-verifier-$version-positive" \
+    https://k04-client.example.invalid/oidc/callback \
+    "$tmp/code-token-$version") ||
+    error "Keycloak $version authorization-code exchange transport failed"
+  [ "$positive_http" = 200 ] &&
+    jq -e '(.access_token | type == "string" and length > 0) and
+      (.id_token | type == "string" and length > 0) and
+      (.refresh_token | type == "string" and length > 0)' \
+      "$tmp/code-token-$version" >/dev/null ||
+    fail "Keycloak $version authorization-code PKCE exchange denied ($positive_http)"
+  python3 "$tmp/code-browser.py" claims "$tmp/code-token-$version" \
+    "$base/realms/master" k04-code-client "$code_user_uuid" \
+    "k04-nonce-$version-positive" ||
+    fail "Keycloak $version authorization-code OIDC identity/nonce mismatch"
+
+  # An authenticated normal user is not an administrator: the bearer
+  # obtained from the code grant must not silently acquire Admin REST roles.
+  jq -jr '.access_token' "$tmp/code-token-$version" \
+    > "$tmp/code-bearer-$version" ||
+    error "Keycloak $version protected authorization-code bearer unavailable"
+  printf 'Authorization: Bearer %s\n' \
+    "$(cat "$tmp/code-bearer-$version")" > "$tmp/code-admin-header-$version" ||
+    error "Keycloak $version protected user bearer header unavailable"
+  code_admin_http=$(transport --output "$tmp/code-admin-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/code-admin-header-$version" \
+    --url "$base/admin/realms/master") ||
+    error "Keycloak $version authorization-code Admin REST probe transport failed"
+  [ "$code_admin_http" = 403 ] ||
+    fail "Keycloak $version ordinary browser user crossed Admin REST boundary ($code_admin_http)"
+
+  code_replay_http=$(code_exchange positive \
+    "$tmp/code-verifier-$version-positive" \
+    https://k04-client.example.invalid/oidc/callback \
+    "$tmp/code-replay-response-$version") ||
+    error "Keycloak $version authorization-code replay transport failed"
+  [ "$code_replay_http" = 400 ] &&
+    jq -e '.error == "invalid_grant"' \
+      "$tmp/code-replay-response-$version" >/dev/null ||
+    fail "Keycloak $version accepted an already redeemed authorization code ($code_replay_http)"
+
+  # Each negative gets its own fresh authenticated browser session so that
+  # rejected verifier/redirect checks are not conflated with replay.
+  code_authorize wrong-verifier
+  printf '%s' 'invalid-pkce-verifier-with-sufficient-length-0123456789' \
+    > "$tmp/code-wrong-verifier-$version" ||
+    error "Keycloak $version wrong-verifier fixture unavailable"
+  code_wrong_verifier_http=$(code_exchange wrong-verifier \
+    "$tmp/code-wrong-verifier-$version" \
+    https://k04-client.example.invalid/oidc/callback \
+    "$tmp/code-wrong-verifier-response-$version") ||
+    error "Keycloak $version wrong PKCE verifier transport failed"
+  [ "$code_wrong_verifier_http" = 400 ] &&
+    jq -e '.error == "invalid_grant"' \
+      "$tmp/code-wrong-verifier-response-$version" >/dev/null ||
+    fail "Keycloak $version accepted wrong PKCE verifier ($code_wrong_verifier_http)"
+
+  code_authorize wrong-redirect
+  code_wrong_redirect_http=$(code_exchange wrong-redirect \
+    "$tmp/code-verifier-$version-wrong-redirect" \
+    https://k04-client.example.invalid/oidc/other \
+    "$tmp/code-wrong-redirect-response-$version") ||
+    error "Keycloak $version mismatched callback transport failed"
+  [ "$code_wrong_redirect_http" = 400 ] &&
+    jq -e '.error == "invalid_grant"' \
+      "$tmp/code-wrong-redirect-response-$version" >/dev/null ||
+    fail "Keycloak $version redeemed authorization code with other redirect ($code_wrong_redirect_http)"
+
+  # The client's configured PKCE S256 policy must deny an authorization
+  # request without its challenge before issuing any interactive login.
+  code_missing_challenge_http=$(transport --get \
+    --output "$tmp/code-missing-challenge-$version" \
+    --write-out '%{http_code}' \
+    --data-urlencode 'response_type=code' \
+    --data-urlencode 'scope=openid' \
+    --data-urlencode 'client_id=k04-code-client' \
+    --data-urlencode 'redirect_uri=https://k04-client.example.invalid/oidc/callback' \
+    --data-urlencode 'state=k04-missing-challenge' \
+    --url "$base/realms/master/protocol/openid-connect/auth") ||
+    error "Keycloak $version PKCE omission transport failed"
+  [ "$code_missing_challenge_http" = 400 ] ||
+    fail "Keycloak $version allowed a PKCE-less browser authorization request ($code_missing_challenge_http)"
+  printf '%s: Keycloak %s real authorization-code browser session, state, S256, replay, redirect and user permission boundary verified\n' \
+    "$TEST_ID" "$version"
+
   # RFC 7523 authorization grant: separate trust/client/linked-user path.
   # Do not credit federated client-authentication success to this grant.
   jag_idp_code=$(transport --output "$tmp/jag-idp-response-$version" \
