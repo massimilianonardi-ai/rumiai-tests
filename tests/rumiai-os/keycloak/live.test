@@ -103,6 +103,15 @@ for version in 26.7.3 26.8.1; do
     error 'bootstrap bearer extraction failed'
   chmod 600 "$tmp/admin-access"
   admin() { cli --token-file "$tmp/admin-access" "$@"; }
+  # Operator normal path: the existing admin-cli Direct Access Grant
+  # avoids first provisioning a separate service account in a fresh realm.
+  cli --username cliadmin --password-file "$tmp/bootstrap-pass" \
+    get /admin/serverinfo > "$tmp/direct-user-info" 2>"$tmp/cli.err" ||
+    fail "Keycloak $version public admin-cli user login failed: $(cat "$tmp/cli.err")"
+  jq -e --arg v "$version" '.systemInfo.version == $v' \
+    "$tmp/direct-user-info" >/dev/null ||
+    fail "Keycloak $version direct user-login Admin REST response mismatched"
+
   admin get /admin/serverinfo > "$tmp/serverinfo" 2>"$tmp/cli.err" ||
     fail "Keycloak $version direct GET failed: $(cat "$tmp/cli.err")"
   jq -e --arg v "$version" '.systemInfo.version == $v' "$tmp/serverinfo" \
