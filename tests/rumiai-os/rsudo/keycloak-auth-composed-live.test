@@ -524,6 +524,119 @@ else:
     raise ValueError("unsupported code/browser fixture mode")
 CODE_BROWSER_PY
 
+# Test-only target exchange: one-use code/verifier arrive exclusively
+# on rsudo stdin; the configured confidential secret stays on sudo target.
+cat > "$tmp/code-remote-exchange.sh" <<'REMOTE_EXCHANGE'
+#!/bin/sh
+set -eu
+set +x
+umask 077
+[ "$#" -eq 1 ] || exit 64
+case "$1" in acquire|replay) mode=$1 ;; *) exit 64 ;; esac
+root=/root/keycloak
+work=$(mktemp -d "$root/code-exchange.XXXXXX") || exit 70
+trap 'rm -rf "$work"' 0
+trap 'exit 70' 1 2 3 15
+IFS= read -r code || exit 70
+IFS= read -r verifier || exit 70
+IFS= read -r redirect || exit 70
+IFS= read -r nonce || exit 70
+IFS= read -r subject || exit 70
+[ -n "$code" ] && [ "${#code}" -le 4096 ] &&
+  [ -n "$nonce" ] && [ "${#nonce}" -le 256 ] &&
+  [ -n "$subject" ] && [ "${#subject}" -le 128 ] || exit 70
+[ "${#verifier}" -ge 43 ] && [ "${#verifier}" -le 128 ] || exit 70
+case "$verifier" in *[!A-Za-z0-9_-]*) exit 70 ;; esac
+case "$redirect" in
+  http://127.0.0.1:*/oidc/callback) : ;;
+  *) exit 65 ;;
+esac
+port=${redirect#http://127.0.0.1:}
+port=${port%/oidc/callback}
+case "$port" in ''|*[!0-9]*) exit 65 ;; esac
+[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || exit 65
+printf %s "$code" > "$work/code"
+printf %s "$verifier" > "$work/verifier"
+printf %s "$redirect" > "$work/redirect"
+printf %s "$nonce" > "$work/nonce"
+printf %s "$subject" > "$work/subject"
+unset code verifier redirect nonce subject
+http=$(curl -q --silent --show-error --noproxy '*' --proxy '' \
+  --proto '=https' --max-redirs 0 --connect-timeout 4 --max-time 25 \
+  --cacert "$root/ca.pem" --output "$work/response" \
+  --write-out '%{http_code}' \
+  --data-urlencode grant_type=authorization_code \
+  --data-urlencode client_id=k04-code-joined \
+  --data-urlencode "client_secret@$root/secret" \
+  --data-urlencode "code@$work/code" \
+  --data-urlencode "code_verifier@$work/verifier" \
+  --data-urlencode "redirect_uri@$work/redirect" \
+  --url https://127.0.0.1:8443/realms/master/protocol/openid-connect/token) ||
+  exit 69
+if [ "$mode" = replay ]
+then
+  [ "$http" = 400 ] && jq -e '.error == "invalid_grant"' \
+    "$work/response" >/dev/null || exit 72
+  printf '{"replay_rejected":true}\n'
+  exit 0
+fi
+[ "$http" = 200 ] || exit 72
+python3 "$root/code-verify-claims.py" "$work/response" \
+  "$work/nonce" "$work/subject" || exit 67
+# Same-directory hardlink: exclusive atomic publication, never overwrite.
+ln "$work/response" "$root/code-joined-store.json" || exit 70
+printf '{"stored":true,"grant":"authorization_code"}\n'
+REMOTE_EXCHANGE
+chmod 700 "$tmp/code-remote-exchange.sh" ||
+  error 'test-only protected remote exchange script unavailable'
+cat > "$tmp/code-verify-claims.py" <<'VERIFY_CLAIMS'
+import base64
+import json
+import sys
+import time
+
+
+def payload(encoded):
+    parts = encoded.split(".")
+    if len(parts) != 3:
+        raise ValueError("not a three-part JWT")
+    data = parts[1]
+    return json.loads(base64.urlsafe_b64decode(
+        data + "=" * (-len(data) % 4)
+    ))
+
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as response:
+        token = json.load(response)
+    with open(sys.argv[2], encoding="ascii") as n:
+        nonce = n.read()
+    with open(sys.argv[3], encoding="ascii") as s:
+        subject = s.read()
+    access = payload(token["access_token"])
+    identity = payload(token["id_token"])
+    issuer = "https://127.0.0.1:8443/realms/master"
+    client = "k04-code-joined"
+    now = time.time()
+    valid = (token.get("token_type", "").lower() == "bearer" and
+             isinstance(token.get("refresh_token"), str) and
+             len(token["refresh_token"]) > 0 and
+             access.get("iss") == issuer and identity.get("iss") == issuer and
+             access.get("azp") == client and
+             identity.get("aud") == client and
+             identity.get("nonce") == nonce and
+             identity.get("sub") == subject and
+             access.get("sub") == subject and
+             access.get("exp", 0) > now and
+             identity.get("exp", 0) > now)
+    if not valid:
+        raise ValueError("trusted issuer token claims not bound to transaction")
+except (OSError, ValueError, TypeError, KeyError, IndexError):
+    sys.exit(1)
+VERIFY_CLAIMS
+chmod 700 "$tmp/code-verify-claims.py" ||
+  error 'test-only claims verifier unavailable'
+
 cat > "$tmp/ssh/Dockerfile" <<'SSH_DOCKERFILE'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
