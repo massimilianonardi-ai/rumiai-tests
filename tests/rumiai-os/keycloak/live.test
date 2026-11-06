@@ -85,7 +85,7 @@ for version in 26.7.3 26.8.1; do
     sleep 1
   done
   cli() {
-    "$root/m" keycloak --server "$base" --realm master \
+    "$root/m" keycloak admin --server "$base" --realm master \
       --ca-file "$tmp/image/cert.pem" "$@"
   }
   cli discovery > "$tmp/discovery" 2>"$tmp/cli.err" ||
