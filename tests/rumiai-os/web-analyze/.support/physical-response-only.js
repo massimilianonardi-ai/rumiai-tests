@@ -94,6 +94,65 @@ function cdpWireLifecycleEvents(rows)
   return events;
 }
 
+// For a finish with no preceding start in its own CDP session, report only
+// which other events were actually observed before it. Cache/service-worker
+// flags are provenance hints, not an explanation for the absent start.
+function classifyOrphanFinishes(wire)
+{
+  const records=new Map();
+  const result={
+    orphanFinishes:0,
+    withPriorResponse:0,
+    withoutPriorResponse:0,
+    responseFromDiskCache:0,
+    responseFromServiceWorker:0,
+    responseServedFromCacheEvent:0,
+    responseOnlyStylesheet:0,
+    responseOnlyOtherType:0,
+    responseOnlyTypeUnknown:0
+  };
+  for(const row of wire)
+  {
+    if(row.direction!=='inbound')continue;
+    let packet;
+    try{packet=JSON.parse(row.raw);}catch(_){continue;}
+    if(!['Network.requestWillBeSent','Network.responseReceived',
+      'Network.requestServedFromCache','Network.loadingFinished'].includes(packet.method))
+      continue;
+    const id=packet.params?.requestId;
+    if(id===undefined || id===null)continue;
+    const identity=key({session:packet.sessionId||'__root__',requestId:id});
+    if(!records.has(identity))
+      records.set(identity,{started:false,response:null,cache:false});
+    const item=records.get(identity);
+    if(packet.method==='Network.requestWillBeSent')
+      item.started=true;
+    else if(packet.method==='Network.responseReceived')
+      item.response=packet.params;
+    else if(packet.method==='Network.requestServedFromCache')
+      item.cache=true;
+    else if(!item.started)
+    {
+      result.orphanFinishes++;
+      if(item.response)
+      {
+        result.withPriorResponse++;
+        if(item.response.response?.fromDiskCache===true)
+          result.responseFromDiskCache++;
+        if(item.response.response?.fromServiceWorker===true)
+          result.responseFromServiceWorker++;
+        if(item.response.type==='Stylesheet')result.responseOnlyStylesheet++;
+        else if(typeof item.response.type==='string')
+          result.responseOnlyOtherType++;
+        else result.responseOnlyTypeUnknown++;
+      }
+      else result.withoutPriorResponse++;
+      if(item.cache)result.responseServedFromCacheEvent++;
+    }
+  }
+  return {...result,meaning:'observed-prior-events-only-no-inferred-cause'};
+}
+
 // A requestId is scoped to a CDP session. Multiple starts can also
 // represent redirects; do not manufacture a one-to-one lifecycle in that case.
 function summarizeSessionLifecycle(events)
@@ -484,6 +543,8 @@ async function main()
   result.diagnostics={
     sameSessionLifecycle:summarizeSessionLifecycle(cdpWireLifecycleEvents(
       readJsonl(path.join(runDir,'cdp-wire.jsonl')))),
+    orphanFinishEvidence:classifyOrphanFinishes(
+      readJsonl(path.join(runDir,'cdp-wire.jsonl'))),
     crossTarget:_crossTargetCandidates(runDir),
     bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
     independentCssSource:_stylesheetSourceEvidence(runDir),
@@ -505,4 +566,4 @@ if (require.main===module) main().catch(error=>{
   process.exitCode=3;
 });
 
-module.exports={correlateCrossTargets,summarizeSessionLifecycle,cdpWireLifecycleEvents};
+module.exports={correlateCrossTargets,summarizeSessionLifecycle,cdpWireLifecycleEvents,classifyOrphanFinishes};
