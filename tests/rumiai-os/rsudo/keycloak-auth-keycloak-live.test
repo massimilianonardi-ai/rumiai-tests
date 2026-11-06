@@ -1209,10 +1209,40 @@ do
   jq -e '(.code_challenge_methods_supported // []) |
     index("S256") != null' "$tmp/ready" >/dev/null ||
     fail "Keycloak $version discovery does not advertise PKCE S256"
+  # Bind before the authorization request; register only the selected
+  # loopback port on this disposable confidential test client.
+  jq -n --arg state "k04-state-$version-loopback" \
+    --arg issuer "$base/realms/master" \
+    '{state:$state,issuer:$issuer}' > "$tmp/code-loopback-config-$version.json" ||
+    error "Keycloak $version loopback state unavailable"
+  python3 "$tmp/code-loopback.py" \
+    "$tmp/code-loopback-config-$version.json" \
+    "$tmp/code-loopback-port-$version" \
+    "$tmp/code-grant-$version-loopback" > "$tmp/code-loopback-output-$version" 2>&1 &
+  loopback_pid=$!
+  tries=0
+  until [ -s "$tmp/code-loopback-port-$version" ]
+  do
+    kill -0 "$loopback_pid" 2>/dev/null ||
+      error "Keycloak $version loopback listener exited before bind"
+    tries=$((tries+1))
+    [ "$tries" -lt 80 ] ||
+      error "Keycloak $version loopback listener did not bind"
+    sleep 0.1
+  done
+  loopback_port=$(cat "$tmp/code-loopback-port-$version") ||
+    error "Keycloak $version loopback port read failed"
+  case "$loopback_port" in
+    ''|*[!0-9]*) error "Keycloak $version invalid loopback callback port" ;;
+  esac
+  loopback_uri=http://127.0.0.1:$loopback_port/oidc/callback
+  jq --arg uri "$loopback_uri" '.redirectUris += [$uri]' \
+    "$tmp/code-client.json" > "$tmp/code-client-active-$version.json" ||
+    error "Keycloak $version exact loopback registration unavailable"
   code_client_http=$(transport --output "$tmp/code-client-response-$version" \
     --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
     --header 'Content-Type: application/json' \
-    --data-binary "@$tmp/code-client.json" \
+    --data-binary "@$tmp/code-client-active-$version.json" \
     --url "$base/admin/realms/master/clients") ||
     error "Keycloak $version authorization-code client provisioning transport failed"
   [ "$code_client_http" = 201 ] ||
@@ -1236,6 +1266,25 @@ do
     '.[] | select(.username == "k04-code-user") | .id' \
     "$tmp/code-users-$version") ||
     fail "Keycloak $version authorization-code user UUID unavailable"
+
+  code_authorize loopback "$loopback_uri"
+  wait "$loopback_pid" ||
+    fail "Keycloak $version loopback listener did not terminate"
+  loopback_pid=
+  loopback_http=$(code_exchange loopback \
+    "$tmp/code-verifier-$version-loopback" "$loopback_uri" \
+    "$tmp/code-loopback-token-$version") ||
+    error "Keycloak $version loopback authorization code exchange failed"
+  [ "$loopback_http" = 200 ] &&
+    jq -e '(.access_token | type == "string" and length > 0) and
+      (.id_token | type == "string" and length > 0)' \
+      "$tmp/code-loopback-token-$version" >/dev/null &&
+    python3 "$tmp/code-browser.py" claims "$tmp/code-loopback-token-$version" \
+      "$base/realms/master" k04-code-client "$code_user_uuid" \
+      "k04-nonce-$version-loopback" ||
+    fail "Keycloak $version registered loopback callback/code exchange failed ($loopback_http)"
+  printf '%s: Keycloak %s one-shot loopback OAuth callback and PKCE S256 exchange verified\n' \
+    "$TEST_ID" "$version"
 
   code_authorize positive
   positive_http=$(code_exchange positive \
