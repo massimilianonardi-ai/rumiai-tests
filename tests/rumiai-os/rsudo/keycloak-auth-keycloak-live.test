@@ -276,6 +276,52 @@ cat > "$tmp/client-federated.json" <<'CLIENT_FEDERATED'
   }]
 }
 CLIENT_FEDERATED
+# RFC 7523 JWT authorization grant is distinct from federated-jwt client
+# authentication. Use a separate issuer, client and linked local user.
+jag_issuer=https://k04-jag-issuer.invalid
+jq -n --rawfile verification_key "$tmp/federated-issuer-public.pem" \
+  --arg issuer "$jag_issuer" '{
+    alias:"k04-jag-idp", providerId:"oidc", enabled:true,
+    config: {
+      issuer:$issuer,
+      clientId:"k04-jag-external",
+      authorizationUrl:($issuer + "/authorize"),
+      tokenUrl:($issuer + "/token"),
+      jwtAuthorizationGrantEnabled:"true",
+      jwtAuthorizationGrantAssertionReuseAllowed:"false",
+      useJwksUrl:"false",
+      validateSignature:"true",
+      publicKeySignatureVerifier:$verification_key
+    }
+  }' > "$tmp/jag-idp.json" ||
+  error 'JWT authorization grant external IdP fixture unavailable'
+cat > "$tmp/jag-client.json" <<'JAG_CLIENT'
+{
+  "clientId": "k04-jag-client",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "secret": "k04-protected-client-secret",
+  "attributes": {
+    "oauth2.jwt.authorization.grant.enabled": "true",
+    "oauth2.jwt.authorization.grant.idp": "k04-jag-idp"
+  }
+}
+JAG_CLIENT
+cat > "$tmp/jag-denied-client.json" <<'JAG_DENIED_CLIENT'
+{
+  "clientId": "k04-jag-denied",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "secret": "k04-protected-client-secret"
+}
+JAG_DENIED_CLIENT
+cat > "$tmp/jag-user.json" <<'JAG_USER'
+{"username":"k04-jag-local-user","enabled":true}
+JAG_USER
+printf '%s' 'k04-protected-client-secret' > "$tmp/jag-secret" ||
+  error 'JWT authorization grant private client secret unavailable'
 cat > "$tmp/sign-federated-jwt.py" <<'PYFEDERATED'
 import base64
 import json
@@ -474,6 +520,18 @@ federated_token_request()
     --data-urlencode \
       client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer \
     --data-urlencode "client_assertion@$1" \
+    --url "$3/realms/master/protocol/openid-connect/token"
+}
+
+# Protected assertion and client-secret bytes are read by curl from
+# private files. A grant assertion is not a client authentication assertion.
+jag_token_request()
+{
+  transport --output "$2" --write-out '%{http_code}' \
+    --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer' \
+    --data-urlencode "client_id=$4" \
+    --data-urlencode "client_secret@$tmp/jag-secret" \
+    --data-urlencode "assertion@$1" \
     --url "$3/realms/master/protocol/openid-connect/token"
 }
 
@@ -816,6 +874,129 @@ do
     "$tmp/federated-wrong-audience-response-$version" >/dev/null ||
     fail "Keycloak $version wrong federated audience lacked invalid_client"
   printf '%s: Keycloak %s real federated issuer JWT grant and signature/audience rejection verified\n' \
+    "$TEST_ID" "$version"
+
+  # RFC 7523 authorization grant: separate trust/client/linked-user path.
+  # Do not credit federated client-authentication success to this grant.
+  jag_idp_code=$(transport --output "$tmp/jag-idp-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-idp.json" \
+    --url "$base/admin/realms/master/identity-provider/instances") ||
+    error "Keycloak $version JWT grant IdP registration transport failed"
+  [ "$jag_idp_code" = 201 ] ||
+    fail "Keycloak $version JWT grant IdP registration HTTP $jag_idp_code"
+  for jag_client in jag-client jag-denied-client
+  do
+    jag_client_code=$(transport \
+      --output "$tmp/$jag_client-response-$version" \
+      --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$tmp/$jag_client.json" \
+      --url "$base/admin/realms/master/clients") ||
+      error "Keycloak $version $jag_client registration transport failed"
+    [ "$jag_client_code" = 201 ] ||
+      fail "Keycloak $version $jag_client registration HTTP $jag_client_code"
+  done
+  jag_user_code=$(transport --output "$tmp/jag-user-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-user.json" \
+    --url "$base/admin/realms/master/users") ||
+    error "Keycloak $version JWT grant local user registration transport failed"
+  [ "$jag_user_code" = 201 ] ||
+    fail "Keycloak $version JWT grant local user registration HTTP $jag_user_code"
+  jag_user_lookup=$(transport --output "$tmp/jag-users-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --url "$base/admin/realms/master/users?username=k04-jag-local-user&exact=true") ||
+    error "Keycloak $version JWT grant local user lookup transport failed"
+  [ "$jag_user_lookup" = 200 ] ||
+    fail "Keycloak $version JWT grant local user lookup HTTP $jag_user_lookup"
+  jag_user_uuid=$(jq -er '.[] | select(.username == "k04-jag-local-user") | .id' \
+    "$tmp/jag-users-$version") ||
+    fail "Keycloak $version JWT grant local user UUID unavailable"
+  jq -n '{identityProvider:"k04-jag-idp",userId:"k04-jag-external-user",userName:"k04-jag-external-user"}' \
+    > "$tmp/jag-link.json" ||
+    error "Keycloak $version JWT grant user link fixture unavailable"
+  jag_link_code=$(transport --output "$tmp/jag-link-response-$version" \
+    --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$tmp/jag-link.json" \
+    --url "$base/admin/realms/master/users/$jag_user_uuid/federated-identity/k04-jag-idp") ||
+    error "Keycloak $version JWT grant user federation link transport failed"
+  [ "$jag_link_code" = 204 ] ||
+    fail "Keycloak $version JWT grant external subject link HTTP $jag_link_code"
+
+  python3 "$tmp/sign-federated-jwt.py" "$jag_issuer" \
+    k04-jag-external-user "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/jag-valid-$version" ||
+    error "Keycloak $version JWT authorization grant assertion signing failed"
+  jag_grant_http=$(jag_token_request "$tmp/jag-valid-$version" \
+    "$tmp/jag-token-$version" "$base" k04-jag-client) ||
+    error "Keycloak $version JWT authorization grant token transport failed"
+  [ "$jag_grant_http" = 200 ] &&
+    jq -e '(.access_token | type == "string" and length > 0) and
+      (has("refresh_token") | not)' "$tmp/jag-token-$version" >/dev/null ||
+    fail "Keycloak $version linked-user RFC7523 grant unsuccessful ($jag_grant_http)"
+  # The local token must identify the linked user, not silently grant an
+  # administrative service-account principal.
+  python3 - "$tmp/jag-token-$version" "$jag_user_uuid" <<'JAG_CLAIMS'
+import base64
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    token = json.load(source)["access_token"]
+part = token.split(".")[1]
+claims = json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))
+if claims.get("sub") != sys.argv[2]:
+    raise SystemExit("JWT grant returned wrong local user")
+JAG_CLAIMS
+
+  # A one-use assertion must not be accepted on replay.
+  jag_replay_http=$(jag_token_request "$tmp/jag-valid-$version" \
+    "$tmp/jag-replay-$version" "$base" k04-jag-client) ||
+    error "Keycloak $version JWT grant replay transport failed"
+  case "$jag_replay_http" in 400|401) : ;; *)
+    fail "Keycloak $version JWT grant accepted replay ($jag_replay_http)" ;;
+  esac
+  # Client authorization is separate from validity of the signed grant.
+  python3 "$tmp/sign-federated-jwt.py" "$jag_issuer" \
+    k04-jag-external-user "$base/realms/master" \
+    "$tmp/federated-issuer.key" "$tmp/jag-denied-$version" ||
+    error "Keycloak $version unauthorized-client grant assertion unavailable"
+  jag_denied_http=$(jag_token_request "$tmp/jag-denied-$version" \
+    "$tmp/jag-denied-response-$version" "$base" k04-jag-denied) ||
+    error "Keycloak $version JWT grant unauthorized-client transport failed"
+  case "$jag_denied_http" in 400|401|403) : ;; *)
+    fail "Keycloak $version unauthorized client received JWT grant ($jag_denied_http)" ;;
+  esac
+  for jag_negative in wrong-key wrong-audience expired unknown-subject
+  do
+    jag_key=$tmp/federated-issuer.key
+    jag_audience=$base/realms/master
+    jag_subject=k04-jag-external-user
+    jag_expiry=180
+    case "$jag_negative" in
+      wrong-key) jag_key=$tmp/federated-untrusted.key ;;
+      wrong-audience) jag_audience=https://unrelated-relying-party.invalid ;;
+      expired) jag_expiry=-30 ;;
+      unknown-subject) jag_subject=k04-jag-unlinked-user ;;
+    esac
+    python3 "$tmp/sign-federated-jwt.py" "$jag_issuer" \
+      "$jag_subject" "$jag_audience" "$jag_key" \
+      "$tmp/jag-$jag_negative-$version" "$jag_expiry" ||
+      error "Keycloak $version JWT grant $jag_negative assertion unavailable"
+    jag_negative_http=$(jag_token_request "$tmp/jag-$jag_negative-$version" \
+      "$tmp/jag-$jag_negative-response-$version" "$base" k04-jag-client) ||
+      error "Keycloak $version JWT grant $jag_negative transport failed"
+    case "$jag_negative_http" in 400|401|403) : ;; *)
+      fail "Keycloak $version accepted JWT grant $jag_negative ($jag_negative_http)" ;;
+    esac
+    jq -e '.error | type == "string" and length > 0' \
+      "$tmp/jag-$jag_negative-response-$version" >/dev/null ||
+      fail "Keycloak $version JWT grant $jag_negative omitted OAuth error"
+  done
+  printf '%s: Keycloak %s RFC7523 linked user grant, replay, audience, signature and client boundaries verified\n' \
     "$TEST_ID" "$version"
 
   # Exercise the actual public K04 module through the m/rsudo entrypoint
