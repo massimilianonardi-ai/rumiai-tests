@@ -31,6 +31,35 @@ async function run(command, args, env) {
 function jsonLines(file) {
   return fs.readFileSync(file,'utf8').split('\n').filter(Boolean).map(JSON.parse);
 }
+function verifySameSessionLifecycleControl() {
+  const {summarizeSessionLifecycle} = require('./physical-response-only.js');
+  const start = (targetId,requestId,elapsedMs,extra={}) => ({
+    type:'request',targetId,requestId,elapsedMs,...extra
+  });
+  const finish = (targetId,requestId,elapsedMs) => ({
+    type:'finished',targetId,requestId,elapsedMs
+  });
+  const events=[
+    start('a','shared',1,{frameId:'frame',loaderId:'loader'}),
+    finish('a','shared',2),
+    start('b','shared',1.2,{frameId:'other',loaderId:'other'}),
+    finish('b','shared',2.2),
+    start('a','redirect',3),start('a','redirect',4),
+    finish('a','redirect',5),
+    finish('a','orphan',6),
+    start('b','unfinished',7),
+    start('b','late',9),finish('b','late',8)
+  ];
+  const actual=summarizeSessionLifecycle(events);
+  assert.equal(actual.uniqueSameSessionCompletions,2);
+  assert.equal(actual.withFrameAndLoader,2);
+  assert.equal(actual.ambiguousRepeatedStarts,1);
+  assert.equal(actual.finishWithoutStart,1);
+  assert.equal(actual.startWithoutFinish,1);
+  assert.equal(actual.invalidOrdering,1);
+  assert.equal(actual.confidence,
+    'same-session-CDP-lifecycle-only-not-cross-session-HTTP-identity');
+}
 function verifyCollisionNegativeControl() {
   const {correlateCrossTargets} = require('./physical-response-only.js');
   const request = (targetId,elapsedMs) => ({
@@ -71,6 +100,7 @@ async function main() {
   const root = process.argv[2];
   assert(root,'rumiai-os root is required');
   verifyCollisionNegativeControl();
+  verifySameSessionLifecycleControl();
   const work = fs.mkdtempSync(path.join(os.tmpdir(),'web-analyze-oopif-'));
   const cross = http.createServer((req,res) => {
     res.setHeader('Content-Type',req.url === '/payload' ? 'text/plain' : 'text/html');
@@ -132,6 +162,12 @@ async function main() {
     assert(attachedFrameTargets.length > 0,
       'process-swap frame identity was not preserved in attached OOPIF target');
     const network = jsonLines(path.join(runDir,'network.jsonl'));
+    const {summarizeSessionLifecycle} = require('./physical-response-only.js');
+    const lifecycle=summarizeSessionLifecycle(network);
+    assert(lifecycle.uniqueSameSessionCompletions>0,
+      'real Chromium produced no session-local complete request lifecycle');
+    assert(lifecycle.withFrameAndLoader>0,
+      'real Chromium produced no matched lifecycle with frame/loader provenance');
     const childDocumentRequests = network.filter(row=>
       row.type==='request' && row.resourceType==='Document' &&
       attachedFrameTargets.some(target=>
