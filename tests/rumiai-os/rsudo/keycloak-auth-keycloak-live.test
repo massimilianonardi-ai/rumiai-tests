@@ -341,7 +341,8 @@ cat > "$tmp/code-client.json" <<'CODE_CLIENT'
   "directAccessGrantsEnabled": false,
   "serviceAccountsEnabled": false,
   "secret": "k04-protected-client-secret",
-  "redirectUris": ["https://k04-client.example.invalid/oidc/callback"],
+  "redirectUris": ["https://k04-client.example.invalid/oidc/callback",
+                   "http://127.0.0.1/oidc/callback"],
   "attributes": {"pkce.code.challenge.method": "S256"}
 }
 CODE_CLIENT
@@ -1259,13 +1260,12 @@ do
   [ "$bad_callback_http" = 400 ] &&
     [ ! -e "$tmp/code-grant-$version-loopback" ] ||
     fail "Keycloak $version loopback callback accepted forged state ($bad_callback_http)"
-  jq --arg uri "$loopback_uri" '.redirectUris += [$uri]' \
-    "$tmp/code-client.json" > "$tmp/code-client-active-$version.json" ||
-    error "Keycloak $version exact loopback registration unavailable"
+  # Keycloak's native loopback pattern authorizes the same path with an
+  # ephemeral port, without changing the confidential client per request.
   code_client_http=$(transport --output "$tmp/code-client-response-$version" \
     --write-out '%{http_code}' --header "@$tmp/bootstrap-header" \
     --header 'Content-Type: application/json' \
-    --data-binary "@$tmp/code-client-active-$version.json" \
+    --data-binary "@$tmp/code-client.json" \
     --url "$base/admin/realms/master/clients") ||
     error "Keycloak $version authorization-code client provisioning transport failed"
   [ "$code_client_http" = 201 ] ||
