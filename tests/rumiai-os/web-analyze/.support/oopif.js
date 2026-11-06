@@ -126,6 +126,23 @@ async function main() {
       row.params?.reason==='swap');
     assert(swapped.length > 0,
       'Chromium did not report a frame process swap');
+    const swappedFrames = new Set(swapped.map(row=>row.params?.frameId));
+    const attachedFrameTargets = attached.filter(row=>
+      swappedFrames.has(row.params?.targetInfo?.targetId));
+    assert(attachedFrameTargets.length > 0,
+      'process-swap frame identity was not preserved in attached OOPIF target');
+    const network = jsonLines(path.join(runDir,'network.jsonl'));
+    const childDocumentRequests = network.filter(row=>
+      row.type==='request' && row.resourceType==='Document' &&
+      attachedFrameTargets.some(target=>
+        target.params?.targetInfo?.targetId===row.frameId));
+    assert(childDocumentRequests.some(row=>
+      typeof row.loaderId==='string' && row.loaderId.length>0),
+      'process-swapped iframe document has no observed frame and loader provenance');
+    const childLoaders = new Set(childDocumentRequests
+      .map(row=>row.loaderId).filter(Boolean));
+    assert(childLoaders.size>0,
+      'no loader identity observed for the process-swapped iframe document');
     const iframeSessions = new Set(attached.map(row=>row.params.sessionId));
     assert(wire.some(row=>row.method==='Runtime.executionContextCreated' &&
       iframeSessions.has(row.sessionId)),
@@ -142,7 +159,7 @@ async function main() {
       'OOPIF natural response body not archived');
     const summary = JSON.parse(fs.readFileSync(path.join(runDir,'summary.json'),'utf8'));
     assert(summary,'summary must remain readable');
-    console.log('Real Chromium OOPIF target, swap, context, DOM and resource evidence verified');
+    console.log('Real Chromium OOPIF swap/frame/loader, context, DOM and resource evidence verified');
   } finally {
     local?.closeAllConnections();
     local?.close();
