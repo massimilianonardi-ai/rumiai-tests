@@ -86,7 +86,7 @@ function cdpWireLifecycleEvents(rows)
        !Number.isSafeInteger(row.sequence))continue;
     events.push({
       type:packet.method==='Network.requestWillBeSent'?'request':'finished',
-      targetId:packet.sessionId||'__root__',
+      sessionId:packet.sessionId||'__root__',
       requestId:params.requestId,elapsedMs:row.sequence,
       frameId:params.frameId,loaderId:params.loaderId
     });
@@ -103,9 +103,9 @@ function summarizeSessionLifecycle(events)
   for(const row of events)
   {
     if(row.type!=='request' && row.type!=='finished')continue;
-    if(typeof row.targetId!=='string' || !row.targetId ||
+    if(typeof row.sessionId!=='string' || !row.sessionId ||
        row.requestId===undefined || row.requestId===null)continue;
-    const id=key({session:row.targetId,requestId:row.requestId});
+    const id=key({session:row.sessionId,requestId:row.requestId});
     const bucket=row.type==='request'?starts:finishes;
     if(!bucket.has(id))bucket.set(id,[]);
     bucket.get(id).push(row);
