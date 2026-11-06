@@ -602,7 +602,8 @@ async function main()
       readJsonl(path.join(runDir,'cdp-wire.jsonl'))),
     crossTarget:_crossTargetCandidates(runDir),
     bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
-    independentCssSource:cssSourceEvidence,
+    independentCssSource:_stylesheetSourceEvidence(runDir,
+      readJsonl(path.join(runDir,'resources.jsonl'))),
     pageClassification:_amazonPageClass(runDir,label)
   };
   const reportName='response-only-'+label+'-'+runToken+'.json';
