@@ -100,7 +100,7 @@ printf 'existing-file-token\n' > "$tmp/token"
 printf '{"username":"alice","enabled":true}\n' > "$tmp/user.json"
 chmod 600 "$tmp/secret" "$tmp/invalid" "$tmp/token"
 invoke() {
-  "$root/m" keycloak --server "$base" --realm master \
+  "$root/m" keycloak admin --server "$base" --realm master \
     --client-id ops --client-secret-file "$tmp/secret" \
     --ca-file "$tmp/server.pem" "$@"
 }
@@ -117,12 +117,12 @@ invoke put /admin/realms/master/users/id --data-file "$tmp/user.json" >"$tmp/out
 invoke delete /admin/realms/master/users/id >"$tmp/out" 2>"$tmp/err" ||
   fail "real HTTPS DELETE: $(cat "$tmp/err")"
 [ ! -s "$tmp/out" ] || fail 'DELETE unexpectedly returned content'
-"$root/m" keycloak --server "$base" --realm master --ca-file "$tmp/server.pem" \
+"$root/m" keycloak admin --server "$base" --realm master --ca-file "$tmp/server.pem" \
   discovery >"$tmp/out" 2>"$tmp/err" ||
   fail "real HTTPS discovery: $(cat "$tmp/err")"
 jq -e '.issuer == "https://127.0.0.1"' "$tmp/out" >/dev/null ||
   fail 'discovery output invalid'
-"$root/m" keycloak --server "$base" --realm master \
+"$root/m" keycloak admin --server "$base" --realm master \
   --token-file "$tmp/token" --ca-file "$tmp/server.pem" \
   get '/admin/realms/master/users?max=2' >"$tmp/out" 2>"$tmp/err" ||
   fail "existing bearer token: $(cat "$tmp/err")"
@@ -132,7 +132,7 @@ invoke get /admin/realms/master/forbidden >"$tmp/out" 2>"$tmp/err"
 [ "$?" -eq 8 ] && [ ! -s "$tmp/out" ] &&
   grep -F 'HTTP 403' "$tmp/err" >/dev/null ||
   fail 'Admin REST 403 not handled'
-"$root/m" keycloak --server "$base" --realm master --client-id ops \
+"$root/m" keycloak admin --server "$base" --realm master --client-id ops \
   --client-secret-file "$tmp/invalid" --ca-file "$tmp/server.pem" \
   get /admin/realms/master/users >"$tmp/out" 2>"$tmp/err"
 [ "$?" -eq 6 ] && grep -F 'HTTP 401' "$tmp/err" >/dev/null ||
@@ -143,11 +143,23 @@ invoke get /admin/realms/master/users >"$tmp/out" 2>"$tmp/err"
 chmod 600 "$tmp/secret"
 invoke get /realms/master >"$tmp/out" 2>"$tmp/err"
 [ "$?" -eq 2 ] || fail 'non-Admin REST path accepted'
-"$root/m" keycloak --server "http://127.0.0.1:1234" --realm master \
+"$root/m" keycloak admin --server "http://127.0.0.1:1234" --realm master \
   discovery >"$tmp/out" 2>"$tmp/err"
 [ "$?" -eq 2 ] || fail 'HTTP Keycloak URL accepted'
 for marker in 'fixture protected secret' 'test-access-token-012345'; do
   grep -F "$marker" "$tmp/err" >/dev/null &&
     fail 'secret was disclosed in diagnostics'
 done
+mkdir -p "$tmp/package-bin" || error 'package launcher fixture unavailable'
+cat > "$tmp/package-bin/keycloak" <<'PACKAGE'
+#!/bin/sh
+printf '%s\n' "$*" 
+PACKAGE
+chmod 700 "$tmp/package-bin/keycloak" ||
+  error 'package launcher fixture not executable'
+delegated=$(m_ROOT="$root" m_BIN_EXT_DIR="$tmp/package-bin" \
+  "$root/bin/sys/keycloak" start-dev --db=dev-mem) ||
+  fail 'existing server package launcher was not preserved'
+[ "$delegated" = 'start-dev --db=dev-mem' ] ||
+  fail 'server package CLI arguments were changed by admin wrapper'
 printf '%s: PASS (public m keycloak, verified TLS, OAuth and Admin REST)\n' "$TEST_ID"
