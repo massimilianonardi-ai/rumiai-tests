@@ -31,9 +31,46 @@ async function run(command, args, env) {
 function jsonLines(file) {
   return fs.readFileSync(file,'utf8').split('\n').filter(Boolean).map(JSON.parse);
 }
+function verifyCollisionNegativeControl() {
+  const {correlateCrossTargets} = require('./physical-response-only.js');
+  const request = (targetId,elapsedMs) => ({
+    type:'request',targetId,requestId:'reused-id',elapsedMs,
+    timestamp:'2026-01-01T00:00:01.000Z',resourceType:'Document',
+    frameId:'child'
+  });
+  const finish = {
+    type:'finished',targetId:'child',requestId:'reused-id',
+    elapsedMs:1200,timestamp:'2026-01-01T00:00:01.200Z'
+  };
+  const graph = {targets:[{
+    targetId:'child',type:'iframe',parentTargetId:'parent',
+    firstSeenAt:'2026-01-01T00:00:01.100Z'
+  }]};
+  const single = correlateCrossTargets([request('parent',1000),finish],graph);
+  assert.equal(single.uniqueCrossTargetIdAndTimeCandidates,1);
+  assert.equal(single.directlyRelatedAndAttachedWithinTransfer,1);
+  assert.equal(single.frameIdentityForIframeCandidates,1);
+  assert.equal(single.confidence,
+    'lineage-evidence-candidates-only-no-automatic-cross-session-merge');
+  // A separate target can legally reuse the same request ID at the same time.
+  // Parent lineage does not authorize selecting the plausible match from a collision.
+  const collision = correlateCrossTargets(
+    [request('parent',1000),request('unrelated',1001),finish],graph);
+  assert.equal(collision.ambiguousCandidates,1);
+  assert.equal(collision.uniqueCrossTargetIdAndTimeCandidates,0);
+  assert.equal(collision.directParentTargetCandidates,0);
+  assert.equal(collision.frameIdentityForIframeCandidates,0);
+  assert.equal(collision.withoutCandidate,0);
+  const none = correlateCrossTargets([request('parent',1000),{
+    ...finish,requestId:'different-id'
+  }],graph);
+  assert.equal(none.withoutCandidate,1);
+  assert.equal(none.uniqueCrossTargetIdAndTimeCandidates,0);
+}
 async function main() {
   const root = process.argv[2];
   assert(root,'rumiai-os root is required');
+  verifyCollisionNegativeControl();
   const work = fs.mkdtempSync(path.join(os.tmpdir(),'web-analyze-oopif-'));
   const cross = http.createServer((req,res) => {
     res.setHeader('Content-Type',req.url === '/payload' ? 'text/plain' : 'text/html');
