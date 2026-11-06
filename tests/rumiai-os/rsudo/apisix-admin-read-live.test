@@ -374,6 +374,55 @@ DRIFTED_CONFIG
     *) fail 'custom -c source was inferred solely from process arguments' ;;
   esac
 
+  # Source-drift counterexample at the exact explicit -c file, not merely
+  # at the independent default config. The mounted file changes in place;
+  # the running worker does not receive an APISIX reload or restart.
+  # Neither a matching master nor a successful Admin read attests that
+  # this newly visible YAML is the loaded startup configuration.
+  pid=$(docker exec "$cid" cat /usr/local/apisix/logs/nginx.pid) ||
+    error 'cannot read master PID before custom-source drift'
+  printf '%s\n' "$observed" | grep -Fx "process_pid=$pid" >/dev/null ||
+    fail 'observed master PID does not match custom-source drift fixture'
+  cat > "$tmp/config-prod.yaml" <<'DRIFTED_CUSTOM_SOURCE'
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+DRIFTED_CUSTOM_SOURCE
+  docker exec "$cid" cat /mnt/rsudo-apisix-custom.yaml \
+    > "$tmp/mounted-custom-read" ||
+    error 'cannot observe edited custom source inside gateway namespace'
+  cmp -s "$tmp/config-prod.yaml" "$tmp/mounted-custom-read" ||
+    fail 'edited custom source is not visible inside gateway namespace'
+  observed_disk=$(mode_on_disk /usr/local/apisix /mnt/rsudo-apisix-custom.yaml \
+    2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed_disk" = standalone-file-yaml ] ||
+    fail 'edited -c file did not classify as standalone-file-yaml on disk'
+  observed_after=$(APISIX_TEST_OPERATION=runtime mode_on_disk /usr/local/apisix \
+    2>"$tmp/mode-stderr")
+  status=$?
+  [ "$status" -eq 0 ] ||
+    fail 'master observation failed after custom-source-only drift'
+  printf '%s\n' "$observed_after" | grep -Fx "process_pid=$pid" >/dev/null ||
+    fail 'source-only drift changed the observed APISIX master'
+  case "$observed_after" in
+    *'runtime_identity=process-consistent-config-unverified'*'mutation_readiness=not-established') : ;;
+    *) fail 'drifted source was misreported as effective configuration' ;;
+  esac
+
+  code=$(http_status /apisix/admin/configs correct) ||
+    fail 'Admin HTTP GET unavailable after selected -c file-only drift'
+  [ "$code" = 200 ] ||
+    fail "Admin HTTP GET changed after selected -c disk-only drift (HTTP $code)"
+  code=$(http_status /apisix/admin/configs incorrect) ||
+    fail 'wrong-key Admin read unavailable after selected -c file drift'
+  case "$code" in
+    401|403) : ;;
+    *) fail "wrong key unexpectedly accepted after -c file drift (HTTP $code)" ;;
+  esac
+  printf '%s\n' "$TEST_ID: -c disk drift: on-disk=standalone-file-yaml running-admin=200 master-stable=yes"
+
   # Bind the observed HTTP listener causally to the disposable Nginx master:
   # terminate that exact PID and require subsequent *new* HTTP connections
   # to stop returning successful Admin API responses. This proves a local
