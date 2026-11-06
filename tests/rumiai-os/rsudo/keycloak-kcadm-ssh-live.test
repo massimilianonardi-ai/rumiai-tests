@@ -1,0 +1,177 @@
+#!/bin/sh
+# Official kcadm rsudo proxy: real OpenSSH and sudo to a disposable Docker
+# target; a fake upstream kcadm executable models only the external CLI.
+TEST_ID=rumiai-os/rsudo/keycloak-kcadm-ssh-live.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+
+case "$0" in
+  */*) test_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P) || error 'test directory' ;;
+  *) error 'test path unavailable' ;;
+esac
+suite_root=$(CDPATH= cd "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'product missing' ;; 2) fail 'invalid product' ;; *) error 'target discovery' ;; esac
+[ "$(uname -s)" = Linux ] || skip 'requires Linux'
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+command -v ssh >/dev/null 2>&1 || skip 'OpenSSH unavailable'
+
+tmp=${TMPDIR:-/tmp}/rsudo-kcadm-ssh-$$
+umask 077
+mkdir -p "$tmp/bin" "$tmp/image" || error 'fixture directory'
+tmp=$(CDPATH= cd "$tmp" && pwd -P) || error 'fixture absolute path'
+cid= image_tag=
+cleanup() {
+  [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :
+  [ -z "$image_tag" ] || docker image rm "$image_tag" >/dev/null 2>&1 || :
+  rm -rf "$tmp"
+}
+trap cleanup 0
+trap 'exit 3' HUP INT TERM
+
+cat >"$tmp/image/Dockerfile" <<'DOCKERFILE'
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  openssh-server sudo && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/sh kcoperator \
+  && echo 'kcoperator:rsudo-kcadm-ssh-secret' | chpasswd \
+  && printf 'kcoperator ALL=(root) ALL\n' > /etc/sudoers.d/kcoperator \
+  && chmod 440 /etc/sudoers.d/kcoperator \
+  && mkdir -p /run/sshd /opt/keycloak/bin \
+  && ssh-keygen -A
+COPY kcadm.sh /opt/keycloak/bin/kcadm.sh
+RUN chmod 755 /opt/keycloak/bin/kcadm.sh
+CMD ["/usr/sbin/sshd","-D","-e","-o","PermitRootLogin=no","-o","PasswordAuthentication=yes","-o","PubkeyAuthentication=no","-o","UsePAM=no"]
+DOCKERFILE
+
+cat >"$tmp/image/kcadm.sh" <<'KCADM'
+#!/bin/sh
+case "$1" in
+  failure) exit 37 ;;
+  show)
+    shift
+    [ "${KC_CLI_PASSWORD-unset}" = "pw' ; test-output-not-command" ] ||
+      { printf 'credential environment mismatch\n' >&2; exit 71; }
+    if [ -r "/proc/$PPID/cmdline" ]
+    then
+      tr '\000' '\n' < "/proc/$PPID/cmdline" | grep -F "$KC_CLI_PASSWORD" >/dev/null &&
+        { printf 'password found in parent argv\n' >&2; exit 72; }
+    fi
+    printf 'argc=%s\n' "$#"
+    for value
+    do
+      printf '<%s>\n' "$value"
+    done
+    ;;
+  *) printf 'unexpected kcadm arguments\n' >&2; exit 73 ;;
+esac
+KCADM
+
+image_tag=rsudo-kcadm-ssh-test:$$
+docker build --quiet -t "$image_tag" "$tmp/image" >"$tmp/image-id" ||
+  error 'SSH fixture image build failed'
+cid=$(docker run -d --network bridge --publish 127.0.0.1::22 "$image_tag") ||
+  error 'SSH fixture container unavailable'
+[ -n "$cid" ] || error 'empty container ID'
+mapping=$(docker port "$cid" 22/tcp) || error 'SSH port mapping'
+port=${mapping##*:}
+case "$port" in ''|*[!0-9]*) error 'invalid SSH port' ;; esac
+
+key=$(docker exec "$cid" cat /etc/ssh/ssh_host_ed25519_key.pub) || error 'host key'
+set -- $key
+[ "$1" = ssh-ed25519 ] && [ -n "$2" ] || error 'invalid host key'
+printf 'kc-ssh-ephemeral %s %s\n' "$1" "$2" >"$tmp/known_hosts"
+
+cat >"$tmp/ssh_config" <<EOF_SSH
+Host kc-ssh-ephemeral
+  HostName 127.0.0.1
+  HostKeyAlias kc-ssh-ephemeral
+  Port $port
+  UserKnownHostsFile $tmp/known_hosts
+  StrictHostKeyChecking yes
+  PreferredAuthentications password
+  PasswordAuthentication yes
+  PubkeyAuthentication no
+  KbdInteractiveAuthentication no
+  IdentitiesOnly yes
+  ControlMaster no
+  ControlPath none
+  ConnectTimeout 4
+EOF_SSH
+
+ssh_real=$(command -v ssh) || error 'ssh path'
+cat >"$tmp/bin/ssh" <<'SSH_WRAPPER'
+#!/bin/sh
+exec "$KCADM_REAL_SSH" -F "$KCADM_SSH_CONFIG" "$@"
+SSH_WRAPPER
+cat >"$tmp/bin/rsudo-kcadm-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 91
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 92
+loadsyslib "rsudo/rsudo" || exit 93
+RSUDO_HOST=kc-ssh-ephemeral
+RSUDO_USER=kcoperator
+RSUDO_PASSWORD=rsudo-kcadm-ssh-secret
+RSUDO_INTERACTIVE=
+rsudo keycloak "$@"
+PROBE
+chmod 700 "$tmp/bin/ssh" "$tmp/bin/rsudo-kcadm-probe" ||
+  error 'cannot activate wrapper'
+
+probe() {
+  KCADM_REAL_SSH="$ssh_real" KCADM_SSH_CONFIG="$tmp/ssh_config" \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-kcadm-probe "$@"
+}
+
+tries=0
+until docker exec "$cid" test -e /run/sshd.pid >/dev/null 2>&1
+do
+  [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] ||
+    error 'SSH fixture died'
+  tries=$((tries+1))
+  [ "$tries" -lt 80 ] || error 'SSH daemon unavailable'
+  sleep 0.1
+done
+
+selected=$(probe discovery --path /opt/keycloak/bin/kcadm.sh 2>"$tmp/err") ||
+  fail "real SSH/sudo discovery: $(tail -n 4 "$tmp/err")"
+[ "$selected" = /opt/keycloak/bin/kcadm.sh ] ||
+  fail 'unexpected selected path'
+docker exec "$cid" test -f /root/.rsudo-keycloak-kcadm-path ||
+  fail 'discovery did not persist under remote root'
+mode=$(docker exec "$cid" stat -c %a /root/.rsudo-keycloak-kcadm-path) ||
+  fail 'remote config mode'
+[ "$mode" = 600 ] || fail "remote selection mode is $mode"
+
+KC_CLI_PASSWORD="pw' ; test-output-not-command"
+export KC_CLI_PASSWORD
+probe kcadm show "arg with spaces" "quote'\"asterisk*" \
+  >"$tmp/out" 2>"$tmp/err" ||
+  fail "real SSH/sudo proxy: $(tail -n 7 "$tmp/err")"
+cat >"$tmp/expected" <<'EXPECTED'
+argc=2
+<arg with spaces>
+<quote'"asterisk*>
+EXPECTED
+cmp -s "$tmp/out" "$tmp/expected" || fail 'remote argv changed'
+grep -F "$KC_CLI_PASSWORD" "$tmp/err" >/dev/null &&
+  fail 'password appeared in rsudo stderr'
+grep -F 'rsudo-kcadm-ssh-secret' "$tmp/err" >/dev/null &&
+  fail 'SSH/sudo password appeared in rsudo stderr'
+
+probe kcadm failure >"$tmp/out" 2>"$tmp/err"
+[ "$?" -eq 37 ] || fail 'upstream status not propagated'
+
+# rsudo_core must also preserve the script when sudo needs no password.
+docker exec "$cid" sh -c \
+  "printf 'kcoperator ALL=(root) NOPASSWD:ALL\n' > /etc/sudoers.d/kcoperator" ||
+  error 'cannot select passwordless sudo'
+probe kcadm show "after-nopasswd" >"$tmp/out" 2>"$tmp/err" ||
+  fail "passwordless sudo proxy: $(tail -n 7 "$tmp/err")"
+grep -F '<after-nopasswd>' "$tmp/out" >/dev/null ||
+  fail 'passwordless sudo did not forward argument'
+
+printf '%s: PASS\n' "$TEST_ID"
