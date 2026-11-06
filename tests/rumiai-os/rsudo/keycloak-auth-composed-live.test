@@ -1130,6 +1130,140 @@ EOF_SSH_CONFIG
   printf '%s: Keycloak %s existing rsudo stdin delivered protected code without argv/log disclosure\n' \
     "$TEST_ID" "$version"
 
+  # Joined proof: real user login on Keycloak, a nonce/state-bound local
+  # loopback callback, existing rsudo stdin, sudo-target confidential token
+  # exchange and atomic remote token store. The browser navigation itself
+  # is simulated over HTTP, not a graphical browser claim.
+  docker cp "$tmp/code-remote-exchange.sh" \
+    "$ssh_container:/root/keycloak/code-remote-exchange.sh" ||
+    error "Keycloak $version remote code exchange fixture staging failed"
+  docker cp "$tmp/code-verify-claims.py" \
+    "$ssh_container:/root/keycloak/code-verify-claims.py" ||
+    error "Keycloak $version remote code-claim verifier staging failed"
+  docker exec "$ssh_container" sh -c \
+    'chown 0:0 /root/keycloak/code-remote-exchange.sh /root/keycloak/code-verify-claims.py &&
+     chmod 700 /root/keycloak/code-remote-exchange.sh /root/keycloak/code-verify-claims.py' ||
+    error "Keycloak $version remote code exchange protection failed"
+
+  code_work="$tmp/authorization-code-$version"
+  mkdir -m 700 "$code_work" ||
+    error "Keycloak $version operator callback workspace unavailable"
+  issuer=https://127.0.0.1:8443/realms/master
+  python3 "$tmp/code-browser.py" prepare "$code_work" "$issuer" ||
+    error "Keycloak $version transaction PKCE/state/nonce creation failed"
+  python3 "$tmp/code-browser.py" callback "$code_work" "$issuer" \
+    >"$tmp/code-callback-out-$version" 2>"$tmp/code-callback-err-$version" &
+  code_callback_pid=$!
+  tries=0
+  until [ -s "$code_work/code-port" ]
+  do
+    kill -0 "$code_callback_pid" 2>/dev/null ||
+      error "Keycloak $version local callback server failed before bind"
+    tries=$((tries+1))
+    [ "$tries" -lt 80 ] ||
+      error "Keycloak $version local callback did not bind"
+    sleep 0.1
+  done
+  callback_port=$(cat "$code_work/code-port") ||
+    error "Keycloak $version callback port unavailable"
+  case "$callback_port" in ''|*[!0-9]*)
+    error "Keycloak $version invalid callback port" ;; esac
+  callback_uri=http://127.0.0.1:$callback_port/oidc/callback
+  # Wrong-state local traffic must not consume the one valid transaction.
+  forged_code_http=$(curl -q --silent --show-error --noproxy '*' \
+    --proto '=http' --max-redirs 0 --connect-timeout 3 --max-time 5 \
+    --output "$tmp/code-forged-response-$version" --write-out '%{http_code}' \
+    --url "$callback_uri?state=not-the-random-state&code=forged") ||
+    error "Keycloak $version forged callback transport failed"
+  [ "$forged_code_http" = 400 ] &&
+    [ ! -e "$code_work/code-value" ] ||
+    fail "Keycloak $version accepted wrong-state code ($forged_code_http)"
+
+  authorize_http=$(code_https --get \
+    --output "$code_work/login-page" \
+    --cookie-jar "$code_work/cookies" \
+    --write-out '%{http_code}' \
+    --data-urlencode response_type=code \
+    --data-urlencode scope=openid \
+    --data-urlencode client_id=k04-code-joined \
+    --data-urlencode "redirect_uri=$callback_uri" \
+    --data-urlencode "state@$code_work/code-state" \
+    --data-urlencode "nonce@$code_work/code-nonce" \
+    --data-urlencode "code_challenge@$code_work/code-challenge" \
+    --data-urlencode code_challenge_method=S256 \
+    --url "$issuer/protocol/openid-connect/auth") ||
+    error "Keycloak $version browser authorization HTTPS transport failed"
+  [ "$authorize_http" = 200 ] ||
+    fail "Keycloak $version browser authorization did not request login ($authorize_http)"
+  python3 "$tmp/code-browser.py" form "$code_work" "$issuer" \
+    "$code_work/login-page" "$code_work/login.conf" ||
+    fail "Keycloak $version browser login form origin/identity invalid"
+  login_http=$(code_https \
+    --output "$code_work/login-result" \
+    --dump-header "$code_work/login-headers" \
+    --write-out '%{http_code}' \
+    --cookie "$code_work/cookies" --cookie-jar "$code_work/cookies" \
+    --data-urlencode username=k04-code-joined-user \
+    --data-urlencode "password@$tmp/code-user-password" \
+    --config "$code_work/login.conf") ||
+    error "Keycloak $version ordinary user login transport failed"
+  case "$login_http" in 302|303) : ;; *)
+    fail "Keycloak $version ordinary user login did not redirect ($login_http)" ;;
+  esac
+  python3 "$tmp/code-browser.py" navigate "$code_work" "$issuer" \
+    "$code_work/login-headers" "$callback_uri" ||
+    fail "Keycloak $version browser redirect/state/issuer delivery failed"
+  wait "$code_callback_pid" ||
+    fail "Keycloak $version callback receiver did not complete valid transaction"
+  code_callback_pid=
+  [ -s "$code_work/code-value" ] &&
+    [ "$(stat -c %a "$code_work/code-value")" = 600 ] ||
+    fail "Keycloak $version operator one-time code not stored privately"
+
+  # Frame five private lines only for the protected stdin transport.
+  # Neither the code nor the verifier/nonce enters argv or shell source.
+  {
+    cat "$code_work/code-value"; printf '\n'
+    cat "$code_work/code-verifier"; printf '\n'
+    printf '%s\n' "$callback_uri"
+    cat "$code_work/code-nonce"; printf '\n'
+    printf '%s\n' "$code_user_uuid"
+  } > "$code_work/remote-transfer" ||
+    error "Keycloak $version private transaction stream unavailable"
+  joined_result=$(probe code-joined-proof acquire \
+    < "$code_work/remote-transfer" 2>"$tmp/code-joined.err")
+  joined_status=$?
+  [ "$joined_status" -eq 0 ] &&
+    [ "$joined_result" = '{"stored":true,"grant":"authorization_code"}' ] &&
+    docker exec "$ssh_container" sh -c \
+      'test "$(stat -c %a /root/keycloak/code-joined-store.json)" = 600 &&
+       jq -e "(.access_token | type == \"string\" and length > 0) and
+        (.id_token | type == \"string\" and length > 0) and
+        (.refresh_token | type == \"string\" and length > 0)" \
+        /root/keycloak/code-joined-store.json >/dev/null' ||
+    fail "Keycloak $version joined authorization-code remote exchange failed ($joined_status)"
+  prior_store_hash=$(docker exec "$ssh_container" \
+    sha256sum /root/keycloak/code-joined-store.json) ||
+    error "Keycloak $version remote token-store snapshot unavailable"
+  replay_result=$(probe code-joined-proof replay \
+    < "$code_work/remote-transfer" 2>"$tmp/code-joined-replay.err")
+  replay_status=$?
+  [ "$replay_status" -eq 0 ] &&
+    [ "$replay_result" = '{"replay_rejected":true}' ] &&
+    [ "$(docker exec "$ssh_container" sha256sum /root/keycloak/code-joined-store.json)" = "$prior_store_hash" ] ||
+    fail "Keycloak $version code replay not denied or remote token store changed ($replay_status)"
+  python3 - "$code_work/code-value" "$tmp/code-joined.err" \
+    "$tmp/code-joined-replay.err" <<'NO_CODE_DISCLOSURE' ||
+import pathlib
+import sys
+code = pathlib.Path(sys.argv[1]).read_bytes()
+if not code or any(code in pathlib.Path(p).read_bytes() for p in sys.argv[2:]):
+    sys.exit(1)
+NO_CODE_DISCLOSURE
+    fail "Keycloak $version one-time code leaked through composed diagnostics"
+  printf '%s: Keycloak %s real authorization code and PKCE exchanged through rsudo SSH/sudo into protected store; replay rejected\n' \
+    "$TEST_ID" "$version"
+
   # The grant JWT is signed outside the SSH target; only the compact
   # assertion is staged as root-owned 0600 data. Distinct from client JWT.
   python3 "$tmp/sign-federated-jwt.py" "$jag_issuer" \
