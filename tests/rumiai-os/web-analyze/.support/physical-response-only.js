@@ -72,6 +72,8 @@ function key(item)
 function _crossTargetCandidates(runDir)
 {
   const events=readJsonl(path.join(runDir,'network.jsonl'));
+  const graph=readJson(path.join(runDir,'rest/target-graph-final.json'));
+  const targets=new Map((graph.targets||[]).map(item=>[item.targetId,item]));
   const requests=new Map();
   const finished=new Set();
   for(const item of events)
@@ -91,20 +93,87 @@ function _crossTargetCandidates(runDir)
     .filter(request=>request.targetId!==item.targetId &&
       request.elapsedMs<=item.elapsedMs &&
       item.elapsedMs-request.elapsedMs<=120000));
-  const unique=matched.filter(items=>items.length===1).map(items=>items[0]);
-  const sourceWithoutOwnFinish=unique.filter(item=>
-    !finished.has(key({session:item.targetId,requestId:item.requestId})));
+  const unique=orphanFinishes.flatMap((item,index)=>
+    matched[index].length===1?[{request:matched[index][0],finish:item}]:[]);
+  const sourceWithoutOwnFinish=unique.filter(({request})=>
+    !finished.has(key({session:request.targetId,requestId:request.requestId})));
+  const lineage=unique.map(({request,finish})=>
+  {
+    const target=targets.get(finish.targetId);
+    const directParent=target?.parentTargetId===request.targetId;
+    const seenAt=Date.parse(target?.firstSeenAt||'');
+    const requestAt=Date.parse(request.timestamp||'');
+    const finishedAt=Date.parse(finish.timestamp||'');
+    const attachedInWindow=Number.isFinite(seenAt) &&
+      Number.isFinite(requestAt) && Number.isFinite(finishedAt) &&
+      seenAt>=requestAt-500 && seenAt<=finishedAt+500;
+    return {
+      directParent,
+      attachedInWindow,
+      iframeFrameIdentity:directParent && target?.type==='iframe' &&
+        request.frameId===finish.targetId,
+      workerFromParentScript:directParent && target?.type==='worker' &&
+        request.resourceType==='Script'
+    };
+  });
   return {
     finishedWithoutSameTargetRequest:orphanFinishes.length,
     uniqueCrossTargetIdAndTimeCandidates:unique.length,
     candidateSourcesWithoutSameTargetFinish:sourceWithoutOwnFinish.length,
     ambiguousCandidates:matched.filter(items=>items.length>1).length,
     withoutCandidate:matched.filter(items=>!items.length).length,
-    candidateDocument:unique.filter(item=>item.resourceType==='Document').length,
-    candidateScript:unique.filter(item=>item.resourceType==='Script').length,
-    confidence:'candidate-only-no-automatic-cross-session-merge'
+    candidateDocument:unique.filter(item=>item.request.resourceType==='Document').length,
+    candidateScript:unique.filter(item=>item.request.resourceType==='Script').length,
+    directParentTargetCandidates:lineage.filter(item=>item.directParent).length,
+    directlyRelatedAndAttachedWithinTransfer:lineage.filter(item=>
+      item.directParent && item.attachedInWindow).length,
+    frameIdentityForIframeCandidates:lineage.filter(item=>item.iframeFrameIdentity).length,
+    workerChildOfScriptRequesterCandidates:lineage.filter(item=>
+      item.workerFromParentScript).length,
+    confidence:'lineage-evidence-candidates-only-no-automatic-cross-session-merge'
   };
 }
+function _stylesheetSourceEvidence(runDir)
+{
+  const details=readJsonl(path.join(runDir,'network-details.jsonl'));
+  const requests=new Set();
+  const responses=new Map();
+  for(const row of details)
+  {
+    const event=row.event||{};
+    if(!event.requestId)continue;
+    const id=key({session:row.session,requestId:event.requestId});
+    if(row.method==='Network.requestWillBeSent')requests.add(id);
+    if(row.method==='Network.responseReceived' &&
+      event.type==='Stylesheet' && event.response?.fromDiskCache===true)
+      responses.set(id,event.response.url);
+  }
+  const missing=[...responses].filter(([id])=>!requests.has(id));
+  const styles=readJson(path.join(runDir,'rest/stylesheets/index.json'));
+  const sources=new Map();
+  for(const item of styles)
+  {
+    if(item.sourceURL && item.status==='saved' &&
+      Number.isFinite(item.bytes) && item.bytes>0 &&
+      typeof item.file==='string' &&
+      item.file.startsWith('rest/stylesheets/') &&
+      fs.existsSync(path.join(runDir,item.file)))
+    {
+      if(!sources.has(item.sourceURL))sources.set(item.sourceURL,[]);
+      sources.get(item.sourceURL).push(item);
+    }
+  }
+  const covered=missing.filter(([,url])=>sources.has(url));
+  return {
+    cachedStylesheetResponsesWithoutRequest:missing.length,
+    withSavedIndependentCssSource:covered.length,
+    withoutSavedIndependentCssSource:missing.length-covered.length,
+    cssSourceIndexEntries:styles.length,
+    cssSourceIndexSaved:styles.filter(item=>item.status==='saved').length,
+    sourceMeaning:'CDP CSS.getStyleSheetText; NOT original HTTP response body'
+  };
+}
+
 
 function _cdpBodyFailures(runDir,resources)
 {
@@ -328,6 +397,7 @@ async function main()
   result.diagnostics={
     crossTarget:_crossTargetCandidates(runDir),
     bodyUnavailable:_cdpBodyFailures(runDir,readJsonl(path.join(runDir,'resources.jsonl'))),
+    independentCssSource:_stylesheetSourceEvidence(runDir),
     pageClassification:_amazonPageClass(runDir,label)
   };
   const reportName='response-only-'+label+'-'+runToken+'.json';
