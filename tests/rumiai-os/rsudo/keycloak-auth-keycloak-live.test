@@ -448,6 +448,27 @@ elif mode == "redirect":
             not query["code"][0] or "error" in query):
         raise ValueError("authorization code/state not verified")
     write(code_path, query["code"][0])
+elif mode == "error-redirect":
+    headers_path, expected_url, expected_state = sys.argv[2:]
+    with open(headers_path, encoding="iso-8859-1") as source:
+        locations = [
+            line.partition(":")[2].strip()
+            for line in source
+            if line.lower().startswith("location:")
+        ]
+    if len(locations) != 1:
+        raise ValueError("OAuth error redirect missing or ambiguous")
+    uri = urlsplit(locations[0])
+    expected = urlsplit(expected_url)
+    if (uri.scheme, uri.netloc, uri.path, uri.fragment) != (
+        expected.scheme, expected.netloc, expected.path, ""
+    ):
+        raise ValueError("OAuth error callback origin/path mismatch")
+    query = parse_qs(uri.query, keep_blank_values=True)
+    if (query.get("state") != [expected_state] or
+            len(query.get("error", [])) != 1 or
+            not query["error"][0] or "code" in query):
+        raise ValueError("no valid OAuth error or code leaked to callback")
 elif mode == "claims":
     token_path, expected_issuer, expected_client, expected_user, nonce = sys.argv[2:]
     with open(token_path, encoding="utf-8") as source:
@@ -1196,6 +1217,7 @@ do
   # request without its challenge before issuing any interactive login.
   code_missing_challenge_http=$(transport --get \
     --output "$tmp/code-missing-challenge-$version" \
+    --dump-header "$tmp/code-missing-challenge-headers-$version" \
     --write-out '%{http_code}' \
     --data-urlencode 'response_type=code' \
     --data-urlencode 'scope=openid' \
@@ -1204,8 +1226,12 @@ do
     --data-urlencode 'state=k04-missing-challenge' \
     --url "$base/realms/master/protocol/openid-connect/auth") ||
     error "Keycloak $version PKCE omission transport failed"
-  [ "$code_missing_challenge_http" = 400 ] ||
-    fail "Keycloak $version allowed a PKCE-less browser authorization request ($code_missing_challenge_http)"
+  [ "$code_missing_challenge_http" = 302 ] &&
+    python3 "$tmp/code-browser.py" error-redirect \
+      "$tmp/code-missing-challenge-headers-$version" \
+      https://k04-client.example.invalid/oidc/callback \
+      k04-missing-challenge ||
+    fail "Keycloak $version did not deny PKCE-less authorization with a code-free OAuth error redirect ($code_missing_challenge_http)"
   printf '%s: Keycloak %s real authorization-code browser session, state, S256, replay, redirect and user permission boundary verified\n' \
     "$TEST_ID" "$version"
 
