@@ -16,7 +16,7 @@ resolve_test_dir()
   [ "$dir" != "$self" ] || dir=.
   CDPATH= cd -- "$dir" 2>/dev/null && pwd -P
 }
-tmp= keycloak_container= ssh_container= keycloak_image= ssh_image=
+tmp= keycloak_container= ssh_container= keycloak_image= ssh_image= code_callback_pid=
 stop_containers()
 {
   [ -z "$ssh_container" ] || docker rm -f "$ssh_container" >/dev/null 2>&1 || :
@@ -28,6 +28,12 @@ stop_containers()
 }
 cleanup()
 {
+  if [ -n "$code_callback_pid" ]
+  then
+    kill "$code_callback_pid" 2>/dev/null || :
+    wait "$code_callback_pid" 2>/dev/null || :
+    code_callback_pid=
+  fi
   stop_containers
   [ -z "$ssh_image" ] || docker image rm "$ssh_image" >/dev/null 2>&1 || :
   [ -z "$tmp" ] || rm -rf "$tmp"
@@ -684,6 +690,12 @@ if [ "${1-}" = admin-probe ]
 then
   shift
   _rsudo_mod_keycloak_admin_transport_probe "$@"
+elif [ "${1-}" = code-joined-proof ]
+then
+  shift
+  [ "$#" -eq 1 ] || exit 96
+  case "$1" in acquire|replay) : ;; *) exit 96 ;; esac
+  rsudo -- sh /root/keycloak/code-remote-exchange.sh "$1"
 elif [ "${1-}" = code-stream-proof ]
 then
   shift
@@ -729,6 +741,16 @@ host_https()
     --proto '=https' --max-redirs 0 \
     --cacert "$tmp/keycloak/server.pem" --connect-timeout 4 \
     --max-time 25 "$@"
+}
+# The real server advertises its container's 8443 issuer. Route the test
+# host's verified HTTPS request through the Docker-published port without
+# weakening TLS hostname/CA trust or modifying the server issuer.
+code_https()
+{
+  curl -q --silent --show-error --noproxy '*' --proxy '' \
+    --proto '=https' --max-redirs 0 \
+    --cacert "$tmp/keycloak/server.pem" --connect-timeout 4 \
+    --max-time 25 --connect-to "127.0.0.1:8443:127.0.0.1:$https_port" "$@"
 }
 
 for version in 26.7.3 26.8.1
