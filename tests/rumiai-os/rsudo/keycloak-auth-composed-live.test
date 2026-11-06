@@ -449,7 +449,7 @@ elif mode == "form":
             "\r" in action or "\n" in action):
         raise ValueError("untrusted login form action")
     write(config_path, "url = " + json.dumps(action) + "\n")
-elif mode == "callback":
+elif mode in ("callback", "callback-timeout"):
     with open(os.path.join(directory, "code-state"), encoding="ascii") as file:
         state = file.read()
     code_path = os.path.join(directory, "code-value")
@@ -493,7 +493,7 @@ elif mode == "callback":
 
     with HTTPServer(("127.0.0.1", 0), Handler) as server:
         write(port_path, str(server.server_address[1]))
-        deadline = time.monotonic() + 80
+        deadline = time.monotonic() + (1 if mode == "callback-timeout" else 80)
         for _ in range(12):
             if os.path.isfile(code_path):
                 break
@@ -1151,6 +1151,21 @@ EOF_SSH_CONFIG
      chmod 700 /root/keycloak/code-remote-exchange.sh /root/keycloak/code-verify-claims.py' ||
     error "Keycloak $version remote code exchange protection failed"
 
+  # No callback means no authorization code, no remote exchange, and
+  # no token publication. Expiration is verified without any browser login.
+  timeout_work="$tmp/authorization-code-timeout-$version"
+  mkdir -m 700 "$timeout_work" ||
+    error "Keycloak $version callback timeout workspace unavailable"
+  python3 "$tmp/code-browser.py" prepare "$timeout_work"     https://127.0.0.1:8443/realms/master ||
+    error "Keycloak $version callback timeout state preparation failed"
+  if python3 "$tmp/code-browser.py" callback-timeout "$timeout_work"     https://127.0.0.1:8443/realms/master     >"$tmp/code-timeout-out-$version" 2>"$tmp/code-timeout-err-$version"
+  then
+    fail "Keycloak $version callback listener falsely succeeded without a redirect"
+  fi
+  [ ! -e "$timeout_work/code-value" ] &&
+    docker exec "$ssh_container" test ! -e /root/keycloak/code-joined-store.json ||
+    fail "Keycloak $version absent browser callback published a token"
+
   code_work="$tmp/authorization-code-$version"
   mkdir -m 700 "$code_work" ||
     error "Keycloak $version operator callback workspace unavailable"
@@ -1182,8 +1197,9 @@ EOF_SSH_CONFIG
     --url "$callback_uri?state=not-the-random-state&code=forged") ||
     error "Keycloak $version forged callback transport failed"
   [ "$forged_code_http" = 400 ] &&
-    [ ! -e "$code_work/code-value" ] ||
-    fail "Keycloak $version accepted wrong-state code ($forged_code_http)"
+    [ ! -e "$code_work/code-value" ] &&
+    docker exec "$ssh_container" test ! -e /root/keycloak/code-joined-store.json ||
+    fail "Keycloak $version wrong-state callback published a code/token ($forged_code_http)"
 
   authorize_http=$(code_https --get \
     --output "$code_work/login-page" \
@@ -1258,15 +1274,19 @@ EOF_SSH_CONFIG
     [ "$replay_result" = '{"replay_rejected":true}' ] &&
     [ "$(docker exec "$ssh_container" sha256sum /root/keycloak/code-joined-store.json)" = "$prior_store_hash" ] ||
     fail "Keycloak $version code replay not denied or remote token store changed ($replay_status)"
-  python3 - "$code_work/code-value" "$tmp/code-joined.err" \
-    "$tmp/code-joined-replay.err" <<'NO_CODE_DISCLOSURE' ||
+  python3 - "$code_work/code-value" "$code_work/code-verifier" \
+    "$tmp/code-joined.err" "$tmp/code-joined-replay.err" <<'NO_CODE_DISCLOSURE' ||
 import pathlib
 import sys
-code = pathlib.Path(sys.argv[1]).read_bytes()
-if not code or any(code in pathlib.Path(p).read_bytes() for p in sys.argv[2:]):
+secrets = [pathlib.Path(p).read_bytes() for p in sys.argv[1:3]]
+secrets.append(b"k04-disposable-client-secret")
+if not all(secrets) or any(
+    secret in pathlib.Path(p).read_bytes()
+    for secret in secrets for p in sys.argv[3:]
+):
     sys.exit(1)
 NO_CODE_DISCLOSURE
-    fail "Keycloak $version one-time code leaked through composed diagnostics"
+    fail "Keycloak $version code, verifier or client secret leaked through SSH diagnostics"
   printf '%s: Keycloak %s real authorization code and PKCE exchanged through rsudo SSH/sudo into protected store; replay rejected\n' \
     "$TEST_ID" "$version"
 
