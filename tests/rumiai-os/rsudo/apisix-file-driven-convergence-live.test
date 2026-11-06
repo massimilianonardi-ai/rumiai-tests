@@ -84,6 +84,7 @@ cat > "$tmp/apisix.json" <<'JSON'
 "plugins":{"uri-blocker":{"block_rules":["/rsudo-file-json"]}},
 "upstream":{"type":"roundrobin","nodes":{"127.0.0.1:19877":1}}}]}
 JSON
+cp "$tmp/apisix.json" "$tmp/initial.json" || error 'cannot preserve initial JSON source'
 chmod 644 "$tmp/apisix.yaml" "$tmp/apisix.json" ||
   error 'cannot expose disposable documents to gateway workers'
 
@@ -130,6 +131,7 @@ diagnostics()
   printf '%s\n' "$TEST_ID: diagnostic: $1" >&2
   docker exec "$cid" cat /usr/local/apisix/conf/config.yaml >&2 || :
   docker exec "$cid" cat /usr/local/apisix/conf/apisix.yaml >&2 || :
+  docker exec "$cid" cat /usr/local/apisix/conf/apisix.json >&2 || :
   ready=$(http_status /status/ready 7085)
   ready_status=$?
   printf 'readiness transport=%s http=%s\n' "$ready_status" "$ready" >&2
@@ -302,4 +304,134 @@ CONFIG
   done
 done
 
-printf '%s\n' "$TEST_ID: PASS (two real APISIX releases, distinct readiness modes, two launches each)"
+# JSON has no YAML #END marker. Exercise an independently selected JSON
+# provider, truncate the disposable mounted document, and then repair it.
+# This checks real data-plane behavior, not an APISIX admin mutation API.
+for image in $images
+do
+  case "$image" in
+    *b921bdef*) release=3.16 ;;
+    *9a7e45dc*) release=3.19 ;;
+    *) error 'unknown pinned APISIX image in JSON fixture' ;;
+  esac
+  cat > "$tmp/config.yaml" <<'CONFIG'
+apisix:
+  enable_admin: false
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: json
+CONFIG
+  chmod 644 "$tmp/config.yaml" ||
+    error 'cannot make JSON provider configuration readable'
+  cp "$tmp/initial.yaml" "$tmp/apisix.yaml" ||
+    error 'cannot reset nonselected YAML source'
+  cp "$tmp/initial.json" "$tmp/apisix.json" ||
+    error 'cannot reset JSON source'
+  cid=$(docker run -d --network none \
+    --cap-drop ALL --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    --mount "type=bind,src=$tmp/apisix.yaml,dst=/usr/local/apisix/conf/apisix.yaml,readonly" \
+    --mount "type=bind,src=$tmp/apisix.json,dst=/usr/local/apisix/conf/apisix.json,readonly" \
+    "$image") || error "cannot start isolated $release JSON gateway"
+  [ -n "$cid" ] || error 'Docker returned no JSON gateway ID'
+
+  observed=$(APISIX_CONVERGENCE_TEST_CID="$cid" PATH="$tmp/bin:$PATH" \
+    "$root/m" rsudo-apisix-file-convergence-probe \
+    /usr/local/apisix /usr/local/apisix/conf/config.yaml 2>"$tmp/probe-stderr")
+  status=$?
+  [ "$status" -eq 0 ] && [ "$observed" = standalone-file-json ] || {
+    cat "$tmp/probe-stderr" >&2 || :
+    fail "$release JSON mode not classified by real m/APISIX product"
+  }
+  docker exec "$cid" cat /usr/local/apisix/conf/apisix.json > "$tmp/visible.json" ||
+    error "$release cannot read JSON source inside gateway namespace"
+  cmp -s "$tmp/visible.json" "$tmp/initial.json" ||
+    fail "$release JSON source differs across gateway namespace"
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    old=$(http_status /rsudo-file-json 9080)
+    old_status=$?
+    if [ "$old_status" -eq 0 ] && [ "$old" = 403 ]; then break; fi
+    if [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" != true ]
+    then
+      diagnostics "$release initial JSON gateway exited"
+      fail "$release JSON gateway exited before initial route"
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  if [ "$tries" -ge 30 ]
+  then
+    diagnostics "$release initial JSON route stayed HTTP $old"
+    fail "$release JSON gateway never applied its initial route"
+  fi
+  other=$(http_status /rsudo-file-yaml 9080) ||
+    fail "$release unselected YAML route request failed"
+  [ "$other" = 404 ] ||
+    fail "$release JSON provider unexpectedly loaded YAML route HTTP $other"
+
+  sed 's|/rsudo-file-json|/rsudo-file-json-reloaded|g' \
+    "$tmp/initial.json" > "$tmp/repaired.json" ||
+    error "$release cannot construct repaired JSON fixture"
+  printf '%s\n' '{"routes": [' > "$tmp/incomplete.json" ||
+    error "$release cannot construct truncated JSON fixture"
+
+  # Distinct mtime for each write: these APISIX releases poll timestamp.
+  sleep 2
+  cat "$tmp/incomplete.json" > "$tmp/apisix.json" ||
+    error "$release cannot publish truncated JSON test document"
+  docker exec "$cid" cat /usr/local/apisix/conf/apisix.json \
+    > "$tmp/visible.json" ||
+    error "$release cannot read truncated JSON inside gateway"
+  cmp -s "$tmp/visible.json" "$tmp/incomplete.json" ||
+    fail "$release truncated JSON not visible in gateway namespace"
+  sleep 3
+  old=$(http_status /rsudo-file-json 9080) ||
+    fail "$release existing route unavailable after truncated JSON"
+  new=$(http_status /rsudo-file-json-reloaded 9080) ||
+    fail "$release new route unavailable after truncated JSON"
+  if [ "$old" != 403 ] || [ "$new" != 404 ]
+  then
+    diagnostics "$release invalid JSON observation old=$old new=$new"
+    fail "$release invalid JSON replaced or disrupted last valid route"
+  fi
+
+  sleep 2
+  cat "$tmp/repaired.json" > "$tmp/apisix.json" ||
+    error "$release cannot publish repaired valid JSON test document"
+  docker exec "$cid" cat /usr/local/apisix/conf/apisix.json \
+    > "$tmp/visible.json" ||
+    error "$release cannot read repaired JSON inside gateway"
+  cmp -s "$tmp/visible.json" "$tmp/repaired.json" ||
+    fail "$release repaired JSON differs across gateway namespace"
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    new=$(http_status /rsudo-file-json-reloaded 9080)
+    new_status=$?
+    old=$(http_status /rsudo-file-json 9080)
+    old_status=$?
+    if [ "$new_status" -eq 0 ] && [ "$old_status" -eq 0 ] &&
+       [ "$new" = 403 ] && [ "$old" = 404 ]
+    then
+      break
+    fi
+    tries=$((tries + 1))
+    sleep 1
+  done
+  if [ "$tries" -ge 30 ]
+  then
+    diagnostics "$release repaired JSON did not converge old=$old new=$new"
+    fail "$release repaired JSON did not replace the initial route"
+  fi
+  printf '%s\n' "$TEST_ID: JSON reload $release invalid=old-403,new-404 repaired=old-404,new-403"
+
+  docker rm -f "$cid" >/dev/null 2>&1 ||
+    error "$release cannot remove isolated JSON gateway"
+  cid=
+done
+
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16/3.19, isolated YAML and JSON invalid-source retention and reload)"
