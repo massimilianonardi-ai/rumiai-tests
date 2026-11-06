@@ -399,6 +399,21 @@ if [ "${1-}" = admin-probe ]
 then
   shift
   _rsudo_mod_keycloak_admin_transport_probe "$@"
+elif [ "${1-}" = code-stream-proof ]
+then
+  shift
+  [ "$#" -eq 0 ] || exit 95
+  # Exercise existing rsudo noninteractive stdin. The remote shell source is
+  # constant and contains no code, verifier, assertion, or token bytes.
+  rsudo -- sh -c '
+    umask 077
+    IFS= read -r authorization_code || exit 71
+    [ -n "$authorization_code" ] || exit 72
+    [ ! -e /root/keycloak/code-from-stdin ] || exit 73
+    (set -C; printf "%s\n" "$authorization_code" > /root/keycloak/code-from-stdin) || exit 74
+    unset authorization_code
+    printf "{\"received\":true}\n"
+  '
 else
   rsudo_mod_keycloak_auth "$@"
 fi
@@ -754,6 +769,33 @@ EOF_SSH_CONFIG
        chmod 600 /root/keycloak/mtls-$identity.key /root/keycloak/mtls-$identity.pem" ||
       error "Keycloak $version remote mTLS $identity credentials insecure"
   done
+
+  # Prove the only existing viable code-transfer boundary before adding a
+  # public human browser grant: local secret bytes travel over rsudo stdin
+  # after SSH/sudo authentication, not as command argv or shell source.
+  printf 'k04-synthetic-auth-code-%s\n' "$version" \
+    > "$tmp/expected-code-$version" ||
+    error "Keycloak $version synthetic callback code unavailable"
+  docker cp "$tmp/expected-code-$version" \
+    "$ssh_container:/root/keycloak/expected-code" ||
+    error "Keycloak $version remote comparison fixture unavailable"
+  docker exec "$ssh_container" chmod 600 /root/keycloak/expected-code ||
+    error "Keycloak $version protected synthetic comparison file unavailable"
+  code_stream_result=$(cat "$tmp/expected-code-$version" |
+    probe code-stream-proof 2>"$tmp/code-stream.err")
+  code_stream_status=$?
+  [ "$code_stream_status" -eq 0 ] &&
+    [ "$code_stream_result" = '{"received":true}' ] &&
+    docker exec "$ssh_container" cmp -s /root/keycloak/expected-code \
+      /root/keycloak/code-from-stdin &&
+    [ "$(docker exec "$ssh_container" stat -c %a /root/keycloak/code-from-stdin)" = 600 ] ||
+    fail "Keycloak $version SSH/sudo stdin authorization-code transfer failed ($code_stream_status)"
+  if grep -F "k04-synthetic-auth-code-$version" "$tmp/code-stream.err" >/dev/null
+  then
+    fail "Keycloak $version leaked one-time code via rsudo diagnostics"
+  fi
+  printf '%s: Keycloak %s existing rsudo stdin delivered protected code without argv/log disclosure\n' \
+    "$TEST_ID" "$version"
 
   # The grant JWT is signed outside the SSH target; only the compact
   # assertion is staged as root-owned 0600 data. Distinct from client JWT.
