@@ -401,6 +401,14 @@ DRIFTED_CONFIG
           error "$release cannot observe HTTP route after main source drift"
         [ "$control_new" = 200 ] && [ "$still_loaded" = 403 ] ||
           fail "$release disk-only provider drift incorrectly changed active worker route"
+        # APISIX readiness observes worker configuration receipt, not the
+        # provenance of the currently mounted main config.yaml. A successful
+        # readiness response must not upgrade source identity or write safety.
+        ready_after_drift=$(http_status /status/ready 7085) ||
+          fail "$release readiness transport failed after disk-only provider drift"
+        [ "$ready_after_drift" = 200 ] ||
+          fail "$release readiness changed unexpectedly after disk-only drift (HTTP $ready_after_drift)"
+        printf '%s\n' "$TEST_ID: worker source drift $release readiness=200-but-source-unverified"
         printf '%s\n' "$TEST_ID: worker source drift $release disk=standalone-file-json control-yaml=200 http-yaml=403"
       fi
 
