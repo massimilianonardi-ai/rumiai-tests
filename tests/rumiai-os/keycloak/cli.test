@@ -58,9 +58,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/realms/master/protocol/openid-connect/token":
             form = parse_qs(self.body().decode())
-            if (form.get("grant_type") == ["client_credentials"] and
-                form.get("client_id") == ["ops"] and
-                form.get("client_secret") == ["fixture protected secret"]):
+            service = (form.get("grant_type") == ["client_credentials"] and
+                       form.get("client_id") == ["ops"] and
+                       form.get("client_secret") == ["fixture protected secret"])
+            user = (form.get("grant_type") == ["password"] and
+                    form.get("client_id") == ["admin-cli"] and
+                    form.get("username") == ["admin"] and
+                    form.get("password") == ["fixture user password"])
+            if service or user:
                 self.respond(200, {"access_token": "test-access-token-012345",
                                    "token_type": "Bearer", "expires_in": 60})
             else:
@@ -95,15 +100,23 @@ until [ -s "$tmp/port" ]; do
 done
 base=https://127.0.0.1:$(cat "$tmp/port")
 printf 'fixture protected secret\n' > "$tmp/secret"
+printf 'fixture user password\n' > "$tmp/password"
 printf 'wrong secret\n' > "$tmp/invalid"
 printf 'existing-file-token\n' > "$tmp/token"
 printf '{"username":"alice","enabled":true}\n' > "$tmp/user.json"
-chmod 600 "$tmp/secret" "$tmp/invalid" "$tmp/token"
+chmod 600 "$tmp/secret" "$tmp/password" "$tmp/invalid" "$tmp/token"
 invoke() {
   "$root/m" keycloak admin --server "$base" --realm master \
     --client-id ops --client-secret-file "$tmp/secret" \
     --ca-file "$tmp/server.pem" "$@"
 }
+"$root/m" keycloak admin --server "$base" --realm master \
+  --username admin --password-file "$tmp/password" \
+  --ca-file "$tmp/server.pem" get '/admin/realms/master/users?max=2' \
+  > "$tmp/out" 2>"$tmp/err" ||
+  fail "normal admin-cli direct user login failed: $(cat "$tmp/err")"
+jq -e '.users == ["alice","bob"]' "$tmp/out" >/dev/null ||
+  fail 'normal admin user authentication returned unexpected response'
 invoke get '/admin/realms/master/users?max=2' >"$tmp/out" 2>"$tmp/err" ||
   fail "real HTTPS GET: $(cat "$tmp/err")"
 jq -e '.users == ["alice","bob"]' "$tmp/out" >/dev/null ||
