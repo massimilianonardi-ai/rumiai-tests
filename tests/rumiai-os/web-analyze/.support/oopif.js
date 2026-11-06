@@ -31,6 +31,37 @@ async function run(command, args, env) {
 function jsonLines(file) {
   return fs.readFileSync(file,'utf8').split('\n').filter(Boolean).map(JSON.parse);
 }
+function verifyOrphanFinishEvidenceControl() {
+  const {classifyOrphanFinishes}=require('./physical-response-only.js');
+  let sequence=0;
+  const event=(sessionId,method,params)=>({
+    direction:'inbound',sequence:++sequence,
+    raw:JSON.stringify({sessionId,method,params})
+  });
+  const wire=[
+    event('a','Network.responseReceived',{requestId:'cached',
+      type:'Stylesheet',response:{fromDiskCache:true}}),
+    event('a','Network.requestServedFromCache',{requestId:'cached'}),
+    event('a','Network.loadingFinished',{requestId:'cached'}),
+    event('a','Network.loadingFinished',{requestId:'missing'}),
+    event('b','Network.requestWillBeSent',{requestId:'same'}),
+    event('a','Network.loadingFinished',{requestId:'same'}),
+    event('b','Network.loadingFinished',{requestId:'same'}),
+    event('c','Network.responseReceived',{requestId:'worker',type:'Fetch',
+      response:{fromServiceWorker:true}}),
+    event('c','Network.loadingFinished',{requestId:'worker'})
+  ];
+  const result=classifyOrphanFinishes(wire);
+  assert.equal(result.orphanFinishes,4);
+  assert.equal(result.withPriorResponse,2);
+  assert.equal(result.withoutPriorResponse,2);
+  assert.equal(result.responseFromDiskCache,1);
+  assert.equal(result.responseFromServiceWorker,1);
+  assert.equal(result.responseServedFromCacheEvent,1);
+  assert.equal(result.responseOnlyStylesheet,1);
+  assert.equal(result.responseOnlyOtherType,1);
+  assert.equal(result.meaning,'observed-prior-events-only-no-inferred-cause');
+}
 function verifySameSessionLifecycleControl() {
   const {summarizeSessionLifecycle} = require('./physical-response-only.js');
   const start = (sessionId,requestId,elapsedMs,extra={}) => ({
@@ -119,6 +150,7 @@ async function main() {
   assert(root,'rumiai-os root is required');
   verifyCollisionNegativeControl();
   verifySameSessionLifecycleControl();
+  verifyOrphanFinishEvidenceControl();
   const work = fs.mkdtempSync(path.join(os.tmpdir(),'web-analyze-oopif-'));
   const cross = http.createServer((req,res) => {
     res.setHeader('Content-Type',req.url === '/payload' ? 'text/plain' : 'text/html');
@@ -188,6 +220,11 @@ async function main() {
       'real Chromium produced no session-local complete request lifecycle');
     assert(lifecycle.withFrameAndLoader>0,
       'real Chromium produced no matched lifecycle with frame/loader provenance');
+    const {classifyOrphanFinishes} = require('./physical-response-only.js');
+    const orphanEvidence=classifyOrphanFinishes(
+      jsonLines(path.join(runDir,'cdp-wire.jsonl')));
+    assert.equal(orphanEvidence.orphanFinishes,lifecycle.finishWithoutStart,
+      'raw CDP orphan-finish classification differs from session lifecycle');
     const childDocumentRequests = network.filter(row=>
       row.type==='request' && row.resourceType==='Document' &&
       attachedFrameTargets.some(target=>
