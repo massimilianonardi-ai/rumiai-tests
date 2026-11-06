@@ -322,6 +322,144 @@ cat > "$tmp/jag-user.json" <<'JAG_USER'
 JAG_USER
 printf '%s' 'k04-protected-client-secret' > "$tmp/jag-secret" ||
   error 'JWT authorization grant private client secret unavailable'
+# Separate standard Authorization Code client and normal end user.
+# Neither uses a service account nor Direct Access Grant. PKCE S256 is
+# configured as a server-side requirement, not a caller convention.
+cat > "$tmp/code-client.json" <<'CODE_CLIENT'
+{
+  "clientId": "k04-code-client",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": false,
+  "serviceAccountsEnabled": false,
+  "secret": "k04-protected-client-secret",
+  "redirectUris": ["https://k04-client.example.invalid/oidc/callback"],
+  "attributes": {"pkce.code.challenge.method": "S256"}
+}
+CODE_CLIENT
+cat > "$tmp/code-user.json" <<'CODE_USER'
+{
+  "username": "k04-code-user",
+  "enabled": true,
+  "requiredActions": [],
+  "credentials": [
+    {"type": "password", "value": "k04-code-fixture-password", "temporary": false}
+  ]
+}
+CODE_USER
+printf '%s' 'k04-code-fixture-password' > "$tmp/code-user-password" ||
+  error 'authorization-code test-only user password unavailable'
+printf '%s' 'k04-protected-client-secret' > "$tmp/code-client-secret" ||
+  error 'authorization-code test-only client secret unavailable'
+
+# Browser-protocol fixture: follow real Keycloak auth/session forms over
+# verified HTTPS with a per-attempt cookie jar. This is NOT a browser UI
+# automation test or a replacement for the actual server.
+cat > "$tmp/code-browser.py" <<'CODE_BROWSER_PY'
+import base64
+import hashlib
+from html.parser import HTMLParser
+import json
+import secrets
+import sys
+from urllib.parse import parse_qs, urlsplit
+
+
+class LoginForm(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.actions = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "form":
+            return
+        props = dict(attrs)
+        if props.get("id") == "kc-form-login":
+            self.actions.append(props.get("action"))
+
+
+def write(path, value):
+    with open(path, "w", encoding="utf-8") as target:
+        target.write(value)
+
+
+def payload(token):
+    segments = token.split(".")
+    if len(segments) != 3:
+        raise ValueError("OIDC token is not a compact JWT")
+    encoded = segments[1]
+    return json.loads(base64.urlsafe_b64decode(
+        encoded + "=" * (-len(encoded) % 4)
+    ))
+
+
+mode = sys.argv[1]
+if mode == "pkce":
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode("ascii")).digest()
+    ).rstrip(b"=").decode("ascii")
+    write(sys.argv[2], verifier)
+    write(sys.argv[3], challenge)
+elif mode == "form":
+    source, config_path, issuer_base = sys.argv[2:]
+    parser = LoginForm()
+    with open(source, encoding="utf-8") as html:
+        parser.feed(html.read())
+    if len(parser.actions) != 1 or not parser.actions[0]:
+        raise ValueError("Keycloak login form not found")
+    action = parser.actions[0]
+    url = urlsplit(action)
+    base = urlsplit(issuer_base)
+    if (url.scheme, url.netloc) != (base.scheme, base.netloc):
+        raise ValueError("unexpected login form origin")
+    if not url.path.startswith("/realms/master/login-actions/authenticate"):
+        raise ValueError("unexpected login form path")
+    if "\n" in action or "\r" in action:
+        raise ValueError("invalid login form URL")
+    # curl config keeps session_code, execution and auth-session selectors
+    # out of the shell command argument vector.
+    write(config_path, "url = " + json.dumps(action) + "\n")
+elif mode == "redirect":
+    headers_path, expected_url, expected_state, code_path = sys.argv[2:]
+    with open(headers_path, encoding="iso-8859-1") as source:
+        locations = [
+            line.partition(":")[2].strip()
+            for line in source
+            if line.lower().startswith("location:")
+        ]
+    if len(locations) != 1:
+        raise ValueError("authorization redirect missing or ambiguous")
+    uri = urlsplit(locations[0])
+    expected = urlsplit(expected_url)
+    if (uri.scheme, uri.netloc, uri.path, uri.fragment) != (
+        expected.scheme, expected.netloc, expected.path, ""
+    ):
+        raise ValueError("authorization callback origin/path mismatch")
+    query = parse_qs(uri.query, keep_blank_values=True)
+    if (query.get("state") != [expected_state] or
+            len(query.get("code", [])) != 1 or
+            not query["code"][0] or "error" in query):
+        raise ValueError("authorization code/state not verified")
+    write(code_path, query["code"][0])
+elif mode == "claims":
+    token_path, expected_issuer, expected_client, expected_user, nonce = sys.argv[2:]
+    with open(token_path, encoding="utf-8") as source:
+        result = json.load(source)
+    access = payload(result["access_token"])
+    identity = payload(result["id_token"])
+    if (access.get("iss") != expected_issuer or
+            access.get("azp") != expected_client or
+            access.get("sub") != expected_user or
+            identity.get("iss") != expected_issuer or
+            identity.get("sub") != expected_user or
+            identity.get("nonce") != nonce):
+        raise ValueError("OIDC issuer/client/subject/nonce mismatch")
+else:
+    raise ValueError("unknown auth-code test helper mode")
+CODE_BROWSER_PY
 cat > "$tmp/sign-federated-jwt.py" <<'PYFEDERATED'
 import base64
 import json
