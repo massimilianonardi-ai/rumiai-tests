@@ -50,6 +50,24 @@ function verifySameSessionLifecycleControl() {
     start('b','unfinished',7),
     start('b','late',9),finish('b','late',8)
   ];
+  const source=[
+    {direction:'inbound',sequence:1,raw:JSON.stringify({
+      sessionId:'one',method:'Network.requestWillBeSent',
+      params:{requestId:'shared',frameId:'frame',loaderId:'loader'}})},
+    {direction:'inbound',sequence:2,raw:JSON.stringify({
+      sessionId:'two',method:'Network.requestWillBeSent',
+      params:{requestId:'shared',frameId:'frame2',loaderId:'loader2'}})},
+    {direction:'inbound',sequence:3,raw:JSON.stringify({
+      sessionId:'one',method:'Network.loadingFinished',
+      params:{requestId:'shared'}})},
+    {direction:'inbound',sequence:4,raw:JSON.stringify({
+      sessionId:'two',method:'Network.loadingFinished',
+      params:{requestId:'shared'}})}
+  ];
+  const {cdpWireLifecycleEvents}=require('./physical-response-only.js');
+  const fromWire=summarizeSessionLifecycle(cdpWireLifecycleEvents(source));
+  assert.equal(fromWire.uniqueSameSessionCompletions,2);
+  assert.equal(fromWire.withFrameAndLoader,2);
   const actual=summarizeSessionLifecycle(events);
   assert.equal(actual.uniqueSameSessionCompletions,2);
   assert.equal(actual.withFrameAndLoader,2);
@@ -162,8 +180,10 @@ async function main() {
     assert(attachedFrameTargets.length > 0,
       'process-swap frame identity was not preserved in attached OOPIF target');
     const network = jsonLines(path.join(runDir,'network.jsonl'));
-    const {summarizeSessionLifecycle} = require('./physical-response-only.js');
-    const lifecycle=summarizeSessionLifecycle(network);
+    const {summarizeSessionLifecycle,cdpWireLifecycleEvents} =
+      require('./physical-response-only.js');
+    const lifecycle=summarizeSessionLifecycle(cdpWireLifecycleEvents(
+      jsonLines(path.join(runDir,'cdp-wire.jsonl'))));
     assert(lifecycle.uniqueSameSessionCompletions>0,
       'real Chromium produced no session-local complete request lifecycle');
     assert(lifecycle.withFrameAndLoader>0,
