@@ -518,6 +518,7 @@ import os
 from http.server import BaseHTTPRequestHandler
 from socketserver import TCPServer
 import sys
+import time
 from urllib.parse import parse_qs, urlsplit
 
 config_path, port_path, code_path = sys.argv[1:]
@@ -565,8 +566,19 @@ class Handler(BaseHTTPRequestHandler):
 with TCPServer(("127.0.0.1", 0), Handler) as server:
     with open(port_path, "x", encoding="ascii") as target:
         target.write(str(server.server_address[1]))
-    server.timeout = 80
-    server.handle_request()
+    # Reject an unsolicited/wrong-state callback without losing the
+    # legitimate transaction. A strict deadline still bounds the listener.
+    deadline = time.monotonic() + 80
+    for _ in range(12):
+        if os.path.isfile(code_path):
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        server.timeout = remaining
+        server.handle_request()
+    if not os.path.isfile(code_path):
+        raise RuntimeError("loopback authorization callback not received")
 CODE_LOOPBACK_PY
 
 cat > "$tmp/sign-federated-jwt.py" <<'PYFEDERATED'
@@ -1236,6 +1248,17 @@ do
     ''|*[!0-9]*) error "Keycloak $version invalid loopback callback port" ;;
   esac
   loopback_uri=http://127.0.0.1:$loopback_port/oidc/callback
+  # A forged local callback cannot publish a code or consume the valid
+  # transaction before Keycloak completes browser authentication.
+  bad_callback_http=$(curl -q --silent --show-error --noproxy '*' \
+    --proto '=http' --max-redirs 0 --connect-timeout 3 --max-time 5 \
+    --output "$tmp/code-bad-callback-response-$version" \
+    --write-out '%{http_code}' \
+    --url "$loopback_uri?state=forged&code=synthetic-unauthorized-code") ||
+    error "Keycloak $version forged local callback transport failed"
+  [ "$bad_callback_http" = 400 ] &&
+    [ ! -e "$tmp/code-grant-$version-loopback" ] ||
+    fail "Keycloak $version loopback callback accepted forged state ($bad_callback_http)"
   jq --arg uri "$loopback_uri" '.redirectUris += [$uri]' \
     "$tmp/code-client.json" > "$tmp/code-client-active-$version.json" ||
     error "Keycloak $version exact loopback registration unavailable"
