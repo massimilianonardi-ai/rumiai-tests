@@ -60,8 +60,8 @@ printf '%s\n' "$output" | grep -F 'find-and-ps-prefix' >/dev/null || fail 'ps ev
 [ "$(printf '%s\n' "$output" | grep -c '^config')" -eq 3 ] || fail 'multiple candidates lost'
 
 output=$(probe relative 2>"$tmp/stderr"); status=$?
-[ "$status" -eq 72 ] && [ -z "$output" ] || fail 'relative root not rejected'
+[ "$status" -eq 2 ] && [ -z "$output" ] || fail 'relative root not rejected'
 grep -F apisix.discovery-invalid-scan-root "$tmp/stderr" >/dev/null || fail 'diagnostic missing'
 output=$(probe "$tmp/absent" 2>"$tmp/stderr"); status=$?
-[ "$status" -eq 74 ] || fail 'missing root not rejected'
+[ "$status" -eq 2 ] || fail 'missing root not rejected'
 printf '%s\n' "$TEST_ID: PASS (real m + host find, synthetic ps and rsudo boundary)"
