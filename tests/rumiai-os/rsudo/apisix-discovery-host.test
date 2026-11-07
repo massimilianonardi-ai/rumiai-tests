@@ -156,7 +156,7 @@ printf '%s\n' "$output" | grep -F "listener${tab}host${tab}open${tab}127.0.0.1:1
 [ "$(printf '%s\n' "$output" | grep -c "^config${tab}host")" -eq 3 ] || fail 'multiple host candidates lost'
 printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee${tab}manager-image-name-candidate" >/dev/null ||
   fail 'stopped Docker candidate missing'
-printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:/usr/local/apisix/conf${tab}manager-inspect-config-mount-candidate" >/dev/null ||
+printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:/usr/local/apisix/conf${tab}manager-inspect-config-mount-candidate:source=/var/lib/worker-config" >/dev/null ||
   fail 'stopped custom-image mount candidate missing'
 printf '%s\n' "$output" | grep -F 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:/usr/local/apisix/conf/config.yaml' >/dev/null ||
   fail 'running Docker config missing'
