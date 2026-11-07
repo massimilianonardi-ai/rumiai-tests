@@ -23,7 +23,13 @@ umask 077
 mkdir -p "$tmp/bin" "$tmp/tree/one/bin" "$tmp/tree/one/conf" \
   "$tmp/tree/two/conf" "$tmp/tree/other/conf" || error 'fixture directories'
 : > "$tmp/tree/one/bin/apisix"
-: > "$tmp/tree/one/conf/config.yaml"
+cat > "$tmp/tree/one/conf/config.yaml" <<'CONFIG'
+deployment:
+  admin:
+    admin_listen:
+      ip: 127.0.0.1
+      port: 19180
+CONFIG
 : > "$tmp/tree/one/conf/config-stage.yaml"
 : > "$tmp/tree/two/conf/nginx.conf"
 : > "$tmp/tree/two/conf/apisix.json"
@@ -65,6 +71,29 @@ case "$1:$2" in
   *) exit 70 ;;
 esac
 PODMAN
+cat > "$tmp/bin/systemctl" <<'SYSTEMCTL'
+#!/bin/sh
+case "$1" in
+  list-units)
+    printf '%s\n' \
+      'apisix.service loaded active running Apache APISIX' \
+      'apisix@blue.service loaded inactive dead Apache APISIX instance' \
+      'unrelated.service loaded active running Unrelated'
+  ;;
+  list-unit-files)
+    printf '%s\n' \
+      'apisix.service enabled enabled' \
+      'apisix@blue.service disabled enabled' \
+      'unrelated.service enabled enabled'
+  ;;
+  *) exit 70 ;;
+esac
+SYSTEMCTL
+cat > "$tmp/bin/nc" <<'NC'
+#!/bin/sh
+[ "$1" = -z ] && [ "$2" = -w ] && [ "$3" = 1 ] || exit 70
+[ "$4" = 127.0.0.1 ] && [ "$5" = 19180 ]
+NC
 cat > "$tmp/bin/rsudo-apisix-discovery-probe" <<'PROBE'
 #!/bin/sh
 [ -n "$m_ROOT" ] || exit 80
@@ -74,6 +103,7 @@ rsudo() { "$@"; }
 rsudo_mod_apisix_discovery "$@"
 PROBE
 chmod 700 "$tmp/bin/ps" "$tmp/bin/docker" "$tmp/bin/podman" \
+  "$tmp/bin/systemctl" "$tmp/bin/nc" \
   "$tmp/bin/rsudo-apisix-discovery-probe" || error 'fixture permissions'
 probe()
 {
@@ -90,6 +120,12 @@ printf '%s\n' "$output" | grep -F "$tmp/tree/two/conf/apisix.json" >/dev/null ||
 printf '%s\n' "$output" | grep -F "$tmp/tree/other/conf/config.yaml" >/dev/null && fail 'generic config false positive'
 printf '%s\n' "$output" | grep -F 'find-and-ps-prefix' >/dev/null || fail 'ps evidence missing'
 tab=$(printf '\t')
+printf '%s\n' "$output" | grep -F "service${tab}host${tab}active${tab}apisix.service${tab}systemd-loaded-unit" >/dev/null ||
+  fail 'active systemd service candidate missing'
+printf '%s\n' "$output" | grep -F "service${tab}host${tab}inactive${tab}apisix@blue.service${tab}systemd-loaded-unit" >/dev/null ||
+  fail 'inactive systemd service candidate missing'
+printf '%s\n' "$output" | grep -F "listener${tab}host${tab}open${tab}127.0.0.1:19180${tab}config-admin-listen-nc:$tmp/tree/one/conf/config.yaml" >/dev/null ||
+  fail 'configured listener probe missing'
 [ "$(printf '%s\n' "$output" | grep -c "^config${tab}host")" -eq 3 ] || fail 'multiple host candidates lost'
 printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee${tab}manager-image-name-candidate" >/dev/null ||
   fail 'stopped Docker candidate missing'
@@ -103,4 +139,4 @@ output=$(probe relative 2>"$tmp/stderr"); status=$?
 grep -F apisix.discovery-invalid-scan-root "$tmp/stderr" >/dev/null || fail 'diagnostic missing'
 output=$(probe "$tmp/absent" 2>"$tmp/stderr"); status=$?
 [ "$status" -eq 2 ] || fail 'missing root not rejected'
-printf '%s\n' "$TEST_ID: PASS (real m + host find, synthetic ps and rsudo boundary)"
+printf '%s\n' "$TEST_ID: PASS (real m/find, synthetic ps/managers/systemd/nc and rsudo boundary)"
