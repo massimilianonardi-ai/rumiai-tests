@@ -46,7 +46,8 @@ case "$1:$2" in
   ps:-a)
     printf '%s\n' \
       'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd|apisix-live|running|apache/apisix:3.19' \
-      'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee|apisix-stopped|exited|apache/apisix:3.16'
+      'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee|apisix-stopped|exited|apache/apisix:3.16' \
+      'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc|worker-old|exited|internal/worker:stable'
   ;;
   exec:-i)
     [ "$3" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ] || exit 1
@@ -57,6 +58,14 @@ case "$1:$2" in
     else
       printf '%s\n' /usr/local/apisix/conf/config.yaml
     fi
+  ;;
+  inspect:--format)
+    case "$4" in
+      cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+        printf '%s\n' '/var/lib/worker-config|/usr/local/apisix/conf'
+      ;;
+      *) : ;;
+    esac
   ;;
   *) exit 70 ;;
 esac
@@ -90,6 +99,17 @@ case "$1" in
       'apisix.service enabled enabled' \
       'apisix@blue.service disabled enabled' \
       'unrelated.service enabled enabled'
+  ;;
+  show)
+    case "$4" in
+      apisix.service)
+        printf '%s\n' 'Id=apisix.service' 'MainPID=4321' \
+          'ControlGroup=/system.slice/apisix.service' 'ActiveState=active'
+      ;;
+      *)
+        printf '%s\n' "Id=$4" 'MainPID=0' 'ControlGroup=' 'ActiveState=inactive'
+      ;;
+    esac
   ;;
   *) exit 70 ;;
 esac
@@ -129,11 +149,15 @@ printf '%s\n' "$output" | grep -F "service${tab}host${tab}active${tab}apisix.ser
   fail 'active systemd service candidate missing'
 printf '%s\n' "$output" | grep -F "service${tab}host${tab}inactive${tab}apisix@blue.service${tab}systemd-loaded-unit" >/dev/null ||
   fail 'inactive systemd service candidate missing'
+printf '%s\n' "$output" | grep -F "service${tab}host${tab}active-mainpid-match${tab}apisix.service${tab}systemd-mainpid-and-ps-pid-4321" >/dev/null ||
+  fail 'systemd MainPID/process correlation missing'
 printf '%s\n' "$output" | grep -F "listener${tab}host${tab}open${tab}127.0.0.1:19180${tab}config-admin-listen-nc:$tmp/tree/one/conf/config.yaml" >/dev/null ||
   fail 'configured listener probe missing'
 [ "$(printf '%s\n' "$output" | grep -c "^config${tab}host")" -eq 3 ] || fail 'multiple host candidates lost'
 printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee${tab}manager-image-name-candidate" >/dev/null ||
   fail 'stopped Docker candidate missing'
+printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:/usr/local/apisix/conf${tab}manager-inspect-config-mount-candidate" >/dev/null ||
+  fail 'stopped custom-image mount candidate missing'
 printf '%s\n' "$output" | grep -F 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:/usr/local/apisix/conf/config.yaml' >/dev/null ||
   fail 'running Docker config missing'
 printf '%s\n' "$output" | grep -F 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:127.0.0.1:19180' >/dev/null ||
