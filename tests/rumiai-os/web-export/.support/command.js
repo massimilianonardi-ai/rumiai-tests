@@ -254,6 +254,7 @@ async function main()
     const analyzer=[
       "const fs=require('node:fs'),path=require('node:path');",
       `const fixture=${JSON.stringify(fixture)};`,
+      "if(process.env.WEB_EXPORT_SYNTHETIC_FAILURE){process.stderr.write('web-analyze.document-not-observed: fixture failure\\n');process.exit(11)}",
       "const capture=process.argv[3],run=path.join(capture,'synthetic-run');",
       "fs.mkdirSync(path.join(run,'states'),{recursive:true});",
       "fs.mkdirSync(path.join(run,'resources'));",
@@ -303,6 +304,14 @@ async function main()
     assert.equal(fallbackChromium.status,0,
       `Chromium could not open the CSSOM fallback export: ${fallbackChromium.stderr}`);
     assert.match(fallbackChromium.stdout,/CSSOM fallback/);
+    const failedDir=path.join(work,'failed-capture');
+    const failed=await run(process.execPath,[path.join(fakeBin,'web-export'),
+      'https://fixture.invalid/page',failedDir],
+      {env:{...captureEnv,m_ROOT:fakeRoot,m_LIB_DIR:fakeLib,WEB_EXPORT_SYNTHETIC_FAILURE:'1'}});
+    assert.equal(failed.status,8,'capture failure did not retain the exporter status identity');
+    assert.match(failed.stderr,/document-not-observed/,
+      'the capture diagnostic discarded the safe web-analyze identity');
+    assert.equal(fs.existsSync(failedDir),false,'failed capture left a partial export behind');
     await closeServer();
     process.stderr.write('web-export command fixture: all standalone and CSSOM fallback checks passed\n');
   }
