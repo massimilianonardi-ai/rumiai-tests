@@ -161,7 +161,10 @@ async function main()
     assert.match(html,/client rendered content/);
     assert.equal((html.match(/<script\b/gi) || []).length,1,
       'only the exporter-owned scroll-restoration script may remain');
-    assert.match(html,/<script\b[^>]*src="assets\/web-export-scroll-[a-f0-9]{64}\.js"/i);
+    assert.match(html,/<script>\(\(\) =>/,
+      'the generated scroll-restoration helper is not embedded in the document');
+    assert.match(html,/script-src 'sha256-[A-Za-z0-9+/=]+'/,
+      'the inline helper is not restricted by its content hash');
     assert.doesNotMatch(html,/<iframe\b/i);
     assert.doesNotMatch(html,/\b(?:crossorigin|integrity|referrerpolicy)=/i,
       'source fetch metadata makes local-file assets fail origin or integrity checks');
