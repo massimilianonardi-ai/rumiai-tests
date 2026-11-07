@@ -231,6 +231,8 @@ async function main()
     assert.equal(chromium.stdout.includes('web-export fixture heading'),true);
     assert.match(chromium.stdout,/data-web-export-scroll-restored="[1-9][0-9]*"/,
       'the local scroll-restoration helper did not execute');
+    assert.doesNotMatch(chromium.stderr,/Access to CSS stylesheet .*blocked by CORS policy/i,
+      'Chromium rejected the local rewritten stylesheet');
     assert.deepEqual([...requests], [...requestsAfterCapture],
       'opening the file export requested a resource from the source server');
 
