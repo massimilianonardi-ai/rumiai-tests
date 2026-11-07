@@ -39,9 +39,11 @@ function fixtureHtml(origin)
 {
   const rows = Array.from({length:36},(_,index)=>`<p>fixture row ${index}</p>`).join('');
   const inlinePixel = pixel.toString('base64');
+  const integrity = 'sha256-' + crypto.createHash('sha256')
+    .update(fixtureCss(origin)).digest('base64');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <title>web-export chromium fixture</title>
-    <link rel="stylesheet" href="${origin}/fixture.css">
+    <link rel="stylesheet" crossorigin="anonymous" integrity="${integrity}" href="${origin}/fixture.css">
     <style>.inline-block{background-image:url("${origin}/background.png")}</style>
     <script defer src="${origin}/fixture.js"></script>
   </head><body><h1>web-export fixture heading</h1>
@@ -157,8 +159,12 @@ async function main()
     assert.match(html,/Content-Security-Policy/);
     assert.match(html,/connect-src 'none'/);
     assert.match(html,/client rendered content/);
-    assert.doesNotMatch(html,/<script\b/i);
+    assert.equal((html.match(/<script\b/gi) || []).length,1,
+      'only the exporter-owned scroll-restoration script may remain');
+    assert.match(html,/<script\b[^>]*src="assets\/web-export-scroll-[a-f0-9]{64}\.js"/i);
     assert.doesNotMatch(html,/<iframe\b/i);
+    assert.doesNotMatch(html,/\b(?:crossorigin|integrity|referrerpolicy)=/i,
+      'source fetch metadata makes local-file assets fail origin or integrity checks');
     assert.doesNotMatch(html,/onclick=/i);
     assert.doesNotMatch(html,/<form\b[^>]*\saction=/i);
     assert.doesNotMatch(html,/\bping=/i);
@@ -175,6 +181,11 @@ async function main()
       'an inline stylesheet reference remains remote');
     assert.match(html,/href="https?:\/\/127\.0\.0\.1:[0-9]+\/destination"/);
     assert.equal(manifest.coverage.scriptsRemoved > 0,true);
+    assert.equal(manifest.scripts,'site-scripts-removed');
+    assert.deepEqual(manifest.generatedScripts,['scroll-restoration']);
+    assert.equal(manifest.coverage.scrollRestorationScript,true);
+    assert.ok(manifest.coverage.scrollPositionsCaptured>0,
+      'the browser capture did not retain a non-zero scroll position');
     assert.equal(manifest.coverage.framesRemoved > 0,true);
     assert.equal(manifest.coverage.unavailableCssReferences > 0,true);
     assert.ok(manifest.assets.some(asset=>asset.kind==='stylesheet'));
@@ -218,6 +229,8 @@ async function main()
     assert.equal(chromium.status,0,`Chromium could not open the file export: ${chromium.stderr}`);
     assert.match(chromium.stdout,/client rendered content/);
     assert.equal(chromium.stdout.includes('web-export fixture heading'),true);
+    assert.match(chromium.stdout,/data-web-export-scroll-restored="[1-9][0-9]*"/,
+      'the local scroll-restoration helper did not execute');
     assert.deepEqual([...requests], [...requestsAfterCapture],
       'opening the file export requested a resource from the source server');
 
@@ -243,6 +256,7 @@ async function main()
     const hash=body=>crypto.createHash('sha256').update(body).digest('hex');
     const fixture={
       html:'<!doctype html><html><head><title>fallback fixture</title>' +
+        '<style>body{min-height:2200px}</style>' +
         '<link rel="stylesheet" href="https://fixture.invalid/recovered.css">' +
         '<link rel="stylesheet" href="https://fixture.invalid/ambiguous.css"></head>' +
         '<body><h1>CSSOM fallback</h1><img id="fallback" src="https://fixture.invalid/fallback.png">' +
@@ -269,6 +283,7 @@ async function main()
       "fs.mkdirSync(path.join(run,'resources'));",
       "fs.mkdirSync(path.join(run,'rest/stylesheets/cssom'),{recursive:true});",
       "fs.writeFileSync(path.join(run,'states/dom-rest-final.html'),fixture.html);",
+      "fs.writeFileSync(path.join(run,'states/dom-rest-final.json'),JSON.stringify({scrollPositions:[{selector:'html:nth-of-type(1)',top:120,left:0}],scrollPositionsTruncated:false}));",
       "fs.writeFileSync(path.join(run,'resources/fallback.png'),Buffer.from(fixture.pixel,'base64'));",
       "fs.writeFileSync(path.join(run,'resources/tampered.png'),Buffer.from(fixture.tampered,'base64'));",
       "fs.writeFileSync(path.join(run,'resources/recovered-http.css'),Buffer.from(fixture.httpCss,'base64'));",
@@ -296,6 +311,7 @@ async function main()
     const fallbackHtml=fs.readFileSync(path.join(fallbackDir,'index.html'),'utf8');
     const fallbackManifest=JSON.parse(fs.readFileSync(path.join(fallbackDir,'manifest.json'),'utf8'));
     assert.equal(fallbackManifest.coverage.stylesheetSourcesFromCssom,1);
+    assert.equal(fallbackManifest.coverage.scrollRestorationScript,true);
     assert.equal(fallbackManifest.coverage.unverifiedBodies,1);
     assert.equal(fallbackManifest.coverage.ambiguousAssetUrls,1);
     assert.ok(fallbackManifest.coverage.unavailableHtmlReferences>=2);
@@ -332,6 +348,8 @@ async function main()
     assert.equal(fallbackChromium.status,0,
       `Chromium could not open the CSSOM fallback export: ${fallbackChromium.stderr}`);
     assert.match(fallbackChromium.stdout,/CSSOM fallback/);
+    assert.match(fallbackChromium.stdout,/data-web-export-scroll-restored="1"/,
+      'synthetic captured scroll position was not restored in Chromium');
     const failedDir=path.join(work,'failed-capture');
     const failed=await run(process.execPath,[path.join(fakeBin,'web-export'),
       'https://fixture.invalid/page',failedDir],
