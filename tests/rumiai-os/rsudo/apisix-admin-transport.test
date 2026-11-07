@@ -69,6 +69,8 @@ class Handler(BaseHTTPRequestHandler):
             code, body = 401, b'{"error":"unauthorized"}'
         elif self.path == "/apisix/admin/routes":
             code, body = 200, b'{"routes":[{"id":"test"}]}'
+        elif self.path == "/apisix/admin/routes/test":
+            code, body = 200, b'{"id":"test"}'
         elif self.path == "/apisix/admin/services":
             code, body = 200, b'{"services":[]}'
         elif self.path == "/apisix/admin/upstreams":
@@ -95,7 +97,13 @@ rsudo()
 {
   "$@"
 }
-rsudo_mod_apisix_admin_read "$@"
+case "${APISIX_TEST_OPERATION:-admin-read}" in
+  admin-read) rsudo_mod_apisix_admin_read "$@";;
+  list) rsudo_mod_apisix_list "$@";;
+  get) rsudo_mod_apisix_get "$@";;
+  create) rsudo_mod_apisix_create "$@";;
+  *) exit 83;;
+esac
 PROBE
 
 # Make the real curl invocation's argv observable without logging the secret.
@@ -135,6 +143,57 @@ result=$(probe routes "$tmp/admin-header" "$port" 2>"$tmp/stderr")
 status=$?
 [ "$status" -eq 0 ] && [ "$result" = '{"routes":[{"id":"test"}]}' ] ||
   fail "legitimate route GET failed (status $status)"
+
+result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"routes":[{"id":"test"}]}' ] ||
+  fail "public REST list failed (status $status)"
+result=$(APISIX_TEST_OPERATION=get RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe routes test 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"id":"test"}' ] ||
+  fail "public REST get failed (status $status)"
+result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://url-secret@127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 5 ] && [ -z "$result" ] ||
+  fail 'URL userinfo was not rejected locally'
+grep -F 'url-secret' "$tmp/stderr" >/dev/null &&
+  fail 'URL userinfo appeared in diagnostics'
+result=$(APISIX_TEST_OPERATION=create RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 1 ] && [ -z "$result" ] ||
+  fail 'unimplemented create silently fell back instead of failing explicitly'
+result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 3 ] && [ -z "$result" ] ||
+  fail 'unsupported snapshot list did not fail explicitly'
+cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=docker \
+  RSUDO_APISIX_CONTAINER_ID="$cid" \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 4 ] && [ -z "$result" ] ||
+  fail 'REST request ignored explicit container scope'
+
+
 grep -F 'test-secret-credential-never-in-process-argv' "$tmp/argv" >/dev/null &&
   fail 'secret was placed in curl argv'
 grep -F '@' "$tmp/argv" >/dev/null ||
