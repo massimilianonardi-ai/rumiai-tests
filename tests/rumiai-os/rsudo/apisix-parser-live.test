@@ -88,6 +88,24 @@ PROBE
 chmod 700 -- "$tmp/bin/rsudo-apisix-yaml-read-probe" ||
   error 'cannot make YAML read probe executable'
 
+cat > "$tmp/bin/rsudo-apisix-yaml-apply-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  [ "$1" = sh ] || return 83
+  shift
+  docker run --rm --network none --cap-drop ALL -i \
+    --mount "type=bind,src=$APISIX_PARSER_FIXTURES,dst=/mnt/rsudo-apisix-fixtures" \
+    --entrypoint /bin/sh "$APISIX_PARSER_IMAGE" "$@"
+}
+rsudo_mod_apisix_apply
+PROBE
+chmod 700 -- "$tmp/bin/rsudo-apisix-yaml-apply-probe" ||
+  error 'cannot make YAML apply probe executable'
+
 write_case()
 {
   printf '%s\n' "$2" > "$tmp/fixtures/$1" ||
@@ -115,6 +133,15 @@ run_yaml_read()
     RSUDO_APISIX_DATA_FILE="/mnt/rsudo-apisix-fixtures/$yaml_file" \
     PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-yaml-read-probe \
     "$@"
+}
+
+run_yaml_apply()
+{
+  APISIX_PARSER_FIXTURES="$tmp/fixtures" APISIX_PARSER_IMAGE="$image" \
+    RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-yaml \
+    RSUDO_APISIX_HOME=/usr/local/apisix \
+    RSUDO_APISIX_DATA_FILE=/mnt/rsudo-apisix-fixtures/apply.yaml \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-yaml-apply-probe
 }
 
 expect_mode()
@@ -237,6 +264,22 @@ do
   [ "$?" -eq 14 ] || fail 'YAML duplicate ID not rejected'
   result=$(run_yaml_read malformed_resources list routes 2>"$tmp/stderr")
   [ "$?" -eq 10 ] || fail 'malformed YAML not rejected through parser'
+
+  printf '%s\n' 'routes: []' '#END' > "$tmp/fixtures/apply.yaml" || error 'cannot write apply target'
+  chmod 640 "$tmp/fixtures/apply.yaml" || error 'cannot set apply target mode'
+  result=$(printf '%s\n' 'routes:' '  - id: applied-route' '    uri: /applied' '#END' | run_yaml_apply 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "YAML apply status $status"; }
+  grep -F 'applied-route' "$tmp/fixtures/apply.yaml" >/dev/null || fail 'YAML apply did not publish parsed document'
+  [ "$(LC_ALL=C ls -ld "$tmp/fixtures/apply.yaml" | cut -c1-10)" = -rw-r----- ] || fail 'YAML apply did not preserve mode'
+
+  cp "$tmp/fixtures/apply.yaml" "$tmp/fixtures/apply-before-invalid.yaml" || error 'cannot snapshot apply target'
+  result=$(printf '%s\n' 'routes: [' '#END' | run_yaml_apply 2>"$tmp/stderr")
+  [ "$?" -eq 97 ] || fail 'invalid YAML was accepted by apply'
+  cmp -s "$tmp/fixtures/apply.yaml" "$tmp/fixtures/apply-before-invalid.yaml" || fail 'invalid YAML changed apply target'
+  result=$(printf '%s\n' 'routes: []' | run_yaml_apply 2>"$tmp/stderr")
+  [ "$?" -eq 95 ] || fail 'YAML without APISIX #END marker was accepted'
+  cmp -s "$tmp/fixtures/apply.yaml" "$tmp/fixtures/apply-before-invalid.yaml" || fail 'missing marker changed apply target'
 done
 
 printf '%s\n' "$TEST_ID: PASS (APISIX 3.16.0 and 3.19.0 YAML parsers and list/get; no gateway process)"
