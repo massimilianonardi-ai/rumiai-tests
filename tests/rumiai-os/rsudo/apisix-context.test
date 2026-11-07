@@ -1,0 +1,69 @@
+#!/bin/sh
+# Verifies explicit operator-owned target selection and adapter mapping.
+# No remote APISIX, credentials, HTTP or Docker client is invoked.
+TEST_ID=rumiai-os/rsudo/apisix-context.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+test_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P) || error 'test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'product checkout missing' ;; 2) fail 'invalid checkout' ;; *) error 'resolver' ;; esac
+module=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
+[ -f "$module" ] && [ -f "$manual" ] || fail 'missing module/manual'
+sh -n "$module" || fail 'module syntax invalid'
+grep -F 'rsudo_mod_apisix_context' "$manual" >/dev/null || fail 'manual missing context'
+tmp=/tmp/rsudo-apisix-context-$$
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup 0
+umask 077
+mkdir -p "$tmp/bin" || error 'fixture directory'
+cat > "$tmp/bin/rsudo-apisix-context-probe" <<'PROBE'
+#!/bin/sh
+[ -n "$m_ROOT" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo_mod_apisix_context "$@"
+PROBE
+chmod 700 "$tmp/bin/rsudo-apisix-context-probe" || error 'probe permissions'
+probe() { PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-context-probe "$@"; }
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_HOME=/opt/apisix \
+  RSUDO_APISIX_ADMIN_URL=http://127.0.0.1:9180 \
+  RSUDO_APISIX_HEADER_FILE=/root/apisix.header \
+  probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'valid REST context'; }
+printf '%s\n' "$result" | grep -Fx 'adapter=rest' >/dev/null || fail 'REST adapter mismatch'
+printf '%s\n' "$result" | grep -Fx 'selection=operator-supplied-unverified' >/dev/null ||
+  fail 'context claimed verified instance'
+printf '%s\n' "$result" | grep -Fx 'credential_file=configured-not-verified' >/dev/null ||
+  fail 'credential-file status absent'
+printf '%s\n' "$result" | grep -F 'X-API-KEY' >/dev/null && fail 'unexpected credential leak'
+
+cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+result=$(RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID="$cid" \
+  RSUDO_APISIX_DEPLOYMENT=standalone-file-yaml \
+  RSUDO_APISIX_DATA_FILE=/usr/local/apisix/conf/apisix.yaml \
+  probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || fail 'valid Docker YAML context'
+printf '%s\n' "$result" | grep -Fx 'adapter=file-yaml' >/dev/null || fail 'YAML adapter mismatch'
+printf '%s\n' "$result" | grep -Fx "container_id=$cid" >/dev/null || fail 'Docker selector lost'
+
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL=http://127.0.0.1:9180 \
+  RSUDO_APISIX_HEADER_FILE=/root/apisix.header probe)
+[ "$?" -eq 0 ] || fail 'valid snapshot context'
+printf '%s\n' "$result" | grep -Fx 'adapter=snapshot' >/dev/null || fail 'snapshot mapping'
+
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=unknown probe 2>"$tmp/stderr")
+[ "$?" -eq 80 ] || fail 'unknown backend not rejected'
+result=$(RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID=short \
+  RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE=/data/apisix.json probe 2>"$tmp/stderr")
+[ "$?" -eq 78 ] || fail 'short Docker ID not rejected'
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  probe 2>"$tmp/stderr")
+[ "$?" -eq 79 ] || fail 'missing data file not rejected'
+printf '%s\n' "$TEST_ID: PASS (real m and operator context parser, no remote effects)"
