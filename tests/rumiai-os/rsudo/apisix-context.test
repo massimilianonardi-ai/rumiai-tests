@@ -60,12 +60,12 @@ result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
 printf '%s\n' "$result" | grep -Fx 'adapter=snapshot' >/dev/null || fail 'snapshot mapping'
 
 result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=unknown probe 2>"$tmp/stderr")
-[ "$?" -eq 80 ] || fail 'unknown backend not rejected'
+[ "$?" -eq 3 ] || fail 'unknown backend not rejected'
 result=$(RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID=short \
   RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
   RSUDO_APISIX_DATA_FILE=/data/apisix.json probe 2>"$tmp/stderr")
-[ "$?" -eq 78 ] || fail 'short Docker ID not rejected'
+[ "$?" -eq 7 ] || fail 'short Docker ID not rejected'
 result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
   probe 2>"$tmp/stderr")
-[ "$?" -eq 79 ] || fail 'missing data file not rejected'
+[ "$?" -eq 8 ] || fail 'missing data file not rejected'
 printf '%s\n' "$TEST_ID: PASS (real m and operator context parser, no remote effects)"
