@@ -235,20 +235,29 @@ async function main()
     const fallbackCss=Buffer.from('@import url("https://fixture.invalid/not-archived.css") screen;\n' +
       'body{background-image:url("https://fixture.invalid/fallback.png")}\n' +
       '.missing{background-image:url("https://fixture.invalid/not-archived.png")}');
+    const httpCss=Buffer.from('body{color:rebeccapurple}');
+    const ambiguousCssA=Buffer.from('body{color:teal}');
+    const ambiguousCssB=Buffer.from('body{color:maroon}');
     const expectedBody=Buffer.from('good bytes');
     const tamperedBody=Buffer.from('bad! bytes');
     const hash=body=>crypto.createHash('sha256').update(body).digest('hex');
     const fixture={
       html:'<!doctype html><html><head><title>fallback fixture</title>' +
-        '<link rel="stylesheet" href="https://fixture.invalid/recovered.css"></head>' +
+        '<link rel="stylesheet" href="https://fixture.invalid/recovered.css">' +
+        '<link rel="stylesheet" href="https://fixture.invalid/ambiguous.css"></head>' +
         '<body><h1>CSSOM fallback</h1><img id="fallback" src="https://fixture.invalid/fallback.png">' +
         '<img id="tampered" src="https://fixture.invalid/tampered.png">' +
         '<img id="missing" src="https://fixture.invalid/not-archived.png">' +
         '<img id="local-file" src="file:///etc/passwd">' +
         '<img id="blob-url" src="blob:https://fixture.invalid/opaque"></body></html>',
       css:fallbackCss.toString('base64'),pixel:pixel.toString('base64'),
+      httpCss:httpCss.toString('base64'),ambiguousCssA:ambiguousCssA.toString('base64'),
+      ambiguousCssB:ambiguousCssB.toString('base64'),
       tampered:tamperedBody.toString('base64'),expectedSha:hash(expectedBody),
       expectedBytes:expectedBody.length,cssSha:hash(fallbackCss),cssBytes:fallbackCss.length,
+      httpCssSha:hash(httpCss),httpCssBytes:httpCss.length,
+      ambiguousCssASha:hash(ambiguousCssA),ambiguousCssABytes:ambiguousCssA.length,
+      ambiguousCssBSha:hash(ambiguousCssB),ambiguousCssBBytes:ambiguousCssB.length,
       pixelSha:hash(pixel),pixelBytes:pixel.length
     };
     const analyzer=[
@@ -262,11 +271,17 @@ async function main()
       "fs.writeFileSync(path.join(run,'states/dom-rest-final.html'),fixture.html);",
       "fs.writeFileSync(path.join(run,'resources/fallback.png'),Buffer.from(fixture.pixel,'base64'));",
       "fs.writeFileSync(path.join(run,'resources/tampered.png'),Buffer.from(fixture.tampered,'base64'));",
+      "fs.writeFileSync(path.join(run,'resources/recovered-http.css'),Buffer.from(fixture.httpCss,'base64'));",
+      "fs.writeFileSync(path.join(run,'resources/ambiguous-a.css'),Buffer.from(fixture.ambiguousCssA,'base64'));",
+      "fs.writeFileSync(path.join(run,'resources/ambiguous-b.css'),Buffer.from(fixture.ambiguousCssB,'base64'));",
       "fs.writeFileSync(path.join(run,'rest/stylesheets/cssom/recovered.css'),Buffer.from(fixture.css,'base64'));",
       "const rows=[",
       "{url:'https://fixture.invalid/recovered.css',status:'body-unavailable',resourceType:'Stylesheet',mimeType:'text/css'},",
       "{url:'https://fixture.invalid/fallback.png',status:'saved',resourceType:'Image',mimeType:'image/png',file:'resources/fallback.png',sha256:fixture.pixelSha,bytes:fixture.pixelBytes,httpStatus:200},",
       "{url:'https://fixture.invalid/tampered.png',status:'saved',resourceType:'Image',mimeType:'image/png',file:'resources/tampered.png',sha256:fixture.expectedSha,bytes:fixture.expectedBytes,httpStatus:200}];",
+      "rows.push({url:'https://fixture.invalid/recovered.css',status:'saved',resourceType:'Stylesheet',mimeType:'text/css',file:'resources/recovered-http.css',sha256:fixture.httpCssSha,bytes:fixture.httpCssBytes,httpStatus:200});",
+      "rows.push({url:'https://fixture.invalid/ambiguous.css',status:'saved',resourceType:'Stylesheet',mimeType:'text/css',file:'resources/ambiguous-a.css',sha256:fixture.ambiguousCssASha,bytes:fixture.ambiguousCssABytes,httpStatus:200});",
+      "rows.push({url:'https://fixture.invalid/ambiguous.css',status:'saved',resourceType:'Stylesheet',mimeType:'text/css',file:'resources/ambiguous-b.css',sha256:fixture.ambiguousCssBSha,bytes:fixture.ambiguousCssBBytes,httpStatus:200});",
       "fs.writeFileSync(path.join(run,'resources.jsonl'),rows.map(row=>JSON.stringify(row)).join('\\n')+'\\n');",
       "fs.writeFileSync(path.join(run,'rest/stylesheets/index.json'),JSON.stringify([{status:'saved',sourceURL:'https://fixture.invalid/recovered.css',file:'stylesheets/cssom/recovered.css',sha256:fixture.cssSha,bytes:fixture.cssBytes}]));",
       "fs.writeFileSync(path.join(run,'README.md'),'synthetic capture\\n');",
@@ -282,9 +297,12 @@ async function main()
     const fallbackManifest=JSON.parse(fs.readFileSync(path.join(fallbackDir,'manifest.json'),'utf8'));
     assert.equal(fallbackManifest.coverage.stylesheetSourcesFromCssom,1);
     assert.equal(fallbackManifest.coverage.unverifiedBodies,1);
+    assert.equal(fallbackManifest.coverage.ambiguousAssetUrls,1);
     assert.ok(fallbackManifest.coverage.unavailableHtmlReferences>=2);
     assert.ok(fallbackManifest.coverage.unavailableCssReferences>=2);
     assert.ok(fallbackManifest.assets.some(asset=>asset.kind==='stylesheet'&&asset.source==='cssom-source'));
+    assert.match(fallbackHtml,/href="assets\/[a-f0-9]{64}-[a-f0-9]{12}\.css"/i);
+    assert.doesNotMatch(fallbackHtml,/ambiguous\.css/i,'an ambiguous stylesheet URL was retained');
     assert.match(fallbackHtml,/<img id="fallback" src="assets\/[a-f0-9]{64}\.png">/i);
     assert.match(fallbackHtml,/<img id="tampered">/i);
     assert.match(fallbackHtml,/<img id="missing">/i);
@@ -292,11 +310,21 @@ async function main()
     assert.match(fallbackHtml,/<img id="blob-url">/i);
     assert.doesNotMatch(fallbackHtml,/https:\/\/fixture\.invalid\/(?:recovered\.css|fallback\.png|tampered\.png|not-archived\.png)/i);
     const fallbackSheet=fallbackManifest.assets.find(asset=>asset.kind==='stylesheet');
+    assert.equal(fallbackSheet.sourceSha256,fixture.cssSha,
+      'the CSSOM stylesheet provenance digest was not retained');
     const fallbackSheetText=fs.readFileSync(path.join(fallbackDir,fallbackSheet.file),'utf8');
     assert.doesNotMatch(fallbackSheetText,/https:\/\/fixture\.invalid/i);
     assert.match(fallbackSheetText,/url\("\.\/[a-f0-9]{64}\.png"\)/i);
     assert.equal(fallbackManifest.assets.some(asset=>asset.sha256===hash(tamperedBody)),false,
       'a digest-mismatched body was exported');
+    for (const asset of fallbackManifest.assets)
+    {
+      const bytes=fs.readFileSync(path.join(fallbackDir,asset.file));
+      assert.equal(bytes.length,asset.bytes,`CSSOM scenario asset size mismatch ${asset.file}`);
+      assert.equal(hash(bytes),asset.sha256,`CSSOM scenario asset digest mismatch ${asset.file}`);
+    }
+    assert.equal(hash(fallbackHtml),fallbackManifest.document.sha256,
+      'CSSOM scenario document digest mismatch');
     const fallbackChromium=await run('chromium',['--headless=new','--disable-gpu',
       '--disable-background-networking','--no-first-run','--no-default-browser-check',
       '--virtual-time-budget=3000','--user-data-dir='+path.join(work,'fallback-profile'),
