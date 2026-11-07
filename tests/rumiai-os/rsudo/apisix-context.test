@@ -61,7 +61,7 @@ printf '%s\n' "$result" | grep -Fx 'adapter=snapshot' >/dev/null || fail 'snapsh
 
 result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=unknown probe 2>"$tmp/stderr")
 [ "$?" -eq 3 ] || fail 'unknown backend not rejected'
-result=$(RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID=short \
+result=$(RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID=abc \
   RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
   RSUDO_APISIX_DATA_FILE=/data/apisix.json probe 2>"$tmp/stderr")
 [ "$?" -eq 7 ] || fail 'short Docker ID not rejected'
