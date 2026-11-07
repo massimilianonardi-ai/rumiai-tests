@@ -1,0 +1,151 @@
+#!/bin/sh
+# Exercises the operator-selected file-json read adapter through real m/json.
+# The rsudo boundary is local and synthetic; no APISIX or remote host is used.
+TEST_ID=rumiai-os/rsudo/apisix-file-json-read.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+test_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P) || error 'test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'product checkout missing' ;; 2) fail 'invalid checkout' ;; *) error 'resolver' ;; esac
+module=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
+[ -f "$module" ] && [ -f "$manual" ] || fail 'module/manual missing'
+sh -n "$module" || fail 'module syntax invalid'
+
+tmp=/tmp/rsudo-apisix-json-read-$$
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup 0
+umask 077
+mkdir -p "$tmp/bin" || error 'fixture directory'
+cat > "$tmp/apisix.json" <<'JSON'
+{
+  "routes": [
+    {"id":"route-1","uri":"/one","plugins":{"key-auth":{"key":"fixture-secret"}}},
+    {"id":"route-2","uri":"/two"}
+  ],
+  "services": [{"id":"service-1","name":"fixture-service"}],
+  "upstreams": [{"id":"upstream-1","type":"roundrobin"}]
+}
+JSON
+cp "$tmp/apisix.json" "$tmp/apisix.before.json" || error 'fixture snapshot'
+cat > "$tmp/bin/docker" <<'DOCKER'
+#!/bin/sh
+[ "$1:$2" = exec:-i ] || exit 70
+shift 2
+[ "$1" = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ] || exit 71
+shift
+[ "$1" = sh ] || exit 72
+exec "$@"
+DOCKER
+cat > "$tmp/bin/podman" <<'PODMAN'
+#!/bin/sh
+[ "$1:$2" = exec:-i ] || exit 73
+shift 2
+[ "$1" = abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 ] || exit 74
+shift
+[ "$1" = sh ] || exit 75
+exec "$@"
+PODMAN
+cat > "$tmp/bin/rsudo-apisix-json-read-probe" <<'PROBE'
+#!/bin/sh
+[ -n "$m_ROOT" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  case "$1:$2" in
+    sh:-s) "$@" ;;
+    docker:exec|podman:exec) "$@" ;;
+    *) exit 90 ;;
+  esac
+}
+case "${APISIX_READ_SCOPE-host}" in
+  host) rsudo_mod_apisix_list routes ;;
+  docker|podman) rsudo_mod_apisix_list services ;;
+esac
+PROBE
+cat > "$tmp/bin/rsudo-apisix-json-get-probe" <<'PROBE'
+#!/bin/sh
+[ -n "$m_ROOT" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  case "$1:$2" in
+    sh:-s) "$@" ;;
+    docker:exec|podman:exec) "$@" ;;
+    *) exit 90 ;;
+  esac
+}
+rsudo_mod_apisix_get "$@"
+PROBE
+chmod 700 "$tmp/bin/docker" "$tmp/bin/podman" \
+  "$tmp/bin/rsudo-apisix-json-read-probe" "$tmp/bin/rsudo-apisix-json-get-probe" ||
+  error 'fixture permissions'
+probe()
+{
+  PATH="$tmp/bin:$PATH" "$root/m" "$@"
+}
+base_env="RSUDO_APISIX_DEPLOYMENT=standalone-file-json RSUDO_APISIX_DATA_FILE=$tmp/apisix.json"
+
+result=$(env RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-read-probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'host JSON list'; }
+[ "$(printf '%s\n' "$result" | wc -l)" -eq 2 ] || fail 'route list cardinality'
+printf '%s\n' "$result" | grep -F '"id":"route-1"' >/dev/null || fail 'first route missing'
+printf '%s\n' "$result" | grep -F '"id":"route-2"' >/dev/null || fail 'second route missing'
+printf '%s\n' "$result" | grep -F 'fixture-secret' >/dev/null || fail 'selected resource JSON lost'
+
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-get-probe routes route-2 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'host JSON get'; }
+[ "$(printf '%s\n' "$result" | wc -l)" -eq 1 ] || fail 'get cardinality'
+printf '%s\n' "$result" | grep -F '"uri":"/two"' >/dev/null || fail 'selected route content missing'
+printf '%s\n' "$result" | grep -F 'fixture-secret' >/dev/null && fail 'unselected route leaked'
+
+cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+result=$(APISIX_READ_SCOPE=docker RSUDO_APISIX_SCOPE=docker \
+  RSUDO_APISIX_CONTAINER_ID="$cid" RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-read-probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'Docker JSON list'; }
+printf '%s\n' "$result" | grep -F '"id":"service-1"' >/dev/null || fail 'Docker-scoped service missing'
+
+cid=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+result=$(APISIX_READ_SCOPE=podman RSUDO_APISIX_SCOPE=podman \
+  RSUDO_APISIX_CONTAINER_ID="$cid" RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-read-probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'Podman JSON list'; }
+printf '%s\n' "$result" | grep -F '"id":"service-1"' >/dev/null || fail 'Podman-scoped service missing'
+
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-get-probe routes absent 2>"$tmp/stderr")
+[ "$?" -eq 14 ] || fail 'missing JSON resource not rejected distinctly'
+grep -F 'apisix.json-file-read-resource-not-found' "$tmp/stderr" >/dev/null || fail 'not-found diagnostic missing'
+
+printf '%s\n' '{"routes":' > "$tmp/invalid.json"
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/invalid.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-read-probe 2>"$tmp/stderr")
+[ "$?" -eq 11 ] || fail 'invalid JSON not rejected'
+ln -s "$tmp/apisix.json" "$tmp/apisix-link.json" || error 'symlink fixture'
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix-link.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-read-probe 2>"$tmp/stderr")
+[ "$?" -eq 10 ] || fail 'symlinked remote JSON source not rejected'
+cat > "$tmp/duplicate.json" <<'JSON'
+{"routes":[{"id":"same"},{"id":"same"}]}
+JSON
+result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/duplicate.json" PATH="$tmp/bin:$PATH" \
+  "$root/m" rsudo-apisix-json-get-probe routes same 2>"$tmp/stderr")
+[ "$?" -eq 15 ] || fail 'duplicate resource IDs not rejected as ambiguous'
+cmp -s "$tmp/apisix.before.json" "$tmp/apisix.json" || fail 'source JSON was modified'
+printf '%s\n' "$TEST_ID: PASS (real m/json, host and Docker/Podman read routing; synthetic rsudo managers)"
