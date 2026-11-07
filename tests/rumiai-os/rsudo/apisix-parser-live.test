@@ -66,6 +66,28 @@ PROBE
 chmod 700 -- "$tmp/bin/rsudo-apisix-parser-probe" ||
   error 'cannot make probe executable'
 
+cat > "$tmp/bin/rsudo-apisix-yaml-read-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  [ "$1" = sh ] || return 83
+  shift
+  docker run --rm --read-only --network none --cap-drop ALL -i \
+    --mount "type=bind,src=$APISIX_PARSER_FIXTURES,dst=/mnt/rsudo-apisix-fixtures,readonly" \
+    --entrypoint /bin/sh "$APISIX_PARSER_IMAGE" "$@"
+}
+case "$APISIX_YAML_OPERATION:$#" in
+  list:1) rsudo_mod_apisix_list "$1" ;;
+  get:2) rsudo_mod_apisix_get "$1" "$2" ;;
+  *) exit 84 ;;
+esac
+PROBE
+chmod 700 -- "$tmp/bin/rsudo-apisix-yaml-read-probe" ||
+  error 'cannot make YAML read probe executable'
+
 write_case()
 {
   printf '%s\n' "$2" > "$tmp/fixtures/$1" ||
@@ -79,6 +101,20 @@ run_mode()
   APISIX_PARSER_FIXTURES="$tmp/fixtures" APISIX_PARSER_IMAGE="$image" \
     PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-parser-probe \
     "/mnt/rsudo-apisix-fixtures/$1"
+}
+
+run_yaml_read()
+{
+  yaml_file=$1
+  yaml_operation=$2
+  shift 2
+  APISIX_PARSER_FIXTURES="$tmp/fixtures" APISIX_PARSER_IMAGE="$image" \
+    APISIX_YAML_OPERATION="$yaml_operation" \
+    RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-yaml \
+    RSUDO_APISIX_HOME=/usr/local/apisix \
+    RSUDO_APISIX_DATA_FILE="/mnt/rsudo-apisix-fixtures/$yaml_file" \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-yaml-read-probe \
+    "$@"
 }
 
 expect_mode()
@@ -136,6 +172,24 @@ write_case unresolved 'deployment:
   role: traditional
   role_traditional:
     config_provider: ${{UNRESOLVED_PROVIDER}}'
+write_case resources 'routes:
+  - id: yaml-route-1
+    uri: /one
+    plugins:
+      key-auth:
+        key: fixture-secret
+  - id: yaml-route-2
+    uri: /two
+services:
+  - id: yaml-service-1
+upstreams:
+  - id: yaml-upstream-1
+'
+write_case malformed_resources 'routes: ['
+write_case duplicate_resources 'routes:
+  - id: same
+  - id: same
+'
 
 # Both releases must independently exercise the *installed* APISIX parser.
 # A missing image makes this integration test SKIP, not a synthetic PASS.
@@ -162,6 +216,27 @@ do
   expect_failure structure
   expect_failure disabled
   expect_failure unresolved
+
+  result=$(run_yaml_read resources list routes 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "YAML list status $status"; }
+  [ "$(printf '%s\n' "$result" | wc -l)" -eq 2 ] || fail 'YAML list cardinality'
+  printf '%s\n' "$result" | grep -F 'yaml-route-1' >/dev/null || fail 'YAML list first route missing'
+  printf '%s\n' "$result" | grep -F 'fixture-secret' >/dev/null || fail 'YAML selected record lost'
+
+  result=$(run_yaml_read resources get routes yaml-route-2 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "YAML get status $status"; }
+  [ "$(printf '%s\n' "$result" | wc -l)" -eq 1 ] || fail 'YAML get cardinality'
+  printf '%s\n' "$result" | grep -F 'yaml-route-2' >/dev/null || fail 'YAML selected route missing'
+  printf '%s\n' "$result" | grep -F 'fixture-secret' >/dev/null && fail 'YAML get leaked unrelated record'
+
+  result=$(run_yaml_read resources get routes missing 2>"$tmp/stderr")
+  [ "$?" -eq 13 ] || fail 'YAML missing ID not rejected'
+  result=$(run_yaml_read duplicate_resources get routes same 2>"$tmp/stderr")
+  [ "$?" -eq 14 ] || fail 'YAML duplicate ID not rejected'
+  result=$(run_yaml_read malformed_resources list routes 2>"$tmp/stderr")
+  [ "$?" -eq 10 ] || fail 'malformed YAML not rejected through parser'
 done
 
-printf '%s\n' "$TEST_ID: PASS (APISIX 3.16.0 and 3.19.0 parsers; no gateway process)"
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16.0 and 3.19.0 YAML parsers and list/get; no gateway process)"
