@@ -1,6 +1,6 @@
 #!/bin/sh
-# Real m/module plus read-only host filesystem scan. Only SSH/sudo and ps
-# are substituted; this does not validate Docker/Podman or live APISIX.
+# Real m/module plus read-only host/container inventory. Remote managers and
+# ps are synthetic; this does not validate live Docker/Podman or APISIX.
 TEST_ID=rumiai-os/rsudo/apisix-discovery-host.test
 fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
 error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
@@ -34,6 +34,37 @@ cat > "$tmp/bin/ps" <<'PS'
 printf '4321 nginx: master process openresty -p %s\n' "$APISIX_DISCOVERY_FIXTURE_HOME"
 printf '5555 nginx: master process unrelated app\n'
 PS
+cat > "$tmp/bin/docker" <<'DOCKER'
+#!/bin/sh
+case "$1:$2" in
+  ps:-a)
+    printf '%s\n' \
+      'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd|apisix-live|running|apache/apisix:3.19' \
+      'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee|apisix-stopped|exited|apache/apisix:3.16'
+  ;;
+  exec:-i)
+    [ "$3" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ] || exit 1
+    cat >/dev/null
+    printf '%s\n' /usr/local/apisix/conf/config.yaml
+  ;;
+  *) exit 70 ;;
+esac
+DOCKER
+cat > "$tmp/bin/podman" <<'PODMAN'
+#!/bin/sh
+case "$1:$2" in
+  ps:-a)
+    printf '%s\n' \
+      'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff|edge-gateway|running|internal/gateway:stable'
+  ;;
+  exec:-i)
+    [ "$3" = ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff ] || exit 1
+    cat >/dev/null
+    printf '%s\n' /srv/gateway/conf/apisix.json
+  ;;
+  *) exit 70 ;;
+esac
+PODMAN
 cat > "$tmp/bin/rsudo-apisix-discovery-probe" <<'PROBE'
 #!/bin/sh
 [ -n "$m_ROOT" ] || exit 80
@@ -42,7 +73,8 @@ loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
 rsudo() { "$@"; }
 rsudo_mod_apisix_discovery "$@"
 PROBE
-chmod 700 "$tmp/bin/ps" "$tmp/bin/rsudo-apisix-discovery-probe" || error 'fixture permissions'
+chmod 700 "$tmp/bin/ps" "$tmp/bin/docker" "$tmp/bin/podman" \
+  "$tmp/bin/rsudo-apisix-discovery-probe" || error 'fixture permissions'
 probe()
 {
   APISIX_DISCOVERY_FIXTURE_HOME="$tmp/tree/one" PATH="$tmp/bin:$PATH" \
@@ -57,7 +89,14 @@ printf '%s\n' "$output" | grep -F "$tmp/tree/one/conf/config-stage.yaml" >/dev/n
 printf '%s\n' "$output" | grep -F "$tmp/tree/two/conf/apisix.json" >/dev/null || fail 'second installation missing'
 printf '%s\n' "$output" | grep -F "$tmp/tree/other/conf/config.yaml" >/dev/null && fail 'generic config false positive'
 printf '%s\n' "$output" | grep -F 'find-and-ps-prefix' >/dev/null || fail 'ps evidence missing'
-[ "$(printf '%s\n' "$output" | grep -c '^config')" -eq 3 ] || fail 'multiple candidates lost'
+tab=$(printf '\t')
+[ "$(printf '%s\n' "$output" | grep -c "^config${tab}host")" -eq 3 ] || fail 'multiple host candidates lost'
+printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee${tab}manager-image-name-candidate" >/dev/null ||
+  fail 'stopped Docker candidate missing'
+printf '%s\n' "$output" | grep -F 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:/usr/local/apisix/conf/config.yaml' >/dev/null ||
+  fail 'running Docker config missing'
+printf '%s\n' "$output" | grep -F 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:/srv/gateway/conf/apisix.json' >/dev/null ||
+  fail 'Podman config without APISIX image/name hint missing'
 
 output=$(probe relative 2>"$tmp/stderr"); status=$?
 [ "$status" -eq 2 ] && [ -z "$output" ] || fail 'relative root not rejected'
