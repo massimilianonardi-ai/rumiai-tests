@@ -31,7 +31,7 @@ chmod 700 "$tmp/bin/rsudo-apisix-context-probe" || error 'probe permissions'
 probe() { PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-context-probe "$@"; }
 result=$(RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=traditional-admin \
   RSUDO_APISIX_HOME=/opt/apisix \
-  RSUDO_APISIX_ADMIN_URL=http://127.0.0.1:9180 \
+  RSUDO_APISIX_ADMIN_URL=http://127.0.0.1:9180/private-path-probe \
   RSUDO_APISIX_HEADER_FILE=/root/apisix.header \
   probe 2>"$tmp/stderr")
 [ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'valid REST context'; }
@@ -41,6 +41,8 @@ printf '%s\n' "$result" | grep -Fx 'selection=operator-supplied-unverified' >/de
 printf '%s\n' "$result" | grep -Fx 'credential_file=configured-not-verified' >/dev/null ||
   fail 'credential-file status absent'
 printf '%s\n' "$result" | grep -F 'X-API-KEY' >/dev/null && fail 'unexpected credential leak'
+printf '%s\n' "$result" | grep -Fx 'admin_url=configured-not-verified' >/dev/null || fail 'URL status missing'
+printf '%s\n' "$result" | grep -F 'private-path-probe' >/dev/null && fail 'URL path disclosed'
 
 cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 result=$(RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID="$cid" \
