@@ -231,7 +231,9 @@ async function main()
         '<link rel="stylesheet" href="https://fixture.invalid/recovered.css"></head>' +
         '<body><h1>CSSOM fallback</h1><img id="fallback" src="https://fixture.invalid/fallback.png">' +
         '<img id="tampered" src="https://fixture.invalid/tampered.png">' +
-        '<img id="missing" src="https://fixture.invalid/not-archived.png"></body></html>',
+        '<img id="missing" src="https://fixture.invalid/not-archived.png">' +
+        '<img id="local-file" src="file:///etc/passwd">' +
+        '<img id="blob-url" src="blob:https://fixture.invalid/opaque"></body></html>',
       css:fallbackCss.toString('base64'),pixel:pixel.toString('base64'),
       tampered:tamperedBody.toString('base64'),expectedSha:hash(expectedBody),
       expectedBytes:expectedBody.length,cssSha:hash(fallbackCss),cssBytes:fallbackCss.length,
@@ -273,6 +275,8 @@ async function main()
     assert.match(fallbackHtml,/<img id="fallback" src="assets\/[a-f0-9]{64}\.png">/i);
     assert.match(fallbackHtml,/<img id="tampered">/i);
     assert.match(fallbackHtml,/<img id="missing">/i);
+    assert.match(fallbackHtml,/<img id="local-file">/i);
+    assert.match(fallbackHtml,/<img id="blob-url">/i);
     assert.doesNotMatch(fallbackHtml,/https:\/\/fixture\.invalid\/(?:recovered\.css|fallback\.png|tampered\.png|not-archived\.png)/i);
     const fallbackSheet=fallbackManifest.assets.find(asset=>asset.kind==='stylesheet');
     const fallbackSheetText=fs.readFileSync(path.join(fallbackDir,fallbackSheet.file),'utf8');
