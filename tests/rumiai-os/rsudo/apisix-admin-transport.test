@@ -305,8 +305,10 @@ grep -F 'url-secret' "$tmp/stderr" >/dev/null && fail 'mutation URL userinfo lea
 
 result=$(APISIX_TEST_OPERATION=apply RSUDO_APISIX_SCOPE=host \
   RSUDO_APISIX_DEPLOYMENT=traditional-admin \
-  probe routes 2>"$tmp/stderr")
-[ "$?" -eq 1 ] && [ -z "$result" ] || fail 'unimplemented apply silently succeeded'
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe 2>"$tmp/stderr")
+[ "$?" -eq 3 ] && [ -z "$result" ] || fail 'traditional REST apply was not rejected without legacy fallback'
 
 result=$(APISIX_TEST_OPERATION=request RSUDO_APISIX_SCOPE=host \
   RSUDO_APISIX_DEPLOYMENT=traditional-admin \

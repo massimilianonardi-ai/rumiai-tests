@@ -1,0 +1,136 @@
+#!/bin/sh
+# Exercises full standalone JSON document publication through real m/json.
+# The target shell and Docker/Podman boundaries are synthetic local fixtures.
+TEST_ID=rumiai-os/rsudo/apisix-file-json-apply.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+test_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P) || error 'test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'product checkout missing' ;; 2) fail 'invalid checkout' ;; *) error 'resolver' ;; esac
+module=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
+[ -f "$module" ] && [ -f "$manual" ] || fail 'current APISIX module/manual missing'
+grep -F 'rsudo_mod_apisix_apply' "$manual" >/dev/null || fail 'apply function missing from library manual'
+sh -n "$module" || fail 'module syntax invalid'
+
+tmp=/tmp/rsudo-apisix-json-apply-$$
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup 0
+umask 077
+mkdir -p "$tmp/bin" || error 'fixture directory'
+cat > "$tmp/apisix.json" <<'JSON'
+{"routes":[],"services":[],"upstreams":[],"metadata":{"kept":true}}
+JSON
+chmod 640 "$tmp/apisix.json" || error 'source permissions'
+cat > "$tmp/replacement.json" <<'JSON'
+{"routes":[{"id":"route-1","uri":"/one"}],"services":[{"id":"service-1"}],"upstreams":[{"id":"upstream-1"}],"metadata":{"kept":true,"revision":2}}
+JSON
+cat > "$tmp/bin/docker" <<'DOCKER'
+#!/bin/sh
+[ "$1:$2" = exec:-i ] || exit 70
+shift 2
+[ "$1" = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ] || exit 71
+shift
+[ "$1" = sh ] || exit 72
+exec "$@"
+DOCKER
+cat > "$tmp/bin/podman" <<'PODMAN'
+#!/bin/sh
+[ "$1:$2" = exec:-i ] || exit 73
+shift 2
+[ "$1" = abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 ] || exit 74
+shift
+[ "$1" = sh ] || exit 75
+exec "$@"
+PODMAN
+cat > "$tmp/bin/cp" <<'CP'
+#!/bin/sh
+/bin/cp "$@" || exit $?
+if [ "${APPLY_CONFLICT-}" = 1 ] && [ "$#" -eq 3 ] && [ "$1" = -p ]
+then
+  printf '%s\n' '{"routes":[],"services":[],"upstreams":[],"metadata":{"concurrent":true}}' > "$APPLY_CONFLICT_TARGET" || exit 76
+fi
+CP
+cat > "$tmp/bin/rsudo-apisix-json-apply-probe" <<'PROBE'
+#!/bin/sh
+[ -n "$m_ROOT" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  printf '%s\n' called >> "$APPLY_RUDO_MARKER"
+  case "$1:$2" in
+    sh:-c) "$@" ;;
+    docker:exec|podman:exec) "$@" ;;
+    *) exit 90 ;;
+  esac
+}
+rsudo_mod_apisix_apply "$@"
+PROBE
+chmod 700 "$tmp/bin/docker" "$tmp/bin/podman" "$tmp/bin/cp" \
+  "$tmp/bin/rsudo-apisix-json-apply-probe" || error 'fixture permissions'
+apply_host()
+{
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$1" PATH="$tmp/bin:$PATH" \
+  APPLY_RUDO_MARKER="$tmp/rsudo-called" "$root/m" rsudo-apisix-json-apply-probe
+}
+
+result=$(apply_host "$tmp/apisix.json" < "$tmp/replacement.json" 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ -z "$result" ] || { cat "$tmp/stderr" >&2; fail "host JSON apply status $status"; }
+"$root/m" json --check "$tmp/apisix.json" || fail 'published document is invalid JSON'
+grep -F '"revision":2' "$tmp/apisix.json" >/dev/null || fail 'complete document was not published'
+[ "$(LC_ALL=C ls -ld "$tmp/apisix.json" | cut -c1-10)" = -rw-r----- ] || fail 'file mode was not preserved'
+[ ! -e "$tmp/apisix.json.rsudo-lock" ] || fail 'writer lock was not removed'
+find "$tmp" -name 'apisix.json.rsudo-apply-*' -print | grep . >/dev/null && fail 'remote stage directory leaked'
+
+cp "$tmp/apisix.json" "$tmp/before-invalid.json" || error 'invalid-body fixture'
+printf '%s\n' '{"routes":' > "$tmp/invalid.json"
+result=$(apply_host "$tmp/apisix.json" < "$tmp/invalid.json" 2>"$tmp/stderr")
+[ "$?" -eq 9 ] && [ -z "$result" ] || fail 'invalid JSON was accepted'
+cmp -s "$tmp/apisix.json" "$tmp/before-invalid.json" || fail 'invalid input modified source file'
+
+printf '%s\n' '{"routes":[],"metadata":{"new":true}}' > "$tmp/conflict-input.json"
+result=$(APPLY_CONFLICT=1 APPLY_CONFLICT_TARGET="$tmp/apisix.json" \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+  RSUDO_APISIX_DATA_FILE="$tmp/apisix.json" PATH="$tmp/bin:$PATH" \
+  APPLY_RUDO_MARKER="$tmp/rsudo-called" "$root/m" rsudo-apisix-json-apply-probe \
+  < "$tmp/conflict-input.json" 2>"$tmp/stderr")
+[ "$?" -eq 88 ] && [ -z "$result" ] || fail 'concurrent file change was not rejected'
+grep -F '"concurrent":true' "$tmp/apisix.json" >/dev/null || fail 'concurrent writer content was overwritten'
+
+mkdir "$tmp/apisix.json.rsudo-lock" || error 'lock fixture'
+result=$(apply_host "$tmp/apisix.json" < "$tmp/replacement.json" 2>"$tmp/stderr")
+[ "$?" -eq 82 ] && [ -z "$result" ] || fail 'pre-existing writer lock was ignored'
+rmdir "$tmp/apisix.json.rsudo-lock" || error 'lock cleanup'
+
+docker_file=$tmp/docker-apisix.json
+podman_file=$tmp/podman-apisix.json
+cp "$tmp/apisix.json" "$docker_file" || error 'Docker source fixture'
+cp "$tmp/apisix.json" "$podman_file" || error 'Podman source fixture'
+cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+result=$(printf '%s\n' '{"routes":[{"id":"docker-route"}]}' | \
+  RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID="$cid" \
+  RSUDO_APISIX_DEPLOYMENT=standalone-file-json RSUDO_APISIX_DATA_FILE="$docker_file" \
+  PATH="$tmp/bin:$PATH" APPLY_RUDO_MARKER="$tmp/rsudo-called" \
+  "$root/m" rsudo-apisix-json-apply-probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'Docker-scoped JSON apply'; }
+grep -F docker-route "$docker_file" >/dev/null || fail 'Docker-scoped document was not published'
+cid=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+result=$(printf '%s\n' '{"routes":[{"id":"podman-route"}]}' | \
+  RSUDO_APISIX_SCOPE=podman RSUDO_APISIX_CONTAINER_ID="$cid" \
+  RSUDO_APISIX_DEPLOYMENT=standalone-file-json RSUDO_APISIX_DATA_FILE="$podman_file" \
+  PATH="$tmp/bin:$PATH" APPLY_RUDO_MARKER="$tmp/rsudo-called" \
+  "$root/m" rsudo-apisix-json-apply-probe 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'Podman-scoped JSON apply'; }
+grep -F podman-route "$podman_file" >/dev/null || fail 'Podman-scoped document was not published'
+
+ln -s "$tmp/apisix.json" "$tmp/source-link.json" || error 'symlink fixture'
+result=$(apply_host "$tmp/source-link.json" < "$tmp/replacement.json" 2>"$tmp/stderr")
+[ "$?" -eq 81 ] && [ -z "$result" ] || fail 'symlink source was accepted'
+
+printf '%s\n' "$TEST_ID: PASS (real m/json validation, atomic full-document publication, metadata and concurrency checks; synthetic rsudo/container boundaries)"
