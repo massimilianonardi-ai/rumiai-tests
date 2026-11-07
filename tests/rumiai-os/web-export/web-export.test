@@ -1,0 +1,32 @@
+#!/bin/sh
+
+TEST_ID=rumiai-os/web-export/web-export.test
+fail() { printf '%s\n' "$TEST_ID: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: $*" >&2; exit 2; }
+
+self=${RUMIAI_TEST_SOURCE_PATH:-$0}
+case "$self" in */*) :;; *) self=$(command -v "$self") || error 'cannot resolve test' ;; esac
+test_dir=$(CDPATH= cd -- "${self%/*}" && pwd -P) || error 'cannot resolve test directory'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'cannot resolve suite root'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'cannot load target helper'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+status=$?
+case $status in 0) :;; 1) skip 'rumiai-os checkout unavailable';; 2) fail 'invalid target checkout';; *) error 'target discovery failed';; esac
+
+[ -x "$root/bin/sys/web-export" ] || fail 'web-export command missing or not executable'
+[ -f "$root/res/sys/manual/web-export" ] || fail 'web-export command manual missing'
+command -v node >/dev/null 2>&1 || skip 'Node.js unavailable'
+command -v chromium >/dev/null 2>&1 || skip 'Chromium unavailable'
+if node "$test_dir/.support/command.js" "$root"
+then
+    :
+else
+    result=$?
+    case $result in
+        1) fail 'a standalone export contract assertion failed' ;;
+        2) skip 'standalone export fixture is not applicable' ;;
+        3) error 'standalone export fixture could not determine a result' ;;
+        *) error "standalone export fixture exited unexpectedly with status $result" ;;
+    esac
+fi
