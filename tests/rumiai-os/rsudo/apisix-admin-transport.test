@@ -77,6 +77,8 @@ class Handler(BaseHTTPRequestHandler):
             code, body = 200, b'{"upstreams":[]}'
         elif self.path == "/apisix/admin/configs":
             code, body = 200, b'{"routes_conf_version":2,"routes":[{"id":"snap-a","uri":"/a"},{"id":"snap-b","uri":"/b"}],"services":[{"id":"snap-service"}],"upstreams":[{"id":"snap-upstream"}]}'
+        elif self.path == "/apisix/admin/plugin_metadata":
+            code, body = 200, b'{"plugin_metadata":[]}'
         else:
             code, body = 404, b'{"error":"missing"}'
         self.send_response(code)
@@ -110,6 +112,8 @@ class Handler(BaseHTTPRequestHandler):
             code, body = 200, b'{"id":"test","updated":true}'
         elif self.command == "DELETE" and self.path == "/apisix/admin/routes/test":
             code, body = 200, b'{"deleted":"test"}'
+        elif self.path == "/apisix/admin/custom/resource":
+            code, body = 200, b'{"custom":true}'
         else:
             code, body = 404, b'{"error":"missing"}'
         self.send_response(code)
@@ -139,6 +143,7 @@ case "${APISIX_TEST_OPERATION:-admin-read}" in
   create) rsudo_mod_apisix_create "$@";;
   update) rsudo_mod_apisix_update "$@";;
   delete) rsudo_mod_apisix_delete "$@";;
+  request) rsudo_mod_apisix_request "$@";;
   apply) rsudo_mod_apisix_apply "$@";;
   *) exit 83;;
 esac
@@ -246,6 +251,27 @@ status=$?
 [ "$(sed -n '2p' "$tmp/mutation-request")" = /apisix/admin/routes/test ] || fail 'delete path did not include the selected ID'
 [ "$(wc -l < "$tmp/mutation-request")" -eq 2 ] || fail 'delete unexpectedly sent a request body'
 
+result=$(APISIX_TEST_OPERATION=request RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe plugin_metadata 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"plugin_metadata":[]}' ] ||
+  fail "generic REST GET did not route to the selected Admin API path (status $status)"
+
+result=$(printf '%s\n' '{"name":"custom"}' | APISIX_TEST_OPERATION=request \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe custom/resource POST 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"custom":true}' ] ||
+  fail "generic REST POST did not stream its stdin body (status $status)"
+[ "$(sed -n '1p' "$tmp/mutation-request")" = POST ] || fail 'generic request method was not preserved'
+[ "$(sed -n '2p' "$tmp/mutation-request")" = /apisix/admin/custom/resource ] || fail 'generic request path escaped or changed'
+grep -F '{"name":"custom"}' "$tmp/mutation-request" >/dev/null || fail 'generic request body was not delivered'
+
 result=$(printf '%s\n' '{"reject":true}' | APISIX_TEST_OPERATION=create RSUDO_APISIX_SCOPE=host \
   RSUDO_APISIX_DEPLOYMENT=traditional-admin \
   RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
@@ -281,6 +307,19 @@ result=$(APISIX_TEST_OPERATION=apply RSUDO_APISIX_SCOPE=host \
   RSUDO_APISIX_DEPLOYMENT=traditional-admin \
   probe routes 2>"$tmp/stderr")
 [ "$?" -eq 1 ] && [ -z "$result" ] || fail 'unimplemented apply silently succeeded'
+
+result=$(APISIX_TEST_OPERATION=request RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe ../secret 2>"$tmp/stderr")
+[ "$?" -eq 2 ] && [ -z "$result" ] || fail 'generic REST path traversal was accepted'
+result=$(APISIX_TEST_OPERATION=request RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=traditional-admin \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe routes PATCH 2>"$tmp/stderr")
+[ "$?" -eq 3 ] && [ -z "$result" ] || fail 'unsupported generic REST method was accepted'
 
 result=$(APISIX_TEST_OPERATION=create RSUDO_APISIX_SCOPE=host \
   RSUDO_APISIX_DEPLOYMENT=traditional-admin \
@@ -393,4 +432,4 @@ status=$?
 [ "$status" -eq 49 ] && [ -z "$result" ] ||
   fail 'multi-line credential header was not rejected'
 
-printf '%s\n' "$TEST_ID: PASS (real curl and m; read/write methods, stdin body, synthetic rsudo boundary)"
+printf '%s\n' "$TEST_ID: PASS (real curl and m; CRUD plus generic REST request, stdin bodies, synthetic rsudo boundary)"
