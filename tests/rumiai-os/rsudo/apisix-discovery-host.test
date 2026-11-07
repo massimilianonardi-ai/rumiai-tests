@@ -1,0 +1,67 @@
+#!/bin/sh
+# Real m/module plus read-only host filesystem scan. Only SSH/sudo and ps
+# are substituted; this does not validate Docker/Podman or live APISIX.
+TEST_ID=rumiai-os/rsudo/apisix-discovery-host.test
+fail() { printf '%s: FAIL: %s\n' "$TEST_ID" "$*" >&2; exit 1; }
+error() { printf '%s: ERROR: %s\n' "$TEST_ID" "$*" >&2; exit 3; }
+skip() { printf '%s: SKIP: %s\n' "$TEST_ID" "$*" >&2; exit 2; }
+test_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd -P) || error 'test path'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || error 'suite path'
+. "$suite_root/lib/rumiai-os-target.lib" || error 'product resolver'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case "$?" in 0) : ;; 1) skip 'no product checkout' ;; 2) fail 'invalid checkout' ;; *) error 'resolver' ;; esac
+module=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
+manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
+[ -f "$module" ] && [ -f "$manual" ] || fail 'module/manual absent'
+sh -n "$module" || fail 'invalid POSIX shell syntax'
+grep -F rsudo_mod_apisix_discovery "$manual" >/dev/null || fail 'manual missing discovery'
+
+tmp=/tmp/rsudo-apisix-discovery-$$
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup 0
+umask 077
+mkdir -p "$tmp/bin" "$tmp/tree/one/bin" "$tmp/tree/one/conf" \
+  "$tmp/tree/two/conf" "$tmp/tree/other/conf" || error 'fixture directories'
+: > "$tmp/tree/one/bin/apisix"
+: > "$tmp/tree/one/conf/config.yaml"
+: > "$tmp/tree/one/conf/config-stage.yaml"
+: > "$tmp/tree/two/conf/nginx.conf"
+: > "$tmp/tree/two/conf/apisix.json"
+: > "$tmp/tree/other/conf/config.yaml"
+cat > "$tmp/bin/ps" <<'PS'
+#!/bin/sh
+[ "$1" = -eo ] || exit 70
+printf '4321 nginx: master process openresty -p %s\n' "$APISIX_DISCOVERY_FIXTURE_HOME"
+printf '5555 nginx: master process unrelated app\n'
+PS
+cat > "$tmp/bin/rsudo-apisix-discovery-probe" <<'PROBE'
+#!/bin/sh
+[ -n "$m_ROOT" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo() { "$@"; }
+rsudo_mod_apisix_discovery "$@"
+PROBE
+chmod 700 "$tmp/bin/ps" "$tmp/bin/rsudo-apisix-discovery-probe" || error 'fixture permissions'
+probe()
+{
+  APISIX_DISCOVERY_FIXTURE_HOME="$tmp/tree/one" PATH="$tmp/bin:$PATH" \
+    "$root/m" rsudo-apisix-discovery-probe "$@"
+}
+output=$(probe "$tmp/tree" 2>"$tmp/stderr")
+[ "$?" -eq 0 ] || { cat "$tmp/stderr" >&2; fail 'host discovery'; }
+printf '%s\n' "$output" | grep -Fx "$(printf 'kind\tscope\tstate\tidentifier\tevidence')" >/dev/null ||
+  fail 'stable output header missing'
+printf '%s\n' "$output" | grep -F "$tmp/tree/one/conf/config.yaml" >/dev/null || fail 'first installation missing'
+printf '%s\n' "$output" | grep -F "$tmp/tree/one/conf/config-stage.yaml" >/dev/null || fail 'profile missing'
+printf '%s\n' "$output" | grep -F "$tmp/tree/two/conf/apisix.json" >/dev/null || fail 'second installation missing'
+printf '%s\n' "$output" | grep -F "$tmp/tree/other/conf/config.yaml" >/dev/null && fail 'generic config false positive'
+printf '%s\n' "$output" | grep -F 'find-and-ps-prefix' >/dev/null || fail 'ps evidence missing'
+[ "$(printf '%s\n' "$output" | grep -c '^config')" -eq 3 ] || fail 'multiple candidates lost'
+
+output=$(probe relative 2>"$tmp/stderr"); status=$?
+[ "$status" -eq 72 ] && [ -z "$output" ] || fail 'relative root not rejected'
+grep -F apisix.discovery-invalid-scan-root "$tmp/stderr" >/dev/null || fail 'diagnostic missing'
+output=$(probe "$tmp/absent" 2>"$tmp/stderr"); status=$?
+[ "$status" -eq 74 ] || fail 'missing root not rejected'
+printf '%s\n' "$TEST_ID: PASS (real m + host find, synthetic ps and rsudo boundary)"
