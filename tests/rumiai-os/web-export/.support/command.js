@@ -38,14 +38,19 @@ function respond(response, status, type, body)
 function fixtureHtml(origin)
 {
   const rows = Array.from({length:36},(_,index)=>`<p>fixture row ${index}</p>`).join('');
+  const inlinePixel = pixel.toString('base64');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <title>web-export chromium fixture</title>
     <link rel="stylesheet" href="${origin}/fixture.css">
+    <style>.inline-block{background-image:url("${origin}/background.png")}</style>
     <script defer src="${origin}/fixture.js"></script>
   </head><body><h1>web-export fixture heading</h1>
     <button id="inert" onclick="document.body.dataset.clicked='yes'">No action</button>
     <form action="${origin}/submit" method="post"><input name="query"></form>
     <img id="pixel" src="${origin}/pixel.png" srcset="${origin}/pixel.png 1x">
+    <img id="inline-srcset" srcset="data:image/png;base64,${inlinePixel} 1x, ${origin}/pixel.png 2x">
+    <div id="inline-style" style="background-image:url('${origin}/background.png')"></div>
+    <div class="inline-block"></div>
     <iframe src="${origin}/frame.html"></iframe><main>${rows}</main>
     <a href="${origin}/destination" ping="${origin}/ping">normal link</a></body></html>`;
 }
@@ -54,7 +59,8 @@ function fixtureCss(origin)
 {
   return `@font-face{font-family:fixture-font;src:url("${origin}/fixture.woff2") format("woff2");font-display:swap}
     body{font-family:fixture-font,sans-serif;background-image:url("${origin}/background.png");background-repeat:no-repeat}
-    #pixel{width:32px;height:32px}.missing{background-image:url("${origin}/missing.png")}`;
+    #pixel{width:32px;height:32px}.missing{background-image:url("${origin}/missing.png")}
+    .image-set{background-image:image-set("${origin}/background.png" 1x,"${origin}/missing.png" 2x)}`;
 }
 
 function startServer()
@@ -66,7 +72,7 @@ function startServer()
     if (url.pathname === '/fixture.css') return respond(response,200,'text/css; charset=utf-8',fixtureCss(`http://${request.headers.host}`));
     if (url.pathname === '/fixture.js')
       return respond(response,200,'application/javascript; charset=utf-8',
-        "addEventListener('DOMContentLoaded',()=>{const e=document.createElement('p');e.id='client-rendered';e.textContent='client rendered content';document.body.append(e);const missing=document.createElement('div');missing.className='missing';document.body.append(missing)});");
+        "addEventListener('DOMContentLoaded',()=>{const e=document.createElement('p');e.id='client-rendered';e.textContent='client rendered content';document.body.append(e);for(const name of ['missing','image-set']){const item=document.createElement('div');item.className=name;document.body.append(item)}});");
     if (url.pathname === '/pixel.png' || url.pathname === '/background.png')
       return respond(response,200,'image/png',pixel);
     if (url.pathname === '/fixture.woff2') return respond(response,200,'font/woff2',font);
@@ -157,8 +163,12 @@ async function main()
     assert.doesNotMatch(html,/<form\b[^>]*\saction=/i);
     assert.doesNotMatch(html,/\bping=/i);
     assert.doesNotMatch(html,/\bformaction=/i);
+    assert.doesNotMatch(html,/style=["'][^"']*https?:/i,
+      'a remote inline style reference remains');
     assert.doesNotMatch(html,/\b(?:src|poster|data|background|xlink:href)=["']https?:/i,
       'an active HTML resource reference remains remote');
+    assert.doesNotMatch(html,/\bsrcset=["'][^"']*https?:/i,
+      'an active srcset candidate remains remote');
     assert.doesNotMatch(html,/<link\b(?![^>]*\brel=["']canonical)[^>]*\bhref=["']https?:/i,
       'an active link resource remains remote');
     assert.doesNotMatch(html,/<style\b[^>]*>[\s\S]*?url\(\s*["']?https?:/i,
@@ -193,9 +203,11 @@ async function main()
       assert.doesNotMatch(css,/url\(\s*['"]?https?:/i,`remote URL remains in ${asset.file}`);
       assert.doesNotMatch(css,/@import\s+(?:url\()?\s*['"]?https?:/i,
         `remote CSS import remains in ${asset.file}`);
+      assert.doesNotMatch(css,/https?:\/\//i,`remote CSS string URL remains in ${asset.file}`);
     }
     assert.match(html,/src="assets\/[a-f0-9]{64}\.(?:png|jpg|gif|webp|svg)"/i);
     assert.match(html,/srcset="assets\/[a-f0-9]{64}\.(?:png|jpg|gif|webp|svg) 1x"/i);
+    assert.match(html,/srcset="data:image\/png;base64,[a-z0-9+/=]+ 1x, assets\/[a-f0-9]{64}\.png 2x"/i);
 
     const requestsAfterCapture = new Map(requests);
     const fileUrl = pathToFileURL(indexPath).href;
