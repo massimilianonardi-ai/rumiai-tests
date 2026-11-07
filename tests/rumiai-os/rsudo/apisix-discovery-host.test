@@ -51,7 +51,12 @@ case "$1:$2" in
   exec:-i)
     [ "$3" = dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd ] || exit 1
     cat >/dev/null
-    printf '%s\n' /usr/local/apisix/conf/config.yaml
+    if [ "$6" = -- ]
+    then
+      printf '%s\n' 'open|127.0.0.1|19180|127.0.0.1'
+    else
+      printf '%s\n' /usr/local/apisix/conf/config.yaml
+    fi
   ;;
   *) exit 70 ;;
 esac
@@ -131,6 +136,10 @@ printf '%s\n' "$output" | grep -F "container${tab}docker${tab}exited${tab}eeeeee
   fail 'stopped Docker candidate missing'
 printf '%s\n' "$output" | grep -F 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:/usr/local/apisix/conf/config.yaml' >/dev/null ||
   fail 'running Docker config missing'
+printf '%s\n' "$output" | grep -F 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:127.0.0.1:19180' >/dev/null ||
+  fail 'Docker namespace listener probe missing'
+printf '%s\n' "$output" | grep -F 'docker-container-admin-listen-bind-127.0.0.1-config:/usr/local/apisix/conf/config.yaml' >/dev/null ||
+  fail 'Docker namespace listener probe missing'
 printf '%s\n' "$output" | grep -F 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:/srv/gateway/conf/apisix.json' >/dev/null ||
   fail 'Podman config without APISIX image/name hint missing'
 
