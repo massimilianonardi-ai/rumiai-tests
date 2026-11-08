@@ -692,7 +692,7 @@ validation_environment_prepare_target() {
 
             package_cache_root=$(validation_environment_run "$env_root" "$target_root/m" "$target_root/bin/sys/state-path" system sys pkg cache) ||
                 fatal 'cannot resolve disposable target package cache'
-            package_catalog_root=$package_cache_root/pkg-catalog
+            package_catalog_root=$package_cache_root/catalog
             [ -d "$package_catalog_root/.git" ] ||
                 fatal 'prepared target package catalog cache is unavailable'
             prepared_catalog_commit=$(git -C "$package_catalog_root" rev-parse --verify HEAD 2>/dev/null) ||
