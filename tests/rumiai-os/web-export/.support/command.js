@@ -186,6 +186,16 @@ async function withChromium(fileUrl,profile,inspect)
     if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;
   });
+  const documentDeadline=Date.now()+10000;
+  let fixtureReady=false;
+  while(Date.now()<documentDeadline)
+  {
+    fixtureReady=await evaluate('document.readyState!=="loading"&&!!document.querySelector("#prompt")');
+    if(fixtureReady)break;
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+  assert.ok(fixtureReady,'Chromium did not finish loading the exported fixture: '+
+    await evaluate('JSON.stringify({url:location.href,readyState:document.readyState})'));
   const click=async selector=>{
     const point=await evaluate('(()=>{const node=document.querySelector('+
       JSON.stringify(selector)+');if(!node)throw new Error("missing control");'+
