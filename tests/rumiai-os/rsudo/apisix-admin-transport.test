@@ -316,7 +316,7 @@ result=$(printf '%s\n' '{"uri":"/created"}' | APISIX_TEST_OPERATION=create RSUDO
   RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
   RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
   probe routes 2>"$tmp/stderr")
-[ "$?" -eq 3 ] && [ -z "$result" ] || fail 'snapshot create was not rejected without legacy fallback'
+[ "$?" -eq 6 ] && [ -z "$result" ] || fail 'snapshot create did not require an explicit selected APISIX home'
 
 result=$(printf '%s\n' '{"uri":"/created"}' | APISIX_TEST_OPERATION=create RSUDO_APISIX_SCOPE=host \
   RSUDO_APISIX_DEPLOYMENT=traditional-admin \

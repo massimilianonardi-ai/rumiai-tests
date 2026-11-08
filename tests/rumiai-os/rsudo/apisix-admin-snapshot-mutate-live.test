@@ -1,0 +1,134 @@
+#!/bin/sh
+# Resource CRUD through the standalone Admin snapshot API on isolated,
+# pinned APISIX gateways. Never exposes a host port or production credential.
+TEST_ID=rumiai-os/rsudo/apisix-admin-snapshot-mutate-live.test
+fail() { printf '%s\n' "$TEST_ID: FAIL: $*" >&2; exit 1; }
+error() { printf '%s\n' "$TEST_ID: ERROR: $*" >&2; exit 3; }
+skip() { printf '%s\n' "$TEST_ID: SKIP: $*" >&2; exit 2; }
+resolve_test_dir() { self=$0; case "$self" in */*) : ;; *) self=$(command -v "$self") || return 1 ;; esac; dir=${self%/*}; [ "$dir" != "$self" ] || dir=.; CDPATH= cd -- "$dir" 2>/dev/null && pwd -P; }
+tmp= cid=
+cleanup() { [ -z "$cid" ] || docker rm -f "$cid" >/dev/null 2>&1 || :; [ -z "$tmp" ] || rm -rf -- "$tmp"; }
+trap cleanup 0
+dir=$(resolve_test_dir) || error 'cannot resolve test directory'
+suite_root=${dir%/*/*/*}
+. "$suite_root/lib/rumiai-os-target.lib" || error 'target resolver unavailable'
+root=$(rumiai_test_target_rumiai_os_find "$suite_root")
+case $? in 0) : ;; 1) skip 'product checkout unavailable' ;; 2) fail 'invalid product checkout' ;; *) error 'product resolution failed' ;; esac
+command -v docker >/dev/null 2>&1 || skip 'Docker unavailable'
+images='apache/apisix@sha256:b921bdef3cfb2ca72e483d643f40e7843683ff8e188984489c2020f17654ee88
+apache/apisix@sha256:9a7e45dc943fbf10ec916d1232bae4cda9302ae28a4696cfb83c2da01d261141'
+tmp=${TMPDIR:-/tmp}/rsudo-apisix-snapshot-mutate-$$
+umask 077
+mkdir -p "$tmp/bin" || error 'cannot create fixture'
+tmp=$(CDPATH= cd -- "$tmp" && pwd -P) || error 'fixture path unavailable'
+cat > "$tmp/config.yaml" <<'CONFIG'
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: yaml
+  admin:
+    admin_key_required: true
+    admin_key:
+      - name: snapshot-test
+        key: rsudo-snapshot-test-only-never-production
+        role: admin
+    admin_listen:
+      ip: 127.0.0.1
+      port: 9180
+CONFIG
+chmod 644 "$tmp/config.yaml" || error 'cannot set config permissions'
+cat > "$tmp/bin/rsudo-apisix-snapshot-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo() { docker exec -i "$APISIX_TEST_CONTAINER" "$@"; }
+case "$APISIX_TEST_OPERATION:$#" in
+  create:1) rsudo_mod_apisix_create "$1" ;;
+  update:2) rsudo_mod_apisix_update "$1" "$2" ;;
+  delete:2) rsudo_mod_apisix_delete "$1" "$2" ;;
+  list:1) rsudo_mod_apisix_list "$1" ;;
+  get:2) rsudo_mod_apisix_get "$1" "$2" ;;
+  *) exit 83 ;;
+esac
+PROBE
+chmod 700 "$tmp/bin/rsudo-apisix-snapshot-probe" || error 'cannot make probe executable'
+
+for image in $images
+do
+  docker image inspect "$image" >/dev/null 2>&1 || skip "pinned image unavailable: $image"
+  cid=$(docker run -d --network none --cap-drop ALL --security-opt no-new-privileges=true \
+    --mount "type=bind,src=$tmp/config.yaml,dst=/usr/local/apisix/conf/config.yaml,readonly" \
+    -e APISIX_STAND_ALONE=true "$image") || error 'cannot start standalone API fixture'
+  [ -n "$cid" ] || error 'Docker returned no container ID'
+  docker exec -i "$cid" sh -s <<'REMOTE_HEADER' || error 'cannot create protected test header'
+umask 077
+printf '%s\n' 'X-API-KEY: rsudo-snapshot-test-only-never-production' > /tmp/rsudo-snapshot-test-header
+chmod 600 /tmp/rsudo-snapshot-test-header
+command -v curl >/dev/null 2>&1
+REMOTE_HEADER
+
+  tries=0
+  while [ "$tries" -lt 30 ]
+  do
+    initial=$(docker exec "$cid" curl -q --silent --noproxy '*' --proxy '' \
+      --header @/tmp/rsudo-snapshot-test-header http://127.0.0.1:9180/apisix/admin/configs 2>/dev/null)
+    status=$?
+    [ "$status" -eq 0 ] && printf '%s\n' "$initial" | "$root/m" json --check >/dev/null 2>&1 && break
+    [ "$(docker inspect -f '{{.State.Running}}' "$cid" 2>/dev/null)" = true ] || { docker logs "$cid" >&2; fail 'gateway exited before API readiness'; }
+    tries=$((tries + 1)); sleep 1
+  done
+  [ "$tries" -lt 30 ] || { docker logs "$cid" >&2; fail 'standalone API did not become ready'; }
+  before_version=$(printf '%s\n' "$initial" | "$root/m" json -r '.routes_conf_version') || fail 'cannot read initial routes version'
+  [ -n "$before_version" ] || fail 'initial routes version missing'
+  before_services=$(printf '%s\n' "$initial" | "$root/m" json -c '.services') || fail 'cannot read initial services'
+  before_upstreams=$(printf '%s\n' "$initial" | "$root/m" json -c '.upstreams') || fail 'cannot read initial upstreams'
+  run_snapshot() {
+    test_operation=$1
+    if [ "$#" -eq 2 ]; then
+      APISIX_TEST_CONTAINER="$cid" APISIX_TEST_OPERATION="$test_operation" \
+        RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+        RSUDO_APISIX_ADMIN_URL=http://127.0.0.1:9180 \
+        RSUDO_APISIX_HEADER_FILE=/tmp/rsudo-snapshot-test-header \
+        RSUDO_APISIX_HOME=/usr/local/apisix RSUDO_APISIX_WAIT_MS=5000 \
+        PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-snapshot-probe "$2"
+    else
+      APISIX_TEST_CONTAINER="$cid" APISIX_TEST_OPERATION="$test_operation" \
+        RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+        RSUDO_APISIX_ADMIN_URL=http://127.0.0.1:9180 \
+        RSUDO_APISIX_HEADER_FILE=/tmp/rsudo-snapshot-test-header \
+        RSUDO_APISIX_HOME=/usr/local/apisix RSUDO_APISIX_WAIT_MS=5000 \
+        PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-snapshot-probe "$2" "$3"
+    fi
+  }
+  result=$(printf '%s\n' '{"id":"rsudo-snapshot-route","uri":"/before","upstream":{"type":"roundrobin","nodes":{"127.0.0.1:8080":1}}}' | run_snapshot create routes 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "snapshot create failed: $status"; }
+  [ "$(printf '%s\n' "$result" | "$root/m" json -r '.id')" = rsudo-snapshot-route ] || fail 'create returned wrong resource'
+  after_create=$(docker exec "$cid" curl -q --silent --noproxy '*' --proxy '' --header @/tmp/rsudo-snapshot-test-header http://127.0.0.1:9180/apisix/admin/configs) || fail 'cannot read created snapshot'
+  created_version=$(printf '%s\n' "$after_create" | "$root/m" json -r '.routes_conf_version') || fail 'cannot read created version'
+  [ "$created_version" -eq $((before_version + 1)) ] 2>/dev/null || fail 'create did not increment routes_conf_version once'
+  [ "$(printf '%s\n' "$after_create" | "$root/m" json -c '.services')" = "$before_services" ] || fail 'create changed unrelated services'
+  [ "$(printf '%s\n' "$after_create" | "$root/m" json -c '.upstreams')" = "$before_upstreams" ] || fail 'create changed unrelated upstreams'
+  created=$(run_snapshot get routes rsudo-snapshot-route 2>"$tmp/stderr") || fail 'cannot read created route'
+  [ "$(printf '%s\n' "$created" | "$root/m" json -r '.modifiedIndex')" = "$created_version" ] || fail 'created route modifiedIndex does not match collection version'
+
+  result=$(printf '%s\n' '{"id":"rsudo-snapshot-route","uri":"/after","upstream":{"type":"roundrobin","nodes":{"127.0.0.1:8080":1}}}' | run_snapshot update routes rsudo-snapshot-route 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "snapshot update failed: $status"; }
+  [ "$(printf '%s\n' "$result" | "$root/m" json -r '.uri')" = /after ] || fail 'update returned wrong resource'
+  updated=$(docker exec "$cid" curl -q --silent --noproxy '*' --proxy '' --header @/tmp/rsudo-snapshot-test-header http://127.0.0.1:9180/apisix/admin/configs | "$root/m" json -r '.routes_conf_version') || fail 'cannot read updated version'
+  [ "$updated" -eq $((created_version + 1)) ] 2>/dev/null || fail 'update did not increment routes_conf_version once'
+  [ "$(printf '%s\n' "$result" | "$root/m" json -r '.modifiedIndex')" = "$updated" ] || fail 'updated resource modifiedIndex does not match collection version'
+
+  result=$(run_snapshot delete routes rsudo-snapshot-route 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "snapshot delete failed: $status"; }
+  absent=$(run_snapshot get routes rsudo-snapshot-route 2>"$tmp/stderr")
+  [ "$?" -eq 13 ] && [ -z "$absent" ] || fail 'deleted route remains in snapshot'
+  deleted_version=$(docker exec "$cid" curl -q --silent --noproxy '*' --proxy '' --header @/tmp/rsudo-snapshot-test-header http://127.0.0.1:9180/apisix/admin/configs | "$root/m" json -r '.routes_conf_version') || fail 'cannot read deleted version'
+  [ "$deleted_version" -eq $((updated + 1)) ] 2>/dev/null || fail 'delete did not increment routes_conf_version once'
+  docker rm -f "$cid" >/dev/null || error 'cannot remove API fixture'
+  cid=
+done
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16/3.19 snapshot create/update/delete, versions and modifiedIndex)"
