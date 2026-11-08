@@ -66,6 +66,9 @@ case "$1:$2" in
   ;;
   inspect:--format)
     case "$4" in
+      dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd)
+        printf '%s\n' '/opt/config|/usr/local/apisix/conf'
+      ;;
       cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
         printf '%s\n' '/var/lib/worker-config|/usr/local/apisix/conf'
       ;;
@@ -91,6 +94,9 @@ case "$1:$2" in
       cat >/dev/null
       printf '%s\n' /srv/gateway/conf/apisix.json
     fi
+  ;;
+  inspect:--format)
+    printf '%s\n' '/srv/config|/srv/gateway/conf'
   ;;
   *) exit 70 ;;
 esac
@@ -186,12 +192,16 @@ printf '%s\n' "$output" | grep -F 'ddddddddddddddddddddddddddddddddddddddddddddd
   fail 'Docker namespace listener probe missing'
 printf '%s\n' "$output" | grep -F 'docker-container-admin-listen-bind-127.0.0.1-config:/usr/local/apisix/conf/config.yaml' >/dev/null ||
   fail 'Docker namespace listener probe missing'
+printf '%s\n' "$output" | grep -F "mount${tab}docker${tab}matched${tab}dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd:/usr/local/apisix/conf/config.yaml${tab}container-bind-source:/opt/config/config.yaml" >/dev/null ||
+  fail 'running Docker config bind source correlation missing'
 printf '%s\n' "$output" | grep -F 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:/srv/gateway/conf/apisix.json' >/dev/null ||
   fail 'Podman config without APISIX image/name hint missing'
 printf '%s\n' "$output" | grep -F 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:127.0.0.1:19181' >/dev/null ||
   fail 'Podman JSON namespace listener probe missing'
 printf '%s\n' "$output" | grep -F 'podman-container-admin-listen-bind-127.0.0.1-config:/srv/gateway/conf/apisix.json' >/dev/null ||
   fail 'Podman JSON listener provenance missing'
+printf '%s\n' "$output" | grep -F "mount${tab}podman${tab}matched${tab}ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:/srv/gateway/conf/apisix.json${tab}container-bind-source:/srv/config/apisix.json" >/dev/null ||
+  fail 'running Podman config bind source correlation missing'
 
 # A remote target without RumiAI json reports uncertainty rather than copying
 # file contents locally, silently skipping the file or failing the whole scan.
