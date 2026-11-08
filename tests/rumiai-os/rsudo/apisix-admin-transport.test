@@ -42,6 +42,7 @@ esac
 
 command -v python3 >/dev/null 2>&1 || skip 'python3 loopback HTTP fixture unavailable'
 command -v curl >/dev/null 2>&1 || skip 'curl transport dependency unavailable'
+command -v openssl >/dev/null 2>&1 || skip 'OpenSSL digest dependency unavailable'
 module=$root/lib/sys/sh/rsudo/rsudo-mod-apisix.lib.sh
 manual=$root/res/sys/manual/rsudo-mod-apisix.lib.sh
 [ -f "$module" ] && [ ! -x "$module" ] && [ -f "$manual" ] ||
@@ -168,6 +169,7 @@ case "${APISIX_TEST_OPERATION:-admin-read}" in
   delete) rsudo_mod_apisix_delete "$@";;
   apply) rsudo_mod_apisix_apply "$@";;
   request) rsudo_mod_apisix_request "$@";;
+  snapshot-mutate-create) rsudo_mod_apisix_create "$@";;
   *) exit 83;;
 esac
 PROBE
@@ -417,6 +419,51 @@ result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
   RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" RSUDO_APISIX_WAIT_MS=60001 \
   probe digest-5 2>"$tmp/stderr")
 [ "$?" -eq 3 ] && [ -z "$result" ] || fail 'out-of-range snapshot wait was accepted'
+
+# A tiny interpreter fixture isolates the HTTP status and read-back branches
+# after the source has produced its private staging paths. The live container
+# test covers the real APISIX cjson transform and snapshot document semantics.
+mkdir -p "$tmp/snapshot-home/deps/bin" || error 'snapshot interpreter fixture unavailable'
+cat > "$tmp/snapshot-home/deps/bin/luajit" <<'LUAJIT_FIXTURE'
+#!/bin/sh
+if [ -z "${m_SNAP_NEW_VERSION-}" ]; then
+  printf '%s\n' '{"routes_conf_version":3,"routes":[{"id":"snap-created","uri":"/new","modifiedIndex":3}],"services":[],"upstreams":[]}' > "$m_SNAP_NEXT" || exit 71
+  printf '%s\n' '{"id":"snap-created","uri":"/new","modifiedIndex":3}' > "$m_SNAP_EXPECTED" || exit 72
+  printf '%s\n' 3 snap-created
+  exit 0
+fi
+printf '%s\n' 'apisix.snapshot-mutate.readback-conflict' >&2
+exit 2
+LUAJIT_FIXTURE
+chmod 700 "$tmp/snapshot-home/deps/bin/luajit" || error 'snapshot interpreter fixture not executable'
+
+result=$(printf '%s\n' '{"id":"snap-created","uri":"/new"}' | \
+  APISIX_TEST_OPERATION=snapshot-mutate-create RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  RSUDO_APISIX_HOME="$tmp/snapshot-home" RSUDO_APISIX_WAIT_MS=0 \
+  probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 97 ] && [ "$result" = '{"accepted":true}' ] ||
+  fail "snapshot create did not preserve HTTP 202 response (status $status)"
+[ "$(sed -n '1p' "$tmp/mutation-request")" = PUT ] || fail 'snapshot mutation was not PUT'
+[ "$(sed -n '2p' "$tmp/mutation-request")" = '/apisix/admin/configs?wait=0' ] || fail 'snapshot mutation wait was not transmitted'
+grep -E '^[0-9a-f]{64}$' "$tmp/mutation-request" >/dev/null || fail 'snapshot mutation omitted fresh digest'
+
+result=$(printf '%s\n' '{"id":"snap-created","uri":"/new"}' | \
+  APISIX_TEST_OPERATION=snapshot-mutate-create RSUDO_APISIX_SCOPE=host \
+  RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  RSUDO_APISIX_HOME="$tmp/snapshot-home" RSUDO_APISIX_WAIT_MS=5000 \
+  probe routes 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 100 ] && [ -z "$result" ] ||
+  fail "snapshot mutation did not fail on read-back conflict (status $status)"
+grep -F 'apisix.snapshot-mutate.readback-conflict' "$tmp/stderr" >/dev/null ||
+  fail 'snapshot read-back conflict diagnostic missing'
+
 cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=docker \
   RSUDO_APISIX_CONTAINER_ID="$cid" \
@@ -499,4 +546,4 @@ status=$?
 [ "$status" -eq 49 ] && [ -z "$result" ] ||
   fail 'multi-line credential header was not rejected'
 
-printf '%s\n' "$TEST_ID: PASS (real curl and m; CRUD, generic REST request and standalone snapshot apply, stdin bodies, synthetic rsudo boundary)"
+printf '%s\n' "$TEST_ID: PASS (real curl and m; CRUD, generic REST request, snapshot apply and snapshot mutation 202/conflict transport, stdin bodies, synthetic rsudo boundary)"
