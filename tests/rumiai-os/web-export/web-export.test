@@ -16,9 +16,10 @@ case $status in 0) :;; 1) skip 'rumiai-os checkout unavailable';; 2) fail 'inval
 
 [ -x "$root/bin/sys/web-export" ] || fail 'web-export command missing or not executable'
 [ -f "$root/res/sys/manual/web-export" ] || fail 'web-export command manual missing'
-command -v node >/dev/null 2>&1 || skip 'Node.js unavailable'
+[ -n "${RUMIAI_TEST_NODE:-}" ] && [ -x "$RUMIAI_TEST_NODE" ] || command -v node >/dev/null 2>&1 || skip 'Node.js unavailable'
 command -v chromium >/dev/null 2>&1 || skip 'Chromium unavailable'
-if node "$test_dir/.support/command.js" "$root"
+node_command=${RUMIAI_TEST_NODE:-node}
+if "$node_command" "$test_dir/.support/command.js" "$root/bin/sys/web-export" "$root"
 then
     :
 else
