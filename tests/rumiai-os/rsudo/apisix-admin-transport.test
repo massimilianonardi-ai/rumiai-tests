@@ -158,6 +158,10 @@ cat > "$tmp/bin/rsudo-apisix-transport-probe" <<'PROBE'
 loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
 rsudo()
 {
+  if [ "$1" = docker ] || [ "$1" = podman ]; then
+    [ "$2" = exec ] && [ "$3" = -i ] && [ "$4" = "${RSUDO_APISIX_CONTAINER_ID-}" ] || exit 79
+    shift 4
+  fi
   "$@"
 }
 case "${APISIX_TEST_OPERATION:-admin-read}" in
@@ -471,8 +475,8 @@ result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=docker \
   RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
   RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" probe routes 2>"$tmp/stderr")
 status=$?
-[ "$status" -eq 4 ] && [ -z "$result" ] ||
-  fail 'REST request ignored explicit container scope'
+[ "$status" -eq 0 ] && [ "$result" = '{"routes":[{"id":"test"}]}' ] ||
+  fail "REST list did not route through the explicit container selector (status $status)"
 
 
 grep -F 'test-secret-credential-never-in-process-argv' "$tmp/argv" >/dev/null &&
