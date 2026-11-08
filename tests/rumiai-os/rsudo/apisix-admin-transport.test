@@ -383,7 +383,8 @@ status=$?
   fail 'snapshot missing ID was not rejected distinctly'
 snapshot='{"routes_conf_version":3,"routes":[{"id":"snap-next","uri":"/next"}]}'
 result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
-  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_SCOPE=docker RSUDO_APISIX_CONTAINER_ID=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  RSUDO_APISIX_DEPLOYMENT=standalone-api \
   RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
   RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
   probe 'example#3' 2>"$tmp/stderr")
