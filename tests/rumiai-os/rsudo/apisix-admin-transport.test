@@ -86,9 +86,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-    def do_POST(self):
-        self.handle_mutation()
     def do_PUT(self):
+        if self.path not in ("/apisix/admin/configs?wait=0", "/apisix/admin/configs?wait=5000", "/apisix/admin/configs?wait=1000"):
+            self.handle_mutation()
+            return
+        content_length = int(self.headers.get("Content-Length", "0"))
+        request_body = self.rfile.read(content_length)
+        Path(sys.argv[2]).write_bytes(
+            self.command.encode() + b"\n" + self.path.encode() + b"\n" +
+            self.headers.get("X-Digest", "").encode() + b"\n" + request_body
+        )
+        if self.headers.get("X-API-KEY") != KEY:
+            code, body = 401, b'{"error":"unauthorized"}'
+        elif self.path == "/apisix/admin/configs?wait=0":
+            code, body = 202, b'{"accepted":true}'
+        elif self.path == "/apisix/admin/configs?wait=5000":
+            code, body = 200, b'{"applied":true}'
+        elif self.path == "/apisix/admin/configs?wait=1000":
+            code, body = 204, b''
+        else:
+            code, body = 400, b'{"error":"unexpected-config-request"}'
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_POST(self):
         self.handle_mutation()
     def do_DELETE(self):
         self.handle_mutation()
@@ -143,8 +166,8 @@ case "${APISIX_TEST_OPERATION:-admin-read}" in
   create) rsudo_mod_apisix_create "$@";;
   update) rsudo_mod_apisix_update "$@";;
   delete) rsudo_mod_apisix_delete "$@";;
-  request) rsudo_mod_apisix_request "$@";;
   apply) rsudo_mod_apisix_apply "$@";;
+  request) rsudo_mod_apisix_request "$@";;
   *) exit 83;;
 esac
 PROBE
@@ -352,6 +375,48 @@ result=$(APISIX_TEST_OPERATION=get RSUDO_APISIX_SCOPE=host \
 status=$?
 [ "$status" -eq 13 ] && [ -z "$result" ] ||
   fail 'snapshot missing ID was not rejected distinctly'
+snapshot='{"routes_conf_version":3,"routes":[{"id":"snap-next","uri":"/next"}]}'
+result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe 'example#3' 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 97 ] && [ "$result" = '{"accepted":true}' ] ||
+  fail "snapshot apply did not preserve accepted response (status $status)"
+[ "$(sed -n '1p' "$tmp/mutation-request")" = PUT ] || fail 'snapshot apply method was not PUT'
+[ "$(sed -n '2p' "$tmp/mutation-request")" = '/apisix/admin/configs?wait=0' ] || fail 'snapshot apply path/wait was incorrect'
+[ "$(sed -n '3p' "$tmp/mutation-request")" = 'example#3' ] || fail 'snapshot digest header missing'
+sed '1,3d' "$tmp/mutation-request" > "$tmp/observed-snapshot"
+[ "$(cat "$tmp/observed-snapshot")" = "$snapshot" ] || fail 'snapshot body changed in transport'
+result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" RSUDO_APISIX_WAIT_MS=5000 \
+  probe digest-4 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ "$result" = '{"applied":true}' ] ||
+  fail "snapshot apply wait response failed (status $status)"
+[ "$(sed -n '2p' "$tmp/mutation-request")" = '/apisix/admin/configs?wait=5000' ] || fail 'snapshot apply wait was not transmitted'
+result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" RSUDO_APISIX_WAIT_MS=1000 \
+  probe digest-6 2>"$tmp/stderr")
+status=$?
+[ "$status" -eq 0 ] && [ -z "$result" ] || fail "snapshot no-op 204 was not accepted (status $status)"
+result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" \
+  probe 'invalid digest' 2>"$tmp/stderr")
+[ "$?" -eq 2 ] && [ -z "$result" ] || fail 'invalid snapshot digest was accepted'
+result=$(printf '%s\n' "$snapshot" | APISIX_TEST_OPERATION=apply \
+  RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-api \
+  RSUDO_APISIX_ADMIN_URL="http://127.0.0.1:$port" \
+  RSUDO_APISIX_HEADER_FILE="$tmp/admin-header" RSUDO_APISIX_WAIT_MS=60001 \
+  probe digest-5 2>"$tmp/stderr")
+[ "$?" -eq 3 ] && [ -z "$result" ] || fail 'out-of-range snapshot wait was accepted'
 cid=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 result=$(APISIX_TEST_OPERATION=list RSUDO_APISIX_SCOPE=docker \
   RSUDO_APISIX_CONTAINER_ID="$cid" \
@@ -434,4 +499,4 @@ status=$?
 [ "$status" -eq 49 ] && [ -z "$result" ] ||
   fail 'multi-line credential header was not rejected'
 
-printf '%s\n' "$TEST_ID: PASS (real curl and m; CRUD plus generic REST request, stdin bodies, synthetic rsudo boundary)"
+printf '%s\n' "$TEST_ID: PASS (real curl and m; CRUD, generic REST request and standalone snapshot apply, stdin bodies, synthetic rsudo boundary)"
