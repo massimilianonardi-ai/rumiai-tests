@@ -23,6 +23,11 @@ on:
       - rumiai-test
       - lib/rumiai-os-target.lib
   workflow_dispatch:
+    inputs:
+      rumiai_os_commit:
+        description: Full rumiai-os commit SHA to validate (defaults to current main)
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -44,8 +49,26 @@ jobs:
       - name: Freeze product revision
         id: revision
         shell: bash
+        env:
+          REQUESTED_RUMIAI_OS_COMMIT: ${{ inputs.rumiai_os_commit }}
         run: |
-          echo "commit=$(git -C rumiai-os rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          selected=$(git -C rumiai-os rev-parse HEAD)
+          if [ -n "$REQUESTED_RUMIAI_OS_COMMIT" ]; then
+            case "$REQUESTED_RUMIAI_OS_COMMIT" in
+              *[!0-9a-f]*) echo 'requested rumiai-os commit must be a full lowercase SHA-1' >&2; exit 1 ;;
+            esac
+            [ "${#REQUESTED_RUMIAI_OS_COMMIT}" -eq 40 ] || {
+              echo 'requested rumiai-os commit must be a full lowercase SHA-1' >&2
+              exit 1
+            }
+            git -C rumiai-os fetch --no-tags origin "$REQUESTED_RUMIAI_OS_COMMIT"
+            selected=$(git -C rumiai-os rev-parse FETCH_HEAD)
+            [ "$selected" = "$REQUESTED_RUMIAI_OS_COMMIT" ] || {
+              echo 'fetched rumiai-os commit does not match the requested SHA' >&2
+              exit 1
+            }
+          fi
+          echo "commit=$selected" >> "$GITHUB_OUTPUT"
 
   focused-validation:
     needs: resolve-product
