@@ -1,5 +1,5 @@
 #!/bin/sh
-# Real APISIX 3.16.0 and 3.19.0 LuaJIT/YAML/defaults through the actual m
+# Real APISIX 3.16.0 and 3.19.0 LuaJIT/JSON/YAML/defaults through the actual m
 # entrypoint and product shell module. Only rsudo remote SSH/sudo is replaced
 # by network-disabled Docker stdin execution; no live APISIX gateway is tested.
 
@@ -97,7 +97,7 @@ rsudo()
 {
   [ "$1" = sh ] || return 83
   shift
-  docker run --rm --network none --cap-drop ALL -i \
+  docker run --rm --read-only --network none --cap-drop ALL -i \
     --mount "type=bind,src=$APISIX_PARSER_FIXTURES,dst=/mnt/rsudo-apisix-fixtures" \
     --entrypoint /bin/sh "$APISIX_PARSER_IMAGE" "$@"
 }
@@ -105,6 +105,29 @@ rsudo_mod_apisix_apply
 PROBE
 chmod 700 -- "$tmp/bin/rsudo-apisix-yaml-apply-probe" ||
   error 'cannot make YAML apply probe executable'
+
+cat > "$tmp/bin/rsudo-apisix-json-mutate-probe" <<'PROBE'
+#!/bin/sh
+[ -n "${m_ROOT:-}" ] || exit 80
+. "$m_LIB_DIR/sys/sh/core.lib.sh" || exit 81
+loadsyslib "rsudo/rsudo-mod-apisix" || exit 82
+rsudo()
+{
+  [ "$1" = sh ] || return 83
+  shift
+  docker run --rm --read-only --network none --cap-drop ALL -i \
+    --mount "type=bind,src=$APISIX_PARSER_FIXTURES,dst=/mnt/rsudo-apisix-fixtures" \
+    --entrypoint /bin/sh "$APISIX_PARSER_IMAGE" "$@"
+}
+case "$APISIX_JSON_OPERATION:$#" in
+  create:1) rsudo_mod_apisix_create "$1" ;;
+  update:2) rsudo_mod_apisix_update "$1" "$2" ;;
+  delete:2) rsudo_mod_apisix_delete "$1" "$2" ;;
+  *) exit 84 ;;
+esac
+PROBE
+chmod 700 -- "$tmp/bin/rsudo-apisix-json-mutate-probe" ||
+  error 'cannot make JSON mutation probe executable'
 
 write_case()
 {
@@ -142,6 +165,18 @@ run_yaml_apply()
     RSUDO_APISIX_HOME=/usr/local/apisix \
     RSUDO_APISIX_DATA_FILE=/mnt/rsudo-apisix-fixtures/apply.yaml \
     PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-yaml-apply-probe
+}
+
+run_json_mutation()
+{
+  operation=$1
+  shift
+  APISIX_PARSER_FIXTURES="$tmp/fixtures" APISIX_PARSER_IMAGE="$image" \
+    APISIX_JSON_OPERATION="$operation" \
+    RSUDO_APISIX_SCOPE=host RSUDO_APISIX_DEPLOYMENT=standalone-file-json \
+    RSUDO_APISIX_HOME=/usr/local/apisix \
+    RSUDO_APISIX_DATA_FILE=/mnt/rsudo-apisix-fixtures/mutate.json \
+    PATH="$tmp/bin:$PATH" "$root/m" rsudo-apisix-json-mutate-probe "$@"
 }
 
 expect_mode()
@@ -280,6 +315,45 @@ do
   result=$(printf '%s\n' 'routes: []' | run_yaml_apply 2>"$tmp/stderr")
   [ "$?" -eq 95 ] || fail 'YAML without APISIX #END marker was accepted'
   cmp -s "$tmp/fixtures/apply.yaml" "$tmp/fixtures/apply-before-invalid.yaml" || fail 'missing marker changed apply target'
+
+  cat > "$tmp/fixtures/mutate.json" <<'JSON'
+{"routes":[{"id":"route-old","uri":"/old"}],"services":[{"id":"service-keep"}],"upstreams":[{"id":"upstream-keep"}],"metadata":{"revision":8,"empty_array":[],"empty_object":{},"custom":{"values":[1,2]}}}
+JSON
+  chmod 640 "$tmp/fixtures/mutate.json" || error 'cannot set mutation target mode'
+  result=$(printf '%s\n' '{"id":"route-new","uri":"/new","plugins":{}}' | run_json_mutation create routes 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "JSON file create status $status"; }
+  "$root/m" json --check "$tmp/fixtures/mutate.json" || fail 'created JSON file is malformed'
+  [ "$("$root/m" json -r '.routes[1].id' "$tmp/fixtures/mutate.json")" = route-new ] || fail 'create did not append the selected route'
+  [ "$("$root/m" json -r '.services[0].id' "$tmp/fixtures/mutate.json")" = service-keep ] || fail 'create changed unrelated services'
+  [ "$("$root/m" json -r '.metadata.empty_array' "$tmp/fixtures/mutate.json")" = '[]' ] || fail 'create changed an unrelated empty array'
+  [ "$("$root/m" json -r '.metadata.empty_object' "$tmp/fixtures/mutate.json")" = '{}' ] || fail 'create changed an unrelated empty object'
+  [ "$(LC_ALL=C ls -ld "$tmp/fixtures/mutate.json" | cut -c1-10)" = -rw-r----- ] || fail 'JSON mutation did not preserve mode'
+
+  result=$(printf '%s\n' '{"id":"route-old","uri":"/updated","metadata":{"kept":true}}' | run_json_mutation update routes route-old 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "JSON file update status $status"; }
+  [ "$("$root/m" json -r '.routes[0].uri' "$tmp/fixtures/mutate.json")" = /updated ] || fail 'update did not replace the selected route'
+  [ "$("$root/m" json -r '.routes[1].id' "$tmp/fixtures/mutate.json")" = route-new ] || fail 'update changed an unrelated route'
+
+  cp "$tmp/fixtures/mutate.json" "$tmp/fixtures/mutate-before-mismatch.json" || error 'cannot snapshot mutation target'
+  result=$(printf '%s\n' '{"id":"different-id","uri":"/invalid"}' | run_json_mutation update routes route-old 2>"$tmp/stderr")
+  [ "$?" -eq 108 ] || fail 'update body ID mismatch was accepted'
+  cmp -s "$tmp/fixtures/mutate.json" "$tmp/fixtures/mutate-before-mismatch.json" || fail 'ID-mismatched update changed the target'
+
+  result=$(run_json_mutation delete routes route-new 2>"$tmp/stderr")
+  status=$?
+  [ "$status" -eq 0 ] || { cat "$tmp/stderr" >&2; fail "JSON file delete status $status"; }
+  [ "$("$root/m" json -r '.routes[0].id' "$tmp/fixtures/mutate.json")" = route-old ] || fail 'delete removed the wrong route'
+  [ "$("$root/m" json -r '.routes[1]?' "$tmp/fixtures/mutate.json")" = null ] || fail 'delete did not remove the selected route'
+
+  cat > "$tmp/fixtures/mutate.json" <<'JSON'
+{"routes":[{"id":"duplicate"},{"id":"duplicate"}],"services":[],"upstreams":[]}
+JSON
+  cp "$tmp/fixtures/mutate.json" "$tmp/fixtures/mutate-before-duplicate.json" || error 'cannot snapshot duplicate fixture'
+  result=$(run_json_mutation delete routes duplicate 2>"$tmp/stderr")
+  [ "$?" -eq 111 ] || fail 'duplicate target ID was not rejected'
+  cmp -s "$tmp/fixtures/mutate.json" "$tmp/fixtures/mutate-before-duplicate.json" || fail 'duplicate-ID rejection changed the target'
 done
 
-printf '%s\n' "$TEST_ID: PASS (APISIX 3.16.0 and 3.19.0 YAML parsers, list/get and full-document apply; no gateway process)"
+printf '%s\n' "$TEST_ID: PASS (APISIX 3.16.0 and 3.19.0 parsers, YAML list/get/apply and JSON-file CRUD; no gateway process)"
