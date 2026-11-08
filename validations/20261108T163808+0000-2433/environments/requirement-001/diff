@@ -1,0 +1,280 @@
+--- /tmp/rumiai-validation-evidence-20261108T163808+0000-2433/environments/requirement-001/before	2026-11-08 16:51:51.833872072 +0000
++++ /tmp/rumiai-validation-evidence-20261108T163808+0000-2433/environments/requirement-001/after	2026-11-08 16:54:06.014577257 +0000
+@@ -69,6 +69,7 @@
+ target/bin	directory	755				
+ target/bin/ai-linux-arm64	directory	755				
+ target/bin/ai-osarch	symlink	777			ai-linux-arm64	
++target/bin/ext	directory	700				
+ target/bin/ext-linux-arm64	directory	755				
+ target/bin/ext-linux-arm64/node	symlink	777			../../pkg/nodejs!linux-arm64/cmd/node	
+ target/bin/ext-linux-arm64/npm	symlink	777			../../pkg/nodejs!linux-arm64/cmd/npm	
+@@ -6478,8 +6479,14 @@
+ target/state/system/profile/main/sys	directory	755				
+ target/state/system/profile/main/sys/environment	directory	755				
+ target/state/system/profile/main/sys/environment/cache	directory	755				
+-target/state/system/profile/main/sys/environment/cache/env-linux-arm64	file	644	0	1794156650.2151203		
++target/state/system/profile/main/sys/environment/cache/env	file	644	39	1794156748.7437098		
++target/state/system/profile/main/sys/environment/cache/env-linux-arm64	file	644	63	1794156748.74571		
++target/state/system/profile/main/sys/environment/cache/env-linux-x86_64	file	644	63	1794156748.7447097		
++target/state/system/profile/main/sys/environment/cache/env-macos-arm64	file	644	63	1794156748.7477098		
++target/state/system/profile/main/sys/environment/cache/env-macos-x86_64	file	644	63	1794156748.7467098		
+ target/state/system/profile/main/sys/environment/cache/env-osarch	symlink	777			env-linux-arm64	
++target/state/system/profile/main/sys/environment/cache/env-windows-arm64	file	644	63	1794156748.7497096		
++target/state/system/profile/main/sys/environment/cache/env-windows-x86_64	file	644	63	1794156748.7487097		
+ target/state/system/profile/main/sys/pkg	directory	755				
+ target/state/system/profile/main/sys/pkg/cache	directory	700				
+ target/state/system/profile/main/sys/pkg/cache/catalog	directory	700				
+@@ -9263,6 +9270,8 @@
+ target/state/system/profile/main/sys/pkg/cache/catalog/v2/pkg/ollama/linux-x86_64/repository/versions	file	600	133	1794156650.619373		
+ target/state/system/profile/main/sys/pkg/conf	directory	755				
+ target/state/system/profile/main/sys/pkg/conf/catalog	file	644	56	1794156650.1658		
++target/state/system/profile/main/sys/pkg/conf/provider	directory	700				
++target/state/system/profile/main/sys/pkg/conf/provider/default	directory	700				
+ target/state/system/profile/main/sys/pkg/tmp	directory	700				
+ target/state/system/profile/main/sys/shell	directory	755				
+ target/state/system/profile/main/sys/shell/conf	directory	755				
+@@ -9274,4 +9283,244 @@
+ target/state/system/profile/main/sys/shell/conf/zsh/.zprofile	file	644	301	1794156650.165858		
+ target/state/system/profile/main/sys/shell/conf/zsh/.zshenv	file	644	654	1794156650.1659644		
+ target/state/system/profile/main/sys/shell/conf/zsh/.zshrc	file	644	996	1794156650.1659644		
++target/state/user	directory	700				
++target/state/user/default	directory	700				
++target/state/user/default/pkg	directory	700				
++target/state/user/default/pkg/nodejs	directory	700				
++target/state/user/default/pkg/nodejs/home	directory	700				
++target/state/user/default/sys	directory	700				
++target/state/user/default/sys/mk	directory	700				
++target/state/user/default/sys/mk/cache	directory	700				
++target/state/user/default/sys/mk/cache/projects	directory	700				
++target/state/user/default/sys/mk/cache/projects/29b7095ac845fbe0d32163c32deefca3a8d2710889d8352a541aaecc2f81d184	directory	700				
++target/state/user/default/sys/mk/cache/projects/29b7095ac845fbe0d32163c32deefca3a8d2710889d8352a541aaecc2f81d184/operations	directory	700				
++target/state/user/default/sys/mk/cache/projects/29b7095ac845fbe0d32163c32deefca3a8d2710889d8352a541aaecc2f81d184/operations/44575cf5b28512d75644bf54a517dcef304ff809fd511747621b4d64f19aac66.json	file	600	368	1794156755.6965194		
++target/state/user/default/sys/mk/cache/projects/657379362b81ca226ae2f3f09f23a1c9c2f0766a3f990c14fafa594727d3d8a0	directory	700				
++target/state/user/default/sys/mk/cache/projects/657379362b81ca226ae2f3f09f23a1c9c2f0766a3f990c14fafa594727d3d8a0/operations	directory	700				
++target/state/user/default/sys/mk/cache/projects/657379362b81ca226ae2f3f09f23a1c9c2f0766a3f990c14fafa594727d3d8a0/operations/80a3df68e540126042ce0a4f70667d78a556fd6f19398efbbebb31aef87cd449.json	file	600	377	1794156747.5867448		
++target/state/user/default/sys/mk/cache/shared-artifacts	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/candidates/1e5b319b12a569defd15e03984f2c840de127f792f81432967f47c90e1f02a5d	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/candidates/1e5b319b12a569defd15e03984f2c840de127f792f81432967f47c90e1f02a5d/manifest.json	file	600	366	1794156720.8986912		
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/candidates/1e5b319b12a569defd15e03984f2c840de127f792f81432967f47c90e1f02a5d/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/candidates/1e5b319b12a569defd15e03984f2c840de127f792f81432967f47c90e1f02a5d/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	4	1794156720.8986912		
++target/state/user/default/sys/mk/cache/shared-artifacts/095a03859809cc673d43f588eba4a46f27262091aa3f324f5c00bddc1fb2cd5a/current	file	600	65	1794156720.902579		
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/candidates/e2353a43d5dca8936003221910836afef2f8020d3c895dfcee233d0fd5be4dc2	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/candidates/e2353a43d5dca8936003221910836afef2f8020d3c895dfcee233d0fd5be4dc2/manifest.json	file	600	369	1794156718.2035398		
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/candidates/e2353a43d5dca8936003221910836afef2f8020d3c895dfcee233d0fd5be4dc2/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/candidates/e2353a43d5dca8936003221910836afef2f8020d3c895dfcee233d0fd5be4dc2/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156718.2035398		
++target/state/user/default/sys/mk/cache/shared-artifacts/119f0605805c9826fc8d9a9584302b1c660201875a45cb1842212fcde34ec0dc/current	file	600	65	1794156718.2076657		
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/candidates/7d4d1e634ddd63c6fa64011022cc6f17e06c4d068d901ec0d5ad034856caad2b	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/candidates/7d4d1e634ddd63c6fa64011022cc6f17e06c4d068d901ec0d5ad034856caad2b/manifest.json	file	600	369	1794156717.723714		
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/candidates/7d4d1e634ddd63c6fa64011022cc6f17e06c4d068d901ec0d5ad034856caad2b/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/candidates/7d4d1e634ddd63c6fa64011022cc6f17e06c4d068d901ec0d5ad034856caad2b/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156717.723714		
++target/state/user/default/sys/mk/cache/shared-artifacts/142da0697d78f7eb9178f23758be20acc8c6b2ff64c82cde794afe3d0c412e79/current	file	600	65	1794156717.7276812		
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/candidates/57d12ef7d00d27b45169ada28441ea7cf4613ff2c88a4cc0a7f67cdb168704fe	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/candidates/57d12ef7d00d27b45169ada28441ea7cf4613ff2c88a4cc0a7f67cdb168704fe/manifest.json	file	600	394	1794156738.7075822		
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/candidates/57d12ef7d00d27b45169ada28441ea7cf4613ff2c88a4cc0a7f67cdb168704fe/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/candidates/57d12ef7d00d27b45169ada28441ea7cf4613ff2c88a4cc0a7f67cdb168704fe/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	14	1794156738.7075822		
++target/state/user/default/sys/mk/cache/shared-artifacts/1d5d6b3fe62f66fcfbf45aab2fd7fd69594ed040f6798816ee389228208a8220/current	file	600	65	1794156738.7120225		
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/candidates/63bf00f420f887c758b9ff5688a42c2a9329988954bf4fe76ee8fd92b9cee8da	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/candidates/63bf00f420f887c758b9ff5688a42c2a9329988954bf4fe76ee8fd92b9cee8da/manifest.json	file	600	369	1794156720.1392212		
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/candidates/63bf00f420f887c758b9ff5688a42c2a9329988954bf4fe76ee8fd92b9cee8da/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/candidates/63bf00f420f887c758b9ff5688a42c2a9329988954bf4fe76ee8fd92b9cee8da/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156720.1392212		
++target/state/user/default/sys/mk/cache/shared-artifacts/306589403f4676598f89a82c412237340ef87b380fe0973bf7ff7ac27172fe08/current	file	600	65	1794156720.1436036		
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/candidates/a313cebc9f822382b487ca717b2ef56836fc7f95a007424a1fcfe0b73b5dff3d	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/candidates/a313cebc9f822382b487ca717b2ef56836fc7f95a007424a1fcfe0b73b5dff3d/manifest.json	file	600	394	1794156738.3687022		
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/candidates/a313cebc9f822382b487ca717b2ef56836fc7f95a007424a1fcfe0b73b5dff3d/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/candidates/a313cebc9f822382b487ca717b2ef56836fc7f95a007424a1fcfe0b73b5dff3d/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	15	1794156738.3687022		
++target/state/user/default/sys/mk/cache/shared-artifacts/3a3346f97315ab2b121b5825f14fe1a9a62e2867654dd1a2e92621f5b6881ae9/current	file	600	65	1794156738.3730333		
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/candidates/bf01f141a8d2ba063f45d0f32b272213f6e717b19d28ef28ad0dfb4814e8b4d7	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/candidates/bf01f141a8d2ba063f45d0f32b272213f6e717b19d28ef28ad0dfb4814e8b4d7/manifest.json	file	600	502	1794156720.3614843		
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/candidates/bf01f141a8d2ba063f45d0f32b272213f6e717b19d28ef28ad0dfb4814e8b4d7/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/candidates/bf01f141a8d2ba063f45d0f32b272213f6e717b19d28ef28ad0dfb4814e8b4d7/payload/dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb8292110622	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/candidates/bf01f141a8d2ba063f45d0f32b272213f6e717b19d28ef28ad0dfb4814e8b4d7/payload/dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb8292110622/item.txt	file	600	4	1794156720.3614843		
++target/state/user/default/sys/mk/cache/shared-artifacts/5690c2921624079a8b863edba0ca9427531de9200ee48d655bf023dc3ea829c4/current	file	600	65	1794156720.3655965		
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/candidates/47fb6d1150c57a3751b0dd0ce071c4f2cfae629b7b2d38d2afd7afc81698866a	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/candidates/47fb6d1150c57a3751b0dd0ce071c4f2cfae629b7b2d38d2afd7afc81698866a/manifest.json	file	600	376	1794156747.5686347		
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/candidates/47fb6d1150c57a3751b0dd0ce071c4f2cfae629b7b2d38d2afd7afc81698866a/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/candidates/47fb6d1150c57a3751b0dd0ce071c4f2cfae629b7b2d38d2afd7afc81698866a/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	7	1794156747.5686347		
++target/state/user/default/sys/mk/cache/shared-artifacts/56f791e26cd6d0a4c4bea740ab14522f7478f8368c4de1594d2282714006678d/current	file	600	65	1794156747.572745		
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/candidates/7029e49c27bb77d26de0ba108ed20d9f2891af184ad95f1aed534a1d6a1b5ce4	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/candidates/7029e49c27bb77d26de0ba108ed20d9f2891af184ad95f1aed534a1d6a1b5ce4/manifest.json	file	600	369	1794156719.1695328		
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/candidates/7029e49c27bb77d26de0ba108ed20d9f2891af184ad95f1aed534a1d6a1b5ce4/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/candidates/7029e49c27bb77d26de0ba108ed20d9f2891af184ad95f1aed534a1d6a1b5ce4/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	5	1794156719.1695328		
++target/state/user/default/sys/mk/cache/shared-artifacts/5c242f20184013b60e134a14315ca75aedf77a2127dffa8e02c2ac1733feb01a/current	file	600	65	1794156719.1736348		
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/candidates/214450631632680b2d707b102e815ba6d4670b49716029d7809fa6049cad682a	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/candidates/214450631632680b2d707b102e815ba6d4670b49716029d7809fa6049cad682a/manifest.json	file	600	372	1794156725.4387405		
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/candidates/214450631632680b2d707b102e815ba6d4670b49716029d7809fa6049cad682a/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/candidates/214450631632680b2d707b102e815ba6d4670b49716029d7809fa6049cad682a/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156725.4387405		
++target/state/user/default/sys/mk/cache/shared-artifacts/5c4d59abf040c7f7fbabe4d5e467cd256c19053494581fbdc2ef3cf5f34ac9bc/current	file	600	65	1794156725.44245		
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/candidates/2871e2cca09eac855d79e88637fb4cabda068350010d8dbbc5c6af7bc6d5deac	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/candidates/2871e2cca09eac855d79e88637fb4cabda068350010d8dbbc5c6af7bc6d5deac/manifest.json	file	600	366	1794156720.426262		
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/candidates/2871e2cca09eac855d79e88637fb4cabda068350010d8dbbc5c6af7bc6d5deac/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/candidates/2871e2cca09eac855d79e88637fb4cabda068350010d8dbbc5c6af7bc6d5deac/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	4	1794156720.426262		
++target/state/user/default/sys/mk/cache/shared-artifacts/640985e337e16c60211242d7f2ec794fea94187a2d72e7f9f1cb678254716afe/current	file	600	65	1794156720.4295945		
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/candidates/926d452adeea8630c6791cc8c86f572429255595e71f439cc8be67321954d6f5	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/candidates/926d452adeea8630c6791cc8c86f572429255595e71f439cc8be67321954d6f5/manifest.json	file	600	369	1794156720.2170634		
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/candidates/926d452adeea8630c6791cc8c86f572429255595e71f439cc8be67321954d6f5/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/candidates/926d452adeea8630c6791cc8c86f572429255595e71f439cc8be67321954d6f5/payload/8082d8aa69408b1abb0b136be13cabe21dc23e2e01e5ffbbb33666d57f1176e0	file	600	6	1794156720.2170634		
++target/state/user/default/sys/mk/cache/shared-artifacts/7091fad0e94d89e67c264a10ae33a182a60e6c66d6c8f76857002cd34772b3f6/current	file	600	65	1794156720.220601		
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/candidates/74f0d7b0e6d1304a4434c389abf9d8d766bde3069b647562ffce845c15981ae0	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/candidates/74f0d7b0e6d1304a4434c389abf9d8d766bde3069b647562ffce845c15981ae0/manifest.json	file	600	378	1794156725.665436		
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/candidates/74f0d7b0e6d1304a4434c389abf9d8d766bde3069b647562ffce845c15981ae0/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/candidates/74f0d7b0e6d1304a4434c389abf9d8d766bde3069b647562ffce845c15981ae0/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156725.665436		
++target/state/user/default/sys/mk/cache/shared-artifacts/73d93832718e6e5ae560ca62d640203f1cd208d455cc296536126a91333b31ae/current	file	600	65	1794156725.6694424		
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/candidates/38abadad5ab0174d85cda0dcb2c491ab725b21fc5dfc20ebbfbcb25c0c62e775	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/candidates/38abadad5ab0174d85cda0dcb2c491ab725b21fc5dfc20ebbfbcb25c0c62e775/manifest.json	file	600	369	1794156719.8691638		
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/candidates/38abadad5ab0174d85cda0dcb2c491ab725b21fc5dfc20ebbfbcb25c0c62e775/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/candidates/38abadad5ab0174d85cda0dcb2c491ab725b21fc5dfc20ebbfbcb25c0c62e775/payload/8082d8aa69408b1abb0b136be13cabe21dc23e2e01e5ffbbb33666d57f1176e0	file	600	5	1794156719.8691638		
++target/state/user/default/sys/mk/cache/shared-artifacts/7576e4f7d3cb480d06733802dbdd462b5f6ea1f7b17564561f9cbf5d8ff499ad/current	file	600	65	1794156719.8736124		
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/candidates/7a2a63ce87e57bed834eb46a3d318508d504dd1b3597ecc52d99d6844f2cb76f	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/candidates/7a2a63ce87e57bed834eb46a3d318508d504dd1b3597ecc52d99d6844f2cb76f/manifest.json	file	600	369	1794156718.3568058		
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/candidates/7a2a63ce87e57bed834eb46a3d318508d504dd1b3597ecc52d99d6844f2cb76f/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/candidates/7a2a63ce87e57bed834eb46a3d318508d504dd1b3597ecc52d99d6844f2cb76f/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	5	1794156718.3568058		
++target/state/user/default/sys/mk/cache/shared-artifacts/8b7a7064584e6f621887ce44b85dd0cb8bc2ed4022bd274ec10839e15fba2721/current	file	600	65	1794156719.7126174		
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/candidates/cf8bfe9b1642de626ef9b52ca22cec38488281df5cf496358a4ce14ffcb5fb73	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/candidates/cf8bfe9b1642de626ef9b52ca22cec38488281df5cf496358a4ce14ffcb5fb73/manifest.json	file	600	377	1794156721.0406327		
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/candidates/cf8bfe9b1642de626ef9b52ca22cec38488281df5cf496358a4ce14ffcb5fb73/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/candidates/cf8bfe9b1642de626ef9b52ca22cec38488281df5cf496358a4ce14ffcb5fb73/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156721.0406327		
++target/state/user/default/sys/mk/cache/shared-artifacts/8b80784546b070f005ab5d9196e56563b9e9c480c7c6e6dfcc4afdeb3d91ec16/current	file	600	65	1794156721.0445743		
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/candidates/046db598d2dc0aa80256f4823682a08eb37c95de547ef310b7b1578b81ebd830	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/candidates/046db598d2dc0aa80256f4823682a08eb37c95de547ef310b7b1578b81ebd830/manifest.json	file	600	376	1794156746.723467		
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/candidates/046db598d2dc0aa80256f4823682a08eb37c95de547ef310b7b1578b81ebd830/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/candidates/046db598d2dc0aa80256f4823682a08eb37c95de547ef310b7b1578b81ebd830/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	7	1794156746.723467		
++target/state/user/default/sys/mk/cache/shared-artifacts/a2b7835cd7a39e2f6acbd05f019962ce8bd1fe3238434f0c440c93164977a83d/current	file	600	65	1794156746.7277706		
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/candidates/246b16584786df76495afc1a14bdec3fb8a05331e724d1f3ef89ba3c53ec2b74	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/candidates/246b16584786df76495afc1a14bdec3fb8a05331e724d1f3ef89ba3c53ec2b74/manifest.json	file	600	394	1794156737.579619		
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/candidates/246b16584786df76495afc1a14bdec3fb8a05331e724d1f3ef89ba3c53ec2b74/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/candidates/246b16584786df76495afc1a14bdec3fb8a05331e724d1f3ef89ba3c53ec2b74/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	12	1794156737.579619		
++target/state/user/default/sys/mk/cache/shared-artifacts/ad74ce86c18a709d5f031658a9793e1d41c72f21cd51467b7f0b9aaf27b19c6f/current	file	600	65	1794156737.5840583		
++target/state/user/default/sys/mk/cache/shared-artifacts/b1d02cae7fae7146eac9ea3f11efedc2687d09d3c81c2692f8208284ed36ab8c	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/b1d02cae7fae7146eac9ea3f11efedc2687d09d3c81c2692f8208284ed36ab8c/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/candidates/d28a10696044eecaadd93f878140918766cd8eaf31cc759a523ec1fdec7cbfcf	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/candidates/d28a10696044eecaadd93f878140918766cd8eaf31cc759a523ec1fdec7cbfcf/manifest.json	file	600	394	1794156737.6477985		
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/candidates/d28a10696044eecaadd93f878140918766cd8eaf31cc759a523ec1fdec7cbfcf/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/candidates/d28a10696044eecaadd93f878140918766cd8eaf31cc759a523ec1fdec7cbfcf/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	11	1794156737.6477985		
++target/state/user/default/sys/mk/cache/shared-artifacts/c18660bb2f3698220cf53cbb90cb2add6ac0dcfb949ad36fcef61ab5a18041ea/current	file	600	65	1794156737.6520562		
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/candidates/3c65bc48d040561f8cd42aea4c34b14274b5aab553b0df69286111fc98b6dfca	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/candidates/3c65bc48d040561f8cd42aea4c34b14274b5aab553b0df69286111fc98b6dfca/manifest.json	file	600	377	1794156721.2842784		
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/candidates/3c65bc48d040561f8cd42aea4c34b14274b5aab553b0df69286111fc98b6dfca/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/candidates/3c65bc48d040561f8cd42aea4c34b14274b5aab553b0df69286111fc98b6dfca/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	6	1794156721.2842784		
++target/state/user/default/sys/mk/cache/shared-artifacts/c90fa45a30f966f827321645674295e3775819c96c490020e81f239690898ce9/current	file	600	65	1794156721.2885673		
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/candidates/d47d93d2756e2a5215e464e341e06ce51374ee2fea073fd200e1b9e9ed89b6cd	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/candidates/d47d93d2756e2a5215e464e341e06ce51374ee2fea073fd200e1b9e9ed89b6cd/manifest.json	file	600	502	1794156720.824708		
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/candidates/d47d93d2756e2a5215e464e341e06ce51374ee2fea073fd200e1b9e9ed89b6cd/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/candidates/d47d93d2756e2a5215e464e341e06ce51374ee2fea073fd200e1b9e9ed89b6cd/payload/dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb8292110622	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/candidates/d47d93d2756e2a5215e464e341e06ce51374ee2fea073fd200e1b9e9ed89b6cd/payload/dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb8292110622/item.txt	file	600	4	1794156720.824708		
++target/state/user/default/sys/mk/cache/shared-artifacts/ced00ee0e4e011655a437948e88261b75dd4c8b60dbc50c944ab9b88ad02d958/current	file	600	65	1794156720.8285816		
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/.attempt-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/.maintenance-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/.publication-leases	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/candidates	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/candidates/12dfbdc6e07d3e3e64ed84d8c9909ddafcd9b268693e4fcf3c6d98fcd51e8461	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/candidates/12dfbdc6e07d3e3e64ed84d8c9909ddafcd9b268693e4fcf3c6d98fcd51e8461/manifest.json	file	600	394	1794156738.187532		
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/candidates/12dfbdc6e07d3e3e64ed84d8c9909ddafcd9b268693e4fcf3c6d98fcd51e8461/payload	directory	700				
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/candidates/12dfbdc6e07d3e3e64ed84d8c9909ddafcd9b268693e4fcf3c6d98fcd51e8461/payload/c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c	file	600	16	1794156738.187532		
++target/state/user/default/sys/mk/cache/shared-artifacts/f24bf4109ca94fd4abdbcc6649a3280d0f2455d20f3069d82ab2d3d4850837c4/current	file	600	65	1794156738.192039		
+ tmp	directory	700				
