@@ -1,0 +1,214 @@
+#!/bin/sh
+# Full, live v2 pkg-catalog install lifecycle across the selected host.
+# The supplied m-os checkout and catalog are real, pinned external inputs.
+test_id=m-os/pkg-catalog-exhaustive/install-all.test
+fail_environment()
+{
+  printf '%s: ERROR: %s\n' "$test_id" "$1" >&2
+  exit 3
+}
+test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P) || fail_environment 'test directory unavailable'
+suite_root=$(CDPATH= cd -- "$test_dir/../../.." && pwd -P) || fail_environment 'suite root unavailable'
+. "$suite_root/lib/m-os-target.lib" || fail_environment 'm-os target helper unavailable'
+target=$(rumiai_test_target_m_os_find) || fail_environment 'explicit m-os target unavailable'
+catalog=${RUMIAI_TEST_PKG_CATALOG_ROOT-}
+report_dir=${RUMIAI_TEST_CATALOG_REPORT_DIR-}
+expected_osarch=${RUMIAI_TEST_EXPECT_OSARCH-}
+expected_catalog=${RUMIAI_TEST_EXPECT_CATALOG_SHA-}
+expected_runtime=${RUMIAI_TEST_EXPECT_M_OS_SHA-}
+[ -n "$catalog" ] && [ -d "$catalog/v2/pkg" ] || fail_environment 'v2 catalog checkout unavailable'
+[ -n "$report_dir" ] && [ -n "$expected_osarch" ] &&
+  [ -n "$expected_catalog" ] && [ -n "$expected_runtime" ] ||
+  fail_environment 'exact execution inputs missing'
+[ "$(git -C "$catalog" rev-parse HEAD)" = "$expected_catalog" ] ||
+  fail_environment 'catalog checkout HEAD differs from requested revision'
+[ "$(git -C "$target" rev-parse HEAD)" = "$expected_runtime" ] ||
+  fail_environment 'm-os checkout HEAD differs from requested revision'
+osarch=$("$target/m" sh -c 'printf "%s\n" "$m_OSARCH"') ||
+  fail_environment 'host platform not resolved by the real m bootstrap'
+[ "$osarch" = "$expected_osarch" ] ||
+  fail_environment "expected $expected_osarch, observed $osarch"
+[ ! -e "$target/pkg" ] && [ ! -L "$target/pkg" ] ||
+  fail_environment 'target package store is not initially clean'
+mkdir -p -- "$report_dir/logs" || fail_environment 'report directory not writable'
+report="$report_dir/results.tsv"
+printf 'package\tstream\tversion\tresult\tdetail\n' > "$report" ||
+  fail_environment 'cannot initialize result report'
+LC_ALL=C
+export LC_ALL
+total=0
+passed=0
+failed=0
+errors=0
+unsupported=0
+
+# All v1-supported platform streams must remain available in the v2 snapshot.
+for old_package in "$catalog"/v1/pkg/*
+do
+  [ -d "$old_package" ] || continue
+  package=${old_package##*/}
+  if [ -d "$old_package/$osarch" ] || [ -d "$old_package/all" ]
+  then
+    if [ ! -d "$catalog/v2/pkg/$package/$osarch" ] &&
+       [ ! -d "$catalog/v2/pkg/$package/all" ]
+    then
+      printf '%s\t%s\t-\tFAIL\tv1-support-not-migrated\n' "$package" "$osarch" >> "$report"
+      printf '%s: FAIL: missing v2 support for %s on %s\n' "$test_id" "$package" "$osarch" >&2
+      failed=$((failed + 1))
+    fi
+  fi
+done
+
+for pkg_dir in "$catalog"/v2/pkg/*
+do
+  [ -d "$pkg_dir" ] || continue
+  package=${pkg_dir##*/}
+  stream="$pkg_dir/$osarch"
+  stream_name=$osarch
+  if [ ! -d "$stream" ]
+  then
+    stream="$pkg_dir/all"
+    stream_name=all
+  fi
+  if [ ! -d "$stream" ]
+  then
+    printf '%s\t%s\t-\tUNSUPPORTED\tno-matching-stream\n' "$package" "$osarch" >> "$report"
+    unsupported=$((unsupported + 1))
+    continue
+  fi
+
+  range_seen=0
+  for range in "$stream"/n*=*
+  do
+    [ -d "$range" ] || continue
+    range_seen=1
+    label=${range##*/}
+    version=${label#*=}
+    concrete="$package@$version"
+    if [ "$stream_name" != all ]
+    then
+      concrete="$concrete!$osarch"
+    fi
+    spec=$concrete
+    total=$((total + 1))
+    log="$report_dir/logs/$package-$label.log"
+    dependencies="$report_dir/logs/$package-$label.dependencies"
+    dep_log="$report_dir/logs/$package-$label.depend.log"
+    : > "$log" || fail_environment 'cannot initialize case log'
+    result=PASS
+    detail=installed-and-uninstalled
+
+    if [ ! -f "$range/format" ]
+    then
+      result=FAIL
+      detail=missing-format
+    fi
+
+    # pkg depend and pkg install use the real selected catalog snapshot.
+    if ! "$target/m" pkg depend "$spec" > "$dependencies" 2> "$dep_log"
+    then
+      result=FAIL
+      detail=dependency-plan-failed
+      : > "$dependencies"
+    fi
+
+    if [ -e "$target/pkg/$concrete" ] || [ -L "$target/pkg/$concrete" ]
+    then
+      result=FAIL
+      detail=preexisting-concrete-contaminates-test
+    elif "$target/m" pkg install "$spec" > "$log" 2>&1
+    then
+      if [ ! -f "$target/pkg/$concrete/schema" ] ||
+         [ "$(cat "$target/pkg/$concrete/schema")" != v2 ]
+      then
+        result=FAIL
+        detail=installed-schema-not-v2
+      elif ! "$target/m" pkg versions "$package" >> "$log" 2>&1
+      then
+        result=FAIL
+        detail=installed-versions-query-failed
+      else
+        actual=$("$target/m" pkg default "$package" 2>> "$log")
+        if [ "$actual" != "$concrete" ]
+        then
+          result=FAIL
+          detail=installed-default-mismatch
+        fi
+      fi
+    else
+      result=FAIL
+      detail=public-install-failed
+    fi
+
+    # Remove the consumer first, then dependencies in reverse planned order.
+    cleanup_failed=0
+    if [ -d "$target/pkg/$concrete" ]
+    then
+      "$target/m" pkg uninstall "$concrete" >> "$log" 2>&1 || cleanup_failed=1
+    fi
+    reverse_deps=
+    while IFS= read -r dependency
+    do
+      [ -n "$dependency" ] || continue
+      reverse_deps="$dependency
+$reverse_deps"
+    done < "$dependencies"
+    while IFS= read -r dependency
+    do
+      [ -n "$dependency" ] || continue
+      if [ -d "$target/pkg/$dependency" ]
+      then
+        "$target/m" pkg uninstall "$dependency" >> "$log" 2>&1 || cleanup_failed=1
+      fi
+    done <<EOF_DEPENDENCIES
+$reverse_deps
+EOF_DEPENDENCIES
+    if [ -d "$target/pkg/$concrete" ]
+    then
+      cleanup_failed=1
+    fi
+    if [ "$cleanup_failed" -eq 1 ]
+    then
+      if [ "$result" = PASS ]
+      then
+        result=FAIL
+        detail=public-uninstall-or-dependency-cleanup-failed
+      else
+        detail="$detail+cleanup-failed"
+      fi
+    fi
+
+    case "$result" in
+      PASS)
+        passed=$((passed + 1))
+        rm -f -- "$log" "$dependencies" "$dep_log" || :
+        ;;
+      FAIL)
+        failed=$((failed + 1))
+        printf '%s: FAIL: %s (%s)\n' "$test_id" "$spec" "$detail" >&2
+        if [ -f "$dep_log" ] && [ -s "$dep_log" ]
+        then
+          tail -n 12 "$dep_log" >&2 || :
+        fi
+        tail -n 25 "$log" >&2 || :
+        ;;
+      *)
+        errors=$((errors + 1))
+        ;;
+    esac
+    printf '%s\t%s\t%s\t%s\t%s\n' "$package" "$stream_name" "$version" "$result" "$detail" >> "$report" ||
+      fail_environment 'cannot append case result'
+    printf '%s: %s: %s\n' "$test_id" "$result" "$spec"
+  done
+  if [ "$range_seen" -eq 0 ]
+  then
+    failed=$((failed + 1))
+    printf '%s\t%s\t-\tFAIL\tstream-without-ranges\n' "$package" "$stream_name" >> "$report"
+  fi
+done
+printf 'host=%s\nall-version-ranges=%s\npass=%s\nfail=%s\nerror=%s\nunsupported-packages=%s\n' \
+  "$osarch" "$total" "$passed" "$failed" "$errors" "$unsupported" > "$report_dir/summary.txt"
+cat "$report_dir/summary.txt"
+[ "$total" -gt 0 ] || fail_environment 'no applicable v2 ranges were enumerated'
+[ "$failed" -eq 0 ] && [ "$errors" -eq 0 ] || exit 1
+exit 0
