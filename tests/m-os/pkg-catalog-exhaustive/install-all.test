@@ -94,9 +94,13 @@ do
     log="$report_dir/logs/$package-$label.log"
     dependencies="$report_dir/logs/$package-$label.dependencies"
     dep_log="$report_dir/logs/$package-$label.depend.log"
+    provider_dependencies="$report_dir/logs/$package-$label.provider-dependencies"
     : > "$log" || fail_environment 'cannot initialize case log'
+    : > "$dependencies" || fail_environment 'cannot initialize dependency list'
+    : > "$provider_dependencies" || fail_environment 'cannot initialize provider list'
     result=PASS
     detail=installed-and-uninstalled
+    provider_concrete=
 
     if [ ! -f "$range/format" ]
     then
@@ -104,19 +108,46 @@ do
       detail=missing-format
     fi
 
+    # In non-interactive CI, explicitly install a compatible provider first.
+    # The real dependency resolver then sees exactly one installed candidate.
+    if [ "$result" = PASS ] && [ -f "$range/dependency" ]
+    then
+      if grep -E '^java[[:space:]]' "$range/dependency" >/dev/null
+      then
+        provider_concrete="temurin@25+36!$osarch"
+      elif grep -E '^web-control[[:space:]]' "$range/dependency" >/dev/null
+      then
+        provider_concrete=pwc-web-control@v0.1.6
+      fi
+
+      if [ -n "$provider_concrete" ]
+      then
+        if ! "$target/m" pkg depend "$provider_concrete" > "$provider_dependencies" 2>> "$log"
+        then
+          result=FAIL
+          detail=provider-dependency-plan-failed
+        elif ! "$target/m" pkg install "$provider_concrete" >> "$log" 2>&1
+        then
+          result=FAIL
+          detail=provider-preinstallation-failed
+        fi
+      fi
+    fi
+
     # pkg depend and pkg install use the real selected catalog snapshot.
-    if ! "$target/m" pkg depend "$spec" > "$dependencies" 2> "$dep_log"
+    if [ "$result" = PASS ] &&
+       ! "$target/m" pkg depend "$spec" > "$dependencies" 2> "$dep_log"
     then
       result=FAIL
       detail=dependency-plan-failed
-      : > "$dependencies"
     fi
 
-    if [ -e "$target/pkg/$concrete" ] || [ -L "$target/pkg/$concrete" ]
+    if [ "$result" = PASS ] &&
+       { [ -e "$target/pkg/$concrete" ] || [ -L "$target/pkg/$concrete" ]; }
     then
       result=FAIL
       detail=preexisting-concrete-contaminates-test
-    elif "$target/m" pkg install "$spec" > "$log" 2>&1
+    elif [ "$result" = PASS ] && "$target/m" pkg install "$spec" > "$log" 2>&1
     then
       if [ ! -f "$target/pkg/$concrete/schema" ] ||
          [ "$(cat "$target/pkg/$concrete/schema")" != v2 ]
@@ -135,7 +166,8 @@ do
           detail=installed-default-mismatch
         fi
       fi
-    else
+    elif [ "$result" = PASS ]
+    then
       result=FAIL
       detail=public-install-failed
     fi
@@ -163,7 +195,33 @@ $reverse_deps"
     done <<EOF_DEPENDENCIES
 $reverse_deps
 EOF_DEPENDENCIES
-    if [ -d "$target/pkg/$concrete" ]
+
+    # Also undo the explicitly preinstalled provider when dependent planning
+    # failed before it could appear in the consumer's dependency plan.
+    if [ -n "$provider_concrete" ] && [ -d "$target/pkg/$provider_concrete" ]
+    then
+      "$target/m" pkg uninstall "$provider_concrete" >> "$log" 2>&1 || cleanup_failed=1
+    fi
+    reverse_provider_deps=
+    while IFS= read -r dependency
+    do
+      [ -n "$dependency" ] || continue
+      reverse_provider_deps="$dependency
+$reverse_provider_deps"
+    done < "$provider_dependencies"
+    while IFS= read -r dependency
+    do
+      [ -n "$dependency" ] || continue
+      if [ -d "$target/pkg/$dependency" ]
+      then
+        "$target/m" pkg uninstall "$dependency" >> "$log" 2>&1 || cleanup_failed=1
+      fi
+    done <<EOF_PROVIDER_DEPENDENCIES
+$reverse_provider_deps
+EOF_PROVIDER_DEPENDENCIES
+
+    if [ -d "$target/pkg/$concrete" ] ||
+       { [ -n "$provider_concrete" ] && [ -d "$target/pkg/$provider_concrete" ]; }
     then
       cleanup_failed=1
     fi
@@ -181,7 +239,7 @@ EOF_DEPENDENCIES
     case "$result" in
       PASS)
         passed=$((passed + 1))
-        rm -f -- "$log" "$dependencies" "$dep_log" || :
+        rm -f -- "$log" "$dependencies" "$dep_log" "$provider_dependencies" || :
         ;;
       FAIL)
         failed=$((failed + 1))
